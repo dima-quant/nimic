@@ -12,6 +12,7 @@ rule:localname -> rename identifier that starts with _ to local_ otherwise add "
 rule:classdef -> interpret class definition as type
 rule:classdefseq -> combine consecutive class definitions into one type def.
 Move method definitions outside type definitions
+rule:annotateself -> if self is not annotated, it will be derived from the class name (as immutable)
 rule:instantiation -> call with capitalized name and named arguments is interpreted as instantiation ("=" -> ":").
 Classes instantiated with keywords should be named starting with a capital letter
 rule:typealias -> type alias (also register as alias for dispatch): class Time(float64) -> type Time* = float64
@@ -1242,6 +1243,11 @@ class _Unparser(NodeVisitor):
                     body = [body]
                 for b in body:
                     if isinstance(b, FunctionDef) or isinstance(b, AsyncFunctionDef):
+                        # check if self is annotated
+                        if b.args.args and b.args.args[0].arg == "self" and b.args.args[0].annotation is None:
+                            # rule:annotateself
+                            type_name = self._adjust_name(node.name, definition=False)
+                            b.args.args[0].annotation = Name(id=type_name, ctx=Load())
                         self._class_def_methods.append(b)
                     else:
                         if enum and isinstance(b, Assign) and isinstance(b.value, Call) and \
