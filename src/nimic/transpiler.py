@@ -1,60 +1,81 @@
 """
 nimic transpiler
 Copyright (c) 2026 Dmytro Makogon, see LICENSE (MIT).
-Transpiles subset of Python (nimic) into Nim.
-The transpiler is based on the `ast` module adjusted to implement the following rules and features:
 
-rule:doublespace -> change four spaces to double spaces for indentation
-rule:dropwith -> drop "with" for "const", "let", "var", "export", "block"
-rule:writeexport -> write no parentheses for "export" by assigning low priority
-rule:dropbrackets -> remove brackets from what follows after "ptr" and "ref"
-rule:localname -> rename identifier that starts with _ to local_ otherwise add "*" when definition
-rule:classdef -> interpret class definition as type
-rule:classdefseq -> combine consecutive class definitions into one type def.
-Move method definitions outside type definitions
-rule:annotateself -> if self is not annotated, it will be derived from the class name (as immutable)
-rule:instantiation -> call with capitalized name and named arguments is interpreted as instantiation ("=" -> ":").
-Classes instantiated with keywords should be named starting with a capital letter
-rule:typealias -> type alias (also register as alias for dispatch): class Time(float64) -> type Time* = float64
-rule:typedistinct -> distinct type (decorated with "distinct"): class Time(float64) -> type Time* = distinct float64
-rule:funcdef -> adjust function definition according to Nim syntax as "proc" (or "func")
-rule:funcdefdecorated -> interpret decorators as definitions for "template", "iterator", "converter", "method".
-Other decorators are skipped
-rule:funcdefmut -> arguments denoted as "mut@" are mutable in function definition -> "var "
-rule:funcdefbody -> no body is written for function definition with "borrow" in pragma or only "pass"
-rule:funcdefinplace -> remove return ... from dunder defs for binary in-place operators __i...__, first argument is
-annotated as mutable if not done already
-rule:funcdefargswap -> arguments are swapped for binary operators "__radd__", "__rmul__", etc
-rule:funcdefrenamedunder -> rename binary operators __add__ -> "+", __sub__ -> "-", __getitem__ -> `[]`, etc
-rule:funcdefpackedtuple -> unpack tuples with "packed_tuple" in name
-rule:typedtemplate -> drop return from typed template or converter definition
-rule:pragma -> docstring with {.x.} is written as pragma {.x.}, if pragma contains "noSideEffect" func is defined
-rule:matchcase -> adjust match case according to Nim syntax, also for variant types
-rule:import -> write import from as import, drop from __future__ import ...
-rule:nodoubleimport -> do not write import module if already imported
-rule:varini -> var initialization call without arguments with the same name as annotation is interpreted as
-declaration ("with var: a: Rng = Rng()" transpiles as "var a: Rng")
-rule:assign -> operator <<= is defined as value assignment to a mutable variable , i.e. a <<= b transpile as a = b,
-for attributes and array elements not needed, can be just c.x = b or c[0] = b
-rule:comptime -> the expression "if comptime(x)" is written as "when x" ("if" directly followed by "comptime"
-should be resolvable at comptime (is interpreted as "when")
-rule:bitwiserename -> bitwise operations get precedence adjusted and are renamed << -> shl, >> -> shr, & -> and,
-| -> or, ^ -> xor
-rule:lowecasebool -> True -> true, False -> false, "None" -> "nil"
-rule:funcrename -> rename functions "print" to "echo", "str" to "$"
-rule:stringjoin -> replace "f" by "&"
-rule:enum -> "NIntEnum", "NStrEnum" rename to "Enum", drop "auto"
-rule:main -> replace __name__ == "__main__" by isMainModule
-rule:quote -> replace quotes to double quotes
-rule:deref -> pointer dereference: ".contents" -> "[]"
-rule:copy -> value types are copied, drop .copy()
-rule:inlineif -> write inline if according to Nim syntax
-rule:literaltypes -> write as type suffix uint(0x9e3779b97f4a7c15) -> 0x9e3779b97f4a7c15'u64
-rule:isnot -> write isnot according to Nim syntax
-rule:notin -> write notin according to Nim syntax
-feature:subscriptrename -> subscript can be renames if in keywords_no_with context ("const", "let", "var", "export")
+Transpiles a subset of Python (nimic DSL) into Nim source code.
+This module is a modified copy of CPython's ``ast.py``, where the
+``_Unparser`` visitor has been extended to emit Nim syntax instead of
+Python syntax.  The transformation is driven by the rules listed below.
 
-The docstring for the original `ast` module is given below:
+Transformation Rules
+--------------------
+
+Formatting:
+  rule:doublespace -> change four spaces to double spaces for indentation
+  rule:quote -> replace quotes to double quotes
+
+Scope qualifiers:
+  rule:dropwith -> drop "with" for "const", "let", "var", "export", "block"
+  rule:writeexport -> write no parentheses for "export" by assigning low priority
+  feature:subscriptrename -> subscript can be renamed if in keywords_no_with context ("const", "let", "var", "export")
+
+Type system:
+  rule:classdef -> interpret class definition as type
+  rule:classdefseq -> combine consecutive class definitions into one type def.
+    Move method definitions outside type definitions
+  rule:typealias -> type alias (also register as alias for dispatch): class Time(float64) -> type Time* = float64
+  rule:typedistinct -> distinct type (decorated with "distinct"): class Time(float64) -> type Time* = distinct float64
+  rule:annotateself -> if self is not annotated, it will be derived from the class name (as immutable)
+  rule:instantiation -> call with capitalized name and named arguments is interpreted as instantiation ("=" -> ":").
+    Classes instantiated with keywords should be named starting with a capital letter
+  rule:enum -> "NIntEnum", "NStrEnum" rename to "Enum", drop "auto"
+
+Function definitions:
+  rule:funcdef -> adjust function definition according to Nim syntax as "proc" (or "func")
+  rule:funcdefdecorated -> interpret decorators as definitions for "template", "iterator", "converter", "method".
+    Other decorators are skipped
+  rule:funcdefmut -> arguments denoted as "mut@" are mutable in function definition -> "var "
+  rule:funcdefbody -> no body is written for function definition with "borrow" in pragma or only "pass"
+  rule:funcdefinplace -> remove return ... from dunder defs for binary in-place operators __i...__, first argument is
+    annotated as mutable if not done already
+  rule:funcdefargswap -> arguments are swapped for binary operators "__radd__", "__rmul__", etc
+  rule:funcdefrenamedunder -> rename binary operators __add__ -> "+", __sub__ -> "-", __getitem__ -> `[]`, etc
+  rule:funcdefpackedtuple -> unpack tuples with "packed_tuple" in name
+  rule:typedtemplate -> drop return from typed template or converter definition
+  rule:pragma -> docstring with {.x.} is written as pragma {.x.}, if pragma contains "noSideEffect" func is defined
+
+Control flow:
+  rule:matchcase -> adjust match case according to Nim syntax, also for variant types
+  rule:inlineif -> write inline if according to Nim syntax
+  rule:comptime -> the expression "if comptime(x)" is written as "when x" ("if" directly followed by "comptime"
+    should be resolvable at comptime (is interpreted as "when")
+  rule:main -> replace __name__ == "__main__" by isMainModule
+
+Operators & renaming:
+  rule:assign -> operator <<= is defined as value assignment to a mutable variable, i.e. a <<= b transpiles as a = b,
+    for attributes and array elements not needed, can be just c.x = b or c[0] = b
+  rule:bitwiserename -> bitwise operations get precedence adjusted and are renamed << -> shl, >> -> shr, & -> and,
+    | -> or, ^ -> xor
+  rule:lowercasebool -> True -> true, False -> false, "None" -> "nil"
+  rule:funcrename -> rename functions "print" to "echo", "str" to "$"
+  rule:stringjoin -> replace "f" by "&"
+  rule:literaltypes -> write as type suffix uint(0x9e3779b97f4a7c15) -> 0x9e3779b97f4a7c15'u64
+  rule:isnot -> write isnot according to Nim syntax
+  rule:notin -> write notin according to Nim syntax
+
+Imports:
+  rule:import -> write import from as import, drop from __future__ import ...
+  rule:nodoubleimport -> do not write import module if already imported
+
+Memory & variables:
+  rule:dropbrackets -> remove brackets from what follows after "ptr" and "ref"
+  rule:localname -> rename identifier that starts with _ to local_ otherwise add "*" when definition
+  rule:deref -> pointer dereference: ".contents" -> "[]"
+  rule:copy -> value types are copied, drop .copy()
+  rule:varini -> var initialization call without arguments with the same name as annotation is interpreted as
+    declaration ("with var: a: Rng = Rng()" transpiles as "var a: Rng")
+
+The docstring for the original ``ast`` module is given below:
 
     ast
     ~~~
@@ -805,7 +826,7 @@ class _Unparser(NodeVisitor):
         self._type_suffixes = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"] #, "u", "f", "d"]
         self._func_rename = {"print": "echo", "str": "$"}
         self._subscript_rename = {} # if var or let context
-        self._const_rename = {"True": "true", "False": "false", "None": "nil"}  # rule:lowecasebool
+        self._const_rename = {"True": "true", "False": "false", "None": "nil"}  # rule:lowercasebool
         self._enums = ["NIntEnum", "NStrEnum"]
         self._def_decorators = ["template", "iterator", "converter", "method"]
 
@@ -1646,7 +1667,7 @@ class _Unparser(NodeVisitor):
             else:
                 repr_value = repr(value)
             if repr_value in self._const_rename:
-                # rule:lowecasebool
+                # rule:lowercasebool
                 self.write(self._const_rename[repr_value])
             else:
                 self.write(repr_value)
