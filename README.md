@@ -8,39 +8,43 @@ Nimic is a pure Python module that facilitates writing AOT compilable code with 
 
 ```
 nimic/
-├── ntypes.py       — Type system (Object, NScalar, seq, dispatch, variant types)
-├── nkeywords.py    — Nim keyword & builtin emulation (const, let, var, ref, ptr, cast, ...)
+├── ntypes.py       — Public API: re-exports type system + Nim keyword/builtin shims
+├── ntypesystem.py  — Core type system (Object, NScalar, seq, dispatch, distinct, converter)
 ├── transpiler.py   — AST-based Python → Nim source code transpiler
-├── inliner.py      — Template function inlining (untyped templates)
-├── std/            — Python shims for Nim stdlib modules (math, os, strformat, ...)
+├── inliner.py      — Template function inlining (@template, @template_expand)
+├── ncode/          — Nim definitions (pydefs.nim, pystd/)
+├── std/            — Python shims for Nim stdlib (math, options, os, paths, strformat, ...)
 └── system/         — Python shims for Nim system modules (ansi_c)
 ```
 
-### ntypes.py — Type System
+### ntypesystem.py — Core Type System
 
 Organized in layers from low-level memory to high-level abstractions:
 
 | Layer | Classes | Purpose |
 |-------|---------|---------|
-| Memory | `Ntype`, `DICT_OF_TYPES`, `DICT_OF_C_TYPES` | ctypes-backed buffers with value semantics |
-| Scalars | `NScalar` → `NInteger` / `NFloat` | Fixed-width types (`int8`..`int64`, `uint8`..`uint64`, `float16`..`float64`) with proper arithmetic promotion |
+| Memory | `Ntype`, `NTypeRegistry` | ctypes-backed buffers with value semantics |
+| Scalars | `NScalar` → `NInteger` / `NFloat` | Fixed-width types (`int8`..`int64`, `uint8`..`uint64`, `float16`..`float64`) with arithmetic promotion |
 | Structs | `Object` | Nim "object" — fields via annotations, backed by `ctypes.Structure` |
 | Enums | `NIntEnum` | Nim integer enums with auto-registration |
 | Variants | `Object` + `match kind:` | Nim "case object" — discriminated unions |
 | Containers | `seq[T]`, `UncheckedArray[T]` | Growable sequence and pointer-indexed array |
 | Dispatch | `@dispatch`, `DispDict`, `NMetaClass` | Nim-style multi-dispatch via type annotations |
+| Modifiers | `@distinct`, `@converter` | Type distinctness and trivial type conversions |
+| Strings | `string` | `str` subclass with Nim-compatible `&`, `%`, `isEmpty` |
 
-### nkeywords.py — Nim Keyword Emulation
+### ntypes.py — Public API & Keywords
 
-Provides Python-side implementations so nimic code executes in Python:
+Re-exports all of `ntypesystem` and adds Nim keyword/builtin emulation:
 
 - **Compiler hints** — `const`, `let`, `var`, `block`, `export`, `alias` (no-ops in Python, scoping in Nim)
 - **Reference types** — `ref`, `ptr`, `mut@` (`@` operator returns identity)
 - **Enum utilities** — `NStrEnum` with `succ`/`pred`/`ord`/`nrange`/`low`/`high`
-- **Cast & memory** — `cast[T](x)`, `sizeof(x)`, `addr(x)`
-- **Templates** — `@template`, `@converter`, `untyped`
+- **Cast & memory** — `cast[T](x)`, `sizeof(x)`, `addr(x)`, `unsafeAddr(x)`
+- **Type aliases** — `SomeInteger`, `SomeFloat`, `untyped`, `u64`, `i64`, `f64`
 - **Iteration** — `fields(obj)`, `fields(a, b)`, `countdown(a, b)`
-- **Compile-time** — `comptime(x)`, `defined(varname)`
+- **Compile-time** — `comptime(x)`, `defined(varname)`, `static`
+- **Templates** — `@template`, `@template_expand` (re-exported from `inliner`)
 
 ### transpiler.py — Python → Nim Transpiler
 
