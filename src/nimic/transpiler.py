@@ -102,11 +102,11 @@ The docstring for the original ``ast`` module is given below:
     :copyright: Copyright 2008 by Armin Ronacher.
     :license: Python License.
 """
-import sys
 import re
+import sys
 from _ast import *
 from contextlib import contextmanager, nullcontext
-from enum import IntEnum, auto, _simple_enum
+from enum import IntEnum, _simple_enum, auto
 
 
 def parse(source, filename='<unknown>', mode='exec', *,
@@ -1214,7 +1214,7 @@ class _Unparser(NodeVisitor):
         # rule:pragma
         body, pragma = self._get_body_and_pragma(node)
         type_str = self._adjust_name(node.name) # rule:localname
-        _pass = isinstance(body[0], Pass)
+        _pass = isinstance(body[0], Pass) if body else False
         no_attr = _pass # no attributes, i.e. pass or only methods
         # deco in ["ref", "ptr", "distinct"]
         no_object = no_attr or deco
