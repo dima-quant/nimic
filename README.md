@@ -75,6 +75,7 @@ Nimic uses Python syntax with specific conventions that have dual meaning — ru
 ## Quick Example
 
 ```python
+from __future__ import annotations
 from nimic.ntypes import *
 
 # Struct definition (Nim object)
