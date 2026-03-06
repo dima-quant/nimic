@@ -1388,25 +1388,10 @@ class NInteger(NScalar):
     def to_bytes(self, length=None, byteorder=sys.byteorder):
         if length is None:
             length = (self._n_bits + 7) // 8
-        try:
-            return int(self).to_bytes(
+        
+        return int(self).to_bytes(
                 length, byteorder=byteorder, signed=self._n_signed
-            )
-        except (OverflowError, AttributeError):
-            pass
-
-        val = int(self) & ((1 << (length * 8)) - 1)
-        out = []
-        while length > 0:
-            out.append(val & 0xFF)
-            val >>= 8
-            length -= 1
-        if byteorder == "big":
-            out = reversed(out)
-        if PY3K:
-            return bytes(out)
-        else:
-            return "".join(map(chr, out))
+        )
 
     @classmethod
     def from_bytes(cls, bytes, byteorder=sys.byteorder, signed=None):
