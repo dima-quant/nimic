@@ -804,7 +804,7 @@ class _Unparser(NodeVisitor):
     output source code for the abstract syntax; original formatting
     is disregarded."""
 
-    def __init__(self, *, _avoid_backslashes=False):
+    def __init__(self, *, type_registry: dict[str, ] | None = None, _avoid_backslashes=False):
         self._source = []
         self._precedences = {}
         self._type_ignores = {}
@@ -814,7 +814,8 @@ class _Unparser(NodeVisitor):
         self.alias = {"object": "Object"}
         self.renamed_keywords = {}
         self.module_names = []
-        self._module_rename = {"nimic.ntypes": "nimic/pydefs", "math": "nimic/pystd/math"}
+        self._module_rename = {"nimic.ntypes": "ncode/pydefs", "math": "ncode/pystd/math"}
+        self._type_registry = type_registry
         self._no_bracket_subscript = ["ptr", "ref"]  # rule:dropbrackets
         self._keywords_no_with = ["const", "let", "var", "export"]  # rule:dropwith
         self._keywords_rename = {}
@@ -2247,8 +2248,8 @@ class _Unparser(NodeVisitor):
             self.set_precedence(_Precedence.BOR.next(), *node.patterns)
             self.interleave(lambda: self.write(" | "), self.traverse, node.patterns)
 
-def unparse(ast_obj):
-    unparser = _Unparser()
+def unparse(ast_obj, type_registry: dict[str, ] | None = None):
+    unparser = _Unparser(type_registry=type_registry)
     return unparser.visit(ast_obj), unparser.module_names
 
 
