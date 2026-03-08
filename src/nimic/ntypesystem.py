@@ -890,7 +890,7 @@ class UncheckedArray(Ntype):
         self._n_cache = {}
 
     @property
-    def isNil(self):
+    def is_nil(self):
         return self._n_view is None
 
     def __getitem__(self, _index: int) -> object:
@@ -937,7 +937,7 @@ class seq(Ntype):
             raise Exception("Seq type not specified")
 
     @property
-    def isNil(self):
+    def is_nil(self):
         return self._n_view is None
 
     def __len__(self) -> int:
@@ -979,7 +979,7 @@ class seq(Ntype):
         )
         self.len += 1
 
-    def setLen(self, len: int) -> None:
+    def set_len(self, len: int) -> None:
         self.len = len
 
     @classmethod
@@ -1530,10 +1530,10 @@ class float64(NFloat):
 
 class cstring:
     def __init__(self, length: int):
-        self = newString(length)
+        self = new_string(length)
 
 
-def newString(length: int) -> cstring:
+def new_string(length: int) -> cstring:
     return ctypes.create_string_buffer(length)
 
 
@@ -1562,9 +1562,11 @@ class string(str):
                 set_key = True
         return self._substitute(**kwargs)
 
-    def isEmpty(self) -> bool:
+    def is_empty(self) -> bool:
         return len(self) == 0
 
+    def __truediv__(self: string, tail: string | str) -> string:
+        return f"{self}/{tail}"
 
 # remove when in Nim
 to_string = string

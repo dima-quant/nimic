@@ -235,7 +235,7 @@ def addr(x: object) -> object:
     return make_pointer(x)
 
 
-def unsafeAddr(x: object) -> object:
+def unsafe_addr(x: object) -> object:
     return make_pointer(x)
 
 

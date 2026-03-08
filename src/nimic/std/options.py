@@ -12,7 +12,7 @@ Usage in nimic code:
     x: Option[int32] = some(int32(42))
     y: Option[int32] = none(int32)
 
-    if x.isSome():
+    if x.is_some():
         print(x.get())
 
 Transpiles to Nim:
@@ -40,11 +40,11 @@ class Option:
         specialized = type(f"Option[{type_name}]", (Option,), {"_n_inner_type": T})
         return specialized
 
-    def isSome(self) -> bool:
+    def is_some(self) -> bool:
         """Returns true if the Option contains a value."""
         return self._has_value
 
-    def isNone(self) -> bool:
+    def is_none(self) -> bool:
         """Returns true if the Option is empty."""
         return not self._has_value
 
@@ -57,7 +57,7 @@ class Option:
             raise ValueError("Option is none — cannot get value (UnpackDefect)")
         return self._value
 
-    def unsafeGet(self):
+    def unsafe_get(self):
         """Returns the contained value without checking.
 
         Behavior is undefined if the Option is empty.
@@ -82,7 +82,7 @@ class Option:
         return "none()"
 
     def __bool__(self):
-        """Allow truthiness check: `if opt: ...` is equivalent to `if opt.isSome(): ...`."""
+        """Allow truthiness check: `if opt: ...` is equivalent to `if opt.is_some(): ...`."""
         return self._has_value
 
 
