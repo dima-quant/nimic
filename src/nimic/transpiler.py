@@ -811,7 +811,7 @@ class _Unparser(NodeVisitor):
         self._indent = 0
         self._avoid_backslashes = _avoid_backslashes
         self._in_try_star = False
-        self.alias = {"object": "Object"}
+        self._aliases = {"Object": "object", "NTuple": "tuple"}
         self.renamed_keywords = {}
         self.module_names = []
         self._module_rename = {"nimic.ntypes": "ncode/pydefs", "math": "ncode/pystd/math"}
@@ -1224,8 +1224,8 @@ class _Unparser(NodeVisitor):
             base = node.bases[0].id[1:]
         else:
             base = node.bases[0].id
-        if base == self.alias["object"]:
-            from_object = "object"
+        if base in self._aliases:
+            from_object = self._aliases[base]
         elif base in self._enums:
             from_object = "enum "
             enum = True

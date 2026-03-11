@@ -7,7 +7,7 @@ type semantics. Re-exports the core type system from ntypesystem (dispatch,
 converter, distinct, Object, NIntEnum, seq, UncheckedArray, scalar types, string)
 and adds Nim keyword shims, builtins, and compiler hints so that nimic code can
 run in Python. Code written using these types and keywords runs natively in Python AND
-transpiles to equivalent Nim code via the nimic transpiler. 
+transpiles to equivalent Nim code via the nimic transpiler.
 
 Contents:
 
@@ -37,6 +37,7 @@ from nimic.inliner import template, template_expand
 from nimic.ntypesystem import (
     NIntEnum,
     Object,
+    NTuple,
     UncheckedArray,
     converter,
     dispatch,
