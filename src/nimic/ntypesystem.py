@@ -1002,6 +1002,18 @@ class seq(Ntype):
     def set_len(self, len: int) -> None:
         self.len = len
 
+    @property
+    def items(self):
+        """Yield immutable copies of elements (Nim's items)."""
+        for i in range(self.len):
+            yield self[i].copy()
+
+    @property
+    def mitems(self):
+        """Yield mutable ctypes-backed views of elements (Nim's mitems)."""
+        for i in range(self.len):
+            yield self[i]
+
     @classmethod
     def _n_register_type(cls, class_name: str | None = None) -> None:
         if class_name is None:
