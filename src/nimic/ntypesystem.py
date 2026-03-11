@@ -21,6 +21,7 @@ Architecture (layers from low-level to high-level):
   Structured types (Object)
     Object             — Nim "object"; fields declared via annotations
                          (e.g. x: float64), backed by ctypes.Structure.
+    NTuple             — Nim tuple; similar to Object, but with tuple-style unpacking.
     NIntEnum           — Nim integer enum; auto-registers in DICT_OF_TYPES.
     Variant types      — Nim "case object"; detected by the presence of a
                          "kind" field with a match/case block.
@@ -890,6 +891,15 @@ class _Object(Ntype):
 class Object(_Object, metaclass=NMetaClass):
     def __init_subclass__(cls) -> None:
         cls._n_register_type()
+
+class NTuple(_Object):
+    def __init_subclass__(cls) -> None:
+        cls._n_register_type()
+
+    def __iter__(self):
+        """Yield field values in definition order, enabling tuple-style unpacking."""
+        for name in self._n_fields:
+            yield getattr(self, name)
 
 # --- UncheckedArray ---
 
