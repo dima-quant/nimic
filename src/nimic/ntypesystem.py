@@ -595,11 +595,7 @@ class NMetaClass(type):
 
 # --- Structured Objects (Object) ---
 
-
-class Object(Ntype, metaclass=NMetaClass):
-    def __init_subclass__(cls) -> None:
-        cls._n_register_type()
-
+class _Object(Ntype):
     def __init__(self, _n_value: Object | None = None, **kwargs: object) -> None:
         """_n_value is an instance of Object or an object with the same structure or None"""
         _has_c_type = False
@@ -720,10 +716,11 @@ class Object(Ntype, metaclass=NMetaClass):
 
     def _n_set_value(self, other: Object | None) -> None:
         # create attributes with corresponding/default values
+        python_fields = getattr(self.__class__, '_n_python_fields', set())
         for name in self._n_fields:
             type_name = self._n_annotations[name]
             # type of each field should be already in the dict of types
-            if type_name in DICT_OF_TYPES and not type_name.startswith("seq["):
+            if type_name in DICT_OF_TYPES and name not in python_fields:
                 if other:
                     _value = getattr(other, name)
                     setattr(
@@ -742,6 +739,12 @@ class Object(Ntype, metaclass=NMetaClass):
                         name,
                         DICT_OF_TYPES[type_name]._n_on_struct(self._n_view, name),
                     )
+            elif name in python_fields:
+                # Python-side field (seq or Object without c_type)
+                if other and hasattr(other, name):
+                    setattr(self, name, getattr(other, name))
+                elif type_name in DICT_OF_TYPES:
+                    setattr(self, name, DICT_OF_TYPES[type_name]())
             elif type_name.startswith("ptr["):
                 setattr(self, name, None)
 
@@ -855,23 +858,27 @@ class Object(Ntype, metaclass=NMetaClass):
             _annotations = cls._n_resolve_variant(dict_of_types, dict_of_c_types)
         else:
             _annotations = cls.__annotations__
-        # check if at least one field is a not a sequence and at least one is a sequence
-        _has_c_type = False
+        # Classify fields: ctypes-backed vs Python-side (seq or Object without c_type)
+        python_fields = set()
         for key, _type_name in _annotations.items():
-            _has_c_type = _has_c_type or not _type_name.startswith("seq[")
             if _type_name.startswith("seq["):
                 seq._n_register_type(_type_name)
-        has_c_type = has_c_type and _has_c_type
+                python_fields.add(key)
+            elif _type_name in dict_of_types and _type_name not in dict_of_c_types:
+                # Object type with no ctypes backing (e.g., all-seq Object)
+                python_fields.add(key)
+        cls._n_python_fields = python_fields
+        has_c_type = has_c_type and len(python_fields) < len(_annotations)
         if has_c_type:
             c_class_name = "c_" + class_name
-            # check if all fields have corresponding types registered
+            # check if all ctypes-backed fields have corresponding types registered
             for key, value in _annotations.items():
-                if not value.startswith("seq[") and not value.startswith("ptr["):
+                if key not in python_fields and not value.startswith("ptr["):
                     assert value in dict_of_types
             f_list = [
                 (key, dict_of_c_types[value])
                 for key, value in _annotations.items()
-                if value in dict_of_c_types
+                if value in dict_of_c_types and key not in python_fields
             ]
             _c_type = type(c_class_name, (ctypes.Structure,), {"_fields_": f_list})
             dict_of_c_types[class_name] = _c_type
@@ -880,6 +887,9 @@ class Object(Ntype, metaclass=NMetaClass):
     def _n_c_type(cls) -> type:
         return DICT_OF_C_TYPES[cls.__name__]
 
+class Object(_Object, metaclass=NMetaClass):
+    def __init_subclass__(cls) -> None:
+        cls._n_register_type()
 
 # --- UncheckedArray ---
 
@@ -1388,7 +1398,7 @@ class NInteger(NScalar):
     def to_bytes(self, length=None, byteorder=sys.byteorder):
         if length is None:
             length = (self._n_bits + 7) // 8
-        
+
         return int(self).to_bytes(
                 length, byteorder=byteorder, signed=self._n_signed
         )
