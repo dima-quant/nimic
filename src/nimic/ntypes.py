@@ -205,6 +205,7 @@ var = contextlib.nullcontext()
 block = contextlib.nullcontext()
 Type = contextlib.nullcontext()
 context_template = contextlib.contextmanager
+template_inline = contextlib.nullcontext()
 export = contextlib.nullcontext()
 alias = contextlib.nullcontext()
 

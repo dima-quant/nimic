@@ -20,7 +20,7 @@ Scope qualifiers:
   feature:subscriptrename -> subscript can be renamed if in keywords_no_with context ("const", "let", "var", "export")
 
 Type system:
-  rule:classdef -> interpret class definition as type
+  rule:classdef -> interpret class definition as type (object or tuple, depending on base class)
   rule:classdefseq -> combine consecutive class definitions into one type def.
     Move method definitions outside type definitions
   rule:typealias -> type alias (also register as alias for dispatch): class Time(float64) -> type Time* = float64
@@ -34,6 +34,7 @@ Function definitions:
   rule:funcdef -> adjust function definition according to Nim syntax as "proc" (or "func")
   rule:funcdefdecorated -> interpret decorators as definitions for "template", "iterator", "converter", "method".
     Other decorators are skipped
+  rule:templateinline -> "with template_inline" is replaced by template definition
   rule:funcdefmut -> arguments denoted as "mut@" are mutable in function definition -> "var "
   rule:funcdefbody -> no body is written for function definition with "borrow" in pragma or only "pass"
   rule:funcdefinplace -> remove return ... from dunder defs for binary in-place operators __i...__, first argument is
@@ -1383,8 +1384,8 @@ class _Unparser(NodeVisitor):
                 else:
                     self.traverse(body)
 
-    def _get_pragma(self, docstring):
-        doc = docstring.value
+    def _get_pragma(self, docstring_value):
+        doc = docstring_value
         if "{." in doc:
             pragma = doc.split("{.")[1].split(".}")[0]
         else:
@@ -1394,7 +1395,7 @@ class _Unparser(NodeVisitor):
     def _get_body_and_pragma(self, node):
         if (docstring := self.get_raw_docstring(node)):
             # check if pragma {. .} is present
-            pragma = self._get_pragma(docstring)
+            pragma = self._get_pragma(docstring.value)
             body = node.body[1:]
         else:
             pragma = ""
@@ -1478,10 +1479,26 @@ class _Unparser(NodeVisitor):
             with self.block():
                 self.traverse(node.orelse)
 
+    def write_template_inline(self, node):
+        if isinstance(node.body[0], Assign):
+            assign = node.body[0]
+            pragma_str = ""
+        else:
+            assign = node.body[1]
+            pragma = self._get_pragma(node.body[0].value.value)
+            pragma_str = " {." + pragma + ".} "
+        tname = assign.targets[0].id
+        # apply rule:localname
+        self.fill(f"template {self._adjust_name(tname)}(): untyped {pragma_str}=")
+        with self.block(start=""):
+            self.fill()
+            self.traverse(assign.value)
+
     def visit_With(self, node):
         # rule:dropwith
         if isinstance(node.items[0].context_expr, Name):
             name = node.items[0].context_expr.id
+            start = ":"
             if name in self._keywords_no_with:
                 self.fill()
                 self._context_stack.append(name)
@@ -1491,17 +1508,20 @@ class _Unparser(NodeVisitor):
                 self.fill()
                 self._context_stack.append(name)
                 cont_pop = True
-                start = ":"
             if name in self._keywords_rename:
                 node.items[0].context_expr.id = self._keywords_rename[name]
         else:
             self.fill("with ")
             cont_pop = False
-        self.interleave(lambda: self.write(", "), self.traverse, node.items)
-        with self.block(extra=self.get_type_comment(node), start=start):
-            self.traverse(node.body)
-        if cont_pop:
-            self._context_stack.pop()
+        if name == "template_inline":
+            # rule:templateinline
+            self.write_template_inline(node)
+        else:
+            self.interleave(lambda: self.write(", "), self.traverse, node.items)
+            with self.block(extra=self.get_type_comment(node), start=start):
+                self.traverse(node.body)
+            if cont_pop:
+                self._context_stack.pop()
 
     def visit_AsyncWith(self, node):
         self.fill("async with ")
