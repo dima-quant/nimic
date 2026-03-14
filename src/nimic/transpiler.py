@@ -27,7 +27,7 @@ Type system:
   rule:typedistinct -> distinct type (decorated with "distinct"): class Time(float64) -> type Time* = distinct float64
   rule:annotateself -> if self is not annotated, it will be derived from the class name (as immutable)
   rule:instantiation -> call with capitalized name and named arguments is interpreted as instantiation ("=" -> ":").
-    Classes instantiated with keywords should be named starting with a capital letter
+    Classes instantiated with keywords should be named starting with a capital letter (preceeding by _ or local_)
   rule:enum -> "NIntEnum", "NStrEnum" rename to "Enum", drop "auto"
 
 Function definitions:
@@ -76,7 +76,7 @@ Memory & variables:
   rule:deref -> pointer dereference: ".contents" -> "[]"
   rule:copy -> value types are copied, drop .copy()
   rule:varini -> var initialization call without arguments with the same name as annotation is interpreted as
-    declaration ("with var: a: Rng = Rng()" transpiles as "var a: Rng")
+    declaration ("with var: a: Rng = Rng()" transpiles as "var a: Rng"), e.g. if the type is tuple
 
 The docstring for the original ``ast`` module is given below:
 
@@ -798,8 +798,8 @@ class _Precedence:
             return self
 
 
-_SINGLE_QUOTES = ('"', "'")  # rule:quote
-_MULTI_QUOTES = ('"""', "'''")
+_SINGLE_QUOTES = ('"',)  # rule:quote — Nim uses double quotes only
+_MULTI_QUOTES = ('"""',)
 _ALL_QUOTES = (*_SINGLE_QUOTES, *_MULTI_QUOTES)
 
 class _Unparser(NodeVisitor):
@@ -1087,8 +1087,9 @@ class _Unparser(NodeVisitor):
         self.fill()
         set_annotation = isinstance(node.annotation, Set)
         if node.simple and isinstance(node.target, Name) and not set_annotation:
-            # rule:localname
-            node.target.id = self._adjust_name(node.target.id)
+            if not self._context_stack or self._context_stack[-1] != "tuple":
+                # rule:localname
+                node.target.id = self._adjust_name(node.target.id)
         with self.delimit_if("(", ")", not node.simple and isinstance(node.target, Name)):
             self.traverse(node.target)
         self.write(": ")
@@ -1315,7 +1316,9 @@ class _Unparser(NodeVisitor):
                             self.fill()
                             self.interleave(lambda: self.write(", "), self.traverse, body_rest)
                         else:
+                            self._context_stack.append(from_object)
                             self.traverse(body_rest)
+                            self._context_stack.pop()
         self.maybe_newline()
 
     def visit_FunctionDef(self, node):
@@ -1593,7 +1596,7 @@ class _Unparser(NodeVisitor):
             quote = next((q for q in quote_types if string[0] in q), string[0])
             return string[1:-1], [quote]
         if escaped_string:
-            # Sort so that we prefer '''"''' over """\""""
+            # Sort so that the trailing-quote escape uses the less common option
             possible_quotes.sort(key=lambda q: q[0] == escaped_string[-1])
             # If we're using triple quotes and we'd need to escape a final
             # quote, escape it
@@ -1640,15 +1643,14 @@ class _Unparser(NodeVisitor):
 
         if fallback_to_repr:
             # If we weren't able to find a quote type that works for all parts
-            # of the JoinedStr, fallback to using repr and triple single quotes.
-            quote_types = ["'''"]
+            # of the JoinedStr, fallback to triple double quotes.
+            quote_types = ['"""']
             new_fstring_parts.clear()
             for value, is_constant in fstring_parts:
                 if is_constant:
-                    value = repr('"' + value)  # force repr to use single quotes
-                    expected_prefix = "'\""
-                    assert value.startswith(expected_prefix), repr(value)
-                    value = value[len(expected_prefix):-1]
+                    # Escape inner double quotes for triple-double-quoted string
+                    value = value.replace("\\", "\\\\")
+                    value = value.replace('"', '\\"')
                 new_fstring_parts.append(value)
 
         value = "".join(new_fstring_parts)
@@ -1716,10 +1718,13 @@ class _Unparser(NodeVisitor):
         else:
             # rule:quote
             if isinstance(value, str):
-                value = repr("'" + value)  # force repr to use double quotes
-                expected_prefix = '"\''
-                assert value.startswith(expected_prefix), repr(value)
-                repr_value  = value[0] + value[len(expected_prefix):]
+                # Escape inner double quotes and special chars, wrap in double quotes
+                escaped = value.replace("\\", "\\\\")
+                escaped = escaped.replace('"', '\\"')
+                escaped = escaped.replace("\n", "\\n")
+                escaped = escaped.replace("\t", "\\t")
+                escaped = escaped.replace("\r", "\\r")
+                repr_value = f'"{escaped}"'
             else:
                 repr_value = repr(value)
             if repr_value in self._const_rename:
@@ -1927,6 +1932,11 @@ class _Unparser(NodeVisitor):
         "__iand__": "`&=`",
         "__ixor__": "`^=`",
         "__ior__": "`|=`",
+        "__lt__": "`<`",
+        "__le__": "`<=`",
+        "__gt__": "`>`",
+        "__ge__": "`>=`",
+        "__ne__": "`!=`",
     }
 # rule:bitwiserename
     binop_precedence = {
@@ -2037,7 +2047,9 @@ class _Unparser(NodeVisitor):
             pop = False
             if isinstance(node.func, Name):
                 _name = node.func.id
-                if _name[0].isupper() or _name.startswith("local_") and _name[6].isupper():
+                is_local_class = _name.startswith("_") and _name[1].isupper() or \
+                    _name.startswith("local_") and _name[6].isupper()
+                if _name[0].isupper() or is_local_class:
                     # rule:instantiation, classes instantiated with keywords should be named starting with a capital letter
                     self._context_stack.append("instance")
                 else:
