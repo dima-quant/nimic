@@ -34,6 +34,7 @@ Function definitions:
   rule:funcdef -> adjust function definition according to Nim syntax as "proc" (or "func")
   rule:funcdefdecorated -> interpret decorators as definitions for "template", "iterator", "converter", "method".
     Other decorators are skipped
+  rule:block -> function definition named "_block" is inserted as "block:" where called
   rule:templateinline -> "with template_inline" is replaced by template definition
   rule:funcdefyield -> definitions with yield or decorated with "iterator" are converted to iterators
   rule:funcdefmut -> arguments denoted as "mut@" are mutable in function definition -> "var "
@@ -1053,7 +1054,26 @@ class _Unparser(NodeVisitor):
             self.set_precedence(_Precedence.TUPLE, target)
             self.traverse(target)
             self.write(" = ")
-        self.traverse(node.value)
+        if (
+            isinstance(node.value, Call)
+            and isinstance(node.value.func, Name)
+            and not node.value.args
+            and node.value.func.id == "_block"
+        ):
+            # rule:block
+            self.write("block:")
+            func_node = self._context_stack.pop()
+            body = func_node.body
+            with self.block(start=""):
+                if isinstance(body, list) and isinstance(body[-1], Return):
+                    if body[:-1]:
+                        self.traverse(body[:-1])
+                    if body[-1].value:
+                        # do not print "return"
+                        self.fill()
+                        self.traverse(body[-1].value)
+        else:
+            self.traverse(node.value)
         if type_comment := self.get_type_comment(node):
             self.write(type_comment)
 
@@ -1292,7 +1312,7 @@ class _Unparser(NodeVisitor):
                             self.traverse(body_rest[2:])
                     else:
                         if enum:
-                            self.fill("")
+                            self.fill()
                             self.interleave(lambda: self.write(", "), self.traverse, body_rest)
                         else:
                             self.traverse(body_rest)
@@ -1333,6 +1353,9 @@ class _Unparser(NodeVisitor):
         return False
 
     def _function_helper(self, node, fill_suffix):
+        if node.name == "_block":
+            self._context_stack.append(node)
+            return
         # rule:funcdef
         self.maybe_newline()
         decl_str = "proc"
@@ -1389,7 +1412,7 @@ class _Unparser(NodeVisitor):
                     if no_return:
                         if body[-1].value:
                             # do not print "return"
-                            self.fill("")
+                            self.fill()
                             self.traverse(body[-1].value)
                     elif not inplace:
                         self.traverse(body[-1])
