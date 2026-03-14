@@ -1358,8 +1358,6 @@ class _Unparser(NodeVisitor):
             do_arg_swap = func_name in self.binpops_with_arg_swap
             inplace = func_name[2] == "i"
             func_name = self.dunder_ops[func_name]   # rule:funcdefrenamedunder
-        if func_name == "scenes":
-            pass
         # rule:funcdefyield
         if decl_str != "iterator" and self._has_yield(body):
            decl_str = "iterator"
