@@ -35,6 +35,7 @@ Function definitions:
   rule:funcdefdecorated -> interpret decorators as definitions for "template", "iterator", "converter", "method".
     Other decorators are skipped
   rule:templateinline -> "with template_inline" is replaced by template definition
+  rule:funcdefyield -> definitions with yield or decorated with "iterator" are converted to iterators
   rule:funcdefmut -> arguments denoted as "mut@" are mutable in function definition -> "var "
   rule:funcdefbody -> no body is written for function definition with "borrow" in pragma or only "pass"
   rule:funcdefinplace -> remove return ... from dunder defs for binary in-place operators __i...__, first argument is
@@ -1323,6 +1324,14 @@ class _Unparser(NodeVisitor):
                     if drop_j > -1:
                         body.pop(drop_j)
 
+    def _has_yield(self, node):
+        for x in node:
+            if isinstance(x, Expr) and isinstance(x.value, Yield):
+                return True
+            if (isinstance(x, For) or isinstance(x, While)) and self._has_yield(x.body):
+                return True
+        return False
+
     def _function_helper(self, node, fill_suffix):
         # rule:funcdef
         self.maybe_newline()
@@ -1342,14 +1351,19 @@ class _Unparser(NodeVisitor):
                 decl_str = "func"
                 pragma = ",".join([x for x in parsed_pragma if x != "noSideEffect"])
         func_name = node.name
-        do_arg_swap = False # rule:funcdefargswap
-        inplace = False # rule:funcdefinplace
-        no_return = False # rule:typedtemplate
+        do_arg_swap = False  # rule:funcdefargswap
+        inplace = False  # rule:funcdefinplace
+        no_return = False  # rule:typedtemplate
         if func_name[0:2] == "__" and func_name in self.dunder_ops:
             do_arg_swap = func_name in self.binpops_with_arg_swap
             inplace = func_name[2] == "i"
-            func_name = self.dunder_ops[func_name] # rule:funcdefrenamedunder
-        name_str = self._adjust_name(func_name) # rule:localname
+            func_name = self.dunder_ops[func_name]   # rule:funcdefrenamedunder
+        if func_name == "scenes":
+            pass
+        # rule:funcdefyield
+        if decl_str != "iterator" and self._has_yield(body):
+           decl_str = "iterator"
+        name_str = self._adjust_name(func_name)  # rule:localname
         def_str = fill_suffix + decl_str + " " + name_str
         if inplace and isinstance(node.args.args[0].annotation, Name):
             node.args.args[0].annotation.id = "var " + node.args.args[0].annotation.id
@@ -1486,7 +1500,7 @@ class _Unparser(NodeVisitor):
         else:
             assign = node.body[1]
             pragma = self._get_pragma(node.body[0].value.value)
-            pragma_str = " {." + pragma + ".} "
+            pragma_str = "{." + pragma + ".} "
         tname = assign.targets[0].id
         # apply rule:localname
         self.fill(f"template {self._adjust_name(tname)}(): untyped {pragma_str}=")
