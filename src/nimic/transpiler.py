@@ -72,7 +72,8 @@ Imports:
 
 Memory & variables:
   rule:dropbrackets -> remove brackets from what follows after "ptr" and "ref"
-  rule:localname -> rename identifier that starts with _ to local_ otherwise add "*" when definition
+  rule:localname -> rename identifiers that starts with _ to local_, otherwise add "*" when definition,
+    except for "result"
   rule:deref -> pointer dereference: ".contents" -> "[]"
   rule:copy -> value types are copied, drop .copy()
   rule:varini -> var initialization call without arguments with the same name as annotation is interpreted as
@@ -1087,9 +1088,10 @@ class _Unparser(NodeVisitor):
         self.fill()
         set_annotation = isinstance(node.annotation, Set)
         if node.simple and isinstance(node.target, Name) and not set_annotation:
-            if not self._context_stack or self._context_stack[-1] != "tuple":
+            target_name = node.target.id
+            if (not self._context_stack or self._context_stack[-1] != "tuple") and target_name != "result":
                 # rule:localname
-                node.target.id = self._adjust_name(node.target.id)
+                node.target.id = self._adjust_name(target_name)
         with self.delimit_if("(", ")", not node.simple and isinstance(node.target, Name)):
             self.traverse(node.target)
         self.write(": ")
