@@ -1177,12 +1177,14 @@ class NScalar:
             target_type = determine_common_type(self._n_type, other._n_type)
             res_val = op_func(self._n_get_value(), other._n_get_value())
             return target_type(res_val)
-        elif hasattr(other, "__float__"):  # check if numeric literal or other scalar
-            target_type = self._n_type
+        elif hasattr(other, "__float__"):  # numeric literal or other scalar
+            # Promote int types to float64 when operating with a float literal
+            if isinstance(other, float) and not issubclass(self._n_type, NFloat):
+                target_type = float64
+            else:
+                target_type = self._n_type
             res_val = op_func(self._n_get_value(), other)
             return target_type(res_val)
-            # For raw Python scalars, we treat the scalar as the same type as self
-            # for basic interaction, though C would promote.
         return op_func(self._n_get_value(), other)
 
     def _n_rop(self, other: NScalar | int | float, op_func: callable) -> NScalar:
@@ -1190,12 +1192,14 @@ class NScalar:
             target_type = determine_common_type(self._n_type, other._n_type)
             res_val = op_func(other._n_get_value(), self._n_get_value())
             return target_type(res_val)
-        elif hasattr(other, "__float__"):  # check if numeric literal or other scalar
-            target_type = self._n_type
+        elif hasattr(other, "__float__"):  # numeric literal or other scalar
+            # Promote int types to float64 when operating with a float literal
+            if isinstance(other, float) and not issubclass(self._n_type, NFloat):
+                target_type = float64
+            else:
+                target_type = self._n_type
             res_val = op_func(other, self._n_get_value())
             return target_type(res_val)
-            # For raw Python scalars, we treat the scalar as the same type as self
-            # for basic interaction, though C would promote.
         return op_func(other, self._n_get_value())
 
     def _n_iop(self, other: NScalar | int | float, op_func: callable) -> None:
@@ -1227,6 +1231,12 @@ class NScalar:
         return self._n_op(other, operator.mul)
 
     def __truediv__(self, other):
+        # Nim: int / int returns float
+        if not issubclass(self._n_type, NFloat):
+            if isinstance(other, NScalar):
+                return float64(operator.truediv(self._n_get_value(), other._n_get_value()))
+            elif hasattr(other, "__float__"):
+                return float64(operator.truediv(self._n_get_value(), other))
         return self._n_op(other, operator.truediv)
 
     def __floordiv__(self, other):
@@ -1252,6 +1262,12 @@ class NScalar:
         return self._n_rop(other, operator.mul)
 
     def __rtruediv__(self, other):
+        # Nim: int / int returns float
+        if not issubclass(self._n_type, NFloat):
+            if isinstance(other, NScalar):
+                return float64(operator.truediv(other._n_get_value(), self._n_get_value()))
+            elif hasattr(other, "__float__"):
+                return float64(operator.truediv(other, self._n_get_value()))
         return self._n_rop(other, operator.truediv)
 
     def __rfloordiv__(self, other):
