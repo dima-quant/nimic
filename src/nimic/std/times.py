@@ -6,7 +6,7 @@ class Duration:
 
     __slots__ = ("_ns",)
 
-    def __init__(self, nanoseconds: int):
+    def __init__(self, nanoseconds: int = 0):
         self._ns = nanoseconds
 
     def __sub__(self, other: "Duration") -> "Duration":
