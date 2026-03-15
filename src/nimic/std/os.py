@@ -17,6 +17,8 @@ fmReadWriteExisting = "r+"
     # "w+", "wb+":
 fmReadWrite = "w+"
 
+stderr.flush_file = stderr.flush
+stdout.flush_file = stdout.flush
 
 def create_dir(dir: str) -> None:
     """Create directory and parents if needed (Nim: os.createDir)."""
