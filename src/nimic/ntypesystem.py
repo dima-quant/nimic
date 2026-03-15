@@ -1036,7 +1036,7 @@ def determine_common_type(type_a: type, type_b: type) -> type:
     for mixed signed/unsigned the unsigned wins if its rank >= signed.
     """
     if issubclass(type_a, NFloat) or issubclass(type_b, NFloat):
-        return max([type_a, type_b], key=lambda t: getattr(t, "RANK", 0))
+        return max([type_a, type_b], key=lambda t: getattr(t, "_n_rank", 0))
 
     if type_a == type_b:
         return type_a
