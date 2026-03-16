@@ -77,7 +77,8 @@ Memory & variables:
   rule:deref -> pointer dereference: ".contents" -> "[]"
   rule:copy -> value types are copied, drop .copy()
   rule:varini -> var initialization call without arguments with the same name as annotation is interpreted as
-    declaration ("with var: a: Rng = Rng()" transpiles as "var a: Rng"), e.g. if the type is tuple
+    declaration ("with var: a: Rng = Rng()" transpiles as "var a: Rng"), e.g. if the type is tuple. Also holds
+    without annotation for registered classes
 
 The docstring for the original ``ast`` module is given below:
 
@@ -1054,26 +1055,32 @@ class _Unparser(NodeVisitor):
         for target in node.targets:
             self.set_precedence(_Precedence.TUPLE, target)
             self.traverse(target)
-            self.write(" = ")
         if (
             isinstance(node.value, Call)
             and isinstance(node.value.func, Name)
             and not node.value.args
-            and node.value.func.id == "_block"
         ):
-            # rule:block
-            self.write("block:")
-            func_node = self._context_stack.pop()
-            body = func_node.body
-            with self.block(start=""):
-                if isinstance(body, list) and isinstance(body[-1], Return):
-                    if body[:-1]:
-                        self.traverse(body[:-1])
-                    if body[-1].value:
-                        # do not print "return"
-                        self.fill()
-                        self.traverse(body[-1].value)
+            if node.value.func.id == "_block":
+                # rule:block
+                self.write(" = block:")
+                func_node = self._context_stack.pop()
+                body = func_node.body
+                with self.block(start=""):
+                    if isinstance(body, list) and isinstance(body[-1], Return):
+                        if body[:-1]:
+                            self.traverse(body[:-1])
+                        if body[-1].value:
+                            # do not print "return"
+                            self.fill()
+                            self.traverse(body[-1].value)
+            elif "var" in self._context_stack and node.value.func.id in self._type_registry.types:
+                type_name = self._adjust_name(node.value.func.id, definition=False)
+                self.write(": " + type_name) # needed for tuple declaration
+            else:
+                self.write(" = ")
+                self.traverse(node.value)
         else:
+            self.write(" = ")
             self.traverse(node.value)
         if type_comment := self.get_type_comment(node):
             self.write(type_comment)
