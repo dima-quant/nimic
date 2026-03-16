@@ -1,6 +1,6 @@
 [project]
 name = "nimic"
-version = "0.0.3"
+version = "0.0.4"
 authors = [{ name = "Dmytro Makogon"}]
 description = "Pure Python module that facilitates writing AOT compilable code"
 readme = "README.md"
