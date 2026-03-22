@@ -46,6 +46,7 @@ Function definitions:
   rule:funcdefpackedtuple -> unpack tuples with "packed_tuple" in name
   rule:typedtemplate -> drop return from typed template or converter definition
   rule:pragma -> docstring with {.x.} is written as pragma {.x.}, if pragma contains "noSideEffect" func is defined
+  rule:calltype -> def decorated with "calltype" emit as type alias: Name* = proc(...): T {.pragma.}
 
 Control flow:
   rule:matchcase -> adjust match case according to Nim syntax, also for variant types
@@ -819,7 +820,8 @@ class _Unparser(NodeVisitor):
         self._aliases = {"Object": "object", "NTuple": "tuple"}
         self.renamed_keywords = {}
         self.module_names = []
-        self._module_rename = {"nimic.ntypes": "ncode/pydefs", "math": "ncode/pystd/math"}
+        self._module_rename = {"nimic.ntypes": "ncode/pydefs"}
+        self._module_std = ["math"]
         self._type_registry = type_registry
         self._no_bracket_subscript = ["ptr", "ref"]  # rule:dropbrackets
         self._keywords_no_with = ["const", "let", "var", "export"]  # rule:dropwith
@@ -834,7 +836,7 @@ class _Unparser(NodeVisitor):
         self._subscript_rename = {} # if var or let context
         self._const_rename = {"True": "true", "False": "false", "None": "nil"}  # rule:lowercasebool
         self._enums = ["NIntEnum", "NStrEnum"]
-        self._def_decorators = ["template", "iterator", "converter", "method"]
+        self._def_decorators = ["template", "iterator", "converter", "method", "calltype"]
 
     def interleave(self, inter, f, seq):
         """Call f on each item in seq, calling inter() in between."""
@@ -1042,6 +1044,8 @@ class _Unparser(NodeVisitor):
             module_name_split = module_name.split(".")
             if module_name in self._module_rename:
                 self.write(self._module_rename[module_name])
+            elif module_name in self._module_std:
+                self.write("ncode/pystd/" + module_name)
             elif module_name_split[0] == "nimic":
                 self.write("/".join(module_name_split[1:]))
             else:
@@ -1397,6 +1401,17 @@ class _Unparser(NodeVisitor):
         if decl_str != "iterator" and self._has_yield(body):
            decl_str = "iterator"
         name_str = self._adjust_name(func_name)  # rule:localname
+        # rule:calltype — emit as type alias: Name* = proc(...): T {.pragma.}
+        if decl_str == "calltype":
+            self.fill(fill_suffix + name_str + " = proc")
+            with self.delimit("(", ")"):
+                self.traverse(node.args)
+            if node.returns and not isinstance(node.returns, Constant):
+                self.write(": ")
+                self.traverse(node.returns)
+            if pragma:
+                self.write(" {." + pragma + ".}")
+            return
         def_str = fill_suffix + decl_str + " " + name_str
         if inplace and isinstance(node.args.args[0].annotation, Name):
             node.args.args[0].annotation.id = "var " + node.args.args[0].annotation.id
