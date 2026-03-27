@@ -63,7 +63,7 @@ Operators & renaming:
   rule:lowercasebool -> True -> true, False -> false, "None" -> "nil"
   rule:funcrename -> rename functions "print" to "echo", "str" to "$"
   rule:stringjoin -> replace "f" by "&"
-  rule:literaltypes -> write as type suffix uint(0x9e3779b97f4a7c15) -> 0x9e3779b97f4a7c15'u64
+  rule:literaltypes -> write as type suffix u64(0x9e3779b97f4a7c15) -> 0x9e3779b97f4a7c15'u64
   rule:isnot -> write isnot according to Nim syntax
   rule:notin -> write notin according to Nim syntax
 
@@ -1271,14 +1271,14 @@ class _Unparser(NodeVisitor):
         else:
             from_object = "object of " + base
         self.fill(type_str)
+        if hasattr(node, "type_params"):
+            self._type_params_helper(node.type_params)
         if pragma:
             self.write(" {." + pragma + ".}")
         self.write(" =")
         if deco:
             self.write(" " + deco)
         self.write(" " + from_object)
-        if hasattr(node, "type_params"):
-            self._type_params_helper(node.type_params)
         # with self.delimit_if("(", ")", condition = node.bases or node.keywords):
         #     comma = False
         #     for e in node.bases:
@@ -1922,6 +1922,7 @@ class _Unparser(NodeVisitor):
         # unops
         "__str__": "`$`",
         "__getitem__": "`[]`",
+        "__setitem__": "`[]= `",
         # "__invert__": "`~`",
         "__not__": "`not`",
         "__pos__": "`+`",
