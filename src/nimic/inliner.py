@@ -93,27 +93,17 @@ class _TemplateInliner(ast.NodeTransformer):
     def __init__(self, dict_with_templates):
         self.dict_with_templates = dict_with_templates
 
-    def visit_Expr(self, node):
-        """
-        Visit an expression statement. We are looking for expressions that are
-        calls to our template function.
-        """
-        if not isinstance(node.value, ast.Call):
-            return self.generic_visit(node)
-
-        call_node = node.value
+    def _inline_call(self, call_node, targets=None):
         if (
             not isinstance(call_node.func, ast.Name)
             or call_node.func.id not in self.dict_with_templates
         ):
-            return self.generic_visit(node)
+            return None
 
         template_name = call_node.func.id
         template_params = self.dict_with_templates[template_name]["params"]
         template_body_nodes = self.dict_with_templates[template_name]["body_nodes"]
-        # print(f"--- Found call to '{template_name}'. Inlining code. ---")
 
-        # 1. Map the template's parameter names to the argument nodes from the call.
         call_args = call_node.args
         if len(call_args) != len(template_params):
             raise TypeError(
@@ -122,21 +112,43 @@ class _TemplateInliner(ast.NodeTransformer):
             )
 
         argument_map = dict(zip(template_params, call_args))
-
-        # 2. For each node in the template's body, substitute the parameters.
         inlined_body = []
         parameter_replacer = _ParameterReplacer(argument_map)
-
-        # We must deep-copy the body nodes before transforming them.
         original_body_nodes = [copy.deepcopy(n) for n in template_body_nodes]
 
-        for body_node in original_body_nodes:
-            # The replacer walks through each node in the template's body
-            # and replaces parameter names with the actual arguments.
+        for i, body_node in enumerate(original_body_nodes):
             transformed_node = parameter_replacer.visit(body_node)
+            if targets is not None and i == len(original_body_nodes) - 1:
+                # Convert final Expr/Return to Assign using original targets
+                if isinstance(transformed_node, ast.Expr):
+                    transformed_node = ast.Assign(targets=targets, value=transformed_node.value)
+                elif isinstance(transformed_node, ast.Return) and transformed_node.value is not None:
+                    transformed_node = ast.Assign(targets=targets, value=transformed_node.value)
             inlined_body.append(transformed_node)
 
         return inlined_body
+
+    def visit_Expr(self, node):
+        """
+        Visit an expression statement. We are looking for expressions that are
+        calls to our template function.
+        """
+        if not isinstance(node.value, ast.Call):
+            return self.generic_visit(node)
+
+        inlined = self._inline_call(node.value)
+        return inlined if inlined is not None else self.generic_visit(node)
+
+    def visit_Assign(self, node):
+        """
+        Visit an assignment statement. If the right-hand side is a call to a
+        registered template, inline it and assign the result.
+        """
+        if not isinstance(node.value, ast.Call):
+            return self.generic_visit(node)
+
+        inlined = self._inline_call(node.value, node.targets)
+        return inlined if inlined is not None else self.generic_visit(node)
 
     def visit_FunctionDef(self, node):
         # Check if the function is an untyped template
