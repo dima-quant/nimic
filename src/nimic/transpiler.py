@@ -13,6 +13,8 @@ Transformation Rules
 Formatting:
   rule:doublespace -> change four spaces to double spaces for indentation
   rule:quote -> replace quotes to double quotes
+  rule:slice -> slice [a:], [a:b] -> [a..^1], [a..<b]
+  rule:discard -> assign to "_" is replaced by "discard"
 
 Scope qualifiers:
   rule:dropwith -> drop "with" for "const", "let", "var", "export", "block"
@@ -64,6 +66,8 @@ Operators & renaming:
   rule:funcrename -> rename functions "print" to "echo", "str" to "$"
   rule:stringjoin -> replace "f" by "&"
   rule:literaltypes -> write as type suffix u64(0x9e3779b97f4a7c15) -> 0x9e3779b97f4a7c15'u64
+  rule:char -> chars written as ch("#") transpile as char literals '#'
+  rule:array -> add array type to the first array element
   rule:isnot -> write isnot according to Nim syntax
   rule:notin -> write notin according to Nim syntax
 
@@ -79,7 +83,7 @@ Memory & variables:
   rule:copy -> value types are copied, drop .copy()
   rule:varini -> var initialization call without arguments with the same name as annotation is interpreted as
     declaration ("with var: a: Rng = Rng()" transpiles as "var a: Rng"), e.g. if the type is tuple. Also holds
-    without annotation for registered classes
+    without annotation for registered classes or native types as array, openArray, etc.
 
 The docstring for the original ``ast`` module is given below:
 
@@ -811,6 +815,7 @@ class _Unparser(NodeVisitor):
     is disregarded."""
 
     def __init__(self, *, type_registry: dict[str, ] | None = None, _avoid_backslashes=False):
+        self._scope_depth = 0
         self._source = []
         self._precedences = {}
         self._type_ignores = {}
@@ -818,6 +823,7 @@ class _Unparser(NodeVisitor):
         self._avoid_backslashes = _avoid_backslashes
         self._in_try_star = False
         self._aliases = {"Object": "object", "NTuple": "tuple"}
+        self._native_type_subscript = ["array", "openArray", "seq"]
         self.renamed_keywords = {}
         self.module_names = []
         self._module_rename = {"nimic.ntypes": "ncode/pydefs"}
@@ -1056,13 +1062,24 @@ class _Unparser(NodeVisitor):
 
     def visit_Assign(self, node):
         self.fill()
+        if len(node.targets) == 1 and isinstance(node.targets[0], Name) and getattr(node.targets[0], "id", "") == "_":
+            # rule:discard
+            self.write("discard ")
+            self.traverse(node.value)
+            return
         for target in node.targets:
-            self.set_precedence(_Precedence.TUPLE, target)
+            if isinstance(target, Name):
+                is_module_level = (self._scope_depth == 0)
+                in_declaration = any(x in self._context_stack for x in ("var", "let", "const"))
+                if is_module_level and in_declaration:
+                    target._is_definition = True
+            # self.set_precedence(_Precedence.TUPLE, target)
             self.traverse(target)
+            target._is_definition = False
         if (
             isinstance(node.value, Call)
             and isinstance(node.value.func, Name)
-            and not node.value.args
+            and not node.value.args and not node.value.keywords
         ):
             if node.value.func.id == "_block":
                 # rule:block
@@ -1080,6 +1097,17 @@ class _Unparser(NodeVisitor):
             elif "var" in self._context_stack and node.value.func.id in self._type_registry.types:
                 type_name = self._adjust_name(node.value.func.id, definition=False)
                 self.write(": " + type_name) # needed for tuple declaration
+            else:
+                self.write(" = ")
+                self.traverse(node.value)
+        elif (
+            isinstance(node.value, Call)
+            and isinstance(node.value.func, Subscript)
+            and not node.value.args and not node.value.keywords
+        ):
+            if "var" in self._context_stack and node.value.func.value.id in self._native_type_subscript:
+                self.write(": ") # needed for array/openArray declaration
+                self.traverse(node.value.func)
             else:
                 self.write(" = ")
                 self.traverse(node.value)
@@ -1101,8 +1129,10 @@ class _Unparser(NodeVisitor):
         if node.simple and isinstance(node.target, Name) and not set_annotation:
             target_name = node.target.id
             if (not self._context_stack or self._context_stack[-1] != "tuple") and target_name != "result":
+                is_module_level = (self._scope_depth == 0)
+                in_declaration = any(x in self._context_stack for x in ("var", "let", "const"))
                 # rule:localname
-                node.target.id = self._adjust_name(target_name)
+                node.target.id = self._adjust_name(target_name, definition=(is_module_level and in_declaration))
         with self.delimit_if("(", ")", not node.simple and isinstance(node.target, Name)):
             self.traverse(node.target)
         self.write(": ")
@@ -1124,7 +1154,7 @@ class _Unparser(NodeVisitor):
             self.traverse(node.value)
 
     def visit_Pass(self, node):
-        self.fill("pass")
+        self.fill("discard")
 
     def visit_Break(self, node):
         self.fill("break")
@@ -1256,10 +1286,13 @@ class _Unparser(NodeVisitor):
         # deco in ["ref", "ptr", "distinct"]
         no_object = no_attr or deco
         enum = False # rule:enum
-        if node.bases[0].id[0] == "_":
-            base = node.bases[0].id[1:]
+        if hasattr(node.bases[0], "id"):
+            if node.bases[0].id[0] == "_":
+                base = node.bases[0].id[1:]
+            else:
+                base = node.bases[0].id
         else:
-            base = node.bases[0].id
+            base = ast.unparse(node.bases[0]).replace("[", " ").replace("]", "")
         if base in self._aliases:
             from_object = self._aliases[base]
         elif base in self._enums:
@@ -1335,10 +1368,14 @@ class _Unparser(NodeVisitor):
         self.maybe_newline()
 
     def visit_FunctionDef(self, node):
+        self._scope_depth += 1
         self._function_helper(node, "")
+        self._scope_depth -= 1
 
     def visit_AsyncFunctionDef(self, node):
+        self._scope_depth += 1
         self._function_helper(node, "async ")
+        self._scope_depth -= 1
 
     def _check_packed_tuple(self, node_arg_args, body):
         # rule:funcdefpackedtuple
@@ -1403,7 +1440,8 @@ class _Unparser(NodeVisitor):
         name_str = self._adjust_name(func_name)  # rule:localname
         # rule:calltype — emit as type alias: Name* = proc(...): T {.pragma.}
         if decl_str == "calltype":
-            self.fill(fill_suffix + name_str + " = proc")
+            self.fill("type")
+            self.fill("  " + name_str + " = proc")
             with self.delimit("(", ")"):
                 self.traverse(node.args)
             if node.returns and not isinstance(node.returns, Constant):
@@ -1517,19 +1555,25 @@ class _Unparser(NodeVisitor):
             self.fill("if ")
             self.traverse(node.test)
         with self.block():
+            self._scope_depth += 1
             self.traverse(node.body)
+            self._scope_depth -= 1
         # collapse nested ifs into equivalent elifs.
         while node.orelse and len(node.orelse) == 1 and isinstance(node.orelse[0], If):
             node = node.orelse[0]
             self.fill("elif ")
             self.traverse(node.test)
             with self.block():
+                self._scope_depth += 1
                 self.traverse(node.body)
+                self._scope_depth -= 1
         # final else
         if node.orelse:
             self.fill("else")
             with self.block():
+                self._scope_depth += 1
                 self.traverse(node.orelse)
+                self._scope_depth -= 1
 
     def visit_While(self, node):
         self.fill("while ")
@@ -1719,7 +1763,7 @@ class _Unparser(NodeVisitor):
                 self._write_fstring_inner(node.format_spec, is_format_spec=True)
 
     def visit_Name(self, node):
-        name = self._adjust_name(node.id, definition=False) # rule:localname
+        name = self._adjust_name(node.id, definition=getattr(node, "_is_definition", False)) # rule:localname
         self.write(name)
 
     def _write_docstring(self, node):
@@ -1922,7 +1966,7 @@ class _Unparser(NodeVisitor):
         # unops
         "__str__": "`$`",
         "__getitem__": "`[]`",
-        "__setitem__": "`[]= `",
+        "__setitem__": "`[]=`",
         # "__invert__": "`~`",
         "__not__": "`not`",
         "__pos__": "`+`",
@@ -2064,6 +2108,14 @@ class _Unparser(NodeVisitor):
             self.traverse(node.args[0]) # should be only one argument
             self.write("'")
             self.traverse(node.func)
+        elif isinstance(node.func, Name) and node.func.id == "ch":
+            # rule:char
+            val = node.args[0].value
+            if val.isascii():
+                self.write(f"'{val}'") 
+            else:
+                st = val.encode("Latin-1").hex()
+                self.write(f"'\\x{st}'") 
         elif isinstance(node.func, Attribute) and node.func.attr in self._attribute_replace and not node.args:
             # rule:deref and rule:copy
             self.traverse(node.func.value)
@@ -2083,6 +2135,18 @@ class _Unparser(NodeVisitor):
                 # rule:funcrename
                 if _name in self._func_rename:
                     node.func.id = self._func_rename[_name]
+            elif (
+                isinstance(node.func, Subscript)
+                and node.args
+                and isinstance(node.args[0], List)
+                and node.func.value.id in self._native_type_subscript
+                and len(node.func.slice.elts) == 2
+                and isinstance(node.args[0].elts[0], Constant)
+            ):
+                # rule:array
+                array_type = node.func.slice.elts[1].id
+                call_node = Call(func=Name(id=array_type), args=[Constant(value=node.args[0].elts[0].value)], keywords=[])
+                node.args[0].elts[0] = call_node
             self.traverse(node.func)
             with self.delimit("(", ")"):
                 comma = False
@@ -2135,11 +2199,17 @@ class _Unparser(NodeVisitor):
         self.write("...")
 
     def visit_Slice(self, node):
+        # rule:slice
         if node.lower:
             self.traverse(node.lower)
-        self.write(":")
+        else:
+            self.write("0")
         if node.upper:
+            self.write("..<")
             self.traverse(node.upper)
+            # negative upper bound is not allowed, also not literals
+        else:
+            self.write("..^1")
         if node.step:
             self.write(":")
             self.traverse(node.step)
@@ -2253,8 +2323,12 @@ class _Unparser(NodeVisitor):
 
     def visit_match_case(self, node):
         # rule:matchcase
-        self.fill("of ")
-        self.traverse(node.pattern)
+        if isinstance(node.pattern, MatchAs) and node.pattern.name is None and node.pattern.pattern is None:
+            self.fill("else")
+        else:
+            self.fill("of ")
+            self.traverse(node.pattern)
+
         if node.guard:
             self.write(" if ")
             self.traverse(node.guard)
@@ -2338,7 +2412,7 @@ class _Unparser(NodeVisitor):
     def visit_MatchOr(self, node):
         with self.require_parens(_Precedence.BOR, node):
             self.set_precedence(_Precedence.BOR.next(), *node.patterns)
-            self.interleave(lambda: self.write(" | "), self.traverse, node.patterns)
+            self.interleave(lambda: self.write(", "), self.traverse, node.patterns)
 
 def unparse(ast_obj, type_registry: dict[str, ] | None = None):
     unparser = _Unparser(type_registry=type_registry)
