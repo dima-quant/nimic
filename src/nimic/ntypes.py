@@ -31,7 +31,8 @@ from __future__ import annotations
 
 import contextlib
 from enum import StrEnum, auto
-from typing import Generator, TypeVar
+from typing import Generator, TypeVar, BinaryIO
+
 
 from nimic.inliner import template, template_expand
 from nimic.ntypesystem import (
@@ -39,6 +40,8 @@ from nimic.ntypesystem import (
     Object,
     NTuple,
     UncheckedArray,
+    array,
+    calltype,
     converter,
     dispatch,
     distinct,
@@ -52,10 +55,17 @@ from nimic.ntypesystem import (
     nint,
     seq,
     string,
+    typedesc,
+    intp,
+    uintp,
+    pointer,
+    ptr,
     uint8,
     uint16,
     uint32,
     uint64,
+    openArray,
+    cstring,
 )
 
 
@@ -69,18 +79,25 @@ SomeFloat = float
 type BiggestInt = int
 type BiggestFloat = float
 
+File = BinaryIO
 
-def u64(x: int) -> uint64:
-    return uint64(x)
+byte = uint8  # Nim: byte = uint8
 
+def u8(x: int) -> uint8: return uint8(x)
+def u16(x: int) -> uint16: return uint16(x)
+def u32(x: int) -> uint32: return uint32(x)
+def u64(x: int) -> uint64: return uint64(x)
 
-def i64(x: int) -> int64:
-    return int64(x)
+def i8(x: int) -> int8: return int8(x)
+def i16(x: int) -> int16: return int16(x)
+def i32(x: int) -> int32: return int32(x)
+def i64(x: int) -> int64: return int64(x)
 
+def f16(x: float) -> float16: return float16(x)
+def f32(x: float) -> float32: return float32(x)
+def f64(x: float) -> float64: return float64(x)
 
-def f64(x: float) -> float64:
-    return float64(x)
-
+def ch(x: str) -> str: return x
 
 class NStrEnum(StrEnum):
     __members_tuple__ = None
@@ -182,21 +199,6 @@ def high[T: StrEnum](cls: T) -> T:
     return cls.last()
 
 
-class _SomeRefClass:
-    def __matmul__(self, other: object) -> object:
-        return other
-
-    def __call__(self, other: object) -> object:
-        return other
-
-    def __getitem__(self, other: object) -> object:
-        return other
-
-
-ref = _SomeRefClass()
-ptr = _SomeRefClass()
-# reserve keyword for modifiable variables
-mut = _SomeRefClass()
 
 # compiler hints
 const = contextlib.nullcontext()
@@ -214,6 +216,11 @@ static = set
 
 class _SomeCastClass:
     def __getitem__(self, other_cls: type) -> callable:
+        # cast from value type to value type: convert object to bytes, construct from bytes
+        # cast from pointer to pointer: ctypes pointer cast
+        # cast from pointer to uintp: pointer that supports arithmetics
+        # cast from uintp to pointer: ctypes cast from address to pointer
+        # all pointer casts should keep the buffer reference to prevent GC
         if isinstance(other_cls, TypeVar):
             fun = lambda x: x
         else:

@@ -29,6 +29,7 @@ Architecture (layers from low-level to high-level):
   Containers
     seq[T]             — Nim's growable sequence; ctypes array + cache.
     UncheckedArray[T]  — Nim's UncheckedArray; pointer-indexed.
+    array[n, T]        — Nim's fixed size array.
 
   Dispatch
     @dispatch          — Nim-style multi-dispatch based on type annotations.
@@ -64,6 +65,7 @@ import sys
 import textwrap
 from enum import IntEnum
 from string import Template
+from typing import Sequence
 
 __resolved__ = {}
 
@@ -109,6 +111,75 @@ def get_type_params(fn: callable) -> dict:
         else:
             T_def[expr_sp[0].strip()] = expr_sp[1].strip()
     return T_def
+
+
+def _specialize_generic(fn: callable, T_var: dict[str, str]) -> callable:
+    """Create a concrete specialization of a generic function.
+
+    Given a generic function and a mapping of type parameter names to
+    resolved type names (e.g. {"T": "int32"}), this function:
+      1. Gets the source code of fn
+      2. Parses it into an AST
+      3. Replaces all occurrences of type parameter names with the
+         resolved type names (in annotations, body, and subscripts)
+      4. Removes the type parameter brackets from the def line
+      5. Compiles and executes the new source in the caller's namespace
+      6. Returns the newly created concrete function
+    """
+    src = ins.getsource(fn)
+    src = textwrap.dedent(src)
+    # Remove the @dispatch decorator line(s) from source
+    lines = src.split("\n")
+    filtered = []
+    skip_next = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("@dispatch") or stripped == "@dispatch":
+            continue
+        filtered.append(line)
+    src = "\n".join(filtered)
+
+    tree = ast.parse(src)
+    func_def = tree.body[0]
+
+    # Remove type_params (the [T] bracket) from the function def
+    if hasattr(func_def, 'type_params'):
+        func_def.type_params = []
+
+    # Build suffix for unique function name
+    suffix = "_" + "_".join(T_var.values())
+    original_name = func_def.name
+    func_def.name = original_name + suffix
+
+    class _TypeReplacer(ast.NodeTransformer):
+        """Replace all Name nodes matching type parameter names with resolved types."""
+        def visit_Name(self, node):
+            if node.id in T_var:
+                node.id = T_var[node.id]
+            return node
+
+        def visit_Subscript(self, node):
+            # Handle cases like seq[T] -> seq[int32]
+            self.generic_visit(node)
+            return node
+
+        def visit_Attribute(self, node):
+            self.generic_visit(node)
+            return node
+
+    _TypeReplacer().visit(tree)
+    ast.fix_missing_locations(tree)
+
+    # Compile in the caller's namespace
+    code = compile(tree, ins.getfile(fn), "exec")
+    # Build namespace with access to the module's globals
+    ns = fn.__globals__.copy()
+    ns.update(DICT_OF_TYPES)
+    exec(code, ns)
+    specialized_fn = ns[func_def.name]
+    # Preserve the original function name for dispatch lookup
+    specialized_fn.__qualname__ = original_name + suffix
+    return specialized_fn
 
 
 def autorename(x: object) -> str:
@@ -282,10 +353,13 @@ def dispatch(fn: callable) -> callable:
                                             break
                             i += 1
                         if i == len(fn_sig):
+                            # Specialize the generic function with resolved T bindings
+                            generic_fn = sig_defs[sig_def]
+                            specialized = _specialize_generic(generic_fn, T_var)
                             if fn.__name__ in __resolved__:
-                                __resolved__[fn.__name__][fn_sig] = sig_defs[sig_def]
+                                __resolved__[fn.__name__][fn_sig] = specialized
                             else:
-                                __resolved__[fn.__name__] = {fn_sig: sig_defs[sig_def]}
+                                __resolved__[fn.__name__] = {fn_sig: specialized}
                             break
         is_resolved = (
             fn.__name__ in __resolved__ and fn_sig in __resolved__[fn.__name__]
@@ -875,7 +949,9 @@ class _Object(Ntype):
             # check if all ctypes-backed fields have corresponding types registered
             for key, value in _annotations.items():
                 if key not in python_fields and not value.startswith("ptr["):
-                    assert value in dict_of_types
+                    if value not in dict_of_types and not value.startswith("array[") and not value.startswith("openArray["):
+                        python_fields.add(key)
+            has_c_type = has_c_type and len(python_fields) < len(_annotations)
             f_list = [
                 (key, dict_of_c_types[value])
                 for key, value in _annotations.items()
@@ -903,7 +979,6 @@ class NTuple(_Object):
 
 # --- UncheckedArray ---
 
-
 class UncheckedArray(Ntype):
     def __init__(self, data_ptr: int) -> None:
         self._n_view = data_ptr
@@ -930,8 +1005,76 @@ class UncheckedArray(Ntype):
     def __class_getitem__(cls, _ntype: type) -> type:
         if _ntype.__name__ not in DICT_OF_TYPES:
             _ntype._n_register_type()
-        class_name = f"ptr[UncheckedArray[{_ntype.__name__}]]"
+        class_name = f"UncheckedArray[{_ntype.__name__}]"
         return type(class_name, (UncheckedArray,), {"_n_type": _ntype})
+
+    @classmethod
+    def _n_register_type(cls) -> None:
+        DICT_OF_TYPES[cls.__name__] = cls
+
+
+class array(Ntype):
+    """Fixed-size array: array[N, T] → Nim array[N, T].
+
+    Backed by a ctypes buffer of exactly N elements of type T.
+    """
+    _n_size: int = 0
+
+    def __init__(self, it: Sequence | None = None) -> None:
+        self._n_cache = {}
+        if hasattr(self, "_n_type") and hasattr(self, "_n_size"):
+            type_name = self._n_type.__name__
+            if type_name in DICT_OF_C_TYPES:
+                self._n_buffer = (DICT_OF_C_TYPES[type_name] * self._n_size)()
+                self._n_view = (self._n_buffer._type_ * self._n_size).from_address(
+                    ctypes.addressof(self._n_buffer)
+                )
+            else:
+                # Scalar/simple types: use a plain Python list as backing store
+                self._n_buffer = [self._n_type() for _ in range(self._n_size)]
+                self._n_view = self._n_buffer
+            if it is not None:
+                for index in range(self._n_size):
+                    self._n_view[index] = it[index]
+        else:
+            raise Exception("array type or size not specified")
+
+    def __len__(self) -> int:
+        return self._n_size
+
+    def __getitem__(self, index: int) -> object:
+        index = int(index)
+        if isinstance(self._n_view, list):
+            return self._n_view[index]
+        if index not in self._n_cache:
+            self._n_cache[index] = self._n_type._n_on_array(self._n_view, index)
+        return self._n_cache[index]
+
+    def __setitem__(self, index: int, value: object) -> None:
+        index = int(index)
+        if isinstance(self._n_view, list):
+            self._n_view[index] = value
+            return
+        if hasattr(value, '_n_get_value'):
+            val = value._n_get_value()
+        else:
+            val = value
+        if index not in self._n_cache:
+            self._n_cache[index] = self._n_type._n_on_array(self._n_view, index, val)
+        else:
+            self._n_cache[index]._n_set_value(val)
+
+    def __class_getitem__(cls, params) -> type:
+        """array[N, T] → fixed-size array type."""
+        n, _ntype = params
+        # n can be ordinal
+        if _ntype.__name__ not in DICT_OF_TYPES and hasattr(_ntype, '_n_register_type'):
+            try:
+                _ntype._n_register_type()
+            except (KeyError, Exception):
+                pass  # Scalar types register differently
+        class_name = f"array[{n}, {_ntype.__name__}]"
+        return type(class_name, (array,), {"_n_type": _ntype, "_n_size": n})
 
 
 # --- Sequences (seq) ---
@@ -1025,7 +1168,71 @@ class seq(Ntype):
             seq[elem_class]  # create and register seq type
 
 
+class openArray(Ntype):
+    """Nim's openArray[T] — accepts array[N,T] or seq[T] transparently.
+
+    In Python: thin wrapper that delegates indexing to the underlying container.
+    In Nim: transpiles to `openArray[T]`.
+    """
+    _n_type = None
+
+    def __init__(self, source=None):
+        if source is not None:
+            self._n_buffer = source._n_buffer if hasattr(source, '_n_buffer') else source
+            self._n_view = source._n_view if hasattr(source, '_n_view') else source
+        else:
+            self._n_buffer = []
+            self._n_view = []
+
+    def __getitem__(self, index):
+        return self._n_view[index]
+
+    def __setitem__(self, index, value):
+        self._n_view[index] = value
+
+    def __len__(self):
+        if hasattr(self._n_view, '__len__'):
+            return len(self._n_view)
+        return self._n_buffer._n_size if hasattr(self._n_buffer, '_n_size') else 0
+
+    @classmethod
+    def __class_getitem__(cls, _ntype):
+        if hasattr(_ntype, '__name__') and _ntype.__name__ not in DICT_OF_TYPES:
+            if hasattr(_ntype, '_n_register_type'):
+                _ntype._n_register_type()
+        class_name = f"openArray[{_ntype.__name__}]"
+        return type(class_name, (openArray,), {"_n_type": _ntype})
+
+
+def calltype(fn):
+    """Decorator: transpiles to `Name* = proc(...): T {.pragma.}`"""
+    DICT_OF_TYPES[fn.__name__] = fn
+    return fn
+
+
 # --- Type Aliases & Convenience Constructors ---
+
+class _SomeRefClass:
+    def __call__(self, other: object) -> object:
+        return other
+
+    def __getitem__(self, _ntype: type) -> type:
+        if _ntype.__name__ not in DICT_OF_TYPES:
+            _ntype._n_register_type()
+        class_name = f"ptr[{_ntype.__name__}]"
+        # TODO: integrate with ptr type
+        return type(class_name, (_ntype,), {"_n_type": getattr(_ntype, "_n_type", _ntype)})
+
+
+ref = _SomeRefClass()
+ptr = _SomeRefClass()
+typedesc = _SomeRefClass()
+
+class _SomeMutClass:
+    def __matmul__(self, other: object) -> object:
+        return other
+# reserve keyword for modifiable variables
+mut = _SomeMutClass()
 
 
 def determine_common_type(type_a: type, type_b: type) -> type:
@@ -1557,6 +1764,164 @@ class float64(NFloat):
     def _n_normalize(self, val):
         return float(val)
 
+class pointer(Ntype):
+    """Untyped pointer representation (maps to Nim's `pointer`)."""
+    def __init__(self, x=None):
+        if x is None:
+            self._n_buffer = None
+            self._n_view = None
+        else:
+            self._n_buffer = x
+            self._n_view = x
+
+    @property
+    def is_nil(self) -> bool:
+        return self._n_view is None
+
+    @property
+    def contents(self):
+        """Dereference: p.contents → p[] in Nim."""
+        return self._n_view[0] if self._n_view is not None else None
+
+    @contents.setter
+    def contents(self, value):
+        self._n_view[0] = value
+
+    def __getitem__(self, index: int):
+        """Dereference at offset: ptr[i]"""
+        return self._n_view[index]
+
+    def __setitem__(self, index: int, value):
+        """Assign at offset: ptr[i] = val"""
+        self._n_view[index] = value
+
+    def __ilshift__(self, value):
+        """<<= (value assignment) support."""
+        if isinstance(value, pointer):
+            self._n_buffer = value._n_buffer
+            self._n_view = value._n_view
+        else:
+            self._n_buffer = value
+            self._n_view = value
+        return self
+
+class uintp(pointer):
+    """Pointer-sized unsigned integer for pointer arithmetic.
+
+    In Python: wraps a ctypes buffer with GC-safe arithmetic (__add__/__sub__).
+    In Nim: transpiles to `uint` — used with cast[uintp](p) for address math.
+    """
+    def __init__(self, x=None):
+        if x is None:
+            self._n_buffer = None
+            self._n_view = None
+        else:
+            self._n_buffer = x
+            self._n_view = x
+
+    @property
+    def is_nil(self) -> bool:
+        return self._n_view is None
+
+    @property
+    def contents(self):
+        """Dereference: p.contents → p[] in Nim."""
+        return self._n_view[0] if self._n_view is not None else None
+
+    @contents.setter
+    def contents(self, value):
+        self._n_view[0] = value
+
+    def __getitem__(self, index: int):
+        """Dereference at offset: ptr[i]"""
+        return self._n_view[index]
+
+    def __setitem__(self, index: int, value):
+        """Assign at offset: ptr[i] = val"""
+        self._n_view[index] = value
+
+    def __add__(self, offset: int):
+        """Pointer + offset → new uintp (same GC root)."""
+        result = uintp.__new__(uintp)
+        result._n_buffer = self._n_buffer  # keep GC reference!
+        addr = ctypes.addressof(self._n_view) + int(offset)
+        result._n_view = (ctypes.c_char * 1).from_address(addr)
+        return result
+
+    def __sub__(self, other):
+        """ptr - ptr → int offset; ptr - int → new uintp."""
+        if isinstance(other, uintp):
+            return ctypes.addressof(self._n_view) - ctypes.addressof(other._n_view)
+        return self.__add__(-int(other))
+
+    def __ilshift__(self, value):
+        """<<= (value assignment) support."""
+        if isinstance(value, uintp):
+            self._n_buffer = value._n_buffer
+            self._n_view = value._n_view
+        else:
+            self._n_buffer = value
+            self._n_view = value
+        return self
+
+class intp(pointer):
+    """Pointer-sized signed integer for pointer arithmetic.
+
+    In Python: wraps a ctypes buffer with GC-safe arithmetic (__add__/__sub__).
+    In Nim: transpiles to `int` — used with cast[intp](p) for address math.
+    """
+    def __init__(self, x=None):
+        if x is None:
+            self._n_buffer = None
+            self._n_view = None
+        else:
+            self._n_buffer = x
+            self._n_view = x
+
+    @property
+    def is_nil(self) -> bool:
+        return self._n_view is None
+
+    @property
+    def contents(self):
+        """Dereference: p.contents → p[] in Nim."""
+        return self._n_view[0] if self._n_view is not None else None
+
+    @contents.setter
+    def contents(self, value):
+        self._n_view[0] = value
+
+    def __getitem__(self, index: int):
+        """Dereference at offset: ptr[i]"""
+        return self._n_view[index]
+
+    def __setitem__(self, index: int, value):
+        """Assign at offset: ptr[i] = val"""
+        self._n_view[index] = value
+
+    def __add__(self, offset: int):
+        """Pointer + offset → new intp (same GC root)."""
+        result = intp.__new__(intp)
+        result._n_buffer = self._n_buffer  # keep GC reference!
+        addr = ctypes.addressof(self._n_view) + int(offset)
+        result._n_view = (ctypes.c_char * 1).from_address(addr)
+        return result
+
+    def __sub__(self, other):
+        """ptr - ptr → int offset; ptr - int → new intp."""
+        if isinstance(other, intp):
+            return ctypes.addressof(self._n_view) - ctypes.addressof(other._n_view)
+        return self.__add__(-int(other))
+
+    def __ilshift__(self, value):
+        """<<= (value assignment) support."""
+        if isinstance(value, intp):
+            self._n_buffer = value._n_buffer
+            self._n_view = value._n_view
+        else:
+            self._n_buffer = value
+            self._n_view = value
+        return self
 
 # class nbool:
 #     def __init__ (self, value=False):
@@ -1626,12 +1991,17 @@ DICT_OF_C_TYPES.update(
     {
         "float64": ctypes.c_double,
         "float32": ctypes.c_float,
+        "int8": ctypes.c_int8,
+        "int16": ctypes.c_int16,
         "int32": ctypes.c_int,
         "int64": ctypes.c_long,
         "nint": ctypes.c_long,
+        "uint8": ctypes.c_uint8,
+        "uint16": ctypes.c_uint16,
         "uint32": ctypes.c_uint,
         "uint64": ctypes.c_ulong,
         "bool": ctypes.c_bool,
+        "byte": ctypes.c_uint8,
     }
 )
 
@@ -1641,8 +2011,13 @@ __native_types__ = {
     "float64": float64,
     "float32": float32,
     "nint": nint,
+    "int8": int8,
+    "int16": int16,
     "int32": int32,
     "int64": int64,
+    "byte": uint8,
+    "uint8": uint8,
+    "uint16": uint16,
     "uint32": uint32,
     "uint64": uint64,
     "string": string,
