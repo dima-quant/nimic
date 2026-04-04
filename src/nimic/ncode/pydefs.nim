@@ -2,6 +2,7 @@ type
   nbool* = bool
   nint* = int
   uintp* = uint
+  intp* = int
 
 type
   TextIOWrapper* = File
