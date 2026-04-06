@@ -68,6 +68,40 @@ from enum import IntEnum
 from string import Template
 from typing import Sequence
 
+
+# --- NilPtr sentinel ---
+
+class NilPtr:
+    """Nil pointer that preserves type information for dispatch.
+
+    When an Object field is declared as ptr[SomeType] but not yet assigned,
+    it is initialized as NilPtr("ptr[SomeType]") instead of plain None.
+    This allows autorename() to recover the type name for dispatch resolution.
+    """
+    __slots__ = ('_type_name',)
+
+    @property
+    def is_nil(self) -> bool:
+        return True
+
+    def __init__(self, type_name: str):
+        self._type_name = type_name
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __eq__(self, other) -> bool:
+        return other is None or isinstance(other, NilPtr)
+
+    def __ne__(self, other) -> bool:
+        return not self.__eq__(other)
+
+    def __hash__(self) -> int:
+        return hash(None)
+
+    def __repr__(self) -> str:
+        return f"NilPtr({self._type_name!r})"
+
 __resolved__ = {}
 
 __dispatch_generic__ = {}
@@ -184,6 +218,8 @@ def _specialize_generic(fn: callable, T_var: dict[str, str]) -> callable:
 
 
 def autorename(x: object) -> str:
+    if isinstance(x, NilPtr):
+        return x._type_name
     type_name = type(x).__name__
     if type_name in _n_aliases:
         return _n_aliases[type_name]
@@ -752,6 +788,94 @@ class NMetaClass(type):
 # --- Structured Objects (Object) ---
 
 class _Object(Ntype):
+    # Cache for specialized generic classes
+    _n_specializations = {}
+
+    def __class_getitem__(cls, params):
+        """Create a specialized subclass with resolved type annotations.
+
+        E.g. ChannelDescriptor[uint8] creates a subclass where
+        buffer: ptr[UncheckedArray[T]] becomes buffer: ptr[UncheckedArray[uint8]].
+        """
+        type_params = getattr(cls, '__type_params__', ())
+        if not type_params:
+            return cls
+
+        # Normalize params to tuple
+        if not isinstance(params, tuple):
+            params = (params,)
+
+        # Build T_name → concrete_name mapping
+        T_map = {}
+        for tp, concrete in zip(type_params, params):
+            if isinstance(concrete, str):
+                T_map[tp.__name__] = concrete
+            elif hasattr(concrete, '__name__'):
+                T_map[tp.__name__] = concrete.__name__
+            else:
+                T_map[tp.__name__] = str(concrete)
+
+        # Cache key
+        cache_key = (cls, tuple(T_map.items()))
+        if cache_key in _Object._n_specializations:
+            return _Object._n_specializations[cache_key]
+
+        # Resolve annotations by replacing type variable names
+        resolved = {}
+        for attr_name, type_str in cls.__annotations__.items():
+            new_str = type_str
+            for t_name, t_concrete in T_map.items():
+                new_str = new_str.replace(t_name, t_concrete)
+            resolved[attr_name] = new_str
+
+        # Create specialized subclass
+        suffix = "_".join(T_map.values())
+        specialized_name = f"{cls.__name__}[{suffix}]"
+        specialized = type(specialized_name, (cls,), {'__annotations__': resolved})
+        # Register if it has c-type fields
+        if hasattr(cls, '_n_register_type'):
+            try:
+                specialized._n_register_type()
+            except Exception:
+                pass
+
+        _Object._n_specializations[cache_key] = specialized
+        return specialized
+
+    @property
+    def is_nil(self) -> bool:
+        """Nim: isNil — check if pointer-type object is nil."""
+        return getattr(self, '_n_view', None) is None
+
+    @classmethod
+    def cast(cls, instance):
+        """Cast raw pointer/memory to this Object type."""
+        if isinstance(instance, NilPtr) or instance is None:
+            return NilPtr(cls.__name__)
+        # Get the address from the source
+        if isinstance(instance, pointer):
+            if instance._n_view is None:
+                return NilPtr(cls.__name__)
+            address = ctypes.addressof(instance._n_view)
+        elif hasattr(instance, '_n_view'):
+            address = ctypes.addressof(instance._n_view)
+        else:
+            address = ctypes.addressof(instance)
+        # Create Object backed by this memory
+        class_name = cls.__name__
+        if class_name in DICT_OF_C_TYPES:
+            c_type = DICT_OF_C_TYPES[class_name]
+            c_instance = c_type.from_address(address)
+            obj = cls.__new__(cls)
+            obj._n_buffer = instance._n_buffer if hasattr(instance, '_n_buffer') else instance
+            obj._n_view = c_instance
+            obj._n_has_c_type = True
+            obj._n_annotations = cls.__annotations__
+            obj._n_fields = list(cls.__annotations__.keys())
+            obj._n_setup(None)
+            return obj
+        return instance
+
     def __init__(self, _n_value: Object | None = None, **kwargs: object) -> None:
         """_n_value is an instance of Object or an object with the same structure or None"""
         _has_c_type = False
