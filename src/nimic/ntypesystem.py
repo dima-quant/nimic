@@ -60,6 +60,7 @@ import ast
 import ctypes
 import inspect as ins
 import operator
+import re
 import struct
 import sys
 import textwrap
@@ -192,6 +193,37 @@ def autorename(x: object) -> str:
         return type_name
 
 
+def _match_generic_pattern(sig_type: str, arg_type: str, T_def: dict) -> dict | None:
+    """Try to match arg_type against sig_type containing type variables from T_def.
+
+    Returns dict of {T_name: resolved_type_name} if match succeeds, None otherwise.
+
+    Example:
+        _match_generic_pattern("ptr[UncheckedArray[T]]", "ptr[UncheckedArray[uint8]]", {"T": ""})
+        → {"T": "uint8"}
+    """
+    # Find which T variables appear in this sig_type string
+    t_vars_in_sig = [t for t in T_def if t in sig_type]
+    if not t_vars_in_sig:
+        return None
+
+    # Build regex: escape the sig_type, then unescape each T variable
+    # and replace it with a capture group that matches a type name
+    # (including nested brackets like UncheckedArray[uint8])
+    pattern = re.escape(sig_type)
+    for t in t_vars_in_sig:
+        # Replace the escaped T with a capture group
+        pattern = pattern.replace(re.escape(t), r'([A-Za-z_]\w*(?:\[.*?\])?)', 1)
+
+    m = re.fullmatch(pattern, arg_type)
+    if m:
+        result = {}
+        for i, t in enumerate(t_vars_in_sig):
+            result[t] = m.group(i + 1)
+        return result
+    return None
+
+
 debugG = {}
 
 
@@ -321,46 +353,95 @@ def dispatch(fn: callable) -> callable:
                             break
             if fn.__name__ in __dispatch_genericT__:
                 sig_defs = __dispatch_genericT__[fn.__name__]
+                # Collect all matching candidates with specificity scores.
+                # Higher specificity = more specific match.
+                # compound pattern match (Case C) > bare T match (Case B) > exact match (Case A)
+                best_match = None  # (specificity, sig_def, T_var)
                 for sig_def in sig_defs:
                     if len(fn_sig) == len(sig_def):
                         i = 0
                         T_var = {}
                         T_def = __tdefs__[fn.__name__][sig_def]
-                        while i < len(fn_sig) and (
-                            fn_sig[i][0] in sig_def[i] or sig_def[i][0] in T_def
-                        ):
-                            if sig_def[i][0] in T_def:
-                                T_sym = sig_def[i][0]
-                                # check if T already in t_var
-                                T_value = fn_sig[i][0]
+                        specificity = 0  # sum of per-position specificity
+                        while i < len(fn_sig):
+                            arg_name = fn_sig[i][0]
+                            sig_name = sig_def[i][0]
+                            if arg_name in sig_def[i]:
+                                # Case A: exact match (specificity 0)
+                                pass
+                            elif sig_name in T_def:
+                                # Case B: bare type variable (specificity 1)
+                                T_sym = sig_name
+                                T_value = arg_name
                                 if T_sym in T_var:
-                                    if not T_var[T_sym] == T_value:
+                                    if T_var[T_sym] != T_value:
                                         break
                                 else:
-                                    # validate the value of T according to T_def if any
-                                    if len(T_def[T_sym]) == 0:
+                                    constraint = T_def[T_sym]
+                                    if len(constraint) == 0:
+                                        T_var[T_sym] = T_value
+                                    elif constraint.startswith("not "):
+                                        excluded = constraint[4:].strip()
+                                        if T_value == excluded:
+                                            break
+                                        T_var[T_sym] = T_value
+                                    elif T_value == constraint:
+                                        T_var[T_sym] = T_value
+                                    elif (
+                                        constraint in _n_generic_types
+                                        and T_value in _n_generic_types[constraint]
+                                    ):
                                         T_var[T_sym] = T_value
                                     else:
-                                        if T_value in T_def[T_sym]:
-                                            T_var[T_sym] = T_value
-                                        elif (
-                                            T_def[T_sym] in _n_generic_types
-                                            and T_value
-                                            in _n_generic_types[T_def[T_sym]]
-                                        ):
-                                            T_var[T_sym] = T_value
+                                        break
+                                specificity += 1
+                            else:
+                                # Case C: compound type pattern (specificity 2)
+                                matched = _match_generic_pattern(sig_name, arg_name, T_def)
+                                if matched is not None:
+                                    conflict = False
+                                    for t_sym, t_val in matched.items():
+                                        if t_sym in T_var:
+                                            if T_var[t_sym] != t_val:
+                                                conflict = True
+                                                break
                                         else:
-                                            break
+                                            constraint = T_def[t_sym]
+                                            if len(constraint) == 0:
+                                                T_var[t_sym] = t_val
+                                            elif constraint.startswith("not "):
+                                                excluded = constraint[4:].strip()
+                                                if t_val == excluded:
+                                                    conflict = True
+                                                    break
+                                                T_var[t_sym] = t_val
+                                            elif t_val == constraint:
+                                                T_var[t_sym] = t_val
+                                            elif (
+                                                constraint in _n_generic_types
+                                                and t_val in _n_generic_types[constraint]
+                                            ):
+                                                T_var[t_sym] = t_val
+                                            else:
+                                                conflict = True
+                                                break
+                                    if conflict:
+                                        break
+                                    specificity += 2
+                                else:
+                                    break
                             i += 1
                         if i == len(fn_sig):
-                            # Specialize the generic function with resolved T bindings
-                            generic_fn = sig_defs[sig_def]
-                            specialized = _specialize_generic(generic_fn, T_var)
-                            if fn.__name__ in __resolved__:
-                                __resolved__[fn.__name__][fn_sig] = specialized
-                            else:
-                                __resolved__[fn.__name__] = {fn_sig: specialized}
-                            break
+                            if best_match is None or specificity > best_match[0]:
+                                best_match = (specificity, sig_def, T_var)
+                if best_match is not None:
+                    _, best_sig_def, best_T_var = best_match
+                    generic_fn = sig_defs[best_sig_def]
+                    specialized = _specialize_generic(generic_fn, best_T_var)
+                    if fn.__name__ in __resolved__:
+                        __resolved__[fn.__name__][fn_sig] = specialized
+                    else:
+                        __resolved__[fn.__name__] = {fn_sig: specialized}
         is_resolved = (
             fn.__name__ in __resolved__ and fn_sig in __resolved__[fn.__name__]
         )
