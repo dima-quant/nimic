@@ -110,6 +110,8 @@ __dispatch_genericT__ = {}
 
 __tdefs__ = {}
 
+__arg_names__ = {}
+
 # --- Generic Type Classes & Aliases ---
 
 _n_generic_types = {
@@ -129,7 +131,9 @@ _n_generic_types = {
 
 # for now map Python types to native types
 # should map from alias directly to native type
-_n_aliases = {"float": "float64", "int": "int32", "str": "string"}
+_n_aliases = {"float": "float64", "int": "int32", "str": "string",
+              "static[bool]": "bool", "static[int]": "int32",
+              "static[float]": "float64", "static[str]": "string"}
 
 
 def get_type_params(fn: callable) -> dict:
@@ -323,6 +327,7 @@ def dispatch(fn: callable) -> callable:
     ]
     sig_list = [_n_aliases[v] if v in _n_aliases else v for v in sig_list]
     arg_count = fn.__code__.co_argcount
+    arg_names = tuple(k for k in _annotations.keys() if k != "return")
 
     if not len(sig_list) == arg_count:
         sig_str = ", ".join(sig_list)
@@ -332,6 +337,9 @@ def dispatch(fn: callable) -> callable:
     generic = any((arg in _n_generic_types for arg in sig_list))
     genericT = len(fn.__type_params__) > 0
     # register signature
+    if fn.__name__ not in __arg_names__:
+        __arg_names__[fn.__name__] = {}
+
     if genericT:
         T_def = get_type_params(fn)
         # register T def
@@ -346,6 +354,7 @@ def dispatch(fn: callable) -> callable:
         else:
             __dispatch_genericT__[fn.__name__] = {sigs: fn}
             __tdefs__[fn.__name__] = {sigs: T_def}
+        __arg_names__[fn.__name__][sigs] = arg_names
     elif generic:
         # expand generic types
         sigs = tuple(
@@ -356,14 +365,51 @@ def dispatch(fn: callable) -> callable:
             __dispatch_generic__[fn.__name__][sigs] = fn
         else:
             __dispatch_generic__[fn.__name__] = {sigs: fn}
+        __arg_names__[fn.__name__][sigs] = arg_names
     else:
         sigs = tuple((arg,) for arg in sig_list)
         if fn.__name__ in __resolved__:
             __resolved__[fn.__name__][sigs] = fn
         else:
             __resolved__[fn.__name__] = {sigs: fn}
+        __arg_names__[fn.__name__][sigs] = arg_names
 
-    def fn_dispatch(*args):
+    def fn_dispatch(*args, **kwargs):
+        if kwargs:
+            possible_sigs = __arg_names__.get(fn.__name__, {})
+            candidate_args_list = []
+            for sig_def, p_arg_names in possible_sigs.items():
+                if len(args) + len(kwargs) == len(p_arg_names):
+                    expected_kw_names = p_arg_names[len(args):]
+                    if set(expected_kw_names) == set(kwargs.keys()):
+                        full_args = list(args)
+                        for name in expected_kw_names:
+                            full_args.append(kwargs[name])
+                        test_args = tuple(full_args)
+                        test_fn_sig = tuple((autorename(arg),) for arg in test_args)
+
+                        is_match = False
+                        nm = fn.__name__
+                        if nm in __resolved__ and sig_def in __resolved__[nm] and test_fn_sig == sig_def:
+                            is_match = True
+                        elif nm in __dispatch_generic__ and sig_def in __dispatch_generic__[nm]:
+                            if len(test_fn_sig) == len(sig_def) and all(test_fn_sig[i][0] in sig_def[i] for i in range(len(test_fn_sig))):
+                                is_match = True
+                        elif nm in __dispatch_genericT__ and sig_def in __dispatch_genericT__[nm]:
+                            is_match = True
+
+                        if is_match and test_args not in candidate_args_list:
+                            candidate_args_list.append(test_args)
+            if not candidate_args_list:
+                raise TypeError(f"Invalid keyword arguments for {fn.__name__}")
+
+            for cand in candidate_args_list:
+                try:
+                    return fn_dispatch(*cand)
+                except NotImplementedError:
+                    pass
+            raise NotImplementedError(f"Function not defined for keyword signature: {fn.__name__}")
+
         sigs = ((autorename(arg),) for arg in args)
         fn_sig = tuple(sigs)
         is_resolved = (
