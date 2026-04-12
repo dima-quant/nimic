@@ -32,10 +32,14 @@ _n_templates = {}
 
 
 def template(template_func):
-    if (
+    is_untyped = (
         "return" in template_func.__annotations__
         and template_func.__annotations__["return"] == "untyped"
-    ):
+    )
+    # Also check for Nim-style {.dirty.} templates (always untyped)
+    if not is_untyped and template_func.__doc__ and "{.dirty.}" in template_func.__doc__:
+        is_untyped = True
+    if is_untyped:
         # if the function is an untyped template
         try:
             template_source = inspect.getsource(template_func)
