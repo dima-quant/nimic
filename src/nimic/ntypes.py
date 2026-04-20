@@ -36,6 +36,8 @@ from typing import Generator, TypeVar, BinaryIO
 
 from nimic.inliner import template, template_expand
 from nimic.ntypesystem import (
+    addr,
+    unsafe_addr,
     NIntEnum,
     Object,
     NTuple,
@@ -45,6 +47,7 @@ from nimic.ntypesystem import (
     converter,
     dispatch,
     distinct,
+    File,
     float16,
     float32,
     float64,
@@ -79,7 +82,6 @@ SomeFloat = float
 type BiggestInt = int
 type BiggestFloat = float
 
-File = BinaryIO
 
 byte = uint8  # Nim: byte = uint8
 
@@ -98,6 +100,19 @@ def f32(x: float) -> float32: return float32(x)
 def f64(x: float) -> float64: return float64(x)
 
 def ch(x: str) -> str: return x
+
+
+class _NewSeqHelper:
+    """Nim: newSeq[T](n) — create a seq[T] of length n."""
+    def __getitem__(self, _ntype: type):
+        def _make(n: int):
+            s = seq[_ntype]()
+            s.new_seq(n)
+            return s
+        return _make
+
+newSeq = _NewSeqHelper()
+new_seq = newSeq
 
 class NStrEnum(StrEnum):
     __members_tuple__ = None
@@ -234,19 +249,17 @@ cast = _SomeCastClass()
 def sizeof(x: type) -> int:
     return x._n_sizeof()
 
+def doAssert(cond: bool, msg: str = "") -> None:
+    """
+    Evaluates the condition. If it is false, raises an AssertionError with the provided message.
+    Corresponds to Nim's `doAssert`.
 
-def make_pointer(x: object) -> object:
-    x._n_ref_count += 1
-    return x
-
-
-def addr(x: object) -> object:
-    return make_pointer(x)
-
-
-def unsafe_addr(x: object) -> object:
-    return make_pointer(x)
-
+    Args:
+        cond (bool): The condition to evaluate.
+        msg (str): The optional error message if the condition fails.
+    """
+    if not cond:
+        raise AssertionError(msg)
 
 #  presense of comptime in "if" expression forces aot evaluation
 def comptime(x: object) -> object:
@@ -278,3 +291,38 @@ def fields(x: object, y: object | None = None) -> object:
 def countdown(a: int, b: int) -> Generator:
     for i in range(a, b - 1, -1):
         yield i
+
+
+# --- Nim system builtins ---
+
+def alloc_shared0(size):
+    """Nim: allocShared0 — allocate zero-initialized shared memory."""
+    from nimic.system.ansi_c import c_malloc
+    return c_malloc(size)
+
+def dealloc_shared(p):
+    """Nim: deallocShared — free shared memory."""
+    from nimic.system.ansi_c import c_free
+    c_free(p)
+
+allocShared0 = alloc_shared0
+deallocShared = dealloc_shared
+
+
+def write_bytes(f, data, start: int, count: int) -> int:
+    """Nim: writeBytes — write count bytes from data starting at offset start to file f.
+    Returns number of bytes written."""
+    import ctypes
+    if hasattr(data, '_n_view'):
+        # seq or array with ctypes backing
+        buf_addr = ctypes.addressof(data._n_view)
+        raw = (ctypes.c_char * (start + count)).from_address(buf_addr)
+        b = bytes(raw[start:start + count])
+    elif isinstance(data, (bytes, bytearray)):
+        b = data[start:start + count]
+    else:
+        b = bytes(int(data[i]) for i in range(start, start + count))
+    return f.buffer.write(b) if hasattr(f, 'buffer') else f.write(b)
+
+writeBytes = write_bytes
+
