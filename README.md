@@ -40,8 +40,8 @@ Re-exports all of `ntypesystem` and adds Nim keyword/builtin emulation:
 - **Compiler hints** — `const`, `let`, `var`, `block`, `export`, `alias` (no-ops in Python, scoping in Nim)
 - **Reference types** — `ref`, `ptr`, `mut@` (`@` operator returns identity)
 - **Enum utilities** — `NStrEnum` with `succ`/`pred`/`ord`/`nrange`/`low`/`high`
-- **Cast & memory** — `cast[T](x)`, `sizeof(x)`, `addr(x)`, `unsafeAddr(x)`
-- **Type aliases** — `SomeInteger`, `SomeFloat`, `untyped`, `u64`, `i64`, `f64`
+- **Cast & memory** — `cast[T](x)`, `sizeof(x)`, `addr(x)`, `unsafe_addr(x)`
+- **Type aliases** — `SomeInteger`, `SomeFloat`, `untyped`, `char`, `u64`, `i64`, `f64`
 - **Iteration** — `fields(obj)`, `fields(a, b)`, `countdown(a, b)`
 - **Compile-time** — `comptime(x)`, `defined(varname)`, `static`
 - **Templates** — `@template`, `@template_expand` (re-exported from `inliner`)
