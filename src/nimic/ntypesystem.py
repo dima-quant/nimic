@@ -755,28 +755,40 @@ class BufferRegistry:
     reference so the buffer stays alive as long as it is registered.
 
     Address → (buffer_object, size_in_bytes)
+
+    Sorting is lazy: the sorted address list is rebuilt only when
+    ``find_buffer_for_address`` is called after mutations, since
+    registrations vastly outnumber lookups in the pipeline.
     """
 
     def __init__(self):
-        # Keeps start addresses strictly sorted for O(log N) lookup
-        self._sorted_addresses: list[int] = []
         # Maps start_address → (buffer_object, size_in_bytes)
         self._buffers: dict[int, tuple[object, int]] = {}
+        # Sorted cache — rebuilt lazily on lookup when _dirty is True
+        self._sorted_addresses: list[int] = []
+        self._dirty: bool = False
 
     # -- core API --
 
     def register(self, buffer_obj) -> int:
-        """Register a ctypes buffer.  Returns its start address."""
+        """Register a ctypes buffer.  Returns its start address.  O(1)."""
         start_addr = ctypes.addressof(buffer_obj)
         size = ctypes.sizeof(buffer_obj)
         if start_addr not in self._buffers:
-            bisect.insort(self._sorted_addresses, start_addr)
-            self._buffers[start_addr] = (buffer_obj, size)
+            self._dirty = True
+        self._buffers[start_addr] = (buffer_obj, size)
         return start_addr
+
+    def _ensure_sorted(self):
+        """Rebuild the sorted address list if mutations have occurred."""
+        if self._dirty:
+            self._sorted_addresses = sorted(self._buffers.keys())
+            self._dirty = False
 
     def find_buffer_for_address(self, query_addr: int):
         """Return the buffer object whose memory range contains *query_addr*,
         or ``None`` if no registered buffer covers that address.  O(log N)."""
+        self._ensure_sorted()
         if not self._sorted_addresses:
             return None
         index = bisect.bisect_right(self._sorted_addresses, query_addr) - 1
@@ -799,11 +811,9 @@ class BufferRegistry:
         if old_addr != new_addr:
             # address moved — remove old key
             if old_addr in self._buffers:
-                self._sorted_addresses.remove(old_addr)
                 del self._buffers[old_addr]
-            if new_addr not in self._buffers:
-                bisect.insort(self._sorted_addresses, new_addr)
             self._buffers[new_addr] = (buffer_obj, new_size)
+            self._dirty = True
         else:
             # same address, just update size
             self._buffers[old_addr] = (buffer_obj, new_size)
@@ -823,8 +833,8 @@ class BufferRegistry:
             except TypeError:
                 return False
         if addr in self._buffers:
-            self._sorted_addresses.remove(addr)
             del self._buffers[addr]
+            self._dirty = True
             return True
         return False
 
@@ -847,7 +857,7 @@ class BufferRegistry:
 BUFFER_REGISTRY = BufferRegistry()
 
 class Ntype:
-    _n_view: object = None  # ctypes buffer or value
+    _n_view: object = None  # ctypes view of the memory
     _n_type: type  # type of the value
 
     def __init__(self) -> None:
@@ -856,17 +866,17 @@ class Ntype:
 
     @classmethod
     def _n_on_struct(cls, buffer: object, name: str, value: object) -> Ntype:
-        pass
+        raise NotImplementedError
 
     @classmethod
     def _n_on_array(cls, buffer: object, name: str, value: object) -> Ntype:
-        pass
+        raise NotImplementedError
 
     def _n_get_value(self) -> object:
-        pass
+        raise NotImplementedError
 
     def _n_set_value(self, value: object) -> None:
-        pass
+        raise NotImplementedError
 
 
 
@@ -927,6 +937,12 @@ class NBool:
             self._value = value._value
         else:
             self._value = bool(value)
+
+    def __int__(self):
+        return int(self._value)
+
+    def __float__(self):
+        return float(self._value)
 
     def __bool__(self):
         return self._value
@@ -1094,16 +1110,51 @@ class _Object(Ntype):
             return obj
         return instance
 
+    @classmethod
+    def cast(cls, instance):
+        """Cast generic memory/object to this Object type."""
+        if isinstance(instance, NilPtr) or instance is None:
+            return NilPtr(cls.__name__)
+        if isinstance(instance, pointer):
+            if instance._n_addr == 0:
+                return NilPtr(cls.__name__)
+            address = instance._n_addr
+        elif isinstance(instance, ByteAddress):
+            address = _resolve_addr(instance)
+            if address == 0:
+                return NilPtr(cls.__name__)
+        elif hasattr(instance, '_n_view') and getattr(instance, '_n_view') is not None:
+            address = ctypes.addressof(instance._n_view)
+        else:
+            address = ctypes.addressof(instance)
+
+        class_name = cls.__name__
+        if class_name in DICT_OF_C_TYPES:
+            c_type = DICT_OF_C_TYPES[class_name]
+            c_instance = c_type.from_address(address)
+            obj = cls.__new__(cls)
+            obj._n_view = c_instance
+            if hasattr(instance, '_n_buffer'):
+                obj._n_buffer = instance._n_buffer
+            obj._n_annotations = cls.__annotations__
+            obj._n_fields = list(cls.__annotations__.keys())
+            obj._n_setup(None)
+            return obj
+        return instance
+
     def __init__(self, _n_value: Object | None = None, **kwargs: object) -> None:
         """_n_value is an instance of Object or an object with the same structure or None"""
         python_fields = getattr(self.__class__, '_n_python_fields', set())
         field_types = getattr(self.__class__, '_n_field_types', {})
         _seq = DICT_OF_TYPES.get("seq")
-        # Initialize seq fields (Python-side)
+        # Initialize python-side fields (seq and Object subclasses without ctypes backing)
         for name in python_fields:
             fc = field_types.get(name)
-            if fc is not None and isinstance(fc, type) and _seq and issubclass(fc, _seq):
-                setattr(self, name, fc())
+            if fc is not None and isinstance(fc, type):
+                if _seq and issubclass(fc, _seq):
+                    setattr(self, name, fc())
+                elif issubclass(fc, _Object):
+                    setattr(self, name, fc())
         _has_c_type = type(self).__name__ in DICT_OF_C_TYPES
         if kwargs:
             for attribute in kwargs:
@@ -1122,6 +1173,11 @@ class _Object(Ntype):
                 self._n_owned_addr = BUFFER_REGISTRY.register(_buf)
                 self._n_view = _buf
             self._n_setup(value)
+        else:
+            # No ctypes backing — still need _n_fields for attribute access
+            if not kwargs:
+                self._n_fields = list(self.__annotations__)
+                self._n_annotations = self.__annotations__
 
     @classmethod
     def _n_on_array(
@@ -1254,8 +1310,8 @@ class _Object(Ntype):
         """Initialize or update object fields.
 
         Three paths:
-          A. Ctypes-backed fields with _n_on_struct (scalars, arrays, Object structs, NBool)
-          B. UncheckedArray trailing fields (offset-based)
+          A. UncheckedArray trailing fields (offset-based)
+          B. Ctypes-backed fields with _n_on_struct (scalars, arrays, Object structs, NBool)
           C. Python-side fields (pointers, seq, calltypes, etc.)
         """
         python_fields = getattr(self.__class__, '_n_python_fields', set())
@@ -1270,16 +1326,7 @@ class _Object(Ntype):
                 field_cls = DICT_OF_TYPES.get(type_name)
             is_class = field_cls is not None and isinstance(field_cls, type)
 
-            # A. Ctypes-backed fields with _n_on_struct
-            if name not in python_fields and hasattr(field_cls, '_n_on_struct'):
-                val = getattr(other, name, None) if other else None
-                if val is not None:
-                    setattr(self, name, field_cls._n_on_struct(self._n_view, name, val))
-                else:
-                    setattr(self, name, field_cls._n_on_struct(self._n_view, name))
-                continue
-
-            # B. UncheckedArray trailing fields
+            # A. UncheckedArray trailing fields
             if is_class and _ua and issubclass(field_cls, _ua):
                 if hasattr(self, '_n_view') and self._n_view is not None:
                     try:
@@ -1293,6 +1340,15 @@ class _Object(Ntype):
                     setattr(self, name, arr_ptr)
                 else:
                     setattr(self, name, NilPtr(self._n_annotations.get(name, '')))
+                continue
+
+            # B. Ctypes-backed fields with _n_on_struct
+            if name not in python_fields and hasattr(field_cls, '_n_on_struct'):
+                val = getattr(other, name, None) if other else None
+                if val is not None:
+                    setattr(self, name, field_cls._n_on_struct(self._n_view, name, val))
+                else:
+                    setattr(self, name, field_cls._n_on_struct(self._n_view, name))
                 continue
 
             # C. Python-side fields (pointers→NilPtr, calltypes→None, seq→already init'd, etc.)
@@ -1409,6 +1465,7 @@ class _Object(Ntype):
             _annotations = cls._n_resolve_variant(dict_of_types, dict_of_c_types)
         else:
             _annotations = cls.__annotations__
+        dict_of_types[class_name] = cls  # add to dict for resolver
         # resolve types. Generic types, such as ptr[UncheckedArray[T]], should be specialized first
         # TODO: for variants it only resolves the largest variant, need to resolve all variants
         cls._n_field_types = {key: _n_registry.get_or_eval_type(_type_name, caller_globals)
@@ -1510,6 +1567,7 @@ class NTuple(_Object):
 
 class UncheckedArray(Ntype):
     def __init__(self, data_ptr: ctypes.c_void_p=None) -> None:
+        # data_ptr can be a ctypes array (e.g. c_int_Array_1) or a pointer to a structure
         self._n_view = data_ptr
         self._n_cache = {}
 
@@ -1559,9 +1617,8 @@ class UncheckedArray(Ntype):
             c_elem_type = DICT_OF_C_TYPES[type_name]
             ptr_c_type = ctypes.POINTER(c_elem_type)
             data_ptr = ctypes.c_void_p(address)
-            c_data = ctypes.cast(data_ptr, ptr_c_type)
-            arr = cls(c_data)
-            pass  # registry keeps the buffer alive
+            c_data_ptr = ctypes.cast(data_ptr, ptr_c_type)
+            arr = cls(c_data_ptr)
             return arr # addr(arr)
         else:
             raise Exception("Type not specified")
@@ -1632,14 +1689,24 @@ class array(Ntype):
         if self._n_view is None:
             self._n_cache[index] = value
             return
-        if hasattr(value, '_n_get_value'):
-            val = value._n_get_value()
+        if hasattr(value, '_n_addr'):
+            val = value._n_addr
+        elif hasattr(value, '_n_get_value'):
+            try:
+                val = value._n_get_value()
+            except NotImplementedError:
+                val = value
         else:
             val = value
+
+        self._n_view[index] = val
+
         if index not in self._n_cache:
-            self._n_cache[index] = self._n_type._n_on_array(self._n_view, index, val)
-        else:
+            self._n_cache[index] = self._n_type._n_on_array(self._n_view, index)
+        elif hasattr(self._n_cache[index], '_n_set_value'):
             self._n_cache[index]._n_set_value(val)
+        elif hasattr(self._n_cache[index], '__ilshift__'):
+            self._n_cache[index] <<= value
 
     def __class_getitem__(cls, params) -> type:
         """array[N, T] → fixed-size array type."""
@@ -1776,6 +1843,16 @@ class seq(Ntype):
         )
         self.len += 1
 
+    @property
+    def len(self) -> int:
+        if getattr(self, '_n_is_list', False):
+            return len(self._n_list)
+        return getattr(self, '_n_len', 0)
+
+    @len.setter
+    def len(self, value: int):
+        self._n_len = value
+
     def set_len(self, new_len: int) -> None:
         """Set logical length, resizing buffer if needed."""
         if new_len > self._n_reserved:
@@ -1816,18 +1893,22 @@ class seq(Ntype):
     @property
     def items(self):
         """Yield immutable copies of elements (Nim's items)."""
-        for i in range(self.len):
-            yield self[i].copy()
+        for i in range(len(self)):
+            val = self[i]
+            yield val.copy() if hasattr(val, 'copy') else val
 
     @property
     def mitems(self):
         """Yield mutable ctypes-backed views of elements (Nim's mitems)."""
-        for i in range(self.len):
+        for i in range(len(self)):
             yield self[i]
 
     def __iter__(self):
-        # return enumerator of items
-        return self.items
+        # We yield (index, item) so that transpiled loops like `for i, x in myseq:`
+        # can unpack correctly natively, though it will break `for x in myseq:`
+        for i in range(len(self)):
+            val = self[i]
+            yield (i, val.copy() if hasattr(val, 'copy') else val)
 
     @classmethod
     def _n_register_type(cls, class_name: str | None = None) -> None:
@@ -1865,7 +1946,15 @@ class openArray(Ntype):
         return self._n_view[index]
 
     def __setitem__(self, index, value):
-        self._n_view[index] = value
+        if hasattr(value, '_n_addr'):
+            self._n_view[index] = value._n_addr
+        elif hasattr(value, '_n_get_value'):
+            try:
+                self._n_view[index] = value._n_get_value()
+            except NotImplementedError:
+                self._n_view[index] = value
+        else:
+            self._n_view[index] = value
 
     def __len__(self):
         if hasattr(self._n_view, '__len__'):
@@ -1914,6 +2003,8 @@ class File:
         return self._handle.seek(pos, *args)
 
     def write(self, data):
+        if isinstance(data, char):
+            return self._handle.write(bytes(data))
         if isinstance(data, str) and hasattr(self._handle, 'mode') and 'b' in self._handle.mode:
             data = data.encode('utf-8')
         return self._handle.write(data)
@@ -2024,18 +2115,37 @@ class pointer(Ntype):
 
     @contents.setter
     def contents(self, value):
-        if value is None or isinstance(value, NilPtr):
-            self._n_addr = 0
-            self._n_contents_cache = None
-        elif isinstance(value, int):
-            self._n_addr = value
-            self._n_contents_cache = None
-        elif hasattr(value, '_n_view') and value._n_view is not None:
-            self._n_addr = ctypes.addressof(value._n_view)
-            self._n_contents_cache = value
-        else:
-            self._n_addr = 0
-            self._n_contents_cache = value
+        if self._n_addr != 0:
+            ct = type(self)._n_contents_type
+            if ct is not None and hasattr(ct, '__name__'):
+                type_name = ct.__name__
+                if type_name not in DICT_OF_C_TYPES and hasattr(ct, '_n_register_type'):
+                    try:
+                        ct._n_register_type()
+                    except Exception:
+                        pass
+                if type_name in DICT_OF_C_TYPES:
+                    c_elem_type = DICT_OF_C_TYPES[type_name]
+                    ptr_c_type = ctypes.POINTER(c_elem_type)
+                    c_data = ctypes.cast(ctypes.c_void_p(self._n_addr), ptr_c_type)
+
+                    if value is None or isinstance(value, NilPtr):
+                        c_data[0] = getattr(c_elem_type, '_type_', ctypes.c_void_p)(0) if issubclass(c_elem_type, ctypes._SimpleCData) else 0 # Just a safe default
+                    elif isinstance(value, pointer):
+                        c_data[0] = value._n_addr
+                    elif isinstance(value, ByteAddress):
+                        c_data[0] = value._n_get_addr_val()
+                    elif hasattr(value, '_n_get_value'):
+                        c_data[0] = value._n_get_value()
+                    elif hasattr(value, '_n_view') and value._n_view is not None:
+                        c_data[0] = ctypes.addressof(value._n_view)
+                    else:
+                        c_data[0] = value
+                    self._n_contents_cache = value
+                    return
+
+        # Fallback for addr=0 or non C mapped
+        self._n_contents_cache = value
 
     # --- properties ---
 
@@ -2046,8 +2156,15 @@ class pointer(Ntype):
     @property
     def _n_view(self):
         """Backward-compat: return the contents' _n_view (triggers materialization)."""
+        raise NotImplementedError
         c = self.contents
         return getattr(c, '_n_view', None) if c is not None else None
+
+    def copy(self):
+        result = type(self)()
+        result._n_addr = self._n_addr
+        result._n_contents_cache = self._n_contents_cache
+        return result
 
     # --- cast (address-only, no eager _n_ptr_cast) ---
 
@@ -2081,6 +2198,13 @@ class pointer(Ntype):
             result._n_token_id = instance._id
             return result
         else:
+            try:
+                addr = _resolve_addr(instance)
+                if addr != 0:
+                    result._n_addr = addr
+                    return result
+            except Exception:
+                pass
             raise TypeError(f"Cannot cast {type(instance)} to pointer")
 
     # --- struct / array embedding ---
@@ -2092,6 +2216,10 @@ class pointer(Ntype):
         self._n_contents_cache = None
         raw = getattr(parent_view, field_name, 0)
         self._n_addr = int(raw) if raw else 0
+        try:
+            self._n_slot_addr = ctypes.addressof(parent_view) + getattr(type(parent_view), field_name).offset
+        except (AttributeError, TypeError):
+            self._n_slot_addr = 0
         if value is not None:
             self.contents = value
         return self
@@ -2103,6 +2231,10 @@ class pointer(Ntype):
         self._n_contents_cache = None
         raw = parent_elems[index]
         self._n_addr = int(raw) if raw else 0
+        try:
+            self._n_slot_addr = ctypes.addressof(parent_elems) + index * ctypes.sizeof(parent_elems._type_)
+        except (AttributeError, TypeError):
+            self._n_slot_addr = 0
         if value is not None:
             self.contents = value
         return self
@@ -2147,8 +2279,21 @@ class pointer(Ntype):
         return self
 
     @classmethod
+    def _n_ptr_cast(cls, instance):
+        if hasattr(instance, '_n_addr') and instance._n_addr != 0:
+            addr = ctypes.cast(ctypes.c_void_p(instance._n_addr), ctypes.POINTER(ctypes.c_void_p))[0]
+            if addr is None:
+                addr = 0
+            p = cls.__new__(cls)
+            p._n_addr = addr
+            p._n_contents_cache = None
+            return p
+        raise ValueError("Cannot read pointer contents from nil pointer")
+
+    @classmethod
     def _n_register_type(cls) -> None:
         DICT_OF_TYPES[cls.__name__] = cls
+        DICT_OF_C_TYPES[cls.__name__] = ctypes.c_void_p
 
 
 def _resolve_addr(instance) -> int:
@@ -2169,11 +2314,18 @@ def _resolve_addr(instance) -> int:
 
 def make_pointer(x: object) -> pointer:
     """Create a pointer-like object referencing x's memory."""
+    if hasattr(x, '_n_slot_addr') and x._n_slot_addr != 0:
+        p = ptr[type(x)]()
+        p._n_addr = x._n_slot_addr
+        return p
+    if hasattr(x, '_n_addr') and x._n_addr != 0:
+        p = ptr[type(x)]()
+        p._n_addr = x._n_addr
+        return p
     if hasattr(x, '_n_view') and x._n_view is not None:
         p = ptr[type(x)](x)
-    else:
-        raise ValueError(f"Cannot make pointer from {type(x)}")
-    return p
+        return p
+    raise ValueError(f"Cannot make pointer from {type(x)}")
 
 
 def addr(obj: object) -> pointer:
@@ -2243,6 +2395,42 @@ class ByteAddress(Ntype):
         elif hasattr(other, '__int__'):
             return self.__add__(-int(other))
         return 0
+
+    def _n_get_addr_val(self):
+        return ctypes.addressof(self._n_view) if self._n_view is not None else 0
+
+    def __int__(self):
+        return self._n_get_addr_val()
+
+    def __eq__(self, other):
+        if isinstance(other, ByteAddress):
+            return self._n_get_addr_val() == other._n_get_addr_val()
+        if hasattr(other, '__int__'):
+            return self._n_get_addr_val() == int(other)
+        return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __lt__(self, other):
+        if isinstance(other, ByteAddress):
+            return self._n_get_addr_val() < other._n_get_addr_val()
+        return self._n_get_addr_val() < int(other)
+
+    def __le__(self, other):
+        if isinstance(other, ByteAddress):
+            return self._n_get_addr_val() <= other._n_get_addr_val()
+        return self._n_get_addr_val() <= int(other)
+
+    def __gt__(self, other):
+        if isinstance(other, ByteAddress):
+            return self._n_get_addr_val() > other._n_get_addr_val()
+        return self._n_get_addr_val() > int(other)
+
+    def __ge__(self, other):
+        if isinstance(other, ByteAddress):
+            return self._n_get_addr_val() >= other._n_get_addr_val()
+        return self._n_get_addr_val() >= int(other)
 
     def __ilshift__(self, value):
         if isinstance(value, ByteAddress):
@@ -2359,7 +2547,7 @@ class NScalar:
         addr_val = get_addr()
         if addr_val is not None:
             c_type = DICT_OF_C_TYPES[self._n_type.__name__]
-            self._n_view = ctypes.POINTER(c_type).from_address(addr_val)
+            self._n_view = c_type.from_address(addr_val)
         else:
             self._n_view = None
 
@@ -2392,7 +2580,7 @@ class NScalar:
             set_value=lambda _value: parent_elems.__setitem__(
                 id, _value._n_get_value() if isinstance(_value, NScalar) else _value
             ),
-            get_addr=lambda: ctypes.addressof(parent_elems) + offset,
+            get_addr=lambda: (ctypes.addressof(parent_elems.contents) if hasattr(parent_elems, 'contents') else ctypes.addressof(parent_elems)) + offset,
         )
         if value is not None:
             self._n_set_value(value)
@@ -2474,7 +2662,10 @@ class NScalar:
 
     def __ilshift__(self, other: NScalar) -> NScalar:
         """assignment"""
-        self._n_set_value(other._n_get_value())
+        if isinstance(other, NScalar):
+            self._n_set_value(other._n_get_value())
+        else:
+            self._n_set_value(other)
         return self
 
     def copy(self) -> NScalar:
@@ -3000,12 +3191,70 @@ def new_string(length: int) -> cstring:
 # --- String Type ---
 
 
+class char(str):
+    """Nim-compatible char type — a single byte character.
+
+    Construction:
+        char(65)        — from int ordinal (Nim's chr())
+        char('A')       — from single-character string
+        char('A', addr) — from string indexing with backing address
+    """
+    def __new__(cls, value=0, addr: int = 0):
+        if isinstance(value, int):
+            # chr(65) → char from ordinal
+            byte_val = value & 0xFF
+            obj = super().__new__(cls, struct.pack('B', byte_val).decode('latin-1'))
+            obj._n_byte = byte_val
+        else:
+            # char('A') or char('A', addr)
+            ch = value[:1] if value else '\x00'
+            obj = super().__new__(cls, ch)
+            obj._n_byte = ord(ch)
+        obj._n_addr = addr
+        return obj
+
+    def __int__(self):
+        return self._n_byte
+
+    def __index__(self):
+        return self._n_byte
+
+    def __bytes__(self):
+        """Single-byte representation for binary file writing."""
+        return bytes([self._n_byte])
+
+    @classmethod
+    def _n_register_type(cls):
+        DICT_OF_TYPES[cls.__name__] = cls
+        DICT_OF_C_TYPES[cls.__name__] = ctypes.c_char
+
 class string(str):
+    """Nim-compatible string with C-buffer backing to support addr()."""
+    def __new__(cls, bs: bytes | str = ""):
+        if isinstance(bs, str):
+            bs = bs.encode('utf-8', errors='replace')
+        obj = super().__new__(cls, bs.decode('utf-8', errors='replace'))
+        obj._n_view = (ctypes.c_char * len(bs)).from_buffer_copy(bs)
+        if len(bs) > 0:
+            BUFFER_REGISTRY.register(obj._n_view)
+        return obj
+
+    def __len__(self):
+        return len(self._n_view) if hasattr(self, '_n_view') and self._n_view is not None else super().__len__()
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return super().__getitem__(index)
+        val = super().__getitem__(index)
+        if hasattr(self, '_n_view') and self._n_view is not None:
+            return char(val, ctypes.addressof(self._n_view) + index)
+        return val
+
     def __and__(self, other):
-        return self + other
+        return string(str(self) + str(other))
 
     def _substitute(self, **kwargs):
-        return Template(self).substitute(**kwargs)
+        return string(Template(self).substitute(**kwargs))
 
     def __mod__(self, itr):
         set_key = True
@@ -3053,7 +3302,7 @@ def get_c_char(w: bool = False) -> ctypes.c_char | ctypes.c_wchar:
 def get_c_char_p(w: bool = False) -> ctypes.c_char_p | ctypes.c_wchar_p:
     return ctypes.c_wchar_p if w else ctypes.c_char_p
 
-
+c_char = get_c_char()
 c_char_p = get_c_char_p()
 
 
@@ -3071,9 +3320,12 @@ DICT_OF_C_TYPES.update(
         "uint32": ctypes.c_uint,
         "uint64": ctypes.c_ulong,
         "bool": ctypes.c_bool,
+        "nbool": ctypes.c_bool,
+        "NBool": ctypes.c_bool,
         "byte": ctypes.c_uint8,
         "cstring": c_char_p,
         "string": c_char_p,
+        "char": c_char,
         "pointer": ctypes.c_void_p,
     }
 )
@@ -3094,7 +3346,7 @@ __native_types__ = {
     "uint32": uint32,
     "uint64": uint64,
     "string": string,
-    "string": string,
+    "char": char,
     "cstring": cstring,
     "pointer": pointer,
     "array": array,
