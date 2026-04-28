@@ -15,6 +15,7 @@ Formatting:
   rule:quote -> replace quotes to double quotes
   rule:slice -> slice [a:], [a:b] -> [a..^1], [a..<b]
   rule:discard -> assign to "_" is replaced by "discard"
+  rule:pass -> replace "pass" by "discard"
 
 Scope qualifiers:
   rule:dropwith -> drop "with" for "const", "let", "var", "export", "block"
@@ -1130,7 +1131,8 @@ class _Unparser(NodeVisitor):
             target_name = node.target.id
             if (not self._context_stack or self._context_stack[-1] != "tuple") and target_name != "result":
                 is_module_level = (self._scope_depth == 0)
-                in_declaration = any(x in self._context_stack for x in ("var", "let", "const"))
+                in_declaration = True
+                # class def or any(x in self._context_stack for x in ("var", "let", "const"))
                 # rule:localname
                 node.target.id = self._adjust_name(target_name, definition=(is_module_level and in_declaration))
         with self.delimit_if("(", ")", not node.simple and isinstance(node.target, Name)):
@@ -1154,6 +1156,7 @@ class _Unparser(NodeVisitor):
             self.traverse(node.value)
 
     def visit_Pass(self, node):
+        # rule:pass
         self.fill("discard")
 
     def visit_Break(self, node):
@@ -2112,10 +2115,10 @@ class _Unparser(NodeVisitor):
             # rule:char
             val = node.args[0].value
             if val.isascii():
-                self.write(f"'{val}'") 
+                self.write(f"'{val}'")
             else:
                 st = val.encode("Latin-1").hex()
-                self.write(f"'\\x{st}'") 
+                self.write(f"'\\x{st}'")
         elif isinstance(node.func, Attribute) and node.func.attr in self._attribute_replace and not node.args:
             # rule:deref and rule:copy
             self.traverse(node.func.value)
