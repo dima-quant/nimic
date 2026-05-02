@@ -2147,7 +2147,7 @@ class pointer(Ntype):
                         _value = value._n_get_value()
                         self._n_contents_cache = ct._n_on_array(c_data, 0, _value)
                     else:
-                        raise NotImplementedError(f"Cannot set contents of pointer to type {ct}")    
+                        raise NotImplementedError(f"Cannot set contents of pointer to type {ct}")
                     return
 
         # Fallback for addr=0 or non C mapped
@@ -2224,7 +2224,7 @@ class pointer(Ntype):
             self._n_set_value(value._n_get_value() if hasattr(value, '_n_get_value') else int(value))
         else:
             raw = getattr(parent_view, field_name, 0)
-            self._n_addr = int(raw) if raw else 0  
+            self._n_addr = int(raw) if raw else 0
         return self
 
     @classmethod
@@ -2244,7 +2244,7 @@ class pointer(Ntype):
             self._n_set_value(value._n_get_value() if hasattr(value, '_n_get_value') else int(value))
         else:
             raw = parent_elems[index]
-            self._n_addr = int(raw) if raw else 0    
+            self._n_addr = int(raw) if raw else 0
         return self
 
     # --- operators ---
