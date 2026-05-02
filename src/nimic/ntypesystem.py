@@ -2132,17 +2132,21 @@ class pointer(Ntype):
 
                     if value is None or isinstance(value, NilPtr):
                         c_data[0] = getattr(c_elem_type, '_type_', ctypes.c_void_p)(0) if issubclass(c_elem_type, ctypes._SimpleCData) else 0 # Just a safe default
-                    elif isinstance(value, pointer):
-                        c_data[0] = value._n_addr
-                    elif isinstance(value, ByteAddress):
-                        c_data[0] = value._n_get_addr_val()
-                    elif hasattr(value, '_n_get_value'):
-                        c_data[0] = value._n_get_value()
-                    elif hasattr(value, '_n_view') and value._n_view is not None:
-                        c_data[0] = ctypes.addressof(value._n_view)
+                        self._n_contents_cache = None
+                    elif hasattr(ct, '_n_on_array'):
+                        self._n_contents_cache = ct._n_on_array(c_data, 0, value)
                     else:
-                        c_data[0] = value
-                    self._n_contents_cache = value
+                        if isinstance(value, pointer):
+                            c_data[0] = value._n_addr
+                        elif isinstance(value, ByteAddress):
+                            c_data[0] = value._n_get_addr_val()
+                        elif hasattr(value, '_n_get_value'):
+                            c_data[0] = value._n_get_value()
+                        elif hasattr(value, '_n_view') and value._n_view is not None:
+                            c_data[0] = ctypes.addressof(value._n_view)
+                        else:
+                            c_data[0] = value
+                        self._n_contents_cache = value
                     return
 
         # Fallback for addr=0 or non C mapped
@@ -2222,7 +2226,7 @@ class pointer(Ntype):
         except (AttributeError, TypeError):
             self._n_slot_addr = 0
         if value is not None:
-            self.contents = value
+            self.__ilshift__(value)
         return self
 
     @classmethod
@@ -2233,11 +2237,12 @@ class pointer(Ntype):
         raw = parent_elems[index]
         self._n_addr = int(raw) if raw else 0
         try:
-            self._n_slot_addr = ctypes.addressof(parent_elems) + index * ctypes.sizeof(parent_elems._type_)
-        except (AttributeError, TypeError):
+            base_addr = ctypes.addressof(parent_elems.contents) if hasattr(parent_elems, 'contents') else ctypes.addressof(parent_elems)
+            self._n_slot_addr = base_addr + index * ctypes.sizeof(parent_elems._type_)
+        except (AttributeError, TypeError, ValueError):
             self._n_slot_addr = 0
         if value is not None:
-            self.contents = value
+            self.__ilshift__(value)
         return self
 
     # --- operators ---
@@ -2277,6 +2282,11 @@ class pointer(Ntype):
         else:
             self._n_addr = 0
             self._n_contents_cache = value
+
+        if getattr(self, '_n_slot_addr', 0) != 0:
+            c_ptr = ctypes.cast(ctypes.c_void_p(self._n_slot_addr), ctypes.POINTER(ctypes.c_void_p))
+            c_ptr[0] = self._n_addr
+
         return self
 
     @classmethod
