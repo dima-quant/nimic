@@ -10,6 +10,7 @@ Architecture (layers from low-level to high-level):
   Memory layer (ctypes-backed)
     Ntype              — base class wrapping a ctypes buffer + view for value semantics
     NTypeRegistry      — unified registry (types, c_types, variants, max_variants)
+    BufferRegistry     — registry of ctypes buffers (shared memory).
 
   Scalar numerics (NScalar → NInteger / NFloat)
     Fixed-width integers: int8..int64, uint8..uint64, nint
@@ -132,7 +133,7 @@ _n_generic_types = {
 
 # for now map Python types to native types
 # should map from alias directly to native type
-_n_aliases = {"float": "float64", "int": "int32", "str": "string",
+_n_aliases = {"float": "float64", "int": "int32", "str": "string", "NBool": "bool",
               "static[bool]": "bool", "static[int]": "int32",
               "static[float]": "float64", "static[str]": "string"}
 
@@ -1603,7 +1604,6 @@ class UncheckedArray(Ntype):
 
     @classmethod
     def _n_ptr_cast(cls, instance) -> Ntype:
-        import ctypes
         if isinstance(instance, pointer):
             address = instance._n_addr
         elif isinstance(instance, ByteAddress):
@@ -2124,6 +2124,7 @@ class pointer(Ntype):
                         ct._n_register_type()
                     except Exception:
                         pass
+                # set the value backing to the contents's backing buffer, replace by cast?
                 if type_name in DICT_OF_C_TYPES:
                     c_elem_type = DICT_OF_C_TYPES[type_name]
                     ptr_c_type = ctypes.POINTER(c_elem_type)
@@ -2312,30 +2313,23 @@ def _resolve_addr(instance) -> int:
     except TypeError:
         return 0
 
-def make_pointer(x: object) -> pointer:
-    """Create a pointer-like object referencing x's memory."""
+
+def addr(x: object) -> pointer:
+    """For a variable of type T, addr(x) returns a pointer of type ptr[T],
+    such that addr(x).contents is x"""
     if hasattr(x, '_n_slot_addr') and x._n_slot_addr != 0:
         p = ptr[type(x)]()
         p._n_addr = x._n_slot_addr
         return p
-    if hasattr(x, '_n_addr') and x._n_addr != 0:
-        p = ptr[type(x)]()
-        p._n_addr = x._n_addr
-        return p
+
     if hasattr(x, '_n_view') and x._n_view is not None:
         p = ptr[type(x)](x)
         return p
     raise ValueError(f"Cannot make pointer from {type(x)}")
 
 
-def addr(obj: object) -> pointer:
-    """For a variable of type T, addr(x) returns a pointer of type ptr[T],
-    such that addr(x).contents is x"""
-    return make_pointer(obj)
-
-
 def unsafe_addr(obj: object) -> pointer:
-    return make_pointer(obj)
+    return addr(obj)
 
 
 class ByteAddress(Ntype):
@@ -2573,6 +2567,8 @@ class NScalar:
         cls, parent_elems: object, id: int, value: NScalar | None = None
     ) -> NScalar:
         """Array-embedded: reads/writes via ctypes array indexing on `parent_elems` at index `id`."""
+        # parent_elems is expected to be a ctypes array (e.g. from seq[int32]) or a pointer (to array),
+        # e.g. from UncheckedArray
         self = cls.__new__(cls)
         offset = id * cls._n_sizeof()
         self._n_bind(
@@ -2617,7 +2613,6 @@ class NScalar:
 
     @classmethod
     def _n_ptr_cast(cls, value) -> NScalar:
-        import ctypes
         if isinstance(value, pointer):
             address = value._n_addr
         elif isinstance(value, ByteAddress):
@@ -2631,7 +2626,7 @@ class NScalar:
         c_instance = c_type.from_address(address)
 
         self = cls.__new__(cls)
-        pass  # registry keeps original pointer's buffer alive
+        # registry keeps original pointer's buffer alive
         self._n_bind(
             get_value=lambda: c_instance.value,
             set_value=lambda _val: setattr(c_instance, 'value', getattr(_val, 'value', _val) if hasattr(_val, '_n_get_value') else _val),
@@ -3210,7 +3205,7 @@ class char(str):
             ch = value[:1] if value else '\x00'
             obj = super().__new__(cls, ch)
             obj._n_byte = ord(ch)
-        obj._n_addr = addr
+        obj._n_slot_addr = addr
         return obj
 
     def __int__(self):
