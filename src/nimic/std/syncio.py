@@ -4,6 +4,7 @@ Provides Python equivalents of Nim's File I/O: read_file, write_file,
 write_buffer, set_file_pos, open (with Nim file modes from std/os).
 """
 from __future__ import annotations
+import ctypes
 import os
 
 
@@ -31,11 +32,9 @@ def write_buffer(f, buffer, size: int) -> int:
     """Write `size` bytes from `buffer` to file `f`.
     Returns number of bytes written."""
     if hasattr(buffer, '_n_addr'):
-        import ctypes
         addr = buffer._n_addr
         data = bytes((ctypes.c_char * int(size)).from_address(addr))
     elif hasattr(buffer, '_n_view') or hasattr(buffer, 'contents'):
-        import ctypes
         v = getattr(buffer, 'contents', buffer)
         v = getattr(v, '_n_view', v)
         if isinstance(v, int):

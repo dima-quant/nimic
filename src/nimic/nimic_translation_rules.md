@@ -120,7 +120,7 @@ Memory primitives are strongly enforced to mirror Nim.
 Because the transpiler is sensitive to Python's internal logic versus Nim's system macros, specific mappings apply:
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
-| `bool`, `int` | `nbool`, `nint` |
+| `bool`, `int` | `bool`, `nint` |
 | `string` | `string` | `string` should be used instead of Python's `str` |
 | `str1 / str2` (Paths) | `string(str1) / str2` | |
 | `str1 & str2` | `str1 + str2` | String concatenation |
