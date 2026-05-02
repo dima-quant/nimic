@@ -2098,6 +2098,16 @@ class pointer(Ntype):
             self._n_addr = 0
             self._n_contents_cache = x
 
+    def _n_get_value(self):
+        """A pointer's value is the address it holds."""
+        return self._n_view[0] if self._n_view else self._n_addr
+
+    def _n_set_value(self, address: int):
+        """Set the address the pointer points to. Address must be an int."""
+        self._n_addr = address
+        if self._n_view is not None:
+            self._n_view[0] = address
+
     # --- lazy contents ---
 
     @property
@@ -2134,19 +2144,10 @@ class pointer(Ntype):
                         c_data[0] = getattr(c_elem_type, '_type_', ctypes.c_void_p)(0) if issubclass(c_elem_type, ctypes._SimpleCData) else 0 # Just a safe default
                         self._n_contents_cache = None
                     elif hasattr(ct, '_n_on_array'):
-                        self._n_contents_cache = ct._n_on_array(c_data, 0, value)
+                        _value = value._n_get_value()
+                        self._n_contents_cache = ct._n_on_array(c_data, 0, _value)
                     else:
-                        if isinstance(value, pointer):
-                            c_data[0] = value._n_addr
-                        elif isinstance(value, ByteAddress):
-                            c_data[0] = value._n_get_addr_val()
-                        elif hasattr(value, '_n_get_value'):
-                            c_data[0] = value._n_get_value()
-                        elif hasattr(value, '_n_view') and value._n_view is not None:
-                            c_data[0] = ctypes.addressof(value._n_view)
-                        else:
-                            c_data[0] = value
-                        self._n_contents_cache = value
+                        raise NotImplementedError(f"Cannot set contents of pointer to type {ct}")    
                     return
 
         # Fallback for addr=0 or non C mapped
@@ -2157,13 +2158,6 @@ class pointer(Ntype):
     @property
     def is_nil(self) -> bool:
         return self._n_addr == 0 and self._n_contents_cache is None
-
-    @property
-    def _n_view(self):
-        """Backward-compat: return the contents' _n_view (triggers materialization)."""
-        raise NotImplementedError
-        c = self.contents
-        return getattr(c, '_n_view', None) if c is not None else None
 
     def copy(self):
         result = type(self)()
@@ -2219,30 +2213,38 @@ class pointer(Ntype):
         """Struct-embedded pointer: reads address from parent's c_void_p field."""
         self = cls.__new__(cls)
         self._n_contents_cache = None
-        raw = getattr(parent_view, field_name, 0)
-        self._n_addr = int(raw) if raw else 0
         try:
             self._n_slot_addr = ctypes.addressof(parent_view) + getattr(type(parent_view), field_name).offset
+            c_ptr = ctypes.cast(ctypes.c_void_p(self._n_slot_addr), ctypes.POINTER(ctypes.c_void_p))
+            self._n_view = c_ptr
         except (AttributeError, TypeError):
             self._n_slot_addr = 0
+            self._n_view = None
         if value is not None:
-            self.__ilshift__(value)
+            self._n_set_value(value._n_get_value() if hasattr(value, '_n_get_value') else int(value))
+        else:
+            raw = getattr(parent_view, field_name, 0)
+            self._n_addr = int(raw) if raw else 0  
         return self
 
     @classmethod
-    def _n_on_array(cls, parent_elems, index, value=None):
+    def _n_on_array(cls, parent_elems, index, value: int=None):
         """Array-embedded pointer: reads address from parent's ctypes array slot."""
         self = cls.__new__(cls)
         self._n_contents_cache = None
-        raw = parent_elems[index]
-        self._n_addr = int(raw) if raw else 0
         try:
             base_addr = ctypes.addressof(parent_elems.contents) if hasattr(parent_elems, 'contents') else ctypes.addressof(parent_elems)
             self._n_slot_addr = base_addr + index * ctypes.sizeof(parent_elems._type_)
+            c_ptr = ctypes.cast(ctypes.c_void_p(self._n_slot_addr), ctypes.POINTER(ctypes.c_void_p))
+            self._n_view = c_ptr
         except (AttributeError, TypeError, ValueError):
             self._n_slot_addr = 0
+            self._n_view = None
         if value is not None:
-            self.__ilshift__(value)
+            self._n_set_value(value._n_get_value() if hasattr(value, '_n_get_value') else int(value))
+        else:
+            raw = parent_elems[index]
+            self._n_addr = int(raw) if raw else 0    
         return self
 
     # --- operators ---
@@ -2270,23 +2272,18 @@ class pointer(Ntype):
 
     def __ilshift__(self, value):
         """<<= (value assignment) support."""
-        if isinstance(value, pointer):
-            self._n_addr = value._n_addr
-            self._n_contents_cache = value._n_contents_cache
-        elif value is None or isinstance(value, NilPtr):
-            self._n_addr = 0
+        if value is None or isinstance(value, NilPtr):
+            self._n_set_value(0)
             self._n_contents_cache = None
+        elif isinstance(value, pointer):
+            self._n_set_value(value._n_get_value())
+            self._n_contents_cache = value._n_contents_cache
         elif hasattr(value, '_n_view') and value._n_view is not None:
-            self._n_addr = ctypes.addressof(value._n_view)
+            self._n_set_value(ctypes.addressof(value._n_view))
             self._n_contents_cache = value
         else:
-            self._n_addr = 0
+            self._n_set_value(0)
             self._n_contents_cache = value
-
-        if getattr(self, '_n_slot_addr', 0) != 0:
-            c_ptr = ctypes.cast(ctypes.c_void_p(self._n_slot_addr), ctypes.POINTER(ctypes.c_void_p))
-            c_ptr[0] = self._n_addr
-
         return self
 
     @classmethod
@@ -2400,17 +2397,18 @@ class ByteAddress(Ntype):
             return self.__add__(-int(other))
         return 0
 
-    def _n_get_addr_val(self):
+    def _n_get_value(self):
+        """A ByteAddress's value is the memory address it wraps."""
         return ctypes.addressof(self._n_view) if self._n_view is not None else 0
 
     def __int__(self):
-        return self._n_get_addr_val()
+        return self._n_get_value()
 
     def __eq__(self, other):
         if isinstance(other, ByteAddress):
-            return self._n_get_addr_val() == other._n_get_addr_val()
+            return self._n_get_value() == other._n_get_value()
         if hasattr(other, '__int__'):
-            return self._n_get_addr_val() == int(other)
+            return self._n_get_value() == int(other)
         return False
 
     def __ne__(self, other):
@@ -2418,23 +2416,23 @@ class ByteAddress(Ntype):
 
     def __lt__(self, other):
         if isinstance(other, ByteAddress):
-            return self._n_get_addr_val() < other._n_get_addr_val()
-        return self._n_get_addr_val() < int(other)
+            return self._n_get_value() < other._n_get_value()
+        return self._n_get_value() < int(other)
 
     def __le__(self, other):
         if isinstance(other, ByteAddress):
-            return self._n_get_addr_val() <= other._n_get_addr_val()
-        return self._n_get_addr_val() <= int(other)
+            return self._n_get_value() <= other._n_get_value()
+        return self._n_get_value() <= int(other)
 
     def __gt__(self, other):
         if isinstance(other, ByteAddress):
-            return self._n_get_addr_val() > other._n_get_addr_val()
-        return self._n_get_addr_val() > int(other)
+            return self._n_get_value() > other._n_get_value()
+        return self._n_get_value() > int(other)
 
     def __ge__(self, other):
         if isinstance(other, ByteAddress):
-            return self._n_get_addr_val() >= other._n_get_addr_val()
-        return self._n_get_addr_val() >= int(other)
+            return self._n_get_value() >= other._n_get_value()
+        return self._n_get_value() >= int(other)
 
     def __ilshift__(self, value):
         if isinstance(value, ByteAddress):
