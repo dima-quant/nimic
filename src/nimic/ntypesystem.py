@@ -829,10 +829,7 @@ class BufferRegistry:
         if isinstance(buffer_or_addr, int):
             addr = buffer_or_addr
         else:
-            try:
-                addr = ctypes.addressof(buffer_or_addr)
-            except TypeError:
-                return False
+            addr = ctypes.addressof(buffer_or_addr)
         if addr in self._buffers:
             del self._buffers[addr]
             self._dirty = True
@@ -916,12 +913,6 @@ class NIntEnum(IntEnum):
         cls._n_set_indices()
         DICT_OF_TYPES[cls.__name__] = cls
         DICT_OF_C_TYPES[cls.__name__] = ctypes.c_uint64
-
-    # def next(self):
-    #     try:
-    #         return self.__class__(self + 1)
-    #     except ValueError:
-    #         return self
 
 
 class NBool:
@@ -1068,13 +1059,6 @@ class _Object(Ntype):
         specialized_name = f"{cls.__name__}[{suffix}]"
         specialized = type(specialized_name, (cls,), {'__annotations__': resolved})
         specialized._n_register_type()
-        # # Register if it has c-type fields
-        # if hasattr(cls, '_n_register_type'):
-        #     try:
-        #         specialized._n_register_type()
-        #     except Exception:
-        #         pass
-
         _Object._n_specializations[cache_key] = specialized
         return specialized
 
@@ -1330,10 +1314,8 @@ class _Object(Ntype):
             # A. UncheckedArray trailing fields
             if is_class and _ua and issubclass(field_cls, _ua):
                 if hasattr(self, '_n_view') and self._n_view is not None:
-                    try:
-                        offset = getattr(type(self._n_view), name).offset
-                    except AttributeError:
-                        offset = ctypes.sizeof(type(self._n_view))  # Trailing
+                    field_desc = getattr(type(self._n_view), name, None)
+                    offset = field_desc.offset if field_desc is not None else ctypes.sizeof(type(self._n_view))  # Trailing
                     base_addr = ctypes.addressof(self._n_view) + offset
                     arr_view = (ctypes.c_uint8 * 1).from_address(base_addr)
                     arr_ptr = field_cls.__new__(field_cls)
@@ -1689,13 +1671,9 @@ class array(Ntype):
         if self._n_view is None:
             self._n_cache[index] = value
             return
-        if hasattr(value, '_n_addr'):
-            val = value._n_addr
-        elif hasattr(value, '_n_get_value'):
-            try:
-                val = value._n_get_value()
-            except NotImplementedError:
-                val = value
+
+        if hasattr(value, '_n_get_value'):
+            val = value._n_get_value()
         else:
             val = value
 
@@ -1713,10 +1691,7 @@ class array(Ntype):
         n, _ntype = params
         # n can be ordinal
         if _ntype.__name__ not in DICT_OF_TYPES and hasattr(_ntype, '_n_register_type'):
-            try:
-                _ntype._n_register_type()
-            except (KeyError, Exception):
-                pass  # Scalar types register differently
+            _ntype._n_register_type()
         class_name = f"array[{n}, {_ntype.__name__}]"
         # also register array[N, T] in DICT_OF_TYPES and DICT_OF_C_TYPES
         arr_type = type(class_name, (array,), {"_n_type": _ntype, "_n_size": n})
@@ -1949,10 +1924,7 @@ class openArray(Ntype):
         if hasattr(value, '_n_addr'):
             self._n_view[index] = value._n_addr
         elif hasattr(value, '_n_get_value'):
-            try:
-                self._n_view[index] = value._n_get_value()
-            except NotImplementedError:
-                self._n_view[index] = value
+            self._n_view[index] = value._n_get_value()
         else:
             self._n_view[index] = value
 
@@ -2130,10 +2102,7 @@ class pointer(Ntype):
             if ct is not None and hasattr(ct, '__name__'):
                 type_name = ct.__name__
                 if type_name not in DICT_OF_C_TYPES and hasattr(ct, '_n_register_type'):
-                    try:
-                        ct._n_register_type()
-                    except Exception:
-                        pass
+                    ct._n_register_type()
                 # set the value backing to the contents's backing buffer, replace by cast?
                 if type_name in DICT_OF_C_TYPES:
                     c_elem_type = DICT_OF_C_TYPES[type_name]
@@ -2147,7 +2116,7 @@ class pointer(Ntype):
                         _value = value._n_get_value()
                         self._n_contents_cache = ct._n_on_array(c_data, 0, _value)
                     else:
-                        raise NotImplementedError(f"Cannot set contents of pointer to type {ct}")
+                        raise ValueError(f"Cannot set contents of pointer to type {ct}")
                     return
 
         # Fallback for addr=0 or non C mapped
@@ -2197,13 +2166,10 @@ class pointer(Ntype):
             result._n_token_id = instance._id
             return result
         else:
-            try:
-                addr = _resolve_addr(instance)
-                if addr != 0:
-                    result._n_addr = addr
-                    return result
-            except Exception:
-                pass
+            addr = _resolve_addr(instance)
+            if addr != 0:
+                result._n_addr = addr
+                return result
             raise TypeError(f"Cannot cast {type(instance)} to pointer")
 
     # --- struct / array embedding ---
@@ -2213,13 +2179,9 @@ class pointer(Ntype):
         """Struct-embedded pointer: reads address from parent's c_void_p field."""
         self = cls.__new__(cls)
         self._n_contents_cache = None
-        try:
-            self._n_slot_addr = ctypes.addressof(parent_view) + getattr(type(parent_view), field_name).offset
-            c_ptr = ctypes.cast(ctypes.c_void_p(self._n_slot_addr), ctypes.POINTER(ctypes.c_void_p))
-            self._n_view = c_ptr
-        except (AttributeError, TypeError):
-            self._n_slot_addr = 0
-            self._n_view = None
+        self._n_slot_addr = ctypes.addressof(parent_view) + getattr(type(parent_view), field_name).offset
+        c_ptr = ctypes.cast(ctypes.c_void_p(self._n_slot_addr), ctypes.POINTER(ctypes.c_void_p))
+        self._n_view = c_ptr
         if value is not None:
             self._n_set_value(value._n_get_value() if hasattr(value, '_n_get_value') else int(value))
         else:
@@ -2232,14 +2194,10 @@ class pointer(Ntype):
         """Array-embedded pointer: reads address from parent's ctypes array slot."""
         self = cls.__new__(cls)
         self._n_contents_cache = None
-        try:
-            base_addr = ctypes.addressof(parent_elems.contents) if hasattr(parent_elems, 'contents') else ctypes.addressof(parent_elems)
-            self._n_slot_addr = base_addr + index * ctypes.sizeof(parent_elems._type_)
-            c_ptr = ctypes.cast(ctypes.c_void_p(self._n_slot_addr), ctypes.POINTER(ctypes.c_void_p))
-            self._n_view = c_ptr
-        except (AttributeError, TypeError, ValueError):
-            self._n_slot_addr = 0
-            self._n_view = None
+        base_addr = ctypes.addressof(parent_elems.contents) if hasattr(parent_elems, 'contents') else ctypes.addressof(parent_elems)
+        self._n_slot_addr = base_addr + index * ctypes.sizeof(parent_elems._type_)
+        c_ptr = ctypes.cast(ctypes.c_void_p(self._n_slot_addr), ctypes.POINTER(ctypes.c_void_p))
+        self._n_view = c_ptr
         if value is not None:
             self._n_set_value(value._n_get_value() if hasattr(value, '_n_get_value') else int(value))
         else:
@@ -2278,17 +2236,14 @@ class pointer(Ntype):
         elif isinstance(value, pointer):
             self._n_set_value(value._n_get_value())
             self._n_contents_cache = value._n_contents_cache
-        elif hasattr(value, '_n_view') and value._n_view is not None:
-            self._n_set_value(ctypes.addressof(value._n_view))
-            self._n_contents_cache = value
         else:
-            self._n_set_value(0)
-            self._n_contents_cache = value
+            raise TypeError(f"Cannot assign {type(value)} to pointer")
         return self
 
     @classmethod
     def _n_ptr_cast(cls, instance):
         if hasattr(instance, '_n_addr') and instance._n_addr != 0:
+            # if eager contents, addr = instance.contents._n_get_value()
             addr = ctypes.cast(ctypes.c_void_p(instance._n_addr), ctypes.POINTER(ctypes.c_void_p))[0]
             if addr is None:
                 addr = 0
@@ -2315,10 +2270,7 @@ def _resolve_addr(instance) -> int:
         return v
     if hasattr(v, 'value') and isinstance(v.value, int):
         return v.value
-    try:
-        return ctypes.addressof(v)
-    except TypeError:
-        return 0
+    return ctypes.addressof(v)
 
 
 def addr(x: object) -> pointer:
@@ -2375,10 +2327,10 @@ class ByteAddress(Ntype):
         if getattr(self, '_n_view', None) is not None:
             addr = ctypes.addressof(self._n_view) + int(offset)
             c_type = ctypes.c_char * 1
-            # Bounds checking via registry (optional — C pointers don't bounds-check)
-            buf = BUFFER_REGISTRY.find_buffer_for_address(addr)
-            if buf is None:
-                pass  # Allow like C, but could warn
+            # # Bounds checking via registry (optional — C pointers don't bounds-check)
+            # buf = BUFFER_REGISTRY.find_buffer_for_address(addr)
+            # if buf is None:
+            #     pass  # Allow like C, but could warn
             result._n_view = c_type.from_address(addr)
         else:
             result._n_view = None
