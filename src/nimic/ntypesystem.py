@@ -24,8 +24,7 @@ Architecture (layers from low-level to high-level):
                          (e.g. x: float64), backed by ctypes.Structure.
     NTuple             — Nim tuple; similar to Object, but with tuple-style unpacking.
     NIntEnum           — Nim integer enum; auto-registers in DICT_OF_TYPES.
-    Variant types      — Nim "case object"; detected by the presence of a
-                         "kind" field with a match/case block.
+    Variant types      — Nim "case object"; detected by the presence of a match/case block.
 
   Containers
     seq[T]             — Nim's growable sequence; ctypes array + cache.
