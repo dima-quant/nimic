@@ -2426,7 +2426,6 @@ class _SomeRefClass:
             original_name = other.__name__
             # keep the bare class by an alias in the DICT_OF_TYPES
             other.__name__ = f"_n_bare_{original_name}"
-            other.__qualname__ = f"_n_bare_{other.__qualname__}"
             DICT_OF_TYPES[other.__name__] = other
             # Re-register to rebuild ctypes struct with ptr fields included
             if hasattr(other, "_n_register_type"):
