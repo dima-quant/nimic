@@ -22,6 +22,10 @@ class RawPyBuffer(Object):
     buf: pointer
     shape: pointer
 
+    def release(buf):
+        """Release the buffer references.  Transpiles to ``buf.release()``."""
+        buf._shape_backing = None
+        buf._mv_backing = None
 
 def getBuffer(obj, buf, flags=0):
     """Populate *buf* from *obj*'s buffer protocol (numpy ndarray or memoryview).
@@ -70,8 +74,3 @@ def getBuffer(obj, buf, flags=0):
     buf._shape_backing = shape_arr
     buf._mv_backing = c_buf
 
-
-def release(buf):
-    """Release the buffer references.  Transpiles to ``buf.release()``."""
-    buf._shape_backing = None
-    buf._mv_backing = None
