@@ -827,7 +827,7 @@ class _Unparser(NodeVisitor):
         self._native_type_subscript = ["array", "openArray", "seq"]
         self.renamed_keywords = {}
         self.module_names = []
-        self._module_rename = {"nimic.ntypes": "ncode/pydefs"}
+        self._module_rename = {"ntypes": "ncode/pydefs", "nimpy": "ncode/nimpy"}
         self._module_std = ["math"]
         self._type_registry = type_registry
         self._no_bracket_subscript = ["ptr", "ref"]  # rule:dropbrackets
@@ -1049,11 +1049,13 @@ class _Unparser(NodeVisitor):
             self.fill("import ")
             module_name = node.module
             module_name_split = module_name.split(".")
-            if module_name in self._module_rename:
-                self.write(self._module_rename[module_name])
-            elif module_name in self._module_std:
+            # if module_name in self._module_rename:
+            #     self.write(self._module_rename[module_name])
+            if module_name in self._module_std:
                 self.write("ncode/pystd/" + module_name)
             elif module_name_split[0] == "nimic":
+                if module_name_split[1] in self._module_rename:
+                   module_name_split[1] = self._module_rename[module_name_split[1]]
                 self.write("/".join(module_name_split[1:]))
             else:
                 self.module_names.append(module_name)
@@ -1294,8 +1296,8 @@ class _Unparser(NodeVisitor):
                 base = node.bases[0].id[1:]
             else:
                 base = node.bases[0].id
-        else:
-            base = ast.unparse(node.bases[0]).replace("[", " ").replace("]", "")
+        # else:
+        #     base = ast.unparse(node.bases[0]).replace("[", " ").replace("]", "")
         if base in self._aliases:
             from_object = self._aliases[base]
         elif base in self._enums:
