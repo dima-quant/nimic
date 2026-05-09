@@ -27,18 +27,23 @@ def stream(script: str) -> Iterator[tuple[str, str]]:
             for line in match.group('content').splitlines(keepends=True)
         )
 
-def nimp(obj: object, srcs: dict):
+def nimp(obj: object, srcs: dict, wdir: str=None):
     src = ins.getsource(obj)
     aast = transpiler.parse(src)
+    target_file = obj.__file__
+    target_dir = os.path.dirname(target_file)
+    code_dir = os.path.join(target_dir, "ncode/")
     for meta, code in stream(src):
         if meta == "nimic":
             nim_src, modules_names = transpiler.unparse(aast, _n_registry)
             srcs[obj.__name__] = nim_src
             for module_name in modules_names:
                 if module_name in sys.modules and module_name not in srcs:
-                    nimp(sys.modules[module_name], srcs)
+                    nimp(sys.modules[module_name], srcs, wdir)
+        elif wdir and os.path.exists(code_dir):
+            shutil.copytree(code_dir, wdir)
         else:
-            pass # TODO:look for ncode folder with nim code and copy its content to ncache
+            raise TypeError("Module type not supported")    
 
 def ntranspile(args: list[str | types.ModuleType]):
     if len(args)>2 and args[1] == "-m":
@@ -68,7 +73,7 @@ def ntranspile(args: list[str | types.ModuleType]):
     if not os.path.exists(os.path.join(wdir, "ncode")):
         shutil.copytree(code_dir, os.path.join(wdir, "ncode"))
     srcs = {}
-    nimp(main_mod, srcs)
+    nimp(main_mod, srcs, wdir)
     for k, v in srcs.items():
         fname = os.path.join(wdir, k + ".nim")
         with open(fname, "w") as f:
