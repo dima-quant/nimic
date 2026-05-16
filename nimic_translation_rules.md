@@ -1,10 +1,19 @@
 # Nimic Translation Rules (Nim -> Python Nimic)
 
-This document serves as a comprehensive collection of translation rules and syntax mappings when transpiling from Nim syntax to Python syntax for the `nimic` transpiler. These rules correspond directly to the internal `rule:` definitions located in `nimic/transpiler.py`. The major requirement is that nimic code should be a valid Python that transpiles to valid Nim code. Expressions not explicitly mentioned as a rule are assumed to be translated directly to Python syntax.
+This document serves as a comprehensive collection of translation rules and syntax mappings when transpiling from Nim syntax to Python syntax for the `nimic` transpiler. These rules correspond directly to the internal `rule:` definitions located in `nimic/transpiler.py`. The major requirement is that nimic code should be a valid Python that transpiles to valid Nim code. Expressions not explicitly mentioned as a rule are assumed to be translated directly to Python syntax. Nimic code should be marked by the meta-comment and typically makes havy use of annotations and nimic.ntypes:
+
+```python
+# /// nimic
+#
+# ///
+from __future__ import annotations
+from nimic.ntypes import *
+```
+
 
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
-| `isNil` | `is_nil` |  |
+| `isNil`, `copyMem` | `is_nil`, `copy_mem` | Nimic follows the Python convention, replacing `camelCase` with `snake_case` for functions and attributes |
 | `let x = 5` | `with let: x = 5` | Immutable assignments |
 
 ## 1. Variable Declarations (`rule:varini`, `rule:dropwith`)

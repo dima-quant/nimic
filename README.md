@@ -1,6 +1,6 @@
 # Nimic
 
-Nimic is a pure Python module that facilitates writing AOT compilable code with a subset of Python (domain specific language). Based on ctypes built-in module, it includes emulation of native types, pointers and operations on them, implementing dispatch, operator overloading, and templates. Nimic closely follows Nim programming language, to which nimic code transpiles.
+Nimic is a pure Python module that facilitates writing AOT compilable code with a subset of Python (domain specific language), aiming to get C-level performance without leaving Python. Based on ctypes built-in module, it includes emulation of native types, pointers and operations on them, implementing dispatch, operator overloading, and templates. Nimic closely follows Nim programming language, to which nimic code transpiles.
 
 **Key principle:** nimic code is valid Python that runs natively *and* transpiles to equivalent Nim code.
 
@@ -13,6 +13,7 @@ nimic/
 ├── transpiler.py   — AST-based Python → Nim source code transpiler
 ├── inliner.py      — Template function inlining (@template, @template_expand)
 ├── ncode/          — Nim definitions (pydefs.nim, pystd/)
+├── nimpy/          — API for generating Python libraries
 ├── std/            — Python shims for Nim stdlib (math, options, os, paths, strformat, ...)
 └── system/         — Python shims for Nim system modules (ansi_c)
 ```
@@ -75,6 +76,12 @@ Nimic uses Python syntax with specific conventions that have dual meaning — ru
 | `comptime(expr)` | `if comptime(cond):` | Compile-time evaluation (`when` in Nim) |
 | `fields(obj)` | `for f in fields(obj):` | Iterate over object fields |
 | `with export:` | `with export: mod1, mod2` | Re-export modules |
+
+
+## Projects built with nimic
+
+- [Raytracer, including a ppm to mp4 converter](http://github.com/dima-quant/ndsl_raytracer)
+- [Python module for preprocessing image data](/examples)
 
 ## Quick Example
 
