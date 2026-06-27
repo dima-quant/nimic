@@ -47,7 +47,10 @@ Classes and objects use standard Python `class` definitions but employ specific 
 | `type SomeType = ptr object` | `@ptr class SomeType(Object):` | class definition should be decorated by `@ptr` for pointer types |
 | `SomeType(x: 1, y: 2)` | `SomeType(x=1, y=2)` | Object instantiation |
 | `type Time* = float64` | `class Time(float64): pass` | Type Alias |
+| `type range[warnMin, hintMax]` | `Trange[warnMin, hintMax]` | Range subtyping |
+| `type set[TNoteKind]` | `Tset[TNoteKind]` | Sets of ordinal types |
 | `[byte 1, 5]` | `array[2, byte]([1, 5])` | Arrays |
+| `ar: array[1, string] = [0: "some"]` | `ar = array[1, string]({0: string("some")})` | Arrays initialized with a dictionary |
 | `SomeTuple = tuple[x: int, y: float]` | `class SomeTuple(NTuple):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x: int`<br>&nbsp;&nbsp;&nbsp;&nbsp;`y: float` | Tuples should be defined as Named Tuple with an alias |
 
 **distinct type** `type SomeType = distinct int` ➔ Must be decorated by `@distinct` on a class that inherits from the base type,
@@ -78,15 +81,17 @@ Functions use standard Python `def` definitions but might employ specific decora
 
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
-| **Implicit `result` Variable** | `def foo() -> int:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`result = int()`<br>&nbsp;&nbsp;&nbsp;&nbsp;`result = 5`<br>&nbsp;&nbsp;&nbsp;&nbsp;`return result` | Nim's `result` variable is implicitly declared and returned. In Nimic, you must explicitly declare `result = ...` and write `return result` at the end of the script! |
+| **Implicit `result` Variable** | `def foo() -> int:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`result = 5`<br>&nbsp;&nbsp;&nbsp;&nbsp;`return result` | Nim's `result` variable is implicitly declared and returned. In Nimic, you must explicitly assign `result = ...` and write `return result` at the end. Note: There is no need to declare a default instantiation `result = Type()` if the value is defined or overwritten immediately on the next line! |
 | `discard foo()` | `_ = foo()` | Discarding a function call result |
 | `proc foo(x: var SomeType)` | `def foo(x: mut@SomeType):` | Assigning new value requires `<<=`, e.g., `x <<= y` (not needed for attributes and array elements). |
 | `iterator myIter(x: int): int`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | `def myIter(x: int) -> int:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | |
 | `proc foo(x:int)`<br>`proc foo(x:float)` | `@dispatch`<br>`def foo(...)` | "Static" dispatch. |
+| `foo(x = 1)` | `foo(x = 1)` | Call and dispatch with keyword arguments. |
 | `proc foo(...)` | `def foo(...)` | Methods of classes inheriting from `Object` are dispatched automatically. |
 | `0 ..< a` | `range(a)` | Range syntax. |
+| `a .. b` | `inrange(a, b)` | Inclusive range syntax, frequently used for sets (e.g. `Tset[TNoteKind](inrange(low, high))`). |
 | `[a ..< b]`,  `[a ..^1]` | `[a:b]`, `[a:]` | Slicing syntax. Upper bound can not be negative. |
-| `proc `+`(a: uint, b:uint):` | `def __add__(a: uint, b:uint):` | Operator overloading via dunder methods. |
+| `proc `+`(a: SomeType, b:int):` | `class SomeType(Object):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`def __add__(self: static[SomeType], b:int):` | Operator overloading via dunder methods. To avoid monkey-patching in Python, function definitions acting as operators or methods for a specific type should be included as methods within the class definition. The transpiler natively unpacks them to freestanding `proc`s. |
 | `func foo(x:uint):` | `def foo(x:uint):` `"""{.noSideEffect.}"""` | function is proc without side effect |
 | `proc `+`=(a: uint, b:uint):` | `def __iadd__(a: uint, b:uint):` | In-place operators in Python should return the modified object. |
 | `proc `+`=(a: uint, b:uint):` | `def __radd__(a: uint, b:uint):` | Right-hand side binary operators swap arguments. |
