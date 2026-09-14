@@ -182,6 +182,17 @@ def copyFile(source: string, dest: string) -> None:
 def execShellCmd(cmd: string) -> int:
     return _os.system(str(cmd))
 
+@dispatch
+def findExe(exe: string) -> string:
+    res = shutil.which(str(exe))
+    return string(res) if res is not None else string("")
+
+@dispatch
+def findExe(exe: str) -> string:
+    res = shutil.which(str(exe))
+    return string(res) if res is not None else string("")
+
+find_exe = findExe
 
 def getCurrentCompilerExe() -> string:
     # mock

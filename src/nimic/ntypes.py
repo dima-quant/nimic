@@ -171,3 +171,17 @@ def defined(varname: str) -> bool:
     return varname in globals()
 
 
+echo = print
+
+
+def new_exception(except_cls: type, msg: str):
+    """Nim: newException — instantiate an exception with a message."""
+    exc = except_cls(msg)
+    exc.msg = msg
+    return exc
+
+
+newException = new_exception
+
+
+

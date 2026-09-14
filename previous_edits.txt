@@ -1,0 +1,29 @@
+-- Step 82: "Update array __init__ to accept dict for sparse initialization" --
+Replaced:
+"    def __init__(self, it: Sequence | dict | None = None) -> None:\n        self._n_cache = {}\n        if hasattr(self, \"_n_type\") and hasattr(self, \"_n_size\"):\n            class_name = f\"array[{self._n_size}, {self._n_type.__name__}]\"\n            if class_name in DICT_OF_C_TYPES:\n                self._n_backing = DICT_OF_C_TYPES[class_name]()\n                self._n_owned_addr = BUFFER_REGISTRY.register(self._n_backing)\n                self._n_view = DICT_OF_C_TYPES[class_name].from_address(\n                    ctypes.addressof(self._n_backing)\n                )\n                if it is not None:\n                    if isinstance(it, dict):\n                        for key, value in it.items():\n                            self._n_view[int(key)] = value\n                    else:\n                        for index in range(self._n_size):\n                            self._n_view[index] = it[index]\n            else:\n                # Scalar/simple types: use a plain Python list as backing store\n                if it is not None:\n                    if isinstance(it, dict):\n                        self._n_cache = {j: self._n_type() for j in range(self._n_size)}\n                        for key, value in it.items():\n                            self._n_cache[int(key)] = value\n                    else:\n                        for index in range(self._n_size):\n                            self._n_cache[index] = it[index]\n                else:\n                    self._n_cache = {j: self._n_type() for j in range(self._n_size)}"
+-- Step 100: "Update array.__class_getitem__ to handle enum size" --
+Replaced:
+"    def __class_getitem__(cls, params) -> type:\n        \"\"\"array[N, T] → fixed-size array type.\"\"\"\n        n, _ntype = params\n        # n can be ordinal\n        if isinstance(n, type) and issubclass(n, IntEnum):\n            n_val = len(n)\n        else:\n            n_val = int(n)\n\n        if _ntype.__name__ not in DICT_OF_TYPES and hasattr(_ntype, '_n_register_type'):\n            _ntype._n_register_type()\n        class_name = f\"array[{n}, {_ntype.__name__}]\"\n        # also register array[N, T] in DICT_OF_TYPES and DICT_OF_C_TYPES\n        arr_type = type(class_name, (array,), {\"_n_type\": _ntype, \"_n_size\": n_val})\n        arr_type._n_register_type()\n        return arr_type"
+-- Step 154: "Add first() and last() to NIntEnum" --
+Replaced:
+"    @classmethod\n    def _n_set_indices(cls) -> None:\n        cls._n_members_tuple = tuple(cls)\n        cls._n_indices = {val: ind for ind, val in enumerate(cls._n_members_tuple)}\n\n    @classmethod\n    def first(cls):\n        if not hasattr(cls, '_n_members_tuple'):\n            cls._n_set_indices()\n        return cls._n_members_tuple[0]\n\n    @classmethod\n    def last(cls):\n        if not hasattr(cls, '_n_members_tuple'):\n            cls._n_set_indices()\n        return cls._n_members_tuple[-1]"
+-- Step 181: "Fix Tset operator returns" --
+Replaced:
+"class Tset(set):\n    @classmethod\n    def __class_getitem__(cls, item):\n        class _Tset(cls):\n            _n_type = item\n            @classmethod\n            def _n_register_type(cls): pass\n            \n            def __sub__(self, other): return self.__class__(super().__sub__(other))\n            def __or__(self, other): return self.__class__(super().__or__(other))\n            def __and__(self, other): return self.__class__(super().__and__(other))\n            def __xor__(self, other): return self.__class__(super().__xor__(other))\n        _Tset.__name__ = f\"Tset[{item.__name__}]\"\n        DICT_OF_TYPES[_Tset.__name__] = _Tset\n        return _Tset"
+-- Step 284: "Fix get_or_eval_type to check caller_globals" --
+Replaced:
+"    def get_or_eval_type(self, t_name: str, caller_globals: dict | None = None) -> type:\n        if t_name in self.types:\n            return self.types[t_name]\n        if caller_globals and t_name in caller_globals:\n            return caller_globals[t_name]\n        # t_name is not in self.types, so needs to be resolved and registered."
+-- Step 346: "Add __truediv__ to string" --
+Replaced:
+"    def __and__(self, other) -> string:\n        \"\"\"Nim: `&` operator (string concatenation).\"\"\"\n        return string(str(self) + str(other))\n\n    def __truediv__(self, other) -> string:\n        \"\"\"Nim: `/` operator (path joining).\"\"\"\n        import os.path\n        return string(os.path.join(str(self), str(other)))\n\n    def isEmpty(self) -> bool:"
+-- Step 664: "Support Enum length in array" --
+Replaced:
+"        # n can be ordinal\n        if isinstance(n, type) and issubclass(n, enum.Enum):\n            n_val = len(n)\n        else:\n            n_val = int(n)"
+-- Step 670: "Use Enum directly" --
+Replaced:
+"        # n can be ordinal\n        if isinstance(n, type) and issubclass(n, Enum):\n            n_val = len(n)\n        else:\n            n_val = int(n)"
+-- Step 682: "Import Enum in ntypesystem.py" --
+Replaced:
+"from enum import IntEnum, Enum"
+-- Step 691: "Fix array dictionary initialization with Enum keys" --
+Chunks:
