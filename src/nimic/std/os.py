@@ -5,6 +5,7 @@ from sys import stdout, stderr
 import sys
 from io import TextIOWrapper
 from enum import Enum
+from nimic.ntypes import char, string, dispatch
 
 from nimic.std.syncio import read_file, read_file_bytes, write_buffer, set_file_pos
 
@@ -57,6 +58,10 @@ def extract_filename(path: str) -> str:
     """Extract filename from path (Nim: os.extractFilename)."""
     return _os.path.basename(path)
 
+def expandFilename(path: string) -> string:
+    return string(_os.path.abspath(str(path)))
+
+
 
 def param_count() -> int:
     """Number of command-line arguments (Nim: os.paramCount)."""
@@ -66,6 +71,18 @@ def param_count() -> int:
 def param_str(i: int) -> str:
     """Get i-th command-line argument (Nim: os.paramStr)."""
     return sys.argv[i]
+
+
+if _os.name == 'nt':
+    DirSep = char('\\')
+    AltSep = char('/')
+else:
+    DirSep = char('/')
+    AltSep = char('\\')
+
+def getCurrentDir() -> string:
+    """Get the current directory (Nim: os.getCurrentDir)."""
+    return string(_os.getcwd())
 
 
 def get_app_filename() -> str:
@@ -86,3 +103,86 @@ def open(path: str, mode: str = "r"):
     actual_mode = _binary_map.get(mode, mode)
     handle = __builtins__["open"](path, actual_mode) if isinstance(__builtins__, dict) else __builtins__.open(path, actual_mode)
     return File(handle)
+
+import os.path
+import shutil
+
+@dispatch
+def isAbsolute(path: string) -> bool:
+    return os.path.isabs(str(path))
+
+@dispatch
+def splitFile(path: string) -> tuple[string, string, string]:
+    d, f = os.path.split(str(path))
+    n, e = os.path.splitext(f)
+    return string(d), string(n), string(e)
+
+def relativePath(path: string, base: string = string("."), sep: char = DirSep) -> string:
+    res = os.path.relpath(str(path), str(base))
+    if str(sep) != _os.sep:
+        res = res.replace(_os.sep, str(sep))
+    return string(res)
+
+@dispatch
+def changeFileExt(filename: string, ext: string) -> string:
+    n, _ = os.path.splitext(str(filename))
+    ext_str = str(ext)
+    if not ext_str.startswith('.'):
+        ext_str = '.' + ext_str
+    return string(n + ext_str)
+
+@dispatch
+def addFileExt(filename: string, ext: string) -> string:
+    _, e = os.path.splitext(str(filename))
+    if e: return string(filename)
+    ext_str = str(ext)
+    if not ext_str.startswith('.'):
+        ext_str = '.' + ext_str
+    return string(str(filename) + ext_str)
+
+@dispatch
+def removeFile(file: string) -> None:
+    if os.path.exists(str(file)):
+        _os.remove(str(file))
+
+@dispatch
+def fileExists(file: string) -> bool:
+    return os.path.isfile(str(file))
+
+@dispatch
+def dirExists(dir: string) -> bool:
+    return os.path.isdir(str(dir))
+
+@dispatch
+def createDir(dir: string) -> None:
+    _os.makedirs(str(dir), exist_ok=True)
+
+@dispatch
+def cmpPaths(pathA: string, pathB: string) -> int:
+    a = os.path.normcase(os.path.normpath(str(pathA)))
+    b = os.path.normcase(os.path.normpath(str(pathB)))
+    if a < b: return -1
+    elif a > b: return 1
+    else: return 0
+
+@dispatch
+def extractFilename(path: string) -> string:
+    return string(os.path.basename(str(path)))
+
+@dispatch
+def quoteShell(path: string) -> string:
+    import shlex
+    return string(shlex.quote(str(path)))
+
+@dispatch
+def copyFile(source: string, dest: string) -> None:
+    shutil.copy2(str(source), str(dest))
+
+@dispatch
+def execShellCmd(cmd: string) -> int:
+    return _os.system(str(cmd))
+
+
+def getCurrentCompilerExe() -> string:
+    # mock
+    return string(sys.executable)

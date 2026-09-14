@@ -41,7 +41,6 @@ def countdown(a: int, b: int) -> Generator:
     for i in range(a, b - 1, -1):
         yield i
 
-
 # --- Nim system builtins ---
 
 def alloc_shared0(size):
@@ -85,101 +84,20 @@ class _NewSeqHelper:
 newSeq = _NewSeqHelper()
 new_seq = newSeq
 
-class NStrEnum(StrEnum):
-    __members_tuple__ = None
-    __indices__ = None
 
-    @classmethod
-    def _set_indices(cls) -> None:
-        cls.__members_tuple__ = tuple(cls)
-        cls.__indices__ = {val: ind for ind, val in enumerate(cls.__members_tuple__)}
+def new_string_of_cap(cap: int):
+    """Nim: newStringOfCap — create a string with a zero-filled buffer of
+    *cap* bytes.  The resulting string is empty (len 0 in str terms) but its
+    ``_n_view`` ctypes buffer has *cap* bytes available for in-place writes."""
+    from nimic.ntypesystem import string
+    return string(cap)
 
-    @classmethod
-    def first(cls) -> StrEnum:
-        if cls.__members_tuple__ is None:
-            cls._set_indices()
-        return cls.__members_tuple__[0]
-
-    @classmethod
-    def last(cls) -> StrEnum:
-        if cls.__members_tuple__ is None:
-            cls._set_indices()
-        return cls.__members_tuple__[-1]
-
-    @classmethod
-    def nitems(cls) -> int:
-        if cls.__members_tuple__ is None:
-            cls._set_indices()
-        return len(cls.__members_tuple__)
-
-    @classmethod
-    def nrange(cls, first: StrEnum, last: StrEnum) -> StrEnum:
-        if cls.__members_tuple__ is None:
-            cls._set_indices()
-        members = cls.__members_tuple__
-        indices = cls.__indices__
-        first_ind = indices[first]
-        last_ind = indices[last]
-        return members[first_ind : last_ind + 1]
-
-    def nrange(item, last: StrEnum) -> StrEnum:
-        cls = item.__class__
-        if cls.__members_tuple__ is None:
-            cls._set_indices()
-        members = cls.__members_tuple__
-        indices = cls.__indices__
-        first_ind = indices[item]
-        last_ind = indices[last]
-        return members[first_ind : last_ind + 1]
-
-    def succ(item, n: int = 1) -> StrEnum:
-        cls = item.__class__
-        if cls.__members_tuple__ is None:
-            cls._set_indices()
-        members = cls.__members_tuple__
-        indices = cls.__indices__
-        if item in members:
-            ind = indices[item] + n
-            if ind >= 0 and ind < len(members):
-                res = members[ind]
-            else:
-                res = None
-        else:
-            res = None
-        return res
-
-    def ord(item) -> int:
-        cls = item.__class__
-        if cls.__members_tuple__ is None:
-            cls._set_indices()
-        ind = cls.__indices__[item]
-        return ind
+newStringOfCap = new_string_of_cap
 
 
-def succ(item: StrEnum, n: int = 1) -> StrEnum:
-    return item.succ(n)
+def new_cstring_of_cap(cap: int):
+    """Create a cstring with a zero-filled buffer of *cap* bytes."""
+    from nimic.ntypesystem import cstring
+    return cstring(cap)
 
-
-def pred(item: StrEnum, n: int = 1) -> StrEnum:
-    return succ(item, -n)
-
-
-def nord(item: StrEnum) -> int:
-    return item.ord()
-
-
-def nrange(first: StrEnum, last: StrEnum) -> list[StrEnum]:
-    return first.nrange(last)
-
-
-def subset(newname: str, first: NStrEnum, last: NStrEnum) -> type:
-    cls = first.__class__
-    return NStrEnum(newname, [(a.name, a.value) for a in nrange(first, last)])
-
-
-def low[T: StrEnum](cls: T) -> T:
-    return cls.first()
-
-
-def high[T: StrEnum](cls: T) -> T:
-    return cls.last()
+newCStringOfCap = new_cstring_of_cap

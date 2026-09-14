@@ -28,6 +28,7 @@ import inspect
 import textwrap
 from functools import wraps
 
+from nimic.ntypesystem import dispatch
 _n_templates = {}
 
 
@@ -61,7 +62,7 @@ def template(template_func):
             "params": template_params,
             "body_nodes": template_body_nodes,
         }
-    return template_func
+    return dispatch(template_func)
 
 
 class _ParameterReplacer(ast.NodeTransformer):

@@ -21,3 +21,17 @@ class _GenCountTable():
         return CountTable[tp]
 
 initCountTable = _GenCountTable()
+
+class Table:
+    def __init__(self, *args, **kwargs):
+        self._dict = dict(*args, **kwargs)
+    def __class_getitem__(cls, tp):
+        return cls
+    def __getitem__(self, key):
+        return self._dict[key]
+    def __setitem__(self, key, value):
+        self._dict[key] = value
+    def __contains__(self, key):
+        return key in self._dict
+    def __str__(self):
+        return str(self._dict)

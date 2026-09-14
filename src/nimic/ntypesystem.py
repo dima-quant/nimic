@@ -59,13 +59,14 @@ from __future__ import annotations
 import ast
 import bisect
 import ctypes
+import collections
 import inspect as ins
 import operator
 import re
 import struct
 import sys
 import textwrap
-from enum import IntEnum
+from enum import IntEnum, StrEnum, Enum
 from string import Template
 from typing import Sequence
 
@@ -709,6 +710,8 @@ class NTypeRegistry:
     def get_or_eval_type(self, t_name: str, caller_globals: dict | None = None) -> type:
         if t_name in self.types:
             return self.types[t_name]
+        if caller_globals and t_name in caller_globals:
+            return caller_globals[t_name]
         # t_name is not in self.types, so needs to be resolved and registered.
         if "[" in t_name and t_name.endswith("]"):
             base, params = t_name[:-1].split("[", 1)
@@ -734,6 +737,12 @@ class NTypeRegistry:
                 resolved = self.types[base][self.get_or_eval_type(params.strip(), caller_globals)]
                 resolved._n_register_type()  # should be performed in __class_getitem__
                 return resolved
+        try:
+            type_obj = eval(t_name, caller_globals or {})
+            if isinstance(type_obj, type):
+                return type_obj
+        except Exception:
+            pass
         raise NameError(f"Type '{t_name}' not found")
 
 _n_registry = NTypeRegistry()
@@ -914,6 +923,159 @@ class NIntEnum(IntEnum):
         DICT_OF_C_TYPES[cls.__name__] = ctypes.c_uint64
 
 
+class NStrEnum(StrEnum):
+    __n_members_tuple__ = None
+    __n_indices__ = None
+
+    @classmethod
+    def _missing_(cls, value):
+        if isinstance(value, int):
+            if cls.__n_members_tuple__ is None:
+                cls._n_set_indices()
+            if 0 <= value < len(cls.__n_members_tuple__):
+                return cls.__n_members_tuple__[value]
+        return super()._missing_(value)
+
+    @classmethod
+    def _n_set_indices(cls) -> None:
+        cls.__n_members_tuple__ = tuple(cls)
+        cls.__n_indices__ = {val: ind for ind, val in enumerate(cls.__n_members_tuple__)}
+
+    @classmethod
+    def first(cls) -> StrEnum:
+        if cls.__n_members_tuple__ is None:
+            cls._n_set_indices()
+        return cls.__n_members_tuple__[0]
+
+    @classmethod
+    def last(cls) -> StrEnum:
+        if cls.__n_members_tuple__ is None:
+            cls._n_set_indices()
+        return cls.__n_members_tuple__[-1]
+
+    @classmethod
+    def nitems(cls) -> int:
+        if cls.__n_members_tuple__ is None:
+            cls._n_set_indices()
+        return len(cls.__n_members_tuple__)
+
+    @classmethod
+    def nrange(cls, first: StrEnum, last: StrEnum) -> StrEnum:
+        if cls.__n_members_tuple__ is None:
+            cls._n_set_indices()
+        members = cls.__n_members_tuple__
+        indices = cls.__n_indices__
+        first_ind = indices[first]
+        last_ind = indices[last]
+        return members[first_ind : last_ind + 1]
+
+    def inrange(item, last: StrEnum) -> StrEnum:
+        cls = item.__class__
+        if cls.__n_members_tuple__ is None:
+            cls._n_set_indices()
+        members = cls.__n_members_tuple__
+        indices = cls.__n_indices__
+        first_ind = indices[item]
+        last_ind = indices[last]
+        return members[first_ind : last_ind + 1]
+
+    def succ(item, n: int = 1) -> StrEnum:
+        cls = item.__class__
+        if cls.__n_members_tuple__ is None:
+            cls._n_set_indices()
+        members = cls.__n_members_tuple__
+        indices = cls.__n_indices__
+        if item in members:
+            ind = indices[item] + n
+            if ind >= 0 and ind < len(members):
+                res = members[ind]
+            else:
+                res = None
+        else:
+            res = None
+        return res
+
+    def ord(item) -> int:
+        cls = item.__class__
+        if cls.__n_members_tuple__ is None:
+            cls._n_set_indices()
+        ind = cls.__n_indices__[item]
+        return ind
+
+
+def succ(item, n: int = 1):
+    if hasattr(item, 'succ'):
+        return item.succ(n)
+    if isinstance(item, Enum):
+        cls = item.__class__
+        if hasattr(cls, '_n_members_tuple'):
+            members = cls._n_members_tuple
+        elif hasattr(cls, '__members_tuple__'):
+            members = cls.__members_tuple__
+        else:
+            members = list(cls)
+        idx = members.index(item) + n
+        if 0 <= idx < len(members):
+            return members[idx]
+        return None
+    return item + n
+
+def pred(item, n: int = 1):
+    return succ(item, -n)
+
+def nord(item) -> int:
+    if hasattr(item, 'ord'):
+        return item.ord()
+    if isinstance(item, Enum):
+        cls = item.__class__
+        if hasattr(cls, '_n_members_tuple'):
+            members = cls._n_members_tuple
+        elif hasattr(cls, '__members_tuple__'):
+            members = cls.__members_tuple__
+        else:
+            members = list(cls)
+        return members.index(item)
+    return int(item)
+
+
+def inrange(first, last):
+    if hasattr(first, 'inrange'):
+        return first.inrange(last)
+    if isinstance(first, Enum) and isinstance(last, Enum):
+        cls = first.__class__
+        if hasattr(cls, '_n_members_tuple'):
+            members = cls._n_members_tuple
+        elif hasattr(cls, '__members_tuple__'):
+            members = cls.__members_tuple__
+        else:
+            members = list(cls)
+        idx_a = members.index(first)
+        idx_b = members.index(last)
+        return members[idx_a : idx_b + 1]
+    else:
+        return range(int(first), int(last) + 1)
+
+
+def subset(newname: str, first: NStrEnum, last: NStrEnum) -> type:
+    cls = first.__class__
+    return NStrEnum(newname, [(a.name, a.value) for a in inrange(first, last)])
+
+
+def low(obj: object) -> object:
+    if isinstance(obj, type) and hasattr(obj, 'first'):
+        return obj.first()
+    if hasattr(obj, '__len__'):
+        return 0
+    return obj.first()
+
+def high(obj: object) -> object:
+    if isinstance(obj, type) and hasattr(obj, 'last'):
+        return obj.last()
+    if hasattr(obj, '__len__'):
+        return len(obj) - 1
+    return obj.last()
+
+
 class NBool:
     """ctypes-backed bool — harmonizes with NScalar pattern for struct embedding."""
 
@@ -1008,6 +1170,62 @@ class NMetaClass(type):
     @classmethod
     def __prepare__(mcs, name: str, bases: tuple) -> DispDict:
         return DispDict()
+
+
+
+class Trange:
+    """Nim's ``range[low..high]`` subrange type. ``Trange[warnMin, hintMax]``
+    returns a base class that carries the bounds. Subclass it to create a named
+    range type::
+
+        class TNoteKind(Trange[TMsgKind.errUnknown, TMsgKind.errFatal]): pass
+
+    Supports ``low(TNoteKind)``, ``high(TNoteKind)``, and ``nitems()`` for
+    array sizing via ``array[Trange[...], T]``."""
+    _cache: dict = {}
+
+    def __class_getitem__(cls, params):
+        lo, hi = params
+        key = (id(lo), id(hi))
+        if key not in cls._cache:
+            name = f'Trange[{lo}, {hi}]'
+            new_cls = type(name, (), {
+                '_n_low': lo,
+                '_n_high': hi,
+            })
+            # Add first/last/nitems so low()/high() from nsystem work
+            new_cls.first = classmethod(lambda c: c._n_low)
+            new_cls.last = classmethod(lambda c: c._n_high)
+            new_cls.nitems = classmethod(
+                lambda c: nord(c._n_high) - nord(c._n_low) + 1
+            )
+            cls._cache[key] = new_cls
+        return cls._cache[key]
+
+
+class Tset(set):
+    """Nim's ``set[T]`` for ordinal types. ``Tset[MyEnum]`` returns a proper
+    ``set`` subclass that can be instantiated, used in ``isinstance()``, and
+    inherited from.  Results are cached so ``Tset[X] is Tset[X]``."""
+    _cache: dict = {}
+
+    def __class_getitem__(cls, elem_type):
+        if elem_type not in cls._cache:
+            name = f'Tset[{elem_type.__name__}]'
+            # Override set operations to preserve the subclass type
+            def _make_op(op_name):
+                def _op(self, other):
+                    return type(self)(getattr(set, op_name)(self, other))
+                return _op
+            new_cls = type(name, (set,), {
+                '_elem_type': elem_type,
+                '__sub__': _make_op('__sub__'),
+                '__and__': _make_op('__and__'),
+                '__or__': _make_op('__or__'),
+                '__xor__': _make_op('__xor__'),
+            })
+            cls._cache[elem_type] = new_cls
+        return cls._cache[elem_type]
 
 
 # --- Structured Objects (Object) ---
@@ -1137,8 +1355,18 @@ class _Object(Ntype):
             if fc is not None and isinstance(fc, type):
                 if _seq and issubclass(fc, _seq):
                     setattr(self, name, fc())
+                elif getattr(fc, '_n_is_ref', False) or getattr(fc, '_n_is_ptr', False):
+                    setattr(self, name, None)    
                 elif issubclass(fc, _Object):
                     setattr(self, name, fc())
+                elif hasattr(fc, '_n_size'):  # array
+                    setattr(self, name, fc())
+                else:
+                    # Fallback: default-construct (covers string, Hash, etc.)
+                    try:
+                        setattr(self, name, fc())
+                    except TypeError:
+                        pass
         _has_c_type = type(self).__name__ in DICT_OF_C_TYPES
         if kwargs:
             for attribute in kwargs:
@@ -1566,10 +1794,12 @@ class UncheckedArray(Ntype):
     def __setitem__(self, _index: int, _value: object) -> None:
         index = int(_index)
         value = _value._n_get_value()
-        if index not in self._n_cache:
+        if index not in self._n_cache or self._n_cache[index] is None:
             self._n_cache[index] = self._n_type._n_on_array(self._n_view, index, value)
-        else:
+        elif hasattr(self._n_cache[index], '_n_set_value'):
             self._n_cache[index]._n_set_value(value)
+        elif hasattr(self._n_cache[index], '__ilshift__'):
+            self._n_cache[index] <<= value
 
     def __class_getitem__(cls, _ntype: type) -> type:
         if _ntype.__name__ not in DICT_OF_TYPES:
@@ -1613,7 +1843,7 @@ class array(Ntype):
     """
     _n_size: int = 0
 
-    def __init__(self, it: Sequence | None = None) -> None:
+    def __init__(self, it: Sequence | dict | None = None) -> None:
         self._n_cache = {}
         if hasattr(self, "_n_type") and hasattr(self, "_n_size"):
             class_name = f"array[{self._n_size}, {self._n_type.__name__}]"
@@ -1624,13 +1854,22 @@ class array(Ntype):
                     ctypes.addressof(self._n_backing)
                 )
                 if it is not None:
-                    for index in range(self._n_size):
-                        self._n_view[index] = it[index]
+                    if isinstance(it, dict):
+                        for key, value in it.items():
+                            self._n_view[int(key)] = value
+                    else:
+                        for index in range(self._n_size):
+                            self._n_view[index] = it[index]
             else:
                 # Scalar/simple types: use a plain Python list as backing store
                 if it is not None:
-                    for index in range(self._n_size):
-                        self._n_cache[index] = it[index]
+                    if isinstance(it, dict):
+                        self._n_cache = {j: self._n_type() for j in range(self._n_size)}
+                        for key, value in it.items():
+                            self._n_cache[int(key)] = value
+                    else:
+                        for index in range(self._n_size):
+                            self._n_cache[index] = it[index]
                 else:
                     self._n_cache = {j: self._n_type() for j in range(self._n_size)}
                 self._n_backing = None
@@ -1678,8 +1917,11 @@ class array(Ntype):
 
         self._n_view[index] = val
 
-        if index not in self._n_cache:
-            self._n_cache[index] = self._n_type._n_on_array(self._n_view, index)
+        if index not in self._n_cache or self._n_cache[index] is None:
+            if hasattr(self._n_type, '_n_on_array'):
+                self._n_cache[index] = self._n_type._n_on_array(self._n_view, index)
+            else:
+                self._n_cache[index] = value
         elif hasattr(self._n_cache[index], '_n_set_value'):
             self._n_cache[index]._n_set_value(val)
         elif hasattr(self._n_cache[index], '__ilshift__'):
@@ -1689,11 +1931,18 @@ class array(Ntype):
         """array[N, T] → fixed-size array type."""
         n, _ntype = params
         # n can be ordinal
+        if isinstance(n, type) and issubclass(n, Enum):
+            n_val = len(n)
+        elif isinstance(n, type) and issubclass(n, Trange):
+            n_val = int(n.last()) - int(n.first()) + 1
+        else:
+            n_val = int(n)
+
         if _ntype.__name__ not in DICT_OF_TYPES and hasattr(_ntype, '_n_register_type'):
             _ntype._n_register_type()
         class_name = f"array[{n}, {_ntype.__name__}]"
         # also register array[N, T] in DICT_OF_TYPES and DICT_OF_C_TYPES
-        arr_type = type(class_name, (array,), {"_n_type": _ntype, "_n_size": n})
+        arr_type = type(class_name, (array,), {"_n_type": _ntype, "_n_size": n_val})
         arr_type._n_register_type()
         return arr_type
 
@@ -1792,10 +2041,12 @@ class seq(Ntype):
         if self._n_is_list:
             self._n_list[index] = value
             return
-        if index not in self._n_cache:
+        if index not in self._n_cache or self._n_cache[index] is None:
             self._n_cache[index] = self._n_type._n_on_array(self._n_view, index, value)
-        else:
+        elif hasattr(self._n_cache[index], '_n_set_value'):
             self._n_cache[index]._n_set_value(value)
+        elif hasattr(self._n_cache[index], '__ilshift__'):
+            self._n_cache[index] <<= value
 
     def __class_getitem__(cls, _ntype: type) -> type:
         if _ntype.__name__ not in DICT_OF_TYPES:
@@ -1878,11 +2129,14 @@ class seq(Ntype):
             yield self[i]
 
     def __iter__(self):
-        # We yield (index, item) so that transpiled loops like `for i, x in myseq:`
-        # can unpack correctly natively, though it will break `for x in myseq:`
+        """Yield mutable ctypes-backed views of elements (Nim's mitems)."""
         for i in range(len(self)):
-            val = self[i]
-            yield (i, val.copy() if hasattr(val, 'copy') else val)
+            yield self[i]
+        # # We yield (index, item) so that transpiled loops like `for i, x in myseq:`
+        # # can unpack correctly natively, though it will break `for x in myseq:`
+        # for i in range(len(self)):
+        #     val = self[i]
+        #     yield (i, val.copy() if hasattr(val, 'copy') else val)
 
     @classmethod
     def _n_register_type(cls, class_name: str | None = None) -> None:
@@ -2054,10 +2308,14 @@ class pointer(Ntype):
 
     # --- construction ---
 
-    def __init__(self, x=None):
-        if x is None:
+    def __init__(self, x=None, **kwargs):
+        if x is None and not kwargs:
             self._n_addr = 0
             self._n_contents_cache = None
+        elif kwargs and x is None:
+            obj = self._n_contents_type(**kwargs)
+            self._n_addr = ctypes.addressof(obj._n_view) if hasattr(obj, '_n_view') else 0
+            self._n_contents_cache = obj
         elif isinstance(x, int):
             self._n_addr = x
             self._n_contents_cache = None
@@ -2428,6 +2686,7 @@ class _SomeRefClass:
             other.__name__ = f"_n_bare_{original_name}"
             DICT_OF_TYPES[other.__name__] = other
             # Re-register to rebuild ctypes struct with ptr fields included
+            #ptr_type = make_pointer_type(other, class_name=original_name)
             if hasattr(other, "_n_register_type"):
                 other._n_register_type()
             ptr_type = make_pointer_type(other, class_name=original_name)
@@ -2446,7 +2705,27 @@ class _SomeRefClass:
         return ptr_type
 
 
-ref = _SomeRefClass()
+class _SomeManagedRefClass:
+    def __call__(self, cls: type) -> type:
+        """When used as @ref decorator, mark class as a managed reference type.
+        This prevents C-backing for arrays, allowing them to store None and behave
+        like managed Python references."""
+        cls._n_is_ref = True
+        class_name = cls.__name__
+        if class_name in DICT_OF_C_TYPES:
+            del DICT_OF_C_TYPES[class_name]
+        # With no ctypes struct, ALL fields must be python-side so they get
+        # initialized in __init__ (otherwise ctypes-classified fields like
+        # `s: string` are never set and access raises AttributeError).
+        field_types = getattr(cls, '_n_field_types', {})
+        if field_types:
+            cls._n_python_fields = set(field_types.keys())
+        return cls
+
+    def __getitem__(self, _ntype: type) -> type:
+        return _ntype
+
+ref = _SomeManagedRefClass()
 ptr = _SomeRefClass()
 typedesc = _SomeRefClass()
 
@@ -3099,6 +3378,13 @@ class cstring:
     def _n_sizeof(cls) -> int:
         return ctypes.sizeof(ctypes.c_char_p)
 
+    def __getitem__(self, index):
+        if self._value is None:
+            raise IndexError("cstring is nil")
+        if isinstance(index, slice):
+            return cstring(self._value[index])
+        return char(self._value[index])
+
     # --- Nim-compatible interface ---
 
     def __eq__(self, other):
@@ -3132,6 +3418,12 @@ class cstring:
         if self._value is None:
             return "cstring(nil)"
         return f"cstring({self._value!r})"
+
+    def __getitem__(self, index):
+        """Nim cstring indexing — returns '\\0' past end (null-terminated)."""
+        if self._value is None or index >= len(self._value):
+            return '\0'
+        return chr(self._value[index])
 
 
 def new_string(length: int) -> cstring:
@@ -3181,68 +3473,136 @@ class char(str):
         DICT_OF_TYPES[cls.__name__] = cls
         DICT_OF_C_TYPES[cls.__name__] = ctypes.c_char
 
-class string(str):
+class string(collections.UserString):
     """Nim-compatible string with C-buffer backing to support addr()."""
-    def __new__(cls, bs: bytes | str = ""):
+    
+    @property
+    def _n_view(self):
+        return self._n_view_ref[0] if hasattr(self, '_n_view_ref') else None
+
+    @_n_view.setter
+    def _n_view(self, val):
+        if not hasattr(self, '_n_view_ref'):
+            self._n_view_ref = [val]
+        else:
+            self._n_view_ref[0] = val
+
+    def __init__(self, bs=""):
+        if isinstance(bs, string) and hasattr(bs, '_n_view_ref'):
+            self._n_view_ref = bs._n_view_ref
+            return
+        if isinstance(bs, int):
+            cap = bs
+            self._n_view_ref = [(ctypes.c_char * cap)()]
+            if cap > 0:
+                BUFFER_REGISTRY.register(self._n_view_ref[0])
+            return
+            
         if isinstance(bs, str):
-            bs = bs.encode('utf-8', errors='replace')
-        obj = super().__new__(cls, bs.decode('utf-8', errors='replace'))
-        obj._n_view = (ctypes.c_char * len(bs)).from_buffer_copy(bs)
-        if len(bs) > 0:
-            BUFFER_REGISTRY.register(obj._n_view)
-        return obj
+            bs_bytes = bs.encode('utf-8', errors='replace')
+        elif hasattr(bs, 'data'):
+            bs_bytes = bs.data.encode('utf-8', errors='replace')
+        else:
+            bs_bytes = str(bs).encode('utf-8', errors='replace')
+            
+        self._n_view_ref = [(ctypes.c_char * len(bs_bytes)).from_buffer_copy(bs_bytes)]
+        if len(bs_bytes) > 0:
+            BUFFER_REGISTRY.register(self._n_view_ref[0])
+
+    @property
+    def data(self):
+        if hasattr(self, '_n_view_ref') and self._n_view_ref[0] is not None:
+            return bytes(self._n_view_ref[0]).split(b'\0', 1)[0].decode('utf-8', 'replace')
+        return ""
+        
+    @data.setter
+    def data(self, value):
+        pass
+
+    def _n_ensure_capacity(self, new_cap):
+        if self._n_view is None:
+            self._n_view = (ctypes.c_char * new_cap)()
+            BUFFER_REGISTRY.register(self._n_view)
+        elif len(self._n_view) < new_cap:
+            BUFFER_REGISTRY.unregister(self._n_view)
+            new_size = max(len(self._n_view) * 2, new_cap)
+            new_arr = (ctypes.c_char * new_size)()
+            ctypes.memmove(new_arr, self._n_view, len(self._n_view))
+            self._n_view = new_arr
+            BUFFER_REGISTRY.register(self._n_view)
+
+    def add(self, other):
+        if isinstance(other, str):
+            other_bytes = other.encode('utf-8')
+        elif hasattr(other, 'data'):
+            other_bytes = other.data.encode('utf-8')
+        else:
+            other_bytes = str(other).encode('utf-8')
+            
+        cur_bytes = self.data.encode('utf-8')
+        new_len = len(cur_bytes) + len(other_bytes) + 1
+        self._n_ensure_capacity(new_len)
+        
+        for i, b in enumerate(other_bytes):
+            self._n_view[len(cur_bytes) + i] = b
+        self._n_view[len(cur_bytes) + len(other_bytes)] = 0
+
+    def _n_get_value(self):
+        return self.data.encode('utf-8')
+
+    def __str__(self):
+        return self.data
 
     def __len__(self):
-        return len(self._n_view) if hasattr(self, '_n_view') and self._n_view is not None else super().__len__()
+        return len(self.data)
 
-    def __getitem__(self, index):
-        if isinstance(index, slice):
-            return super().__getitem__(index)
-        val = super().__getitem__(index)
-        if hasattr(self, '_n_view') and self._n_view is not None:
-            return char(val, ctypes.addressof(self._n_view) + index)
-        return val
+    def __eq__(self, other):
+        if isinstance(other, string):
+            return self.data == other.data
+        if isinstance(other, str):
+            return self.data == other
+        return NotImplemented
+        
+    def __hash__(self):
+        return hash(self.data)
 
     def __and__(self, other):
-        return string(str(self) + str(other))
+        return string(self.data + str(other))
 
     def _substitute(self, **kwargs):
-        return string(Template(self).substitute(**kwargs))
+        return string(Template(self.data).substitute(**kwargs))
 
     def __mod__(self, itr):
-        set_key = True
-        kwargs = {}
-        for item in itr:
-            if set_key:
-                key = item
-                set_key = False
-            else:
-                kwargs[key] = item
-                set_key = True
-        return self._substitute(**kwargs)
+        if hasattr(itr, '__iter__') and not isinstance(itr, (str, bytes)):
+            return string(self.data % tuple(itr))
+        return string(self.data % itr)
 
     def is_empty(self) -> bool:
-        return len(self) == 0
+        return len(self.data) == 0
 
-    def __truediv__(self: string, tail: string | str) -> string:
-        return f"{self}/{tail}"
+    def __truediv__(self, tail) -> 'string':
+        tail_str = tail.data if hasattr(tail, 'data') else str(tail)
+        return string(f"{self.data}/{tail_str}")
 
-    # Nim-compatible string methods (snake_case = Nim style-insensitive)
-    def splitlines(self) -> list[str]:
-        """Nim: splitLines — split string into lines."""
-        return super().splitlines()
+    def splitlines(self):
+        return [string(x) for x in self.data.splitlines()]
 
-    def split_whitespace(self) -> list[str]:
-        """Nim: splitWhitespace — split string on whitespace."""
-        return super().split()
-
+    def split_whitespace(self):
+        return [string(x) for x in self.data.split()]
+        
     def endswith(self, suffix: str) -> bool:
-        """Nim: endsWith — check if string ends with suffix."""
-        return super().endswith(suffix)
-
+        return self.data.endswith(suffix)
+        
     def startswith(self, prefix: str) -> bool:
-        """Nim: startsWith — check if string starts with prefix."""
-        return super().startswith(prefix)
+        return self.data.startswith(prefix)
+        
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return string(self.data[index])
+        if hasattr(self, '_n_view') and self._n_view is not None:
+            return char(self.data[index], ctypes.addressof(self._n_view) + index)
+        return self.data[index]
+
 
 # remove when in Nim
 to_string = string
