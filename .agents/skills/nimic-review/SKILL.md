@@ -34,7 +34,7 @@ Create `ncompiler/review_[filename].md` to store all findings. Use this structur
 ...
 ```
 
-See existing reviews for reference: `ncompiler/review_wordrecg.md`, `ncompiler/review_idents.md`, `ncompiler/review_pathutils.md`.
+See existing reviews for reference: `ncompiler/review_wordrecg.md`, `ncompiler/review_idents.md`, `ncompiler/review_pathutils.md`, `ncompiler/review_nodejs.md`.
 
 ## Step 2 — Line-by-Line Verification
 
