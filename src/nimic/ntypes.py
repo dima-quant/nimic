@@ -184,4 +184,35 @@ def new_exception(except_cls: type, msg: str):
 newException = new_exception
 
 
+class _SystemNamespace:
+    NimVersion = "2.2.4"
 
+
+system = _SystemNamespace()
+NimVersion = system.NimVersion
+
+
+def incl(s: set, elem: object) -> None:
+    """Nim: incl — include an element into a set."""
+    s.add(elem)
+
+
+def excl(s: set, elem: object) -> None:
+    """Nim: excl — exclude an element from a set."""
+    s.discard(elem)
+
+
+def contains_or_incl(s: set, elem: object) -> bool:
+    """Nim: containsOrIncl — returns True if elem was already in s, else adds elem and returns False."""
+    if elem in s:
+        return True
+    s.add(elem)
+    return False
+
+
+containsOrIncl = contains_or_incl
+
+
+def items(coll):
+    """Nim: items — iterator over elements of a collection."""
+    return iter(coll)

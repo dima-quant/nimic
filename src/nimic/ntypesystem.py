@@ -1209,6 +1209,18 @@ class Tset(set):
     inherited from.  Results are cached so ``Tset[X] is Tset[X]``."""
     _cache: dict = {}
 
+    def incl(self, elem):
+        self.add(elem)
+
+    def excl(self, elem):
+        self.discard(elem)
+
+    def contains_or_incl(self, elem):
+        if elem in self:
+            return True
+        self.add(elem)
+        return False
+
     def __class_getitem__(cls, elem_type):
         if elem_type not in cls._cache:
             name = f'Tset[{elem_type.__name__}]'
@@ -1217,7 +1229,7 @@ class Tset(set):
                 def _op(self, other):
                     return type(self)(getattr(set, op_name)(self, other))
                 return _op
-            new_cls = type(name, (set,), {
+            new_cls = type(name, (cls,), {
                 '_elem_type': elem_type,
                 '__sub__': _make_op('__sub__'),
                 '__and__': _make_op('__and__'),
@@ -3239,6 +3251,22 @@ class NInteger(NScalar):
     def __index__(self):
         return self._n_get_value().__index__()
 
+    @classmethod
+    def first(cls):
+        """Return the minimum representable value for this integer type."""
+        if cls._n_signed:
+            return cls(-(1 << (cls._n_bits - 1)))
+        else:
+            return cls(0)
+
+    @classmethod
+    def last(cls):
+        """Return the maximum representable value for this integer type."""
+        if cls._n_signed:
+            return cls((1 << (cls._n_bits - 1)) - 1)
+        else:
+            return cls((1 << cls._n_bits) - 1)
+
 
 # Unsigned Integers
 class uint8(NInteger):
@@ -3574,7 +3602,17 @@ class string(collections.UserString):
 
     def __mod__(self, itr):
         if hasattr(itr, '__iter__') and not isinstance(itr, (str, bytes)):
-            return string(self.data % tuple(itr))
+            items = list(itr)
+            if '$' in self.data:
+                res = self.data
+                for i, arg in enumerate(items, 1):
+                    val = arg.data if hasattr(arg, 'data') else str(arg)
+                    res = res.replace(f"${i}", val)
+                return string(res)
+            return string(self.data % tuple(items))
+        if '$1' in self.data:
+            val = itr.data if hasattr(itr, 'data') else str(itr)
+            return string(self.data.replace('$1', val))
         return string(self.data % itr)
 
     def is_empty(self) -> bool:
