@@ -111,11 +111,24 @@ import shutil
 def isAbsolute(path: string) -> bool:
     return os.path.isabs(str(path))
 
+class _SplitFileTuple(tuple):
+    @property
+    def dir(self) -> string:
+        return self[0]
+    @property
+    def name(self) -> string:
+        return self[1]
+    @property
+    def ext(self) -> string:
+        return self[2]
+
 @dispatch
-def splitFile(path: string) -> tuple[string, string, string]:
+def splitFile(path: string) -> _SplitFileTuple:
     d, f = os.path.split(str(path))
     n, e = os.path.splitext(f)
-    return string(d), string(n), string(e)
+    return _SplitFileTuple((string(d), string(n), string(e)))
+
+split_file = splitFile
 
 def relativePath(path: string, base: string = string("."), sep: char = DirSep) -> string:
     res = os.path.relpath(str(path), str(base))
@@ -187,12 +200,27 @@ def findExe(exe: string) -> string:
     res = shutil.which(str(exe))
     return string(res) if res is not None else string("")
 
-@dispatch
-def findExe(exe: str) -> string:
-    res = shutil.which(str(exe))
-    return string(res) if res is not None else string("")
-
 find_exe = findExe
+
+@dispatch
+def parentDir(path: string) -> string:
+    s = str(path)
+    if not s or s == "/" or s == "\\":
+        return string("")
+    res = _os.path.dirname(s)
+    if res == s:
+        return string("")
+    return string(res)
+
+parent_dir = parentDir
+
+def walkFiles(pattern: string | str):
+    import glob
+    for p in glob.iglob(str(pattern)):
+        if _os.path.isfile(p):
+            yield string(p)
+
+walk_files = walkFiles
 
 def getCurrentCompilerExe() -> string:
     # mock

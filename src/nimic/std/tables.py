@@ -33,5 +33,8 @@ class Table:
         self._dict[key] = value
     def __contains__(self, key):
         return key in self._dict
+    def hasKey(self, key):
+        return key in self._dict
+    has_key = hasKey
     def __str__(self):
         return str(self._dict)
