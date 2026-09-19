@@ -113,6 +113,7 @@ The docstring for the original ``ast`` module is given below:
     :copyright: Copyright 2008 by Armin Ronacher.
     :license: Python License.
 """
+import keyword as pykeyword
 import re
 import sys
 from _ast import *
@@ -1266,6 +1267,8 @@ class _Unparser(NodeVisitor):
 
     def _adjust_name(self, name, definition=True):
         # rule:localname
+        if len(name) > 1 and name.endswith("_") and pykeyword.iskeyword(name[:-1]):
+            name = name[:-1]
         if len(name)>1 and name[0] == "_":
             _str = "local" + name
         elif definition and not name[0].startswith("local_"):
@@ -1290,12 +1293,20 @@ class _Unparser(NodeVisitor):
         no_attr = _pass # no attributes, i.e. pass or only methods
         # deco in ["ref", "ptr", "distinct"]
         no_object = no_attr or deco
-        enum = False # rule:enum
+        enum = False  # rule:enum
+        if not node.bases:
+            raise ValueError(
+                f"Class '{node.name}' has no base class. All Nimic class definitions must specify an explicit base (e.g. 'class {node.name}(Object):')."
+            )
         if hasattr(node.bases[0], "id"):
             if node.bases[0].id[0] == "_":
                 base = node.bases[0].id[1:]
             else:
                 base = node.bases[0].id
+        elif hasattr(node.bases[0], "attr"):
+            base = node.bases[0].attr
+        else:
+            base = "Object"
         # else:
         #     base = ast.unparse(node.bases[0]).replace("[", " ").replace("]", "")
         if base in self._aliases:
@@ -1607,9 +1618,11 @@ class _Unparser(NodeVisitor):
 
     def visit_With(self, node):
         # rule:dropwith
+        name = None
+        cont_pop = False
+        start = ":"
         if isinstance(node.items[0].context_expr, Name):
             name = node.items[0].context_expr.id
-            start = ":"
             if name in self._keywords_no_with:
                 self.fill()
                 self._context_stack.append(name)
@@ -1622,8 +1635,7 @@ class _Unparser(NodeVisitor):
             if name in self._keywords_rename:
                 node.items[0].context_expr.id = self._keywords_rename[name]
         else:
-            self.fill("with ")
-            cont_pop = False
+            self.fill()
         if name == "template_inline":
             # rule:templateinline
             self.write_template_inline(node)
@@ -1871,7 +1883,7 @@ class _Unparser(NodeVisitor):
             self.write(": ")
             self.traverse(node.body)
             self.write(" else: ")
-            self.set_precedence(_Precedence.TEST, node.orelse)
+            self.set_precedence(_Precedence.TEST.next(), node.orelse)
             self.traverse(node.orelse)
 
     def visit_Set(self, node):
@@ -1913,7 +1925,7 @@ class _Unparser(NodeVisitor):
         ):
             self.items_view(self.traverse, node.elts)
 
-    unop = {"Invert": "~", "Not": "not", "UAdd": "+", "USub": "-"}
+    unop = {"Invert": "not", "Not": "not", "UAdd": "+", "USub": "-"}
     unop_precedence = {
         "not": _Precedence.NOT,
         "~": _Precedence.FACTOR,
@@ -2027,11 +2039,19 @@ class _Unparser(NodeVisitor):
         "and": _Precedence.BAND,
         "div": _Precedence.TERM,
         "^": _Precedence.POWER,
+        "%": _Precedence.TERM,
     }
 
     binop_rassoc = frozenset(("**",))
     def visit_BinOp(self, node):
-        operator = self.binop[node.op.__class__.__name__]
+        is_str_mod = node.op.__class__.__name__ == "Mod" and (
+            (isinstance(node.left, Constant) and isinstance(node.left.value, str)) or
+            (isinstance(node.left, Call) and isinstance(node.left.func, Name) and node.left.func.id == "string")
+        )
+        if is_str_mod:
+            operator = "%"
+        else:
+            operator = self.binop[node.op.__class__.__name__]
         operator_precedence = self.binop_precedence[operator]
         with self.require_parens(operator_precedence, node):
             if operator in self.binop_rassoc:
