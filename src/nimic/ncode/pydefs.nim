@@ -18,6 +18,8 @@ template str*(x: untyped): untyped =
   $ x
 template `+`*(x: string, y: string): string =
   x & y
+template `~`*(x: untyped): untyped =
+  not x
 
 template range3(t) {.dirty.} =
   iterator range*(a, b, c: t): t {.inline.} =
