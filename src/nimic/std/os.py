@@ -7,7 +7,7 @@ from io import TextIOWrapper
 from enum import Enum
 from nimic.ntypes import char, string, dispatch
 
-from nimic.std.syncio import read_file, read_file_bytes, write_buffer, set_file_pos
+from nimic.std.syncio import read_file, read_file_bytes, write_buffer, set_file_pos, open
 
     # "r", "rb":
 fmRead = "r"
@@ -30,28 +30,44 @@ def create_dir(dir: str) -> None:
 
 class PathComponent(Enum):
     pcFile = "pcFile"
-    pcDir = "pcDir"
     pcLinkToFile = "pcLinkToFile"
+    pcDir = "pcDir"
     pcLinkToDir = "pcLinkToDir"
 
 pcFile = PathComponent.pcFile
+pcLinkToFile = PathComponent.pcLinkToFile
 pcDir = PathComponent.pcDir
+pcLinkToDir = PathComponent.pcLinkToDir
 
 
-class _WalkEntry:
-    __slots__ = ('kind', 'path')
-    def __init__(self, kind, path):
-        self.kind = kind
-        self.path = path
+class _WalkEntry(tuple):
+    def __new__(cls, kind, path):
+        return super().__new__(cls, (kind, path))
+    @property
+    def kind(self):
+        return self[0]
+    @property
+    def path(self):
+        return self[1]
 
 
-def walk_dir(path: str):
+def walk_dir(path: string | str, relative: bool = False, check_dir: bool = False):
     """Iterate over directory entries (Nim: os.walkDir)."""
-    for entry in _os.scandir(path):
-        if entry.is_file():
-            yield _WalkEntry(pcFile, entry.path)
-        elif entry.is_dir():
-            yield _WalkEntry(pcDir, entry.path)
+    try:
+        for entry in _os.scandir(str(path)):
+            p = string(entry.name) if relative else string(entry.path)
+            if entry.is_symlink():
+                k = pcLinkToDir if entry.is_dir() else pcLinkToFile
+            elif entry.is_dir():
+                k = pcDir
+            else:
+                k = pcFile
+            yield _WalkEntry(k, p)
+    except OSError:
+        pass
+
+walkDir = walk_dir
+
 
 
 def extract_filename(path: str) -> str:
@@ -90,19 +106,7 @@ def get_app_filename() -> str:
     return sys.argv[0]
 
 
-def open(path: str, mode: str = "r"):
-    """Nim-style open — returns a File wrapper.
 
-    Nim's File is always binary, so write/append modes are forced to
-    binary (\"wb\", \"ab\", \"r+b\", \"w+b\") to match Nim semantics.
-    Read mode keeps text unless explicitly requested as binary.
-    """
-    from nimic.ntypes import File
-    # Nim files are binary for write/append modes
-    _binary_map = {"w": "wb", "a": "ab", "r+": "r+b", "w+": "w+b"}
-    actual_mode = _binary_map.get(mode, mode)
-    handle = __builtins__["open"](path, actual_mode) if isinstance(__builtins__, dict) else __builtins__.open(path, actual_mode)
-    return File(handle)
 
 import os.path
 import shutil
@@ -170,6 +174,15 @@ def dirExists(dir: string) -> bool:
 def createDir(dir: string) -> None:
     _os.makedirs(str(dir), exist_ok=True)
 
+create_dir = createDir
+
+@dispatch
+def removeDir(dir: string) -> None:
+    if _os.path.exists(str(dir)):
+        shutil.rmtree(str(dir))
+
+remove_dir = removeDir
+
 @dispatch
 def cmpPaths(pathA: string, pathB: string) -> int:
     a = os.path.normcase(os.path.normpath(str(pathA)))
@@ -181,6 +194,11 @@ def cmpPaths(pathA: string, pathB: string) -> int:
 @dispatch
 def extractFilename(path: string) -> string:
     return string(os.path.basename(str(path)))
+
+@dispatch
+def lastPathPart(path: string) -> string:
+    s = str(path).rstrip('/\\')
+    return string(os.path.basename(s))
 
 @dispatch
 def quoteShell(path: string) -> string:
@@ -225,3 +243,43 @@ walk_files = walkFiles
 def getCurrentCompilerExe() -> string:
     # mock
     return string(sys.executable)
+
+get_current_compiler_exe = getCurrentCompilerExe
+
+@dispatch
+def isRelativeTo(path: string, base: string) -> bool:
+    try:
+        import pathlib
+        return pathlib.Path(str(path)).is_relative_to(str(base))
+    except (ValueError, Exception):
+        return False
+
+is_relative_to = isRelativeTo
+
+@dispatch
+def get_env(var: string, default: string = string("")) -> string:
+    val = _os.environ.get(str(var))
+    if val is None:
+        return default
+    return string(val)
+
+getEnv = get_env
+last_path_part = lastPathPart
+
+@dispatch
+def unix_to_native_path(path: string | str, drive: string | str = string("")) -> string:
+    import sys
+    p = str(path)
+    if sys.platform == "win32":
+        p = p.replace("/", "\\")
+        if str(drive):
+            p = str(drive) + ":" + p
+    return string(p)
+
+unixToNativePath = unix_to_native_path
+
+@dispatch
+def expand_tilde(path: string | str) -> string:
+    return string(_os.path.expanduser(str(path)))
+
+expandTilde = expand_tilde

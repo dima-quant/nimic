@@ -38,21 +38,21 @@ def c_realloc(p, size):
 def copy_mem(dst, src, size: int):
     """Copy size bytes from src to dst."""
     n = int(size._n_get_value()) if hasattr(size, '_n_get_value') else int(size)
-    dst_addr = dst._n_addr if isinstance(dst, pointer) else ctypes.addressof(dst)
-    src_addr = src._n_addr if isinstance(src, pointer) else ctypes.addressof(src)
+    dst_addr = int(dst._n_addr if isinstance(dst, pointer) else ctypes.addressof(dst))
+    src_addr = int(src._n_addr if isinstance(src, pointer) else ctypes.addressof(src))
     ctypes.memmove(dst_addr, src_addr, n)
 
 def zero_mem(dst, size: int):
     """Zero size bytes at dst."""
     n = int(size._n_get_value()) if hasattr(size, '_n_get_value') else int(size)
-    dst_addr = dst._n_addr if isinstance(dst, pointer) else ctypes.addressof(dst)
+    dst_addr = int(dst._n_addr if isinstance(dst, pointer) else ctypes.addressof(dst))
     ctypes.memset(dst_addr, 0, n)
 
 def cmp_mem(a, b, size: int) -> int:
     """Compare size bytes — returns 0 if equal, nonzero otherwise."""
     n = int(size._n_get_value()) if hasattr(size, '_n_get_value') else int(size)
-    a_addr = a._n_addr if isinstance(a, pointer) else ctypes.addressof(a)
-    b_addr = b._n_addr if isinstance(b, pointer) else ctypes.addressof(b)
+    a_addr = int(a._n_addr if isinstance(a, pointer) else ctypes.addressof(a))
+    b_addr = int(b._n_addr if isinstance(b, pointer) else ctypes.addressof(b))
     a_bytes = (ctypes.c_char * n).from_address(a_addr)
     b_bytes = (ctypes.c_char * n).from_address(b_addr)
     for i in range(n):

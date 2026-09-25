@@ -18,6 +18,17 @@ class StringTableRef(UserDict):
     def __setitem__(self, key, value):
         self.data[str(key)] = string(value) if not isinstance(value, string) else value
 
+    def get_or_default(self, key, default=string("")):
+        k = str(key)
+        if k in self.data:
+            return self.data[k]
+        if key in self.data:
+            return self.data[key]
+        return default
+
+    getOrDefault = get_or_default
+
+
 def newStringTable(*args, **kwargs) -> StringTableRef:
     return StringTableRef()
 
