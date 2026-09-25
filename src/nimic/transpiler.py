@@ -16,6 +16,7 @@ Formatting:
   rule:slice -> slice [a:], [a:b] -> [a..^1], [a..<b]
   rule:discard -> assign to "_" is replaced by "discard"
   rule:pass -> replace "pass" by "discard"
+  rule:nonlocal -> suppress "nonlocal" declarations (Nim closures capture by reference)
 
 Scope qualifiers:
   rule:dropwith -> drop "with" for "const", "let", "var", "export", "block"
@@ -32,6 +33,10 @@ Type system:
   rule:instantiation -> call with capitalized name and named arguments is interpreted as instantiation ("=" -> ":").
     Classes instantiated with keywords should be named starting with a capital letter (preceeding by _ or local_)
   rule:enum -> "NIntEnum", "NStrEnum" rename to "Enum", drop "auto"
+  rule:trange -> Trange[a, b] transpiles as range[a .. b] (Nim range subtype)
+  rule:tuplelit -> NTuple subclass constructor calls transpile as Nim tuple literals (field: val, ...)
+  rule:setlit -> Tset/set constructor calls transpile as Nim set literals {a, b, ...}
+  rule:seqlit -> seq constructor calls transpile as Nim seq literals @[a, b, ...]
 
 Function definitions:
   rule:funcdef -> adjust function definition according to Nim syntax as "proc" (or "func")
@@ -57,6 +62,9 @@ Control flow:
   rule:comptime -> the expression "if comptime(x)" is written as "when x" ("if" directly followed by "comptime"
     should be resolvable at comptime (is interpreted as "when")
   rule:main -> replace __name__ == "__main__" by isMainModule
+  rule:defined -> defined("identifier") transpiles as defined(identifier) without quotes
+  rule:fortupleunpack -> tuple unpacking in for-loops emits parenthesized (a, b) syntax
+  rule:templatereturn -> inside templates, "return expr" emits just the expression (Nim template result semantics)
 
 Operators & renaming:
   rule:assign -> operator <<= is defined as value assignment to a mutable variable, i.e. a <<= b transpiles as a = b,
@@ -71,10 +79,15 @@ Operators & renaming:
   rule:array -> add array type to the first array element
   rule:isnot -> write isnot according to Nim syntax
   rule:notin -> write notin according to Nim syntax
+  rule:inrange -> inrange(a, b) transpiles as a .. b (Nim inclusive range literal)
+  rule:strformat -> Python % on string operands transpiles as Nim % (format) instead of mod
+  rule:nilident -> "is None" / "is not None" transpile as == nil / != nil
+  rule:keywordescape -> trailing _ stripped from Python keyword clashes (None_ -> None, type_ -> type)
 
 Imports:
   rule:import -> write import from as import, drop from __future__ import ...
   rule:nodoubleimport -> do not write import module if already imported
+  rule:modulepath -> nimic.x.y import paths transpile as x/y, with module renaming (e.g. syncio -> io)
 
 Memory & variables:
   rule:dropbrackets -> remove brackets from what follows after "ptr" and "ref"
@@ -113,6 +126,7 @@ The docstring for the original ``ast`` module is given below:
     :copyright: Copyright 2008 by Armin Ronacher.
     :license: Python License.
 """
+import ast
 import keyword as pykeyword
 import re
 import sys
@@ -825,12 +839,22 @@ class _Unparser(NodeVisitor):
         self._avoid_backslashes = _avoid_backslashes
         self._in_try_star = False
         self._aliases = {"Object": "object", "NTuple": "tuple"}
+        self._tuple_types = set()
+        self._set_types = set()
+        self._seq_types = set()
         self._native_type_subscript = ["array", "openArray", "seq"]
         self.renamed_keywords = {}
         self.module_names = []
         self._module_rename = {"ntypes": "ncode/pydefs", "nimpy": "ncode/nimpy"}
         self._module_std = ["math"]
         self._type_registry = type_registry
+        if self._type_registry is not None:
+            types_dict = getattr(self._type_registry, "types", self._type_registry)
+            if isinstance(types_dict, dict):
+                for name, tp in types_dict.items():
+                    if isinstance(tp, type):
+                        if tp.__name__ == "NTuple" or any(base.__name__ == "NTuple" for base in getattr(tp, "__mro__", [])):
+                            self._tuple_types.add(name)
         self._no_bracket_subscript = ["ptr", "ref"]  # rule:dropbrackets
         self._keywords_no_with = ["const", "let", "var", "export"]  # rule:dropwith
         self._keywords_rename = {}
@@ -845,6 +869,7 @@ class _Unparser(NodeVisitor):
         self._const_rename = {"True": "true", "False": "false", "None": "nil"}  # rule:lowercasebool
         self._enums = ["NIntEnum", "NStrEnum"]
         self._def_decorators = ["template", "iterator", "converter", "method", "calltype"]
+        self._declared_classes = set()
 
     def interleave(self, inter, f, seq):
         """Call f on each item in seq, calling inter() in between."""
@@ -955,17 +980,26 @@ class _Unparser(NodeVisitor):
         if comment is not None:
             return f" # type: {comment}"
 
+    def _is_type_def(self, item):
+        if isinstance(item, ClassDef):
+            return True
+        if isinstance(item, (FunctionDef, AsyncFunctionDef)):
+            for d in item.decorator_list:
+                if (isinstance(d, Name) and d.id == "calltype") or (isinstance(d, Call) and isinstance(d.func, Name) and d.func.id == "calltype"):
+                    return True
+        return False
+
     def traverse(self, node):
         # rule:classdefseq
-        _prev_class_def = False
+        _prev_type_def = False
         if isinstance(node, list):
             for item in node:
-                class_def = isinstance(item, ClassDef)
-                if class_def and not _prev_class_def:
+                type_def = self._is_type_def(item)
+                if type_def and not _prev_type_def:
                     # start type def
                     self.fill("type")
                     self._indent += 1
-                if not class_def and _prev_class_def:
+                if not type_def and _prev_type_def:
                     # end type def
                     self._indent -= 1
                     if len(self._class_def_methods) > 0:
@@ -973,8 +1007,8 @@ class _Unparser(NodeVisitor):
                         # assume for now no nested class defs
                         self._class_def_methods = []
                 self.traverse(item)
-                _prev_class_def = class_def
-            if len(node) > 0 and _prev_class_def: # if the last item was a class def
+                _prev_type_def = type_def
+            if len(node) > 0 and _prev_type_def: # if the last item was a type def
                 # end type def
                 self._indent -= 1
                 if len(self._class_def_methods) > 0:
@@ -1065,6 +1099,17 @@ class _Unparser(NodeVisitor):
         # self.interleave(lambda: self.write(", "), self.traverse, node.names)
 
     def visit_Assign(self, node):
+        if (
+            len(node.targets) == 1
+            and isinstance(node.targets[0], Attribute)
+            and isinstance(node.targets[0].value, Name)
+            and (
+                node.targets[0].value.id in self._declared_classes
+                or (self._type_registry and node.targets[0].value.id in self._type_registry.types)
+                or node.targets[0].value.id in self._aliases
+            )
+        ):
+            return
         self.fill()
         if len(node.targets) == 1 and isinstance(node.targets[0], Name) and getattr(node.targets[0], "id", "") == "_":
             # rule:discard
@@ -1115,6 +1160,29 @@ class _Unparser(NodeVisitor):
             else:
                 self.write(" = ")
                 self.traverse(node.value)
+        elif (
+            isinstance(node.value, Call)
+            and isinstance(node.value.func, Subscript)
+            and isinstance(node.value.func.value, Name)
+            and node.value.func.value.id == "array"
+            and len(node.value.args) == 1
+            and isinstance(node.value.args[0], (List, Dict))
+        ):
+            self.write(": ")
+            self.traverse(node.value.func)
+            self.write(" = ")
+            if isinstance(node.value.args[0], List):
+                self.traverse(node.value.args[0])
+            else:
+                with self.delimit("[", "]"):
+                    def write_dict_item(item):
+                        k, v = item
+                        self.traverse(k)
+                        self.write(": ")
+                        self.traverse(v)
+                    self.interleave(
+                        lambda: self.write(", "), write_dict_item, zip(node.value.args[0].keys, node.value.args[0].values)
+                    )
         else:
             self.write(" = ")
             self.traverse(node.value)
@@ -1153,6 +1221,11 @@ class _Unparser(NodeVisitor):
             self.traverse(node.value)
 
     def visit_Return(self, node):
+        # rule:templatereturn -> inside templates, emit just the expression (no "return")
+        if "template" in self._context_stack and node.value:
+            self.fill()
+            self.traverse(node.value)
+            return
         self.fill("return")
         if node.value:
             self.write(" ")
@@ -1184,8 +1257,8 @@ class _Unparser(NodeVisitor):
         self.interleave(lambda: self.write(", "), self.write, node.names)
 
     def visit_Nonlocal(self, node):
-        self.fill("nonlocal ")
-        self.interleave(lambda: self.write(", "), self.write, node.names)
+        # rule:nonlocal -> Nim closures capture by reference; suppress nonlocal
+        pass
 
     def visit_Await(self, node):
         with self.require_parens(_Precedence.AWAIT, node):
@@ -1267,6 +1340,7 @@ class _Unparser(NodeVisitor):
 
     def _adjust_name(self, name, definition=True):
         # rule:localname
+        # rule:keywordescape -> strip trailing _ from Python keyword clashes (None_ -> None)
         if len(name) > 1 and name.endswith("_") and pykeyword.iskeyword(name[:-1]):
             name = name[:-1]
         if len(name)>1 and name[0] == "_":
@@ -1278,6 +1352,7 @@ class _Unparser(NodeVisitor):
         return _str
 
     def visit_ClassDef(self, node):
+        self._declared_classes.add(node.name)
         # rule:classdef
         if node.decorator_list:
             deco = node.decorator_list[0].id
@@ -1290,7 +1365,7 @@ class _Unparser(NodeVisitor):
         body, pragma = self._get_body_and_pragma(node)
         type_str = self._adjust_name(node.name) # rule:localname
         _pass = isinstance(body[0], Pass) if body else False
-        no_attr = _pass # no attributes, i.e. pass or only methods
+        no_attr = (_pass or all(isinstance(b, (FunctionDef, AsyncFunctionDef, Pass)) for b in body)) if body else False # no attributes, i.e. pass or only methods
         # deco in ["ref", "ptr", "distinct"]
         no_object = no_attr or deco
         enum = False  # rule:enum
@@ -1298,7 +1373,35 @@ class _Unparser(NodeVisitor):
             raise ValueError(
                 f"Class '{node.name}' has no base class. All Nimic class definitions must specify an explicit base (e.g. 'class {node.name}(Object):')."
             )
-        if hasattr(node.bases[0], "id"):
+        if isinstance(node.bases[0], Subscript):
+            base_val = getattr(node.bases[0].value, "id", "")
+            if base_val == "Tset":
+                base = "set[" + ast.unparse(node.bases[0].slice) + "]"
+                from_object = base
+                no_object = True
+                self._set_types.add(node.name)
+                self._set_types.add(type_str)
+            elif base_val == "seq":
+                base = "seq[" + ast.unparse(node.bases[0].slice) + "]"
+                from_object = base
+                no_object = True
+                self._seq_types.add(node.name)
+                self._seq_types.add(type_str)
+            elif base_val == "Trange":
+                slice_node = node.bases[0].slice
+                if isinstance(slice_node, Tuple) and len(slice_node.elts) == 2:
+                    low_str = ast.unparse(slice_node.elts[0])
+                    high_str = ast.unparse(slice_node.elts[1])
+                    base = f"range[{low_str} .. {high_str}]"
+                else:
+                    base = "range[" + ast.unparse(slice_node) + "]"
+                from_object = base
+                no_object = True
+            else:
+                base = ast.unparse(node.bases[0])
+                from_object = base
+                no_object = True
+        elif hasattr(node.bases[0], "id"):
             if node.bases[0].id[0] == "_":
                 base = node.bases[0].id[1:]
             else:
@@ -1307,14 +1410,15 @@ class _Unparser(NodeVisitor):
             base = node.bases[0].attr
         else:
             base = "Object"
-        # else:
-        #     base = ast.unparse(node.bases[0]).replace("[", " ").replace("]", "")
         if base in self._aliases:
             from_object = self._aliases[base]
+            if base == "NTuple":
+                self._tuple_types.add(node.name)
+                self._tuple_types.add(type_str)
         elif base in self._enums:
             from_object = "enum "
             enum = True
-        elif no_object:
+        elif no_object and not (base in ("Exception", "Defect", "CatchableError", "ValueError", "KeyError", "IOError", "OSError") or base.endswith(("Error", "Exception", "Defect"))):
             # rule:typealias or rule:typedistinct
             from_object = base
         else:
@@ -1343,26 +1447,26 @@ class _Unparser(NodeVisitor):
         #             comma = True
         #         self.traverse(e)
         if not _pass:
-            with self.block(start=""):
-                # rule:classdefseq, split body into attributes and methods
-                body_rest = []
-                if not isinstance(body, list):
-                    body = [body]
-                for b in body:
-                    if isinstance(b, FunctionDef) or isinstance(b, AsyncFunctionDef):
-                        # check if self is annotated
-                        if b.args.args and b.args.args[0].arg == "self" and b.args.args[0].annotation is None:
-                            # rule:annotateself
-                            type_name = self._adjust_name(node.name, definition=False)
-                            b.args.args[0].annotation = Name(id=type_name, ctx=Load())
-                        self._class_def_methods.append(b)
+            # rule:classdefseq, split body into attributes and methods
+            body_rest = []
+            if not isinstance(body, list):
+                body = [body]
+            for b in body:
+                if isinstance(b, FunctionDef) or isinstance(b, AsyncFunctionDef):
+                    # check if self is annotated
+                    if b.args.args and b.args.args[0].arg == "self" and b.args.args[0].annotation is None:
+                        # rule:annotateself
+                        type_name = self._adjust_name(node.name, definition=False)
+                        b.args.args[0].annotation = Name(id=type_name, ctx=Load())
+                    self._class_def_methods.append(b)
+                else:
+                    if enum and isinstance(b, Assign) and isinstance(b.value, Call) and \
+                        isinstance(b.value.func, Name) and b.value.func.id == "auto":
+                        body_rest.append(b.targets[0])
                     else:
-                        if enum and isinstance(b, Assign) and isinstance(b.value, Call) and \
-                            isinstance(b.value.func, Name) and b.value.func.id == "auto":
-                            body_rest.append(b.targets[0])
-                        else:
-                            body_rest.append(b)
-                if body_rest:
+                        body_rest.append(b)
+            if body_rest:
+                with self.block(start=""):
                     # rule:matchcase, check for variant types
                     if (len(body_rest) > 1) and isinstance(body_rest[0], AnnAssign) and isinstance(body_rest[1], Match):
                         discriminator_name = self._adjust_name(body_rest[0].target.id) # rule:localname
@@ -1415,11 +1519,11 @@ class _Unparser(NodeVisitor):
 
     def _has_yield(self, node):
         for x in node:
-            if isinstance(x, Expr) and isinstance(x.value, Yield):
-                return True
-            if (isinstance(x, For) or isinstance(x, While)) and self._has_yield(x.body):
-                return True
+            for child in walk(x):
+                if isinstance(child, (Yield, YieldFrom)):
+                    return True
         return False
+
 
     def _function_helper(self, node, fill_suffix):
         if node.name == "_block":
@@ -1448,16 +1552,19 @@ class _Unparser(NodeVisitor):
         no_return = False  # rule:typedtemplate
         if func_name[0:2] == "__" and func_name in self.dunder_ops:
             do_arg_swap = func_name in self.binpops_with_arg_swap
-            inplace = func_name[2] == "i"
             func_name = self.dunder_ops[func_name]   # rule:funcdefrenamedunder
+            if func_name == "`mod`" and node.args.args and node.args.args[0].annotation:
+                ann_str = ast.unparse(node.args.args[0].annotation)
+                if "FormatStr" in ann_str or "string" in ann_str:
+                    func_name = "`%`"
         # rule:funcdefyield
         if decl_str != "iterator" and self._has_yield(body):
            decl_str = "iterator"
-        name_str = self._adjust_name(func_name)  # rule:localname
+        is_module_level = (self._scope_depth <= 1)
+        name_str = self._adjust_name(func_name, definition=is_module_level)  # rule:localname
         # rule:calltype — emit as type alias: Name* = proc(...): T {.pragma.}
         if decl_str == "calltype":
-            self.fill("type")
-            self.fill("  " + name_str + " = proc")
+            self.fill(name_str + " = proc")
             with self.delimit("(", ")"):
                 self.traverse(node.args)
             if node.returns and not isinstance(node.returns, Constant):
@@ -1480,12 +1587,13 @@ class _Unparser(NodeVisitor):
         if node.returns and not isinstance(node.returns, Constant) and not inplace:
             self.write(": ")
             self.traverse(node.returns)
-            typed_template = decl_str == "template" and isinstance(node.returns, Name) \
-                and not node.returns.id == "untyped"
+            typed_template = decl_str == "template"
             no_return = typed_template or decl_str == "converter"
         if pragma:
             self.write(" {." + pragma + ".}")
         if write_body:
+            if decl_str == "template":
+                self._context_stack.append("template")
             with self.block(extra=self.get_type_comment(node), start=" ="):
                 if isinstance(body, list) and isinstance(body[-1], Return):
                     if body[:-1]:
@@ -1499,6 +1607,8 @@ class _Unparser(NodeVisitor):
                         self.traverse(body[-1])
                 else:
                     self.traverse(body)
+            if decl_str == "template":
+                self._context_stack.pop()
 
     def _get_pragma(self, docstring_value):
         doc = docstring_value
@@ -1550,10 +1660,16 @@ class _Unparser(NodeVisitor):
 
     def _for_helper(self, fill, node):
         self.fill(fill)
-        self.set_precedence(_Precedence.TUPLE, node.target)
-        self.traverse(node.target)
+        # rule:fortupleunpack -> parenthesized tuple unpacking in for-loops
+        if isinstance(node.target, Tuple):
+            with self.delimit("(", ")"):
+                self.items_view(self.traverse, node.target.elts)
+        else:
+            self.set_precedence(_Precedence.TUPLE, node.target)
+            self.traverse(node.target)
         self.write(" in ")
         self.traverse(node.iter)
+
         with self.block(extra=self.get_type_comment(node)):
             self.traverse(node.body)
         if node.orelse:
@@ -1561,24 +1677,36 @@ class _Unparser(NodeVisitor):
             with self.block():
                 self.traverse(node.orelse)
 
+    def _check_comptime(self, test_node):
+        if isinstance(test_node, Call) and isinstance(test_node.func, Name) and test_node.func.id == "comptime":
+            return True, test_node.args[0]
+        if isinstance(test_node, UnaryOp) and isinstance(test_node.op, Not):
+            inner_comptime, inner_arg = self._check_comptime(test_node.operand)
+            if inner_comptime:
+                return True, UnaryOp(op=test_node.op, operand=inner_arg)
+        return False, test_node
+
     def visit_If(self, node):
         # rule:comptime
-        comptime = isinstance(node.test, Call) and isinstance(node.test.func, Name) and node.test.func.id == "comptime"
+        comptime, test_expr = self._check_comptime(node.test)
         if comptime:
             self.fill("when ")
-            self.traverse(node.test.args[0])
+            self.traverse(test_expr)
         else:
             self.fill("if ")
-            self.traverse(node.test)
+            self.traverse(test_expr)
         with self.block():
             self._scope_depth += 1
             self.traverse(node.body)
             self._scope_depth -= 1
         # collapse nested ifs into equivalent elifs.
         while node.orelse and len(node.orelse) == 1 and isinstance(node.orelse[0], If):
+            next_comptime, next_test = self._check_comptime(node.orelse[0].test)
+            if comptime != next_comptime:
+                break
             node = node.orelse[0]
             self.fill("elif ")
-            self.traverse(node.test)
+            self.traverse(next_test)
             with self.block():
                 self._scope_depth += 1
                 self.traverse(node.body)
@@ -1809,6 +1937,7 @@ class _Unparser(NodeVisitor):
                 escaped = escaped.replace("\n", "\\n")
                 escaped = escaped.replace("\t", "\\t")
                 escaped = escaped.replace("\r", "\\r")
+                escaped = escaped.replace("\0", "\\0")
                 repr_value = f'"{escaped}"'
             else:
                 repr_value = repr(value)
@@ -2034,9 +2163,9 @@ class _Unparser(NodeVisitor):
         "mod": _Precedence.TERM,
         "shl": _Precedence.TERM, #_Precedence.SHIFT,
         "shr": _Precedence.TERM, #_Precedence.SHIFT,
-        "or": _Precedence.BOR,
-        "xor": _Precedence.BXOR,
-        "and": _Precedence.BAND,
+        "or": _Precedence.OR,
+        "xor": _Precedence.OR,
+        "and": _Precedence.AND,
         "div": _Precedence.TERM,
         "^": _Precedence.POWER,
         "%": _Precedence.TERM,
@@ -2044,9 +2173,13 @@ class _Unparser(NodeVisitor):
 
     binop_rassoc = frozenset(("**",))
     def visit_BinOp(self, node):
+        # rule:strformat -> Python % on string operands transpiles as Nim % (format) instead of mod
         is_str_mod = node.op.__class__.__name__ == "Mod" and (
             (isinstance(node.left, Constant) and isinstance(node.left.value, str)) or
-            (isinstance(node.left, Call) and isinstance(node.left.func, Name) and node.left.func.id == "string")
+            (isinstance(node.left, Call) and isinstance(node.left.func, Name) and node.left.func.id == "string") or
+            (isinstance(node.left, Name) and any(x in node.left.id.lower() for x in ("frmt", "format", "pattern", "tmpl", "f_"))) or
+            isinstance(node.right, (List, Tuple)) or
+            (isinstance(node.right, Name) and any(x in node.right.id.lower() for x in ("args", "params")))
         )
         if is_str_mod:
             operator = "%"
@@ -2090,8 +2223,19 @@ class _Unparser(NodeVisitor):
             else:
                 self.traverse(node.left)
                 for o, e in zip(node.ops, node.comparators):
-                    self.write(" " + self.cmpops[o.__class__.__name__] + " ")
-                    self.traverse(e)
+                    op_name = o.__class__.__name__
+                    # rule:nilident -> "is None" / "is not None" transpile as == nil / != nil
+                    if op_name == "Is" and isinstance(e, Constant) and e.value is None:
+                        self.write(" == ")
+                    elif op_name == "IsNot" and isinstance(e, Constant) and e.value is None:
+                        self.write(" != ")
+                    else:
+                        self.write(" " + self.cmpops[op_name] + " ")
+                    if op_name in ("In", "NotIn") and isinstance(e, Tuple):
+                        with self.delimit("[", "]"):
+                            self.interleave(lambda: self.write(", "), self.traverse, e.elts)
+                    else:
+                        self.traverse(e)
 
     boolops = {"And": "and", "Or": "or"}
     boolop_precedence = {"and": _Precedence.AND, "or": _Precedence.OR}
@@ -2136,15 +2280,80 @@ class _Unparser(NodeVisitor):
         elif isinstance(node.func, Name) and node.func.id == "ch":
             # rule:char
             val = node.args[0].value
-            if val.isascii():
+            char_escapes = {
+                "'": r"'\''",
+                "\\": r"'\\'",
+                "\n": r"'\n'",
+                "\t": r"'\t'",
+                "\r": r"'\r'",
+                "\0": r"'\0'",
+            }
+            if val in char_escapes:
+                self.write(char_escapes[val])
+            elif val.isascii() and val.isprintable():
                 self.write(f"'{val}'")
             else:
                 st = val.encode("Latin-1").hex()
                 self.write(f"'\\x{st}'")
+        elif isinstance(node.func, Name) and node.func.id == "inrange" and len(node.args) == 2:
+            # rule:inrange -> inrange(a, b) translates to a .. b in Nim
+            self.traverse(node.args[0])
+            self.write(" .. ")
+            self.traverse(node.args[1])
         elif isinstance(node.func, Attribute) and node.func.attr in self._attribute_replace and not node.args:
             # rule:deref and rule:copy
             self.traverse(node.func.value)
             self.write(self._attribute_replace[node.func.attr])
+        elif isinstance(node.func, Name) and node.func.id == "defined" and len(node.args) == 1 and isinstance(node.args[0], Constant) and isinstance(node.args[0].value, str):
+            # rule:defined -> defined("identifier") translates to defined(identifier) in Nim
+            self.write(f"defined({node.args[0].value})")
+        # rule:tuplelit -> NTuple subclass constructor calls transpile as Nim tuple literals
+        elif isinstance(node.func, Name) and node.func.id in self._tuple_types:
+            with self.delimit("(", ")"):
+                comma = False
+                for e in node.args:
+                    if comma:
+                        self.write(", ")
+                    else:
+                        comma = True
+                    self.traverse(e)
+                for e in node.keywords:
+                    if comma:
+                        self.write(", ")
+                    else:
+                        comma = True
+                    self.write(e.arg + ": ")
+                    self.traverse(e.value)
+        # rule:setlit -> Tset/set constructor calls transpile as Nim set literals {a, b, ...}
+        elif (
+            (isinstance(node.func, Name) and (node.func.id in self._set_types or node.func.id in ("set", "Tset")))
+            or (isinstance(node.func, Subscript) and isinstance(node.func.value, Name) and node.func.value.id in ("Tset", "set"))
+        ):
+            if not node.args and not node.keywords:
+                self.write("{}")
+            elif len(node.args) == 1 and (isinstance(node.args[0], Set) or (isinstance(node.args[0], Dict) and not node.args[0].keys)):
+                if isinstance(node.args[0], Set):
+                    self.traverse(node.args[0])
+                else:
+                    self.write("{}")
+            else:
+                self.write("{")
+                self.interleave(lambda: self.write(", "), self.traverse, node.args)
+                self.write("}")
+        # rule:seqlit -> seq constructor calls transpile as Nim seq literals @[a, b, ...]
+        elif (
+            (isinstance(node.func, Name) and (node.func.id in self._seq_types or node.func.id == "seq"))
+            or (isinstance(node.func, Subscript) and isinstance(node.func.value, Name) and node.func.value.id == "seq")
+        ):
+            if not node.args and not node.keywords:
+                self.write("@[]")
+            elif len(node.args) == 1 and isinstance(node.args[0], List):
+                self.write("@")
+                self.traverse(node.args[0])
+            else:
+                self.write("@")
+                with self.delimit("[", "]"):
+                    self.interleave(lambda: self.write(", "), self.traverse, node.args)
         else:
             pop = False
             if isinstance(node.func, Name):
@@ -2166,6 +2375,7 @@ class _Unparser(NodeVisitor):
                 and isinstance(node.args[0], List)
                 and node.func.value.id in self._native_type_subscript
                 and len(node.func.slice.elts) == 2
+                and node.args[0].elts
                 and isinstance(node.args[0].elts[0], Constant)
             ):
                 # rule:array
@@ -2196,6 +2406,21 @@ class _Unparser(NodeVisitor):
                 isinstance(slice_value, Tuple)
                 and slice_value.elts
             )
+
+        # rule:trange -> Trange[a, b] translates to range[a .. b] in Nim
+        if isinstance(node.value, Name) and node.value.id == "Trange":
+            self.write("range[")
+            if isinstance(node.slice, Tuple) and len(node.slice.elts) == 2:
+                self.traverse(node.slice.elts[0])
+                self.write(" .. ")
+                self.traverse(node.slice.elts[1])
+            else:
+                self.traverse(node.slice)
+            self.write("]")
+            return
+
+        if isinstance(node.value, Name) and node.value.id == "Tset":
+            node.value.id = "set"
 
         self.set_precedence(_Precedence.ATOM, node.value)
         # feature:subscriptrename
@@ -2319,7 +2544,7 @@ class _Unparser(NodeVisitor):
             self.write(node.arg)
             # rule:instantiation
             if self._context_stack and self._context_stack[-1] == "instance":
-                self.write(":")
+                self.write(": ")
             else:
                 self.write("=")
         self.traverse(node.value)
@@ -2336,7 +2561,14 @@ class _Unparser(NodeVisitor):
             self.traverse(node.body)
 
     def visit_alias(self, node):
-        self.write(node.name)
+        # rule:modulepath -> nimic.x.y -> x/y, with module renaming
+        name = node.name
+        name_split = name.split(".")
+        if name_split[0] == "nimic":
+            if name_split[1] in self._module_rename:
+                name_split[1] = self._module_rename[name_split[1]]
+            name = "/".join(name_split[1:])
+        self.write(name)
         if node.asname:
             self.write(" as " + node.asname)
 
