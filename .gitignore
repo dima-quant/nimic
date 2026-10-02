@@ -208,3 +208,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Raytracer image outputs
+*.ppm
+
+# Local scratch directories
+.scratch/

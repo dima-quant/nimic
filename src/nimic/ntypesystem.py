@@ -146,6 +146,9 @@ _n_protocol_subtypes: dict = {
     "openArray": {"seq", "array", "list"},
 }
 
+# Inlined templates registry shared with nimic.inliner
+_n_templates: dict = {}
+
 
 def get_type_params(fn: callable) -> dict:
     lines = ins.getsource(fn).split("\n")

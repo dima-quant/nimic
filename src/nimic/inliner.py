@@ -28,8 +28,7 @@ import inspect
 import textwrap
 from functools import wraps
 
-from nimic.ntypesystem import dispatch
-_n_templates = {}
+from nimic.ntypesystem import dispatch, _n_templates
 
 
 def template(template_func):
