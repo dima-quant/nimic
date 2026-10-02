@@ -37,6 +37,13 @@ from nimic.ntypes import *
 
 Translate every construct following `nimic_translation_rules.md`. Key rules to remember:
 
+> [!TIP]
+> **When unsure about Nimic syntax**, always consult these two resources first:
+> 1. **`nimic_translation_rules.md`** (project root) — the authoritative reference for every Nim → Nimic mapping (variables, types, operators, functions, pointers, enums, etc.).
+> 2. **`tests/nraytracer/`** — a complete, working Nimic project with 30+ modules demonstrating correct usage patterns for `mut @ T`, `@dispatch`, `Tset`, `seq`, `array`, `Object`, `NIntEnum`, `ref[T]`, `ptr[T]`, iterators, templates, and more.
+>
+> Do **not** guess or invent syntax. If the translation rules don't cover a construct, check nraytracer for a working example. If neither covers it, follow the "Missing Nimic Features" section below.
+
 - **Naming**: Use `snake_case` for functions/attributes (Nim's `camelCase` → Python `snake_case`).
 - **Imports**: Do NOT use extra module qualification if the original Nim source did not use it. If Nim writes `Table` directly, import it directly (`from nimic.std.tables import Table`), not `std.tables.Table`.
 - **Variables**: `var` → `with var:`, `let` → `with let:`, `const` → `with const:`.
@@ -55,9 +62,31 @@ Translate every construct following `nimic_translation_rules.md`. Key rules to r
 - **Compile-time**: `when` → `if comptime(...)`.
 - **Discard**: `discard foo()` → `_ = foo()`.
 
+### No Python-Mode-Only Code
+
+> [!IMPORTANT]
+> **All code — including test cases — must be valid Nimic that compiles and runs in Nim after transpiling.**
+> Do not use Python builtins, idioms, or workarounds that would not survive transpilation. Every line must be dual-mode: runnable as Python via `python -m ncompiler.[filename]` **and** compilable/runnable as Nim via `nim r` on the transpiled output.
+>
+> Common violations to avoid:
+> - Using `f-string` formatting (use `string("...") % [args]` instead)
+> - Using Python `with open(...) as f:` (use `var f: File; open(f, path, fmWrite)` pattern instead)
+> - Using Python `list` instead of `seq` for typed sequences
+> - Using `isinstance()` or other Python reflection where Nim uses type dispatch
+> - Using chained comparisons like `0 <= x <= 10` (use `x >= 0 and x <= 10` instead)
+
 ### Missing `nimic.std` modules
 
 If the Nim source imports a `std/` module not yet in `src/nimic/std/`, create a basic implementation proactively. Add the necessary types and functions that the current file uses, following the patterns in existing `src/nimic/std/*.py` files.
+
+### Naming Convention for `nimic.std` Functions
+
+> [!IMPORTANT]
+> Every new function added to any `src/nimic/std/*.py` module **must** follow this convention:
+> 1. Implement the function with a **Pythonic `snake_case` name** (e.g., `to_octal`, `split_whitespace`, `walk_dir`).
+> 2. Create a **`camelCase` alias** immediately after (e.g., `toOctal = to_octal`, `splitWhitespace = split_whitespace`, `walkDir = walk_dir`).
+>
+> This ensures the function is accessible via both naming conventions — `snake_case` for Python-native callers and `camelCase` for Nim-idiomatic callers.
 
 ### Custom Operators with Limited Scope
 
@@ -117,37 +146,59 @@ if comptime(__name__ == "__main__"):
 
 Write test cases that exercise the most important and non-trivial functionality of the module. Consult `compiler/dep_tree.md` to see which modules import this one, and what functionality they typically use — test those APIs.
 
-## Step 4 — Run Tests
+> [!IMPORTANT]
+> **Tests must be valid Nimic** — they must survive transpilation and execute correctly in Nim via `nim r`.
+> - Do not use Python-only testing constructs (`unittest`, `pytest`, `assert` with f-strings, etc.).
+> - Use `doAssert(condition, string("message"))` for assertions.
+> - Use `echo(string("..."))` for output.
+> - Wrap test code in a `def test_[filename]():` function if callbacks or closures are needed, to ensure they satisfy Nim's `{.closure, gcsafe.}` requirements.
 
-Run the tests:
+## Step 4 — Run Tests in Python
+
+Run the tests in Python mode:
 ```bash
 cd /Users/dima/Documents/Scripts/Ndsl
-python -c "from ncompiler import [filename]"
+.venv/bin/python -m ncompiler.[filename]
 ```
 
 If tests fail, debug and fix. If the failure is due to a missing Nimic feature, create a proposal (see above).
 
-## Step 5 — Transpile Verification
+## Step 5 — Transpile and Execute in Nim
 
-Use the transpiler to verify round-trip fidelity:
+> [!IMPORTANT]
+> This step verifies that the converted code actually compiles and runs as native Nim.
 
-```python
-from nimic import transpiler
-from nimic.ntypesystem import _n_registry
-import ncompiler.[filename] as mod
-import inspect
+1. **Transpile** to Nim source:
+   ```bash
+   .venv/bin/python -c '
+   from nimic import transpiler
+   from nimic.ntypesystem import _n_registry
+   import ncompiler.[filename] as mod
+   import inspect, pathlib
+   src = inspect.getsource(mod)
+   aast = transpiler.parse(src)
+   nim_src, _ = transpiler.unparse(aast, _n_registry)
+   pathlib.Path(".scratch/[filename].nim").write_text(nim_src)
+   print(nim_src[:500])
+   '
+   ```
 
-src = inspect.getsource(mod)
-aast = transpiler.parse(src)
-nim_src, _ = transpiler.unparse(aast, _n_registry)
-print(nim_src)
-```
+2. **Compile and run** the transpiled Nim:
+   ```bash
+   nim r --hints:off --path:.scratch --path:src/nimic --path:compiler .scratch/[filename].nim
+   ```
 
-Verify the transpiled output is recognizable as valid Nim that corresponds to the original `compiler/[filename].nim`. It does not need to compile (dependencies may not be available), but it should be structurally equivalent.
+3. **Verify** that the output matches the Python-mode test output exactly.
+
+If Nim compilation fails, debug and fix the Nimic source. Common issues:
+- Missing export asterisks (functions wrapped in extra scope blocks)
+- Chained comparisons (`0 <= x <= 10` must be split to `x >= 0 and x <= 10`)
+- Python-only constructs that don't transpile
+- String formatting using f-strings instead of `%` operator
 
 ## Step 6 — Trigger Review
 
-After conversion is complete, **automatically** invoke the `nimic-review` skill on the same `[filename]` using a separate subagent. The review must be performed independently — do not review your own conversion.
+After conversion is complete and **both Python and Nim execution pass**, **automatically** invoke the `nimic-review` skill on the same `[filename]` using a separate subagent. The review must be performed independently — do not review your own conversion.
 
 ## Reference Files
 

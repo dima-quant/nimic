@@ -32,6 +32,12 @@ Create `ncompiler/review_[filename].md` to store all findings. Use this structur
 
 ## Step 4: Issue resolution
 ...
+
+## Step 5: Nim execution verification
+...
+
+## Step 6: Core engine changes audit
+...
 ```
 
 See existing reviews for reference: `ncompiler/review_wordrecg.md`, `ncompiler/review_idents.md`, `ncompiler/review_pathutils.md`, `ncompiler/review_nodejs.md`.
@@ -39,6 +45,13 @@ See existing reviews for reference: `ncompiler/review_wordrecg.md`, `ncompiler/r
 ## Step 2 — Line-by-Line Verification
 
 Compare `compiler/[filename].nim` against `ncompiler/[filename].py` **line by line**, verifying:
+
+> [!TIP]
+> **When verifying syntax**, use these two authoritative references:
+> 1. **`nimic_translation_rules.md`** (project root) — the definitive mapping for every Nim → Nimic construct.
+> 2. **`tests/nraytracer/`** — a working Nimic project with 30+ modules showing correct patterns for `mut @ T`, `@dispatch`, `Tset`, `seq`, `array`, `Object`, `NIntEnum`, `ref[T]`, `ptr[T]`, iterators, templates, etc.
+>
+> If the converted code uses syntax not found in either resource, flag it as a potential issue.
 
 1. **Direct correspondence**: Every Nim construct has a matching Nimic Python expression such that the transpiler can restore equivalent Nim code.
 2. **Translation rules compliance**: All mappings follow `nimic_translation_rules.md`. Check especially:
@@ -52,6 +65,14 @@ Compare `compiler/[filename].nim` against `ncompiler/[filename].py` **line by li
    - Correct operator mappings (`and`→`&`, `or`→`|`, `shr`→`>>`, etc.)
    - Correct pointer/memory primitives (`ptr[T]`, `p.contents`, `addr(x)`)
 3. **Completeness**: No Nim code was accidentally skipped or summarized.
+4. **No Python-mode-only code**: All code, including tests, must be valid Nimic that compiles and runs in Nim after transpiling. Flag any of these violations:
+   - `f-string` formatting (must use `string("...") % [args]`)
+   - Python `with open(...) as f:` (must use `open(f, path, mode)`)
+   - Python `list` instead of `seq` for typed sequences
+   - Python `isinstance()` where Nim uses type dispatch
+   - Chained comparisons like `0 <= x <= 10` (must use `x >= 0 and x <= 10`)
+   - Python `unittest` / `pytest` / `assert` with f-strings in tests
+   - Any construct that would not survive transpilation to valid Nim
 
 **Log all observations to the review file.** Do NOT make corrections during this step — only log.
 
@@ -65,11 +86,12 @@ Perform the verification of the **entire file** from start to finish. Do not sto
    - Do they cover the most important functions and types?
    - Do they test non-trivial logic (edge cases, boundary conditions)?
    - Are there critical APIs used by downstream modules that lack tests?
-4. If test coverage is insufficient, **add new test cases**.
-5. Run all tests:
+   - **Are all tests written in valid Nimic** (using `doAssert`, `echo`, `string()` — no Python-only constructs)?
+4. If test coverage is insufficient, **add new test cases** — written in valid Nimic.
+5. Run all tests in Python mode:
    ```bash
    cd /Users/dima/Documents/Scripts/Ndsl
-   python -c "from ncompiler import [filename]"
+   .venv/bin/python -m ncompiler.[filename]
    ```
 6. Log test results (pass/fail) in the review file. If tests fail, log the failure details but **do not attempt to fix them yet**.
 
@@ -77,7 +99,7 @@ Perform the verification of the **entire file** from start to finish. Do not sto
 
 If issues were found in Steps 2–3:
 
-1. Start fixing them one by one, following `nimic_convertion_approach.md` and `nimic_translation_rules.md`.
+1. Start fixing them one by one, following `nimic_convertion_approach.md` and `nimic_translation_rules.md`. When unsure about correct Nimic syntax for a fix, check `tests/nraytracer/` for working examples.
 2. After each fix, write progress in the review file.
 3. For complex issues with no obvious fix:
    - Present 2–3 possible approaches with pros and cons of each.
@@ -85,6 +107,67 @@ If issues were found in Steps 2–3:
 4. If a fix requires a Nimic feature that doesn't exist yet, create a proposal using the `nimic-propose-feature` skill.
 
 If no issues were found, write "No issues found" in the review file.
+
+## Step 5 — Nim Execution Verification
+
+> [!IMPORTANT]
+> After all issues are resolved, the converted module **must** be transpiled and executed in native Nim.
+
+1. **Transpile** to Nim source:
+   ```bash
+   .venv/bin/python -c '
+   from nimic import transpiler
+   from nimic.ntypesystem import _n_registry
+   import ncompiler.[filename] as mod
+   import inspect, pathlib
+   src = inspect.getsource(mod)
+   aast = transpiler.parse(src)
+   nim_src, _ = transpiler.unparse(aast, _n_registry)
+   pathlib.Path(".scratch/[filename].nim").write_text(nim_src)
+   print(nim_src[:500])
+   '
+   ```
+
+2. **Compile and run** the transpiled Nim:
+   ```bash
+   nim r --hints:off --path:.scratch --path:src/nimic --path:compiler .scratch/[filename].nim
+   ```
+
+3. **Compare output**: The Nim execution output must match the Python-mode test output.
+
+4. **Log results** in the review file under "Step 5: Nim execution verification":
+   - Python test output
+   - Nim compilation status (success / errors)
+   - Nim execution output
+   - Any discrepancies
+
+If Nim compilation or execution fails:
+- Debug and fix the Nimic source (not the transpiler unless absolutely necessary).
+- Common issues: missing export `*`, chained comparisons, Python-only constructs, scope depth problems.
+- Re-run both Python and Nim after each fix.
+- Document all fixes in the review file.
+
+**The review is not complete until both Python and Nim execution pass with matching output.**
+
+## Step 6 — Core Engine Changes Summary
+
+> [!IMPORTANT]
+> After finalizing all fixes, check whether any changes were introduced to the nimic core scripts during this conversion/review cycle.
+
+```bash
+cd /Users/dima/Documents/Scripts/Ndsl
+git diff --stat HEAD -- src/nimic/ntypes.py src/nimic/ntypesystem.py src/nimic/nsystem.py src/nimic/transpiler.py
+```
+
+If changes exist:
+
+1. **Log a summary** in the review file under "Step 6: Core engine changes". For each modified file, document: what changed, why it was needed, and a brief code example.
+
+2. **Verify std module naming**: Any new functions added to `src/nimic/std/*.py` must use **`snake_case`** with a **`camelCase` alias** (e.g., `toOctal = to_octal`).
+
+3. **Flag for core review**: Note in the review file that a `nimic-core-review` should be triggered to audit these changes for proper structure, SOLID compliance, and ad hoc fix detection.
+
+If no core changes were made, write "No core engine changes" in this section.
 
 ## Reference Files
 
@@ -95,3 +178,6 @@ If no issues were found, write "No issues found" in the review file.
 - Downstream consumers: `compiler/dep_tree.md`
 - Example nimic project: `tests/nraytracer/`
 - Existing reviews: `ncompiler/review_*.md`
+- Nimic core scripts: `src/nimic/ntypes.py`, `src/nimic/ntypesystem.py`, `src/nimic/nsystem.py`, `src/nimic/transpiler.py`
+- Core review skill: `.agents/skills/nimic-core-review/SKILL.md`
+
