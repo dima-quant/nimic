@@ -103,7 +103,7 @@ def main():
         vD  = initChannelDesc(Cr, Width, subsampled=True)
     print(f"Frame buffers initialized: {yD}, {uD}, {vD}")
     # Encode each frame
-    for i, ppmPath in ppmFiles:
+    for i, ppmPath in enumerate(ppmFiles):
         print(f"\rEncoding frame {i+1}/{len(ppmFiles)}: {extract_filename(ppmPath)}")
         stderr.write(f"\rEncoding frame {i+1}/{len(ppmFiles)}: {extract_filename(ppmPath)}")
 
