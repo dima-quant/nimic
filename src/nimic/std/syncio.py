@@ -56,7 +56,7 @@ def read_file(path: str | string) -> string:
     """Read entire file contents as a string."""
     from nimic.ntypesystem import string
     import builtins
-    with builtins.open(str(path), 'r') as f:
+    with builtins.open(str(path), 'rb') as f:
         return string(f.read())
 
 

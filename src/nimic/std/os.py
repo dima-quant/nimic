@@ -70,9 +70,9 @@ walkDir = walk_dir
 
 
 
-def extract_filename(path: str) -> str:
+def extract_filename(path: str | string) -> string:
     """Extract filename from path (Nim: os.extractFilename)."""
-    return _os.path.basename(path)
+    return string(_os.path.basename(str(path)))
 
 def expandFilename(path: string) -> string:
     return string(_os.path.abspath(str(path)))
