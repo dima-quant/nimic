@@ -1,10 +1,10 @@
 from __future__ import annotations
 import ctypes
-from enum import StrEnum
+from enum import StrEnum, auto
 from typing import Generator, TypeVar
 
 from nimic.system.ansi_c import c_malloc, c_free
-from nimic.ntypesystem import char, seq
+from nimic.ntypesystem import char, seq, NIntEnum
 
 class _SomeCastClass:
     def __getitem__(self, other_cls: type) -> callable:
@@ -101,3 +101,108 @@ def new_cstring_of_cap(cap: int):
     return cstring(cap)
 
 newCStringOfCap = new_cstring_of_cap
+
+
+class Endianness(NIntEnum):
+    littleEndian = 0
+    bigEndian = auto()
+
+
+def _detect_host_os():
+    import sys
+    from nimic.ntypesystem import string
+    if sys.platform == "darwin":
+        return string("macosx")
+    elif sys.platform == "win32":
+        return string("windows")
+    elif sys.platform.startswith("linux"):
+        return string("linux")
+    elif sys.platform.startswith("freebsd"):
+        return string("freebsd")
+    elif sys.platform.startswith("openbsd"):
+        return string("openbsd")
+    elif sys.platform.startswith("netbsd"):
+        return string("netbsd")
+    elif sys.platform.startswith("solaris") or sys.platform.startswith("sunos"):
+        return string("solaris")
+    elif sys.platform.startswith("aix"):
+        return string("aix")
+    return string("any")
+
+
+def _detect_host_cpu():
+    import os
+    from nimic.ntypesystem import string
+    if hasattr(os, "uname"):
+        arch = os.uname().machine.lower()
+    else:
+        import os as _os
+        arch = _os.environ.get("PROCESSOR_ARCHITECTURE", "any").lower()
+    if arch in ["x86_64", "amd64"]:
+        return string("amd64")
+    elif arch in ["i386", "i686", "x86"]:
+        return string("i386")
+    elif arch in ["arm64", "aarch64"]:
+        return string("arm64")
+    elif arch.startswith("arm"):
+        return string("arm")
+    elif arch.startswith("mips64"):
+        return string("mips64")
+    elif arch.startswith("mips"):
+        return string("mips")
+    elif arch.startswith("riscv32"):
+        return string("riscv32")
+    elif arch.startswith("riscv64"):
+        return string("riscv64")
+    elif arch.startswith("powerpc64") or arch.startswith("ppc64"):
+        return string("powerpc64")
+    elif arch.startswith("powerpc") or arch.startswith("ppc"):
+        return string("powerpc")
+    elif arch.startswith("sparc64"):
+        return string("sparc64")
+    elif arch.startswith("sparc"):
+        return string("sparc")
+    elif arch.startswith("s390x"):
+        return string("s390x")
+    return string("any")
+
+
+hostOS = _detect_host_os()
+hostCPU = _detect_host_cpu()
+
+
+def substr(s, first: int = 0, last: int | None = None):
+    """Nim: substr — slice string from `first` to `last` (inclusive)."""
+    from nimic.ntypesystem import string
+    s_val = str(s)
+    f = max(int(first), 0)
+    if last is None:
+        l = len(s_val) - 1
+    else:
+        l = min(int(last), len(s_val) - 1)
+    if f <= l:
+        return string(s_val[f:l + 1])
+    return string("")
+
+
+import builtins as _builtins
+
+def ord(x) -> int:
+    """Nim: ord(x) — returns ordinal integer of an enum, char, int, bool, or StrEnum."""
+    if hasattr(x, 'ord'):
+        return x.ord()
+    if hasattr(x, 'value') and isinstance(x.value, int):
+        return x.value
+    if isinstance(x, (int, bool)):
+        return int(x)
+    return _builtins.ord(x)
+
+
+def quit(error: int | str = 0) -> None:
+    """Nim: quit — exit process with exit code or message."""
+    import sys
+    if isinstance(error, int):
+        sys.exit(error)
+    else:
+        sys.exit(str(error))
+

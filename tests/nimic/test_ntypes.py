@@ -1005,5 +1005,715 @@ class TestNTypes(unittest.TestCase):
         self.assertIsNot(s3._n_view, s4._n_view)  # independent buffers
 
 
+    # ------------------------------------------------------------------ #
+    #  Tests added by nimic-core-review 2026-10-01                       #
+    # ------------------------------------------------------------------ #
+
+    # --- high() / low() on integer types ---
+
+    def test_high_low_signed_integers(self):
+        """high()/low() on signed integer types dispatches via NInteger.first()/last()."""
+        self.assertEqual(int(low(int8)), -128)
+        self.assertEqual(int(high(int8)), 127)
+        self.assertEqual(int(low(int16)), -32768)
+        self.assertEqual(int(high(int16)), 32767)
+        self.assertEqual(int(low(int32)), -2147483648)
+        self.assertEqual(int(high(int32)), 2147483647)
+        self.assertEqual(int(low(int64)), -9223372036854775808)
+        self.assertEqual(int(high(int64)), 9223372036854775807)
+
+    def test_high_low_unsigned_integers(self):
+        """high()/low() on unsigned integer types."""
+        self.assertEqual(int(low(uint8)), 0)
+        self.assertEqual(int(high(uint8)), 255)
+        self.assertEqual(int(low(uint16)), 0)
+        self.assertEqual(int(high(uint16)), 65535)
+        self.assertEqual(int(low(uint32)), 0)
+        self.assertEqual(int(high(uint32)), 4294967295)
+        self.assertEqual(int(low(uint64)), 0)
+        self.assertEqual(int(high(uint64)), 18446744073709551615)
+
+    def test_high_low_enum(self):
+        """high()/low() on NIntEnum returns first/last member."""
+        class Color(NIntEnum):
+            red = 0
+            green = auto()
+            blue = auto()
+
+        self.assertEqual(low(Color), Color.red)
+        self.assertEqual(high(Color), Color.blue)
+
+    def test_high_low_on_seq(self):
+        """high()/low() on a seq instance returns 0 and len-1."""
+        s = seq[int32]()
+        s.add(10)
+        s.add(20)
+        s.add(30)
+        self.assertEqual(low(s), 0)
+        self.assertEqual(high(s), 2)
+
+    def test_high_low_on_array(self):
+        """high()/low() on an array type returns first/last index."""
+        ArrType = array[5, int32]
+        self.assertEqual(low(ArrType), 0)
+        self.assertEqual(high(ArrType), 4)
+
+    # --- NStrEnum comparison operators ---
+
+    def test_nstrenum_comparisons(self):
+        """NStrEnum supports ordinal-based <, <=, >, >= comparisons."""
+        class Severity(NStrEnum):
+            low = "low"
+            medium = "medium"
+            high = "high"
+
+        self.assertTrue(Severity.low < Severity.medium)
+        self.assertTrue(Severity.medium < Severity.high)
+        self.assertFalse(Severity.high < Severity.low)
+        self.assertTrue(Severity.low <= Severity.low)
+        self.assertTrue(Severity.low <= Severity.medium)
+        self.assertTrue(Severity.high > Severity.medium)
+        self.assertTrue(Severity.high >= Severity.high)
+        self.assertFalse(Severity.low > Severity.medium)
+
+    def test_nstrenum_int_index(self):
+        """NStrEnum supports __int__ and __index__ via ord()."""
+        class Direction(NStrEnum):
+            north = "north"
+            south = "south"
+            east = "east"
+            west = "west"
+
+        self.assertEqual(int(Direction.north), 0)
+        self.assertEqual(int(Direction.south), 1)
+        self.assertEqual(int(Direction.east), 2)
+        self.assertEqual(int(Direction.west), 3)
+        # __index__ allows use as list index
+        data = ['N', 'S', 'E', 'W']
+        self.assertEqual(data[Direction.east], 'E')
+
+    # --- Non-zero-based arrays (array with Trange index) ---
+
+    def test_array_nonzero_based(self):
+        """array indexed by Trange has non-zero first index."""
+        R = Trange[3, 7]
+        ArrType = array[R, int32]
+
+        self.assertEqual(ArrType.first(), 3)
+        self.assertEqual(ArrType.last(), 7)
+
+        a = ArrType()
+        # Set/get with non-zero indices
+        a[3] = 100
+        a[5] = 200
+        a[7] = 300
+        self.assertEqual(int(a[3]), 100)
+        self.assertEqual(int(a[5]), 200)
+        self.assertEqual(int(a[7]), 300)
+
+    def test_array_nonzero_based_high_low(self):
+        """high()/low() on Trange-indexed array returns correct bounds."""
+        R = Trange[1, 5]
+        ArrType = array[R, int32]
+        self.assertEqual(low(ArrType), 1)
+        self.assertEqual(high(ArrType), 5)
+
+    # --- string mutability: setLen, __iadd__, __ilshift__ ---
+
+    def test_string_setlen(self):
+        """string.setLen() truncates correctly and extends the backing buffer."""
+        s = string("hello")
+        s.setLen(3)
+        self.assertEqual(str(s), "hel")
+        # Extending pads with null bytes in the backing buffer
+        s.setLen(5)
+        raw = bytes(s._n_view_ref[0])
+        self.assertEqual(len(raw), 5)
+        self.assertEqual(raw[:3], b'hel')
+
+    def test_string_iadd(self):
+        """string += appends in place."""
+        s = string("hello")
+        s += string(" world")
+        self.assertEqual(str(s), "hello world")
+
+    def test_string_ilshift(self):
+        """string <<= replaces content (Nim shallow assignment)."""
+        s = string("hello")
+        s <<= string("goodbye")
+        self.assertEqual(str(s), "goodbye")
+
+    def test_string_data_setter(self):
+        """string.data setter actually updates the backing buffer."""
+        s = string("original")
+        s.data = "replaced"
+        self.assertEqual(str(s), "replaced")
+
+    def test_string_getitem_returns_char(self):
+        """Indexing a string always returns a char."""
+        from nimic.ntypesystem import char as _char
+        s = string("abc")
+        c = s[0]
+        self.assertIsInstance(c, _char)
+        self.assertEqual(str(c), "a")
+
+    def test_string_endswith_startswith(self):
+        """string.endswith / startswith accept string and tuple."""
+        s = string("hello.nim")
+        self.assertTrue(s.endswith(string(".nim")))
+        self.assertTrue(s.endswith(".nim"))
+        self.assertTrue(s.endswith((".nim", ".py")))
+        self.assertFalse(s.endswith(".py"))
+        self.assertTrue(s.startswith(string("hello")))
+        self.assertTrue(s.startswith("hello"))
+        self.assertTrue(s.startswith(("hello", "world")))
+
+    # --- Tset reverse operators ---
+
+    def test_tset_reverse_operators(self):
+        """Tset supports reverse operators (+, *, -) and preserves type."""
+        class TKind(NIntEnum):
+            a = 0
+            b = auto()
+            c = auto()
+
+        S = Tset[TKind]
+        s1 = S({TKind.a, TKind.b})
+        s2 = S({TKind.b, TKind.c})
+
+        # Union via +
+        s3 = s1 + s2
+        self.assertIsInstance(s3, S)
+        self.assertEqual(s3, {TKind.a, TKind.b, TKind.c})
+
+        # Intersection via *
+        s4 = s1 * s2
+        self.assertIsInstance(s4, S)
+        self.assertEqual(s4, {TKind.b})
+
+        # Difference
+        s5 = s1 - s2
+        self.assertIsInstance(s5, S)
+        self.assertEqual(s5, {TKind.a})
+
+        # XOR (symmetric difference)
+        s6 = s1 ^ s2
+        self.assertIsInstance(s6, S)
+        self.assertEqual(s6, {TKind.a, TKind.c})
+
+    def test_tset_contains_and_copy(self):
+        """Tset.contains() and copy() work correctly."""
+        class TKind2(NIntEnum):
+            x = 0
+            y = auto()
+
+        S = Tset[TKind2]
+        s = S({TKind2.x})
+        self.assertTrue(s.contains(TKind2.x))
+        self.assertFalse(s.contains(TKind2.y))
+
+        s2 = s.copy()
+        self.assertEqual(s, s2)
+        self.assertIsNot(s, s2)
+        self.assertIsInstance(s2, S)
+
+    # --- Object with callable fields ---
+
+    def test_object_callable_field(self):
+        """Object with a function-typed field initializes to None."""
+        from nimic.ntypesystem import calltype
+
+        @calltype
+        def my_callback(x: int32) -> int32: ...
+
+        class Handler(Object):
+            on_event: my_callback
+            name: string
+
+        h = Handler()
+        self.assertIsNone(h.on_event)
+        self.assertEqual(str(h.name), "")
+
+    # --- Dispatch subtype matching ---
+
+    def test_dispatch_subtype_int_variants(self):
+        """@dispatch with alias resolution: nint resolves to int64."""
+        @dispatch
+        def process_nint(x: int64) -> string:
+            return string("int64")
+
+        # int64 exact match
+        self.assertEqual(str(process_nint(int64(5))), "int64")
+
+        # nint is aliased to int64 — should match via alias resolution
+        result = process_nint(nint(5))
+        self.assertEqual(str(result), "int64")
+
+    def test_dispatch_no_ambiguity_with_exact_match(self):
+        """When an exact match exists, it takes priority over subtype match."""
+        @dispatch
+        def classify(x: int32) -> string:
+            return string("i32")
+
+        @dispatch
+        def classify(x: int64) -> string:
+            return string("i64")
+
+        self.assertEqual(str(classify(int32(1))), "i32")
+        self.assertEqual(str(classify(int64(1))), "i64")
+
+    # --- char from bytes ---
+
+    def test_char_from_bytes(self):
+        """char() accepts bytes and bytearray."""
+        from nimic.ntypesystem import char as _char
+        c1 = _char(b'A')
+        self.assertEqual(str(c1), 'A')
+        self.assertEqual(int(c1), 65)
+
+        c2 = _char(bytearray(b'Z'))
+        self.assertEqual(str(c2), 'Z')
+        self.assertEqual(int(c2), 90)
+
+    def test_char_sizeof(self):
+        """char._n_sizeof() returns 1."""
+        from nimic.ntypesystem import char as _char
+        self.assertEqual(_char._n_sizeof(), 1)
+
+    # --- Trange inherits from Trange ---
+
+    def test_trange_issubclass(self):
+        """Dynamic Trange subclasses are actual subclasses of Trange."""
+        R = Trange[0, 10]
+        self.assertTrue(issubclass(R, Trange))
+
+    # --- nsystem: Endianness, hostOS, hostCPU, substr, ord, quit ---
+
+    def test_endianness_enum(self):
+        """Endianness enum has expected members."""
+        from nimic.nsystem import Endianness
+        self.assertEqual(int(Endianness.littleEndian), 0)
+        self.assertEqual(int(Endianness.bigEndian), 1)
+
+    def test_host_os_cpu(self):
+        """hostOS and hostCPU return non-empty strings."""
+        from nimic.nsystem import hostOS, hostCPU
+        self.assertIsInstance(hostOS, string)
+        self.assertIsInstance(hostCPU, string)
+        self.assertGreater(len(str(hostOS)), 0)
+        self.assertGreater(len(str(hostCPU)), 0)
+
+    def test_substr(self):
+        """substr() implements Nim's inclusive slicing."""
+        from nimic.nsystem import substr
+        s = string("hello world")
+        self.assertEqual(str(substr(s, 0, 4)), "hello")
+        self.assertEqual(str(substr(s, 6)), "world")
+        self.assertEqual(str(substr(s, 0, 0)), "h")
+
+    def test_ord_function(self):
+        """ord() works on enum, char, int, bool."""
+        from nimic.nsystem import ord as nim_ord
+        from nimic.ntypesystem import char as _char
+
+        # char
+        self.assertEqual(nim_ord(_char('A')), 65)
+        # int passthrough
+        self.assertEqual(nim_ord(42), 42)
+        # bool
+        self.assertEqual(nim_ord(True), 1)
+        self.assertEqual(nim_ord(False), 0)
+        # NIntEnum
+        class TestEnum(NIntEnum):
+            a = 0
+            b = auto()
+        self.assertEqual(nim_ord(TestEnum.a), 0)
+        self.assertEqual(nim_ord(TestEnum.b), 1)
+
+    # --- ntypes: writeFile / readFile ---
+
+    def test_write_read_file(self):
+        """writeFile / readFile round-trip."""
+        import tempfile, os
+        from nimic.ntypes import writeFile, readFile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            path = f.name
+        try:
+            writeFile(path, "nimic test content")
+            content = readFile(path)
+            self.assertEqual(str(content), "nimic test content")
+        finally:
+            os.unlink(path)
+
+    # --- ntypes: setLen ---
+
+    def test_setLen_string(self):
+        """setLen on string truncates or pads."""
+        from nimic.ntypes import setLen
+        s = string("hello")
+        setLen(s, 3)
+        self.assertEqual(str(s), "hel")
+
+    def test_setLen_list(self):
+        """setLen on a plain list extends or truncates."""
+        from nimic.ntypes import setLen
+        lst = [1, 2, 3]
+        setLen(lst, 5)
+        self.assertEqual(len(lst), 5)
+        setLen(lst, 2)
+        self.assertEqual(lst, [1, 2])
+
+    # --- File context manager ---
+
+    def test_file_context_manager(self):
+        """File supports with-statement (context manager)."""
+        import tempfile, os
+        from nimic.ntypesystem import File
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.bin', delete=False) as f:
+            path = f.name
+
+        try:
+            handle = open(path, 'rb')
+            f = File(handle)
+            with f:
+                pass  # just verify no exception
+        finally:
+            os.unlink(path)
+
+    # --- string.string property ---
+
+    def test_string_string_property(self):
+        """string.string returns self (Nim compat)."""
+        s = string("test")
+        self.assertIs(s.string, s)
+
+    # --- raiseAssert ---
+
+    def test_raise_assert(self):
+        """raiseAssert raises AssertionError."""
+        from nimic.ntypes import raiseAssert
+        with self.assertRaises(AssertionError):
+            raiseAssert("test message")
+
+
+    # ------------------------------------------------------------------ #
+    #  Tests for unified type relationships (alias / distinct / inherit)  #
+    # ------------------------------------------------------------------ #
+
+    def test_distinct_not_matched_by_subtype(self):
+        """@distinct type is NOT matched via subtype dispatch."""
+        class TDollar(Object):
+            value: int32
+
+        @distinct
+        class TEuro(TDollar):
+            """{.borrow: `.`}"""
+
+        @dispatch
+        def pay_dollars(d: TDollar) -> string:
+            return string("paid")
+
+        # TDollar exact match works
+        self.assertEqual(str(pay_dollars(TDollar(value=10))), "paid")
+
+        # TEuro should NOT match TDollar via subtype
+        with self.assertRaises(NotImplementedError):
+            pay_dollars(TEuro(TDollar(value=10)))
+
+    def test_distinct_matched_by_converter(self):
+        """@distinct type IS matched when @converter exists."""
+        class TVec2(Object):
+            x: float64
+            y: float64
+
+        @distinct
+        class TPoint2(TVec2):
+            """{.borrow: `.`}"""
+            @converter
+            def toTVec2(p: TPoint2) -> TVec2:
+                return TVec2(p)
+
+        @dispatch
+        def tvec_length(v: TVec2) -> float64:
+            return v.x * v.x + v.y * v.y
+
+        # Should work via converter
+        p = TPoint2(TVec2(x=3.0, y=4.0))
+        self.assertAlmostEqual(float(tvec_length(p)), 25.0)
+
+    def test_inheritance_matched_by_subtype(self):
+        """Inherited type IS matched via subtype dispatch (Liskov)."""
+        class TShape(Object):
+            area: float64
+
+        class TCircle(TShape):
+            radius: float64
+
+        @dispatch
+        def describe_tshape(s: TShape) -> string:
+            return string("shape")
+
+        c = TCircle(radius=5.0, area=78.5)
+        # Should match via inheritance
+        self.assertEqual(str(describe_tshape(c)), "shape")
+
+    def test_alias_matched_both_directions(self):
+        """Type alias resolves through _n_aliases for dispatch."""
+        @dispatch
+        def process_i32(x: int32) -> int32:
+            return x + 1
+
+        # nint is aliased to int64 which is-a NInteger, same as int32
+        # Calling with plain Python int (aliased to int32) should match exactly
+        result = process_i32(int32(5))
+        self.assertEqual(int(result), 6)
+
+    def test_openarray_protocol(self):
+        """openArray matches seq, array, and list via protocol."""
+        from nimic.ntypesystem import _match_subtype
+        self.assertTrue(_match_subtype("seq", "openArray"))
+        self.assertTrue(_match_subtype("array", "openArray"))
+        self.assertTrue(_match_subtype("list", "openArray"))
+        self.assertFalse(_match_subtype("string", "openArray"))
+
+    def test_distinct_in_registry(self):
+        """@distinct adds the type name to _n_distinct_types."""
+        from nimic.ntypesystem import _n_distinct_types
+
+        @distinct
+        class TDistReg(Object):
+            """{.borrow: `.`}"""
+            val: int32
+
+        self.assertIn("TDistReg", _n_distinct_types)
+
+    def test_distinct_match_subtype_returns_false(self):
+        """_match_subtype returns False when arg is a distinct type."""
+        from nimic.ntypesystem import _match_subtype, _n_distinct_types
+
+        @distinct
+        class TDistSub(Object):
+            """{.borrow: `.`}"""
+            val: int32
+
+        self.assertIn("TDistSub", _n_distinct_types)
+        # Even though TDistSub is a Python subclass of Object,
+        # _match_subtype should return False for distinct types
+        self.assertFalse(_match_subtype("TDistSub", "_Object"))
+
+    def test_inheritance_not_confused_with_distinct(self):
+        """Non-distinct subclass still matches via _match_subtype."""
+        from nimic.ntypesystem import _match_subtype
+
+        class TAnimal(Object):
+            name: string
+
+        class TDog(TAnimal):
+            breed: string
+
+        # TDog is a genuine subclass, not distinct — should match
+        self.assertTrue(_match_subtype("TDog", "TAnimal"))
+
+    def test_rootobj_multilevel_inheritance_fields(self):
+        """Object subclass inherits all fields from base classes in MRO order."""
+        class TOrganism(RootObj):
+            alive: bool
+
+        class TMammal(TOrganism):
+            name: string
+
+        class TCanine(TMammal):
+            breed: string
+
+        # Field ordering: base first, derived last
+        self.assertEqual(TCanine._n_fields, ["alive", "name", "breed"])
+
+        # Construct instance and verify all fields are set
+        c = TCanine(alive=True, name=string("Rover"), breed=string("Labrador"))
+        self.assertTrue(c.alive)
+        self.assertEqual(str(c.name), "Rover")
+        self.assertEqual(str(c.breed), "Labrador")
+
+        # Verify C struct backing preserves field order
+        from nimic.ntypesystem import DICT_OF_C_TYPES
+        c_type = DICT_OF_C_TYPES.get("TCanine")
+        self.assertIsNotNone(c_type)
+        c_field_names = [f[0] for f in c_type._fields_]
+        self.assertEqual(c_field_names, ["alive", "name", "breed"])
+
+    def test_rootobj_dispatch_polymorphism(self):
+        """Dispatch against RootObj and intermediate classes respects subtype hierarchy."""
+        class TBaseEntity(RootObj):
+            id: int32
+
+        class TPerson(TBaseEntity):
+            name: string
+
+        class TEmployee(TPerson):
+            salary: int32
+
+        @dispatch
+        def get_entity_id(e: RootObj) -> int32:
+            return e.id
+
+        @dispatch
+        def get_person_name(p: TPerson) -> string:
+            return p.name
+
+        emp = TEmployee(id=int32(101), name=string("Alice"), salary=int32(50000))
+        person = TPerson(id=int32(102), name=string("Bob"))
+        entity = TBaseEntity(id=int32(103))
+
+        # RootObj accepts TEmployee, TPerson, and TBaseEntity
+        self.assertEqual(int(get_entity_id(emp)), 101)
+        self.assertEqual(int(get_entity_id(person)), 102)
+        self.assertEqual(int(get_entity_id(entity)), 103)
+
+        # TPerson accepts TEmployee (derived), but NOT TBaseEntity (parent)
+        self.assertEqual(str(get_person_name(emp)), "Alice")
+        self.assertEqual(str(get_person_name(person)), "Bob")
+        with self.assertRaises(NotImplementedError):
+            get_person_name(entity)
+
+    def test_rootobj_empty_subclass(self):
+        """Empty subclass of Object is a subtype, not an alias."""
+        class TVehicle(RootObj):
+            wheels: int32
+
+        class TBicycle(TVehicle):
+            pass
+
+        # TBicycle inherits fields
+        b = TBicycle(wheels=int32(2))
+        self.assertEqual(int(b.wheels), 2)
+
+        # TBicycle is a subtype of TVehicle
+        from nimic.ntypesystem import _match_subtype
+        self.assertTrue(_match_subtype("TBicycle", "TVehicle"))
+        # TVehicle is NOT a subtype of TBicycle
+        self.assertFalse(_match_subtype("TVehicle", "TBicycle"))
+
+        # Dispatch expecting TBicycle rejects TVehicle
+        @dispatch
+        def ring_bell(b: TBicycle) -> string:
+            return string("ring")
+
+        self.assertEqual(str(ring_bell(b)), "ring")
+        with self.assertRaises(NotImplementedError):
+            ring_bell(TVehicle(wheels=int32(4)))
+
+    def test_ufcs_borrowed_method_dispatch(self):
+        """Free-function dispatch calls borrowed method on distinct type via UFCS."""
+        @distinct
+        class TFilePath(string):
+            def baseName(self) -> string:
+                """{.borrow.}"""
+                import os
+                return string(os.path.basename(str(self)))
+
+        @dispatch
+        def baseName(p: string) -> string:
+            import os
+            return string(os.path.basename(str(p)))
+
+        fp = TFilePath("/path/to/file.txt")
+        # Free-function syntax baseName(fp) resolves to fp.baseName() via UFCS
+        result = baseName(fp)
+        self.assertEqual(str(result), "file.txt")
+
+    # ------------------------------------------------------------------ #
+    #  Tests for dispatch defaults, bare ptr, and binary readFile         #
+    # ------------------------------------------------------------------ #
+
+    def test_dispatch_unannotated_param_with_default(self):
+        """@dispatch infers types for parameters that have default values without type annotations."""
+        @dispatch
+        def clamp_val(val: float64, min_val: float64, max_val = 100.0) -> float64:
+            if val < min_val: return min_val
+            if val > max_val: return max_val
+            return val
+
+        self.assertEqual(float(clamp_val(float64(50.0), float64(0.0))), 50.0)
+        self.assertEqual(float(clamp_val(float64(150.0), float64(0.0))), 100.0)
+        self.assertEqual(float(clamp_val(float64(150.0), float64(0.0), 200.0)), 150.0)
+
+    def test_dispatch_ptr_protocol_matching(self):
+        """@dispatch matches bare 'ptr' parameter against specialized ptr[T] argument."""
+        @dispatch
+        def get_ptr_addr(p: ptr, delta: int32) -> intp:
+            return cast[intp](p) + delta
+
+        buf = array[4, uint8]()
+        p = addr(buf[0])
+        res = get_ptr_addr(p, int32(2))
+        self.assertEqual(int(res), int(cast[intp](p)) + 2)
+
+    def test_read_file_binary_content(self):
+        """read_file reads binary files (e.g. H.264 streams) without UnicodeDecodeError."""
+        import tempfile, os
+        from nimic.std.syncio import read_file
+
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(b'\x00\x00\x00\x01\xf8\xca\xfe\xba\xbe')
+            tmp_path = f.name
+
+        try:
+            content = read_file(tmp_path)
+            self.assertIsInstance(content, string)
+            self.assertEqual(len(content), 9)
+            self.assertEqual(ord(content[4]), 0xf8)
+        finally:
+            os.unlink(tmp_path)
+
+    def test_generic_class_tuple_pattern_matching(self):
+        """@dispatch matches generic function with tuple parameter containing generic type classes."""
+        class MockChannel[T](Object):
+            data: list
+            @dispatch
+            def __getitem__[T](channel: MockChannel[T], indices: tuple[SomeInteger, SomeInteger]) -> T:
+                r, c = indices
+                return channel.data[r + c]
+
+        chan = MockChannel[int32]()
+        chan.data = [int32(10), int32(20), int32(30)]
+        val = chan[1, 1]
+        self.assertEqual(int(val), 30)
+
+    def test_ufcs_dunder_guard(self):
+        """UFCS fallback does NOT trigger on dunder methods to avoid infinite recursion."""
+        class MockSubscriptObj(Object):
+            @dispatch
+            def __getitem__(self: MockSubscriptObj, idx: int32) -> int32:
+                return idx
+
+        inst = MockSubscriptObj()
+        self.assertEqual(int(inst[int32(42)]), 42)
+        with self.assertRaises(NotImplementedError):
+            inst[3.14]
+
+    def test_specialize_generic_strips_decorators(self):
+        """_specialize_generic strips decorators and executes cleanly through generic dispatch."""
+        @dispatch
+        def generic_add[T](a: T, b: T) -> T:
+            return a + b
+
+        res = generic_add(int32(10), int32(20))
+        self.assertEqual(int(res), 30)
+
+    def test_string_add_and_fspath(self):
+        """string.add updates _n_len and content, and string implements os.PathLike."""
+        import os.path
+        s = newStringOfCap(80)
+        s.add("hello")
+        s.add(" ")
+        s.add(string("world"))
+        self.assertEqual(str(s), "hello world")
+        self.assertEqual(len(s), 11)
+
+        # PathLike interface
+        joined = os.path.join(s, "subpath")
+        self.assertEqual(joined, "hello world/subpath")
+
+
 if __name__ == '__main__':
     unittest.main()

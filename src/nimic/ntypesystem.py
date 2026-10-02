@@ -135,7 +135,16 @@ _n_generic_types = {
 # should map from alias directly to native type
 _n_aliases = {"float": "float64", "int": "int32", "str": "string", "NBool": "bool",
               "static[bool]": "bool", "static[int]": "int32",
-              "static[float]": "float64", "static[str]": "string"}
+              "static[float]": "float64", "static[str]": "string",
+              "nint": "int64", "RootObj": "Object"}
+
+# Names of types marked with @distinct — excluded from issubclass-based dispatch matching
+_n_distinct_types: set = set()
+
+# Protocol/concept types → member types that satisfy them without class inheritance
+_n_protocol_subtypes: dict = {
+    "openArray": {"seq", "array", "list"},
+}
 
 
 def get_type_params(fn: callable) -> dict:
@@ -182,6 +191,7 @@ def _specialize_generic(fn: callable, T_var: dict[str, str]) -> callable:
 
     tree = ast.parse(src)
     func_def = tree.body[0]
+    func_def.decorator_list = []
 
     # Remove type_params (the [T] bracket) from the function def
     if hasattr(func_def, 'type_params'):
@@ -226,6 +236,8 @@ def _specialize_generic(fn: callable, T_var: dict[str, str]) -> callable:
 def autorename(x: object) -> str:
     if isinstance(x, NilPtr):
         return x._type_name
+    if isinstance(x, tuple) and not isinstance(x, NTuple):
+        return f"tuple[{', '.join(autorename(elem) for elem in x)}]"
     type_name = type(x).__name__
     if type_name in _n_aliases:
         return _n_aliases[type_name]
@@ -257,6 +269,11 @@ def _match_generic_pattern(sig_type: str, arg_type: str, T_def: dict) -> dict | 
         # Replace the escaped T with a capture group
         pattern = pattern.replace(re.escape(t), r'([A-Za-z_]\w*(?:\[.*?\])?)', 1)
 
+    for gt, members in _n_generic_types.items():
+        if gt in sig_type:
+            gt_pattern = "(?:" + "|".join(re.escape(m) for m in members) + ")"
+            pattern = pattern.replace(re.escape(gt), gt_pattern)
+
     m = re.fullmatch(pattern, arg_type)
     if m:
         result = {}
@@ -275,11 +292,59 @@ debugG = {}
 def _match_subtype(arg_type_name: str, sig_type_name: str) -> bool:
     """Check if arg_type matches sig_type, including subtype relationship.
 
-    Returns True if arg_type_name == sig_type_name, or if the class registered
-    for arg_type_name is a subclass of the class registered for sig_type_name.
+    Returns True if:
+    - Names are equal (exact match)
+    - Names are equal after alias resolution
+    - arg satisfies a protocol that sig declares (e.g. seq satisfies openArray)
+    - arg is a class-hierarchy subtype of sig (inheritance / object-of)
+
+    Returns False if:
+    - arg is a @distinct type (distinct types only match via converter, not subtype)
     """
     if arg_type_name == sig_type_name:
         return True
+    # Distinct types never match via subtype — only via converter
+    if arg_type_name in _n_distinct_types:
+        return False
+    # Resolve aliases to canonical names (e.g. nint → int64, int → int32)
+    arg_canonical = _n_aliases.get(arg_type_name, arg_type_name)
+    sig_canonical = _n_aliases.get(sig_type_name, sig_type_name)
+    if arg_canonical == sig_canonical:
+        return True
+    # Generic type classes (SomeInteger, SomeFloat)
+    if sig_canonical in _n_generic_types and arg_canonical in _n_generic_types[sig_canonical]:
+        return True
+    # Protocol matching (e.g. openArray accepts seq, array, list)
+    protocol_members = _n_protocol_subtypes.get(sig_canonical)
+    if protocol_members and arg_canonical in protocol_members:
+        return True
+    # Parameterized protocol: openArray[T] matches seq[T], array[N,T]
+    if sig_canonical.startswith("openArray") and any(
+        arg_canonical.startswith(p) for p in ("seq", "array", "list")
+    ):
+        return True
+    # Pointer protocol: pointer or ptr accepts any ptr[T]
+    if sig_canonical in ("pointer", "ptr") and (
+        arg_canonical.startswith("ptr[") or arg_canonical in ("ptr", "pointer")
+    ):
+        return True
+    # Tuple matching: tuple[...] or bare tuple
+    if sig_canonical == "tuple" and (arg_canonical.startswith("tuple[") or arg_canonical == "tuple"):
+        return True
+    if sig_canonical.startswith("tuple[") and arg_canonical.startswith("tuple["):
+        sig_inner = sig_canonical[6:-1]
+        arg_inner = arg_canonical[6:-1]
+        sig_parts = [p.strip() for p in sig_inner.split(',')]
+        arg_parts = [p.strip() for p in arg_inner.split(',')]
+        if len(sig_parts) == len(arg_parts):
+            if all(
+                a == s or a in _n_generic_types.get(s, ()) or _match_subtype(a, s)
+                for a, s in zip(arg_parts, sig_parts)
+            ):
+                return True
+    if sig_canonical.startswith("tuple[") and arg_canonical == "tuple":
+        return True
+    # Class hierarchy (inheritance / object-of) — issubclass
     arg_cls = DICT_OF_TYPES.get(arg_type_name)
     sig_cls = DICT_OF_TYPES.get(sig_type_name)
     if arg_cls is not None and sig_cls is not None:
@@ -324,12 +389,27 @@ def dispatch(fn: callable) -> callable:
         if len(qualnames) > 1:
             _annotations.update({"self": qualnames[-2]})
     _annotations.update(fn.__annotations__)
+    arg_count = fn.__code__.co_argcount
+    raw_arg_names = fn.__code__.co_varnames[:arg_count]
+    defaults = fn.__defaults__ or ()
+    default_offset = arg_count - len(defaults)
+
+    for i, name in enumerate(raw_arg_names):
+        if name not in _annotations:
+            if i >= default_offset:
+                def_val = defaults[i - default_offset]
+                def_type = type(def_val).__name__
+                _annotations[name] = _n_aliases.get(def_type, def_type)
+            elif fn.__name__ in _n_templates:
+                _annotations[name] = "untyped"
+
     sig_list = [
-        v.removeprefix("mut @ ") for k, v in _annotations.items() if k != "return"
+        _annotations[name].removeprefix("mut @ ")
+        for name in raw_arg_names
+        if name in _annotations
     ]
     sig_list = [_n_aliases[v] if v in _n_aliases else v for v in sig_list]
-    arg_count = fn.__code__.co_argcount
-    arg_names = tuple(k for k in _annotations.keys() if k != "return")
+    arg_names = tuple(name for name in raw_arg_names if name in _annotations)
 
     if not len(sig_list) == arg_count:
         sig_str = ", ".join(sig_list)
@@ -412,6 +492,17 @@ def dispatch(fn: callable) -> callable:
                     pass
             raise NotImplementedError(f"Function not defined for keyword signature: {fn.__name__}")
 
+        if len(args) < arg_count and defaults and not kwargs:
+            is_match = (
+                (fn.__name__ in __resolved__ and any(len(s) == len(args) for s in __resolved__[fn.__name__]))
+                or (fn.__name__ in __dispatch_generic__ and any(len(s) == len(args) for s in __dispatch_generic__[fn.__name__]))
+                or (fn.__name__ in __dispatch_genericT__ and any(len(s) == len(args) for s in __dispatch_genericT__[fn.__name__]))
+            )
+            if not is_match:
+                missing_count = arg_count - len(args)
+                if missing_count <= len(defaults):
+                    args = args + defaults[len(defaults) - missing_count :]
+
         sigs = ((autorename(arg),) for arg in args)
         fn_sig = tuple(sigs)
         is_resolved = (
@@ -421,7 +512,6 @@ def dispatch(fn: callable) -> callable:
             return __resolved__[fn.__name__][fn_sig](*args)
         else:
             # try to resolve signature
-            allow_subtype_matching = False
             if fn.__name__ in __dispatch_generic__:
                 sig_defs = __dispatch_generic__[fn.__name__]
                 for sig_def in sig_defs:
@@ -512,6 +602,8 @@ def dispatch(fn: callable) -> callable:
                                     if conflict:
                                         break
                                     specificity += 2
+                                elif any(_match_subtype(arg_name, s) for s in sig_def[i]):
+                                    specificity += 1
                                 else:
                                     break
                             i += 1
@@ -530,29 +622,27 @@ def dispatch(fn: callable) -> callable:
             fn.__name__ in __resolved__ and fn_sig in __resolved__[fn.__name__]
         )
         if not is_resolved:
-            # try converter matching (trivial/same-layout conversions only)
-            if fn.__name__ in __resolved__:
-                for sig_def, sig_fn in __resolved__[fn.__name__].items():
-                    if len(fn_sig) == len(sig_def):
-                        if all(
-                            _match_converter(fn_sig[i][0], sig_def[i][0])
-                            for i in range(len(fn_sig))
-                        ):
-                            __resolved__[fn.__name__][fn_sig] = sig_fn
-                            is_resolved = True
-                            break
-        if not is_resolved and allow_subtype_matching:
-            # try subtype matching against all registered concrete signatures
+            # try subtype and converter matching against registered concrete signatures
             if fn.__name__ in __resolved__:
                 for sig_def, sig_fn in __resolved__[fn.__name__].items():
                     if len(fn_sig) == len(sig_def):
                         if all(
                             _match_subtype(fn_sig[i][0], sig_def[i][0])
+                            or _match_converter(fn_sig[i][0], sig_def[i][0])
                             for i in range(len(fn_sig))
                         ):
                             __resolved__[fn.__name__][fn_sig] = sig_fn
                             is_resolved = True
                             break
+        if not is_resolved:
+            # Check UFCS: if the first argument has a method with this function's name
+            if len(args) >= 1 and not fn.__name__.startswith("__") and hasattr(args[0], fn.__name__):
+                method = getattr(args[0], fn.__name__)
+                if callable(method) and getattr(method, "__func__", None) not in (fn, fn_dispatch):
+                    try:
+                        return method(*args[1:], **kwargs)
+                    except AttributeError:
+                        pass
         if is_resolved:
             return __resolved__[fn.__name__][fn_sig](*args)
         else:
@@ -570,7 +660,15 @@ def dispatch(fn: callable) -> callable:
 # --- Converter Registry ---
 
 # Maps source_type_name → set of target_type_names
-__converters__ = {}
+__converters__ = {
+    # Implicit integer widening
+    "int8": {"int16", "int32", "int64"},
+    "int16": {"int32", "int64"},
+    "int32": {"int64"},
+    "uint8": {"uint16", "uint32", "uint64"},
+    "uint16": {"uint32", "uint64"},
+    "uint32": {"uint64"},
+}
 
 
 def converter(fn: callable) -> callable:
@@ -651,13 +749,18 @@ def _make_blocker(cls_name: str, method_name: str) -> callable:
 def distinct(cls: type) -> type:
     """Mark a type as distinct from its parent.
 
-    Removes the type from _n_aliases and blocks inherited methods
-    not explicitly re-declared in the class body. Internal _n_* methods
-    and Python object protocol methods are never blocked.
+    Removes the type from _n_aliases, registers it in _n_distinct_types
+    (so _match_subtype excludes it from inheritance-based dispatch), and
+    blocks inherited methods not explicitly re-declared in the class body.
+    Internal _n_* methods and Python object protocol methods are never blocked.
 
     If a @converter exists from this type to a parent type, inherited
     methods are preserved (implicit conversion makes them accessible).
     """
+    # Register as distinct — excluded from issubclass-based dispatch matching
+    _n_distinct_types.add(cls.__name__)
+    cls._n_is_distinct = True
+
     if cls.__name__ in _n_aliases:
         del _n_aliases[cls.__name__]
 
@@ -691,6 +794,11 @@ def distinct(cls: type) -> type:
                 continue  # Python object protocol
             setattr(cls, name, _make_blocker(cls.__name__, name))
 
+    DICT_OF_TYPES[cls.__name__] = cls
+    for base in getattr(cls, '__mro__', [])[1:]:
+        if base.__name__ in DICT_OF_C_TYPES:
+            DICT_OF_C_TYPES[cls.__name__] = DICT_OF_C_TYPES[base.__name__]
+            break
     return cls
 
 
@@ -708,6 +816,8 @@ class NTypeRegistry:
         self.max_variants = {}  # name → kind_val of largest variant
 
     def get_or_eval_type(self, t_name: str, caller_globals: dict | None = None) -> type:
+        if not isinstance(t_name, str):
+            return t_name
         if t_name in self.types:
             return self.types[t_name]
         if caller_globals and t_name in caller_globals:
@@ -715,34 +825,49 @@ class NTypeRegistry:
         # t_name is not in self.types, so needs to be resolved and registered.
         if "[" in t_name and t_name.endswith("]"):
             base, params = t_name[:-1].split("[", 1)
-            if base == "array":
-                n_str, _ntype = params.split(",", 1)
-                # eval with caller's globals, so module-level constants are resolved
-                eval_ns = dict(self.types)
-                if caller_globals:
-                    eval_ns.update(caller_globals)
-                if n_str in eval_ns:
-                    n = eval_ns[n_str]
-                elif n_str.isdigit():
-                    n = int(n_str)
+            base_type = self.types.get(base)
+            if base_type is None and caller_globals and base in caller_globals:
+                base_type = caller_globals[base]
+            if base_type is not None:
+                if base == "array":
+                    n_str, _ntype = params.split(",", 1)
+                    # eval with caller's globals, so module-level constants are resolved
+                    eval_ns = dict(self.types)
+                    if caller_globals:
+                        eval_ns.update(caller_globals)
+                    if n_str in eval_ns:
+                        n = eval_ns[n_str]
+                    elif n_str.isdigit():
+                        n = int(n_str)
+                    else:
+                        n = eval(n_str, eval_ns)
+                    canonic_arr_name = f"array[{n}, {_ntype.strip()}]"
+                    if canonic_arr_name in self.types:
+                        return self.types[canonic_arr_name]
+                    resolved = base_type[(n, self.get_or_eval_type(_ntype.strip(), caller_globals))]
+                    if hasattr(resolved, '_n_register_type'):
+                        resolved._n_register_type()  # should be performed in __class_getitem__
+                    return resolved
+                elif "," in params:
+                    param_types = tuple(self.get_or_eval_type(p.strip(), caller_globals) for p in params.split(","))
+                    resolved = base_type[param_types]
+                    if hasattr(resolved, '_n_register_type'):
+                        resolved._n_register_type()
+                    return resolved
                 else:
-                    n = eval(n_str, eval_ns)
-                canonic_arr_name = f"array[{n}, {_ntype.strip()}]"
-                if canonic_arr_name in self.types:
-                    return self.types[canonic_arr_name]
-                resolved = self.types[base][(n, self.get_or_eval_type(_ntype.strip(), caller_globals))]
-                resolved._n_register_type()  # should be performed in __class_getitem__
-                return resolved
-            else:
-                resolved = self.types[base][self.get_or_eval_type(params.strip(), caller_globals)]
-                resolved._n_register_type()  # should be performed in __class_getitem__
-                return resolved
+                    resolved = base_type[self.get_or_eval_type(params.strip(), caller_globals)]
+                    if hasattr(resolved, '_n_register_type'):
+                        resolved._n_register_type()  # should be performed in __class_getitem__
+                    return resolved
         try:
             type_obj = eval(t_name, caller_globals or {})
             if isinstance(type_obj, type):
                 return type_obj
         except Exception:
             pass
+        if t_name.isidentifier():
+            placeholder = type(t_name, (Object,), {'_n_forward': True})
+            return placeholder
         raise NameError(f"Type '{t_name}' not found")
 
 _n_registry = NTypeRegistry()
@@ -1002,6 +1127,34 @@ class NStrEnum(StrEnum):
         ind = cls.__n_indices__[item]
         return ind
 
+    def __int__(self) -> int:
+        return self.ord()
+
+    def __index__(self) -> int:
+        return self.ord()
+
+    def __lt__(self, other):
+        if isinstance(other, self.__class__):
+            return self.ord() < other.ord()
+        return super().__lt__(other)
+
+    def __le__(self, other):
+        if isinstance(other, self.__class__):
+            return self.ord() <= other.ord()
+        return super().__le__(other)
+
+    def __gt__(self, other):
+        if isinstance(other, self.__class__):
+            return self.ord() > other.ord()
+        return super().__gt__(other)
+
+    def __ge__(self, other):
+        if isinstance(other, self.__class__):
+            return self.ord() >= other.ord()
+        return super().__ge__(other)
+
+
+
 
 def succ(item, n: int = 1):
     if hasattr(item, 'succ'):
@@ -1062,18 +1215,34 @@ def subset(newname: str, first: NStrEnum, last: NStrEnum) -> type:
 
 
 def low(obj: object) -> object:
-    if isinstance(obj, type) and hasattr(obj, 'first'):
-        return obj.first()
+    if isinstance(obj, type):
+        if issubclass(obj, Enum):
+            members = list(obj)
+            return members[0] if members else 0
+        if hasattr(obj, 'first'):
+            return obj.first()
+        if hasattr(obj, '_n_low'):
+            return obj._n_low
     if hasattr(obj, '__len__'):
         return 0
-    return obj.first()
+    if hasattr(obj, 'first'):
+        return obj.first()
+    return 0
 
 def high(obj: object) -> object:
-    if isinstance(obj, type) and hasattr(obj, 'last'):
-        return obj.last()
+    if isinstance(obj, type):
+        if issubclass(obj, Enum):
+            members = list(obj)
+            return members[-1] if members else 0
+        if hasattr(obj, 'last'):
+            return obj.last()
+        if hasattr(obj, '_n_high'):
+            return obj._n_high
     if hasattr(obj, '__len__'):
         return len(obj) - 1
-    return obj.last()
+    if hasattr(obj, 'last'):
+        return obj.last()
+    return 0
 
 
 class NBool:
@@ -1189,7 +1358,7 @@ class Trange:
         key = (id(lo), id(hi))
         if key not in cls._cache:
             name = f'Trange[{lo}, {hi}]'
-            new_cls = type(name, (), {
+            new_cls = type(name, (cls,), {
                 '_n_low': lo,
                 '_n_high': hi,
             })
@@ -1221,6 +1390,39 @@ class Tset(set):
         self.add(elem)
         return False
 
+    def contains(self, elem):
+        return elem in self
+
+    def copy(self):
+        return type(self)(self)
+
+    def __copy__(self):
+        return type(self)(self)
+
+    def __or__(self, other):
+        return type(self)(super().__or__(other))
+
+    def __and__(self, other):
+        return type(self)(super().__and__(other))
+
+    def __sub__(self, other):
+        return type(self)(super().__sub__(other))
+
+    def __xor__(self, other):
+        return type(self)(super().__xor__(other))
+
+    def __add__(self, other):
+        return type(self)(set.__or__(self, other))
+
+    def __radd__(self, other):
+        return type(self)(set.__or__(self, other))
+
+    def __mul__(self, other):
+        return type(self)(set.__and__(self, other))
+
+    def __rmul__(self, other):
+        return type(self)(set.__and__(self, other))
+
     def __class_getitem__(cls, elem_type):
         if elem_type not in cls._cache:
             name = f'Tset[{elem_type.__name__}]'
@@ -1232,9 +1434,17 @@ class Tset(set):
             new_cls = type(name, (cls,), {
                 '_elem_type': elem_type,
                 '__sub__': _make_op('__sub__'),
+                '__rsub__': lambda self, other: type(self)(set.__sub__(other, self)),
                 '__and__': _make_op('__and__'),
+                '__rand__': _make_op('__and__'),
                 '__or__': _make_op('__or__'),
+                '__ror__': _make_op('__or__'),
                 '__xor__': _make_op('__xor__'),
+                '__rxor__': _make_op('__xor__'),
+                '__add__': _make_op('__or__'),
+                '__radd__': _make_op('__or__'),
+                '__mul__': _make_op('__and__'),
+                '__rmul__': _make_op('__and__'),
             })
             cls._cache[elem_type] = new_cls
         return cls._cache[elem_type]
@@ -1364,7 +1574,9 @@ class _Object(Ntype):
         # Initialize python-side fields (seq and Object subclasses without ctypes backing)
         for name in python_fields:
             fc = field_types.get(name)
-            if fc is not None and isinstance(fc, type):
+            if fc is not None and getattr(fc, '_n_is_calltype', False):
+                setattr(self, name, None)
+            elif fc is not None and isinstance(fc, type):
                 if _seq and issubclass(fc, _seq):
                     setattr(self, name, fc())
                 elif getattr(fc, '_n_is_ref', False) or getattr(fc, '_n_is_ptr', False):
@@ -1377,8 +1589,11 @@ class _Object(Ntype):
                     # Fallback: default-construct (covers string, Hash, etc.)
                     try:
                         setattr(self, name, fc())
-                    except TypeError:
-                        pass
+                    except (TypeError, Exception):
+                        setattr(self, name, None)
+            else:
+                setattr(self, name, None)
+
         _has_c_type = type(self).__name__ in DICT_OF_C_TYPES
         if kwargs:
             for attribute in kwargs:
@@ -1489,6 +1704,11 @@ class _Object(Ntype):
             and name in self._n_fields
         )
         if attr_exists:
+            python_fields = getattr(self.__class__, '_n_python_fields', set())
+            if (python_fields and name in python_fields) or not hasattr(self, '_n_view') or self._n_view is None:
+                super().__setattr__(name, value)
+                return
+
             attr = getattr(self, name)
             # For @ptr classes, sync ptr field addresses back to ctypes struct
             ptr_fields = getattr(self.__class__, '_n_ptr_fields', set())
@@ -1508,7 +1728,15 @@ class _Object(Ntype):
                     super().__setattr__(name, _val)
                 elif isinstance(attr, bool):
                     super().__setattr__(name, value)
-                elif hasattr(attr, "_n_set_value"):
+                elif isinstance(attr, NIntEnum):
+                    if hasattr(attr, "_n_set_value"):
+                        attr._n_set_value(int(value))
+                    if hasattr(self, "_n_view") and self._n_view is not None:
+                        _val = type(attr)._n_on_struct(self._n_view, name, int(value))
+                    else:
+                        _val = type(attr)(int(value))
+                    super().__setattr__(name, _val)
+                elif hasattr(attr, "_n_set_value") and getattr(type(attr), "_n_set_value", None) is not Ntype._n_set_value:
                     attr._n_set_value(value)
                 else:
                     super().__setattr__(name, value)
@@ -1608,15 +1836,18 @@ class _Object(Ntype):
         kind values and field types, and returns:
           _annotations — dict of fields for the largest variant
         """
-        src = ins.getsource(cls)
-        aast = ast.parse(textwrap.dedent(src))
-        variant_type_suspected = (
-            isinstance(aast.body[0].body[0], ast.AnnAssign)
-            and len(aast.body[0].body) > 1
-        )
-        variant_type = variant_type_suspected and isinstance(
-            aast.body[0].body[1], ast.Match
-        )
+        try:
+            src = ins.getsource(cls)
+            aast = ast.parse(textwrap.dedent(src))
+            variant_type_suspected = (
+                isinstance(aast.body[0].body[0], ast.AnnAssign)
+                and len(aast.body[0].body) > 1
+            )
+            variant_type = variant_type_suspected and isinstance(
+                aast.body[0].body[1], ast.Match
+            )
+        except Exception:
+            variant_type = False
         if not variant_type:
             _annotations = cls.__annotations__
         else:
@@ -1666,30 +1897,50 @@ class _Object(Ntype):
         """Register this Object subclass in the global type registries.
 
         Called automatically via __init_subclass__. Handles:
-          - Alias/distinct types (no annotations → inherit from base)
-          - Variant types (builds per-variant ctypes)
-          - Regular structs (builds a ctypes.Structure with _fields_)
+          - Object inheritance: inherits base class fields in MRO order
+          - Alias types: @ref or _n_is_alias with no annotations
+          - Variant types: builds per-variant ctypes
+          - Regular structs: builds a ctypes.Structure with _fields_
         """
         dict_of_types, dict_of_c_types = DICT_OF_TYPES, DICT_OF_C_TYPES
         caller_globals = cls._n_caller_globals
-        if len(cls.__annotations__) == 0:
-            # this should be distinct or alias type
-            cls.__annotations__ = cls.__bases__[0].__annotations__
-            # assume it is alias (distinct removes it if not)
-            if cls.__bases__[0].__name__ in _n_aliases:
-                _n_aliases[cls.__name__] = _n_aliases[cls.__bases__[0].__name__]
-            else:
-                _n_aliases[cls.__name__] = cls.__bases__[0].__name__
+
+        # Collect inherited annotations from base Object classes (base first, derived last)
+        inherited_annotations = {}
+        for base in reversed(cls.__mro__[1:]):
+            if base is not object and base is not Ntype and issubclass(base, _Object):
+                ann = getattr(base, '_n_annotations', getattr(base, '__annotations__', {}))
+                inherited_annotations.update(ann)
+
+        own_annotations = getattr(cls, '__annotations__', {})
         class_name = cls.__name__
+
+        if len(own_annotations) == 0 and len(cls.__bases__) > 0 and issubclass(cls.__bases__[0], _Object):
+            base_name = cls.__bases__[0].__name__
+            # Only treat as alias if it's explicitly a reference type (e.g. @ref PLLStream)
+            # or if marked with _n_is_alias. Normal subclasses are genuine Object subtypes!
+            if getattr(cls, '_n_is_ref', False) or getattr(cls, '_n_is_alias', False):
+                if base_name in _n_aliases:
+                    _n_aliases[cls.__name__] = _n_aliases[base_name]
+                else:
+                    _n_aliases[cls.__name__] = base_name
+
+        # Merge base annotations + own annotations
+        merged_annotations = dict(inherited_annotations)
+        merged_annotations.update(own_annotations)
+        cls.__annotations__ = merged_annotations
+
         attributes = list(cls.__annotations__)
-        # variant type is suspected if there is only one attribute in annotations
-        if len(attributes) == 1:
+        # variant type is suspected if there is only one attribute in own annotations
+        if len(own_annotations) == 1:
             _annotations = cls._n_resolve_variant(dict_of_types, dict_of_c_types)
         else:
             _annotations = cls.__annotations__
+        cls._n_annotations = _annotations
+        cls._n_fields = list(_annotations.keys())
         dict_of_types[class_name] = cls  # add to dict for resolver
+
         # resolve types. Generic types, such as ptr[UncheckedArray[T]], should be specialized first
-        # TODO: for variants it only resolves the largest variant, need to resolve all variants
         cls._n_field_types = {key: _n_registry.get_or_eval_type(_type_name, caller_globals)
             for key, _type_name in _annotations.items()}
         # Resolve base type classes for issubclass checks (safe if not yet defined)
@@ -1768,6 +2019,10 @@ class Object(_Object, metaclass=NMetaClass):
         else:
             # Type parameters not resolved yet, just register the class
             _n_registry.types[cls.__name__] = cls
+
+DICT_OF_TYPES["Object"] = Object
+DICT_OF_TYPES["RootObj"] = Object
+DICT_OF_TYPES["_Object"] = _Object
 
 
 class NTuple(_Object):
@@ -1854,6 +2109,7 @@ class array(Ntype):
     Backed by a ctypes buffer of exactly N elements of type T.
     """
     _n_size: int = 0
+    _n_first: int = 0
 
     def __init__(self, it: Sequence | dict | None = None) -> None:
         self._n_cache = {}
@@ -1868,22 +2124,22 @@ class array(Ntype):
                 if it is not None:
                     if isinstance(it, dict):
                         for key, value in it.items():
-                            self._n_view[int(key)] = value
+                            self[int(key)] = value
                     else:
-                        for index in range(self._n_size):
-                            self._n_view[index] = it[index]
+                        for index in range(min(len(it), self._n_size)):
+                            self[self._n_first + index] = it[index]
             else:
                 # Scalar/simple types: use a plain Python list as backing store
                 if it is not None:
                     if isinstance(it, dict):
-                        self._n_cache = {j: self._n_type() for j in range(self._n_size)}
+                        self._n_cache = {self._n_first + j: self._n_type() for j in range(self._n_size)}
                         for key, value in it.items():
                             self._n_cache[int(key)] = value
                     else:
-                        for index in range(self._n_size):
-                            self._n_cache[index] = it[index]
+                        for index in range(min(len(it), self._n_size)):
+                            self._n_cache[self._n_first + index] = it[index]
                 else:
-                    self._n_cache = {j: self._n_type() for j in range(self._n_size)}
+                    self._n_cache = {self._n_first + j: self._n_type() for j in range(self._n_size)}
                 self._n_backing = None
                 self._n_view = None
         else:
@@ -1895,13 +2151,21 @@ class array(Ntype):
             BUFFER_REGISTRY.free(addr)
 
     @classmethod
+    def first(cls):
+        return cls._n_first
+
+    @classmethod
+    def last(cls):
+        return cls._n_first + cls._n_size - 1
+
+    @classmethod
     def _n_on_struct(cls, struct_view, name, value: Object | None = None):
         self = cls.__new__(cls)
         self._n_view = getattr(struct_view, name)
         self._n_cache = {}
         if value is not None:
             for index in range(self._n_size):
-                self[index] = value[index]
+                self[cls._n_first + index] = value[cls._n_first + index]
         return self
 
     def _n_sizeof(self) -> int:
@@ -1912,8 +2176,12 @@ class array(Ntype):
 
     def __getitem__(self, index: int) -> object:
         index = int(index)
-        if index not in self._n_cache and self._n_view is not None:
-            self._n_cache[index] = self._n_type._n_on_array(self._n_view, index)
+        if self._n_view is not None:
+            if hasattr(self, '_n_type') and isinstance(self._n_type, type) and issubclass(self._n_type, (char, NScalar, bool)):
+                return self._n_type._n_on_array(self._n_view, index - self._n_first)
+            if index not in self._n_cache:
+                self._n_cache[index] = self._n_type._n_on_array(self._n_view, index - self._n_first)
+            return self._n_cache[index]
         return self._n_cache[index]
 
     def __setitem__(self, index: int, value: object) -> None:
@@ -1927,11 +2195,11 @@ class array(Ntype):
         else:
             val = value
 
-        self._n_view[index] = val
+        self._n_view[index - self._n_first] = val
 
         if index not in self._n_cache or self._n_cache[index] is None:
             if hasattr(self._n_type, '_n_on_array'):
-                self._n_cache[index] = self._n_type._n_on_array(self._n_view, index)
+                self._n_cache[index] = self._n_type._n_on_array(self._n_view, index - self._n_first)
             else:
                 self._n_cache[index] = value
         elif hasattr(self._n_cache[index], '_n_set_value'):
@@ -1942,10 +2210,12 @@ class array(Ntype):
     def __class_getitem__(cls, params) -> type:
         """array[N, T] → fixed-size array type."""
         n, _ntype = params
+        first_val = 0
         # n can be ordinal
         if isinstance(n, type) and issubclass(n, Enum):
             n_val = len(n)
         elif isinstance(n, type) and issubclass(n, Trange):
+            first_val = int(n.first())
             n_val = int(n.last()) - int(n.first()) + 1
         else:
             n_val = int(n)
@@ -1954,7 +2224,7 @@ class array(Ntype):
             _ntype._n_register_type()
         class_name = f"array[{n}, {_ntype.__name__}]"
         # also register array[N, T] in DICT_OF_TYPES and DICT_OF_C_TYPES
-        arr_type = type(class_name, (array,), {"_n_type": _ntype, "_n_size": n_val})
+        arr_type = type(class_name, (array,), {"_n_type": _ntype, "_n_size": n_val, "_n_first": first_val})
         arr_type._n_register_type()
         return arr_type
 
@@ -1984,13 +2254,19 @@ class seq(Ntype):
         self._n_reserved = 1
         if hasattr(self, "_n_type"):
             type_name = self._n_type.__name__
-            if not hasattr(self._n_type, '_n_on_array'):
+            if (isinstance(self._n_type, type) and issubclass(self._n_type, string)) or not hasattr(self._n_type, '_n_on_array'):
                 # List-based mode for non-ctypes types (e.g. string)
                 self._n_is_list = True
                 self._n_list = []
                 return
             if type_name not in DICT_OF_C_TYPES:
-                self._n_type._n_register_type()
+                if hasattr(self._n_type, '_n_register_type'):
+                    self._n_type._n_register_type()
+                else:
+                    for base in getattr(self._n_type, '__mro__', [])[1:]:
+                        if base.__name__ in DICT_OF_C_TYPES:
+                            DICT_OF_C_TYPES[type_name] = DICT_OF_C_TYPES[base.__name__]
+                            break
             if c_base:
                 self._n_backing = c_base
             else:
@@ -2062,7 +2338,10 @@ class seq(Ntype):
 
     def __class_getitem__(cls, _ntype: type) -> type:
         if _ntype.__name__ not in DICT_OF_TYPES:
-            _ntype._n_register_type()
+            if hasattr(_ntype, '_n_register_type'):
+                _ntype._n_register_type()
+            else:
+                DICT_OF_TYPES[_ntype.__name__] = _ntype
         class_name = f"seq[{_ntype.__name__}]"
         _seq = type(class_name, (seq,), {"_n_type": _ntype})
         _seq._n_register_type()
@@ -2234,16 +2513,30 @@ class File:
         if handle is not None:
             File._registry[self._id] = self
 
+    def open(self, filename: str, mode: str = "r") -> bool:
+        _binary_map = {"w": "wb", "a": "ab", "r+": "r+b", "w+": "w+b", "r": "rb"}
+        actual_mode = _binary_map.get(str(mode), str(mode))
+        try:
+            self._handle = __builtins__["open"](str(filename), actual_mode) if isinstance(__builtins__, dict) else __builtins__.open(str(filename), actual_mode)
+            self._id = id(self)
+            File._registry[self._id] = self
+            return True
+        except Exception:
+            return False
+
     # --- delegate file operations to the underlying handle ---
 
     def seek(self, pos, *args):
         return self._handle.seek(pos, *args)
 
     def write(self, data):
-        if isinstance(data, char):
-            return self._handle.write(bytes(data))
-        if isinstance(data, str) and hasattr(self._handle, 'mode') and 'b' in self._handle.mode:
-            data = data.encode('utf-8')
+        if hasattr(self._handle, 'mode') and 'b' in self._handle.mode:
+            if isinstance(data, char):
+                return self._handle.write(bytes(data))
+            if hasattr(data, 'data'):
+                data = data.data.encode('utf-8')
+            elif isinstance(data, str):
+                data = data.encode('utf-8')
         return self._handle.write(data)
 
     def read(self, *args):
@@ -2255,6 +2548,17 @@ class File:
 
     def flush(self):
         return self._handle.flush()
+
+    def __enter__(self):
+        if self._handle is not None and hasattr(self._handle, "__enter__"):
+            self._handle.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._handle is not None and hasattr(self._handle, "__exit__"):
+            return self._handle.__exit__(exc_type, exc_val, exc_tb)
+        self.close()
+
 
     @property
     def buffer(self):
@@ -3352,9 +3656,10 @@ class cstring:
     Python-side it stores either None (nil) or a bytes value, and
     provides len(), str(), __eq__(None), and c_free compatibility.
     """
-    __slots__ = ('_value',)
+    __slots__ = ('_value', '_n_view')
 
     def __init__(self, value=None):
+        self._n_view = getattr(value, '_n_view', None)
         if isinstance(value, int):
             # new_string(length) path
             self._value = b'\x00' * value
@@ -3366,6 +3671,8 @@ class cstring:
             self._value = None
         else:
             self._value = bytes(value)
+        if self._n_view is None and self._value is not None:
+            self._n_view = (ctypes.c_char * len(self._value)).from_buffer_copy(self._value)
 
     # --- Object field integration ---
 
@@ -3478,6 +3785,10 @@ class char(str):
             byte_val = value & 0xFF
             obj = super().__new__(cls, struct.pack('B', byte_val).decode('latin-1'))
             obj._n_byte = byte_val
+        elif isinstance(value, (bytes, bytearray)):
+            byte_val = value[0] if len(value) > 0 else 0
+            obj = super().__new__(cls, chr(byte_val))
+            obj._n_byte = byte_val
         else:
             # char('A') or char('A', addr)
             ch = value[:1] if value else '\x00'
@@ -3489,12 +3800,27 @@ class char(str):
     def __int__(self):
         return self._n_byte
 
+    def _n_get_value(self):
+        return bytes([self._n_byte])
+
     def __index__(self):
         return self._n_byte
 
     def __bytes__(self):
         """Single-byte representation for binary file writing."""
         return bytes([self._n_byte])
+
+    @classmethod
+    def _n_sizeof(cls) -> int:
+        return 1
+
+    @classmethod
+    def _n_on_array(cls, parent_elems, index, value=None):
+        addr = ctypes.addressof(parent_elems) + index
+        if value is not None:
+            parent_elems[index] = ord(value) if isinstance(value, str) else int(value)
+        val = parent_elems[index]
+        return cls(val, addr=addr)
 
     @classmethod
     def _n_register_type(cls):
@@ -3518,21 +3844,26 @@ class string(collections.UserString):
     def __init__(self, bs=""):
         if isinstance(bs, string) and hasattr(bs, '_n_view_ref'):
             self._n_view_ref = bs._n_view_ref
+            self._n_len = getattr(bs, '_n_len', None)
             return
         if isinstance(bs, int):
             cap = bs
+            self._n_len = 0
             self._n_view_ref = [(ctypes.c_char * cap)()]
             if cap > 0:
                 BUFFER_REGISTRY.register(self._n_view_ref[0])
             return
             
-        if isinstance(bs, str):
+        if isinstance(bs, (bytes, bytearray)):
+            bs_bytes = bytes(bs)
+        elif isinstance(bs, str):
             bs_bytes = bs.encode('utf-8', errors='replace')
         elif hasattr(bs, 'data'):
             bs_bytes = bs.data.encode('utf-8', errors='replace')
         else:
             bs_bytes = str(bs).encode('utf-8', errors='replace')
             
+        self._n_len = len(bs_bytes)
         self._n_view_ref = [(ctypes.c_char * len(bs_bytes)).from_buffer_copy(bs_bytes)]
         if len(bs_bytes) > 0:
             BUFFER_REGISTRY.register(self._n_view_ref[0])
@@ -3540,12 +3871,52 @@ class string(collections.UserString):
     @property
     def data(self):
         if hasattr(self, '_n_view_ref') and self._n_view_ref[0] is not None:
-            return bytes(self._n_view_ref[0]).split(b'\0', 1)[0].decode('utf-8', 'replace')
+            if hasattr(self, '_n_len') and self._n_len is not None:
+                raw = bytes(self._n_view_ref[0])[:self._n_len]
+            else:
+                raw = bytes(self._n_view_ref[0]).split(b'\0', 1)[0]
+            try:
+                return raw.decode('utf-8')
+            except UnicodeDecodeError:
+                return raw.decode('latin-1')
         return ""
+
+    @property
+    def string(self) -> 'string':
+        return self
         
     @data.setter
     def data(self, value):
-        pass
+        bs = value.data if hasattr(value, 'data') else str(value)
+        bs_bytes = bs.encode('utf-8', errors='replace')
+        if hasattr(self, '_n_view_ref') and self._n_view_ref[0] is not None:
+            BUFFER_REGISTRY.unregister(self._n_view_ref[0])
+        self._n_len = len(bs_bytes)
+        self._n_view_ref = [(ctypes.c_char * len(bs_bytes)).from_buffer_copy(bs_bytes)]
+        if len(bs_bytes) > 0:
+            BUFFER_REGISTRY.register(self._n_view_ref[0])
+
+    def __ilshift__(self, other):
+        self.data = other.data if hasattr(other, 'data') else str(other)
+        return self
+
+    def __iadd__(self, other):
+        s_other = other.data if hasattr(other, 'data') else str(other)
+        self.data = self.data + s_other
+        return self
+
+    def __fspath__(self) -> str:
+        return str(self.data)
+
+    def setLen(self, new_len: int) -> None:
+        nl = int(new_len)
+        curr = self.data
+        if nl <= len(curr):
+            self.data = curr[:nl]
+        else:
+            self.data = curr + '\x00' * (nl - len(curr))
+
+    set_len = setLen
 
     def _n_ensure_capacity(self, new_cap):
         if self._n_view is None:
@@ -3574,6 +3945,7 @@ class string(collections.UserString):
         for i, b in enumerate(other_bytes):
             self._n_view[len(cur_bytes) + i] = b
         self._n_view[len(cur_bytes) + len(other_bytes)] = 0
+        self._n_len = len(cur_bytes) + len(other_bytes)
 
     def _n_get_value(self):
         return self.data.encode('utf-8')
@@ -3605,6 +3977,11 @@ class string(collections.UserString):
             items = list(itr)
             if '$' in self.data:
                 res = self.data
+                if len(items) >= 2 and len(items) % 2 == 0:
+                    for i in range(0, len(items), 2):
+                        k = items[i].data if hasattr(items[i], 'data') else str(items[i])
+                        v = items[i+1].data if hasattr(items[i+1], 'data') else str(items[i+1])
+                        res = res.replace(f"${k}", v)
                 for i, arg in enumerate(items, 1):
                     val = arg.data if hasattr(arg, 'data') else str(arg)
                     res = res.replace(f"${i}", val)
@@ -3628,18 +4005,41 @@ class string(collections.UserString):
     def split_whitespace(self):
         return [string(x) for x in self.data.split()]
         
-    def endswith(self, suffix: str) -> bool:
-        return self.data.endswith(suffix)
+    def endswith(self, suffix: str | string | tuple) -> bool:
+        if isinstance(suffix, tuple):
+            return self.data.endswith(tuple(str(x) for x in suffix))
+        return self.data.endswith(str(suffix))
         
-    def startswith(self, prefix: str) -> bool:
-        return self.data.startswith(prefix)
+    def startswith(self, prefix: str | string | tuple) -> bool:
+        if isinstance(prefix, tuple):
+            return self.data.startswith(tuple(str(x) for x in prefix))
+        return self.data.startswith(str(prefix))
+
+    @classmethod
+    def _n_on_array(cls, parent_elems, index, value=None):
+        if value is not None:
+            b_val = value.data.encode('utf-8') if hasattr(value, 'data') else str(value).encode('utf-8')
+            if isinstance(index, str):
+                setattr(parent_elems, index, b_val)
+            else:
+                parent_elems[index] = b_val
+        raw = getattr(parent_elems, index) if isinstance(index, str) else parent_elems[index]
+        if raw is None:
+            return cls("")
+        if isinstance(raw, bytes):
+            return cls(raw.decode('utf-8', 'replace'))
+        return cls(str(raw))
         
     def __getitem__(self, index):
         if isinstance(index, slice):
             return string(self.data[index])
         if hasattr(self, '_n_view') and self._n_view is not None:
-            return char(self.data[index], ctypes.addressof(self._n_view) + index)
-        return self.data[index]
+            idx = int(index)
+            if 0 <= idx < len(self._n_view):
+                return char(self._n_view[idx], addr=ctypes.addressof(self._n_view) + idx)
+            elif idx < len(self.data):
+                return char(self.data[idx], addr=ctypes.addressof(self._n_view) + idx)
+        return char(self.data[index])
 
 
 # remove when in Nim

@@ -36,24 +36,35 @@ Compile-time metaprogramming relies on function calls or specific decorators. Ge
 | `when x < 5:` | `if comptime(x < 5):` | |
 | `template foo()` | `@template`<br>`def foo()` | Template definition. Note: `@template_expand` is **only** needed on the *calling function* if you need to actually expand *untyped* templates inside it. Typed templates should have a `return` statement. |
 | `template _sph(): untyped {.dirty.} =`<br>&nbsp;&nbsp;&nbsp;&nbsp;`moving_spheres[i]`  (used inline by attributes) | `with template_inline:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`"""{.dirty.}"""`<br>&nbsp;&nbsp;&nbsp;&nbsp;`_sph = moving_spheres[i]` |  For substituting an expression accessed by attributes. |
+| `when defined(windows):` | `if comptime(defined("windows")):` | `defined()` takes a string in Nimic (`rule:defined`); transpiler strips quotes for Nim |
+| `when not compileOption("threads"):` | `if comptime(not compileOption("threads")):` | `not comptime(...)` is also handled correctly |
+
+**Template return** (`rule:templatereturn`): Inside a typed template, `return expr` is transpiled as just `expr` (no `return` keyword), matching Nim's template result semantics. In Nimic, write `return result` normally — the transpiler handles the transformation.
 
 ## 3. Structural Definitions (`rule:classdef`, `rule:typealias`, `rule:typedistinct`)
 Classes and objects use standard Python `class` definitions but employ specific parent classes to signal type semantics to Nimic.
 
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
-| `type SomeType = object` | `class SomeType(Object):` | |
-| `type SomeType = object of BaseType` | `class SomeType(BaseType):` | |
+| `type SomeType = object` | `class SomeType(Object):` | Base object type definition (`RootObj = Object`). |
+| `type SomeType = object of BaseType` | `class SomeType(BaseType):` | Object inheritance via RootObj. Automatically inherits all fields from `BaseType` in MRO order. Supports subtype polymorphism in `@dispatch`. |
 | `type SomeType = ptr object` | `@ptr class SomeType(Object):` | class definition should be decorated by `@ptr` for pointer types |
 | `SomeType(x: 1, y: 2)` | `SomeType(x=1, y=2)` | Object instantiation |
-| `type Time* = float64` | `class Time(float64): pass` | Type Alias |
-| `type range[warnMin, hintMax]` | `Trange[warnMin, hintMax]` | Range subtyping |
-| `type set[TNoteKind]` | `Tset[TNoteKind]` | Sets of ordinal types |
+| `type Time* = float64` | `Time = float64` or `class Time(float64): pass` | Type Alias. Bidirectionally interchangeable with the target type in `@dispatch`. |
+| `type range[warnMin .. hintMax]` | `class MyRange(Trange[warnMin, hintMax]): pass` | Range subtyping definition (`rule:trange`) |
+| `type set[TNoteKind]` | `class MySet(Tset[TNoteKind]): pass` | Sets of ordinal types definition |
+| `type seq[string]` | `class MySeq(seq[string]): pass` | Sequence type alias |
+| `(x: 1, y: 2)` | `SomeTuple(x=1, y=2)` | NTuple constructor transpiles to Nim tuple literal (`rule:tuplelit`) |
+| `{}` | `Tset[T]()` or `Tset()` | Empty set literal (`rule:setlit`) |
+| `{a, b, c}` | `Tset[T](a, b, c)` or `Tset(a, b, c)` | Set literal with elements (`rule:setlit`) |
+| `@[a, b, c]` | `seq[T]([a, b, c])` or `seq([a, b, c])` | Sequence literal (`rule:seqlit`) |
+| `@[]` | `seq()` or `seq[T]()` | Empty sequence literal (`rule:seqlit`) |
 | `[byte 1, 5]` | `array[2, byte]([1, 5])` | Arrays |
 | `ar: array[1, string] = [0: "some"]` | `ar = array[1, string]({0: string("some")})` | Arrays initialized with a dictionary |
 | `SomeTuple = tuple[x: int, y: float]` | `class SomeTuple(NTuple):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x: int`<br>&nbsp;&nbsp;&nbsp;&nbsp;`y: float` | Tuples should be defined as Named Tuple with an alias |
 
-**distinct type** `type SomeType = distinct int` ➔ Must be decorated by `@distinct` on a class that inherits from the base type,
+**distinct type** `type SomeType = distinct int` ➔ Must be decorated by `@distinct` on a class that inherits from the base type.
+A distinct type is excluded from subtype matching in `@dispatch` (functions expecting the base type will reject it unless an explicit `@converter` is defined). Borrowed procs are declared as methods with `"""{.borrow.}"""` and can be called directly or via free-function UFCS dispatch:
 ```nim
   type otherint = distinct int
   proc `*`*(self: otherint, scalar: float64): otherint {.borrow.}
@@ -87,6 +98,7 @@ Functions use standard Python `def` definitions but might employ specific decora
 | `iterator myIter(x: int): int`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | `def myIter(x: int) -> int:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | |
 | `proc foo(x:int)`<br>`proc foo(x:float)` | `@dispatch`<br>`def foo(...)` | "Static" dispatch. |
 | `foo(x = 1)` | `foo(x = 1)` | Call and dispatch with keyword arguments. |
+| `proc foo(x: int, y = 5)` | `@dispatch`<br>`def foo(x: int32, y = 5):` | Default parameter values are supported in `@dispatch`/`@template`; types are inferred and missing trailing arguments populated automatically. |
 | `proc foo(...)` | `def foo(...)` | Methods of classes inheriting from `Object` are dispatched automatically. |
 | `0 ..< a` | `range(a)` | Range syntax. |
 | `a .. b` | `inrange(a, b)` | Inclusive range syntax, frequently used for sets (e.g. `Tset[TNoteKind](inrange(low, high))`). |
@@ -97,6 +109,7 @@ Functions use standard Python `def` definitions but might employ specific decora
 | `proc `+`=(a: uint, b:uint):` | `def __radd__(a: uint, b:uint):` | Right-hand side binary operators swap arguments. |
 | `converter toFloat(x: int): float` | `@converter`<br>`def toFloat(x: nint) -> float:` | Converter functions. |
 | `iterator myIter(x: int): int = yield x` | `def myIter(x: nint) -> nint:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | Iterators are translated to generator functions. |
+| `for (a, b) in pairs:` | `for (a, b) in pairs:` | Tuple unpacking in for-loops; parentheses preserved for Nim (`rule:fortupleunpack`) |
 
 **Get/Set Operators (`rule:funcdefrenamedunder`)** Nim get/set operators map to Python dunder (magic) methods.
   - `[]=` ➔ `__setitem__`
@@ -117,6 +130,7 @@ Memory primitives are strongly enforced to mirror Nim.
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
 | `ptr SomeType` | `ptr[SomeType]` | |
+| `p: ptr` | `p: ptr` | Bare `ptr` protocol in `@dispatch` matches any `ptr[T]`. |
 | `ptr UncheckedArray[T]` | `ptr[UncheckedArray[T]]` | Bare `ptr[T]` cannot be indexed. |
 | `pointer` | `pointer` | Untyped void pointer |
 | `c_malloc(csize_t(size))` | `c_malloc(csize_t(size))` | allocators |
@@ -142,6 +156,11 @@ Because the transpiler is sensitive to Python's internal logic versus Nim's syst
 | `true`, `false`, `nil`, `Inf` |` True`, `False`, `None`, `inf` | Python's standard `inf` is `Inf` in Nim, bools transpile via `rule:lowercasebool`|
 | `0x9e37...15'u64` | `u64(0x9e37...15)` | Numeric literal types |
 | `'#'` | `ch("#")` | Char literal types |
+| `None` (Nim keyword) | `None_` | Trailing `_` stripped by transpiler for Python keyword clashes (`rule:keywordescape`) |
+| `"format: $1" % [arg]` | `string("format: $1") % [arg]` | String `%` operator transpiles as Nim `%` (formatting), not `mod` (`rule:strformat`) |
+| `readFile(f)` | `read_file(f)` / `readFile(f)` | Reads binary-safe byte buffer into Nimic `string`. |
+| `Path(str)` | `Path(str)` | `from nimic.std.paths import Path`. Supports `/` (`__truediv__`) and `os.PathLike` (`__fspath__`). |
+| `== nil` / `!= nil` | `is None` / `is not None` | Python identity checks transpile as Nim nil comparisons (`rule:nilident`) |
 
 ## 7. Operators and Logic (`rule:bitwiserename`)
 | Nim | Python (Nimic) | Notes |
@@ -152,12 +171,14 @@ Because the transpiler is sensitive to Python's internal logic versus Nim's syst
 | `(width + 15) shr 4 - 1` | `((width + 15) >> 4) - 1` | In Python bitwise operators have lower precedance than arithmetic operators | 
 | `for item in arr.mitems:` | `for item in arr.mitems:` | In-place mutation loops translate directly, do not replace with `enumerate`. |
 | `data[i] == ' '` (chars) | `ord(data[i]) == 32` | Python string chars don't map smoothly to Nim `char`. Use `ord()` for comparisons. |
+| `not x` (bitwise) | `~x` | Nim bitwise `not` maps to Python bitwise inversion `~` (`rule:bitwiserename`) |
 
-## 8. Exporting and Scope (`rule:writeexport`, `rule:localname`)
+## 8. Exporting and Scope (`rule:writeexport`, `rule:localname`, `rule:modulepath`)
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
 | `export` | `with export:` | |
 | Local variables | `_` or `local_` prefix | Identifiers defined **without** `*` in Nim should be prefixed in Nimic to prevent transpiling as public with `*`. |
+| `import std/tables` | `from nimic.std.tables import *` | Module paths are translated: `nimic.x.y` → `x/y`, with module renaming (`rule:modulepath`) |
 
 
 ## 9. Callable type (`rule:calltype`)
@@ -193,3 +214,9 @@ class HittableVariant(Object):
         case HittableVariantKind.kMovingSphere:
             fMovingSphere: MovingSphere
 ```
+
+## 12. Closures and Nonlocal Scope (`rule:nonlocal`)
+| Nim | Python (Nimic) | Notes |
+| --- | --- | --- |
+| (implicit capture) | `nonlocal x` | Nim closures capture outer scope variables by reference automatically. In Python, mutating captured outer variables requires `nonlocal x`, which the transpiler suppresses (`rule:nonlocal`). |
+

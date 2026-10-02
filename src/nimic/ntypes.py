@@ -48,8 +48,15 @@ from nimic.nsystem import (
     newStringOfCap,
     new_cstring_of_cap,
     newCStringOfCap,
+    Endianness,
+    hostOS,
+    hostCPU,
+    substr,
+    ord,
+    quit,
 )
 from nimic.ntypesystem import (
+    DICT_OF_TYPES,
     addr,
     unsafe_addr,
     NIntEnum,
@@ -81,6 +88,7 @@ from nimic.ntypesystem import (
     pred,
     ptr,
     ref,
+    mut,
     seq,
     string,
     subset,
@@ -105,9 +113,17 @@ class untyped:
 SomeInteger = int
 SomeFloat = float
 
-type BiggestInt = int
-type BiggestFloat = float
+BiggestInt = int64
+BiggestFloat = float64
+DICT_OF_TYPES["BiggestInt"] = int64
+DICT_OF_TYPES["BiggestFloat"] = float64
 
+RootObj = Object
+nil = None
+
+
+from enum import Enum as enum
+DICT_OF_TYPES["enum"] = enum
 
 byte = uint8  # Nim: byte = uint8
 
@@ -127,7 +143,8 @@ def f64(x: float) -> float64: return float64(x)
 
 def ch(x: str) -> char: return char(x)
 
-
+from nimic._nkeywords import default
+discard = None
 
 # compiler hints
 const = contextlib.nullcontext()
@@ -152,6 +169,10 @@ def doAssert(cond: bool, msg: str = "") -> None:
     """
     if not cond:
         raise AssertionError(msg)
+
+def raiseAssert(msg: str = "") -> None:
+    """Raises an AssertionError with the provided message. Corresponds to Nim raiseAssert."""
+    raise AssertionError(msg)
 
 #  presense of comptime in "if" expression forces aot evaluation
 def comptime(x: object) -> object:
@@ -184,12 +205,69 @@ def new_exception(except_cls: type, msg: str):
 newException = new_exception
 
 
+def writeFile(filename: str | string, content: str | string) -> None:
+    """Nim: writeFile — write string content to a file."""
+    with open(str(filename), 'w') as f:
+        f.write(str(content))
+
+
+def readFile(filename: str | string) -> string:
+    """Nim: readFile — read entire file contents as string."""
+    with open(str(filename), 'rb') as f:
+        return string(f.read())
+
+
+def equalMem(a, b, size: int) -> bool:
+    """Nim: equalMem — compare memory regions."""
+    import ctypes
+    def _to_addr(p):
+        if hasattr(p, '_n_addr'): return p._n_addr
+        if hasattr(p, '_n_view'): return ctypes.addressof(p._n_view)
+        if hasattr(p, 'contents'):
+            c = p.contents
+            if hasattr(c, '_n_addr'): return c._n_addr
+            if hasattr(c, '_n_view'): return ctypes.addressof(c._n_view)
+        if isinstance(p, int): return p
+        try:
+            return ctypes.cast(p, ctypes.c_void_p).value or 0
+        except Exception:
+            return 0
+    addr_a = _to_addr(a)
+    addr_b = _to_addr(b)
+    s = int(size)
+    if s == 0: return True
+    if addr_a == 0 or addr_b == 0: return False
+    buf_a = (ctypes.c_char * s).from_address(addr_a).raw
+    buf_b = (ctypes.c_char * s).from_address(addr_b).raw
+    return buf_a == buf_b
+
+
 class _SystemNamespace:
     NimVersion = "2.2.4"
+    hostOS = hostOS
+    hostCPU = hostCPU
 
 
 system = _SystemNamespace()
 NimVersion = system.NimVersion
+
+from nimic.std.syncio import (
+    FileMode,
+    fmRead,
+    fmWrite,
+    fmAppend,
+    fmReadWrite,
+    fmReadWriteExisting,
+    open,
+    close,
+    write,
+    readLine,
+    readBuffer,
+    write_buffer,
+    stdin,
+    stdout,
+    stderr,
+)
 
 
 def incl(s: set, elem: object) -> None:
@@ -216,3 +294,22 @@ containsOrIncl = contains_or_incl
 def items(coll):
     """Nim: items — iterator over elements of a collection."""
     return iter(coll)
+
+
+from nimic.system.ansi_c import copy_mem
+copyMem = copy_mem
+
+
+def setLen(s, new_len: int) -> None:
+    """Nim: setLen — set length of string or seq."""
+    if hasattr(s, 'setLen'):
+        s.setLen(new_len)
+    elif hasattr(s, 'set_len'):
+        s.set_len(new_len)
+    elif isinstance(s, list):
+        nl = int(new_len)
+        if nl <= len(s):
+            del s[nl:]
+        else:
+            s.extend([None] * (nl - len(s)))
+

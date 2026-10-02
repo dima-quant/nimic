@@ -311,13 +311,17 @@ def new(x: object, cls: type) -> None:
     x = cls()
 
 def default(x: type) -> object:
+    try:
+        return x()
+    except Exception:
+        pass
     if "__value__" in dir(x):
         val = x.__value__
     else:    
         val = x
     if str(val)[0:4] == 'dict':
-        res = dict()
-    return res
+        return dict()
+    return None
 
 #  presense of resolve_aot in "if" expression forces aot evaluation
 #  resolve_aot itself is resolved to True 
