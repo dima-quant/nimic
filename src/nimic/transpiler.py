@@ -1343,6 +1343,9 @@ class _Unparser(NodeVisitor):
         # rule:keywordescape -> strip trailing _ from Python keyword clashes (None_ -> None)
         if len(name) > 1 and name.endswith("_") and pykeyword.iskeyword(name[:-1]):
             name = name[:-1]
+        # rule:nint -> nint transpiles to Nim int (nimic does not shadow Python int)
+        if not definition and name == "nint":
+            return "int"
         if len(name)>1 and name[0] == "_":
             _str = "local" + name
         elif definition and not name[0].startswith("local_"):
