@@ -25,7 +25,7 @@ Nim variable declarations are mapped to Python context managers to encapsulate s
 | `var a: array[2, uint8]` | `with var: a = array[2, uint8]()` | Declaration and initializatoin |
 | `let x = 5` | `with let: x = 5` | Immutable assignments |
 | `const x = 5` | `with const: x = 5` | Compile-time constants |
-| `var x, y: int` | `with var:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x = 0`<br>&nbsp;&nbsp;&nbsp;&nbsp;`y = 0` | Groups declarations |
+| `var x, y: int` | `with var:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x = nint(0)`<br>&nbsp;&nbsp;&nbsp;&nbsp;`y = nint(0)` | Groups declarations |
 | `var tY: uint16` | `with var:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`_tY = uint16()` | Local variable, declared outside function or inner block in Nim, should be named as a local variable with prefix `_` to avoid being mistranslated as exported globals `tY*` after transpiling |
 
 ## 2. Compile-Time and Metaprogramming (`rule:comptime`, `rule:templateinline`)
@@ -61,9 +61,9 @@ Classes and objects use standard Python `class` definitions but employ specific 
 | `@[]` | `seq()` or `seq[T]()` | Empty sequence literal (`rule:seqlit`) |
 | `[byte 1, 5]` | `array[2, byte]([1, 5])` | Arrays |
 | `ar: array[1, string] = [0: "some"]` | `ar = array[1, string]({0: string("some")})` | Arrays initialized with a dictionary |
-| `SomeTuple = tuple[x: int, y: float]` | `class SomeTuple(NTuple):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x: int`<br>&nbsp;&nbsp;&nbsp;&nbsp;`y: float` | Tuples should be defined as Named Tuple with an alias |
+| `SomeTuple = tuple[x: int, y: float]` | `class SomeTuple(NTuple):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x: nint`<br>&nbsp;&nbsp;&nbsp;&nbsp;`y: float64` | Tuples should be defined as Named Tuple with an alias |
 
-**distinct type** `type SomeType = distinct int` ➔ Must be decorated by `@distinct` on a class that inherits from the base type.
+**distinct type** `type SomeType = distinct int` ➔ Must be decorated by `@distinct` on a class that inherits from the base type (`nint` for Nim `int`).
 A distinct type is excluded from subtype matching in `@dispatch` (functions expecting the base type will reject it unless an explicit `@converter` is defined). Borrowed procs are declared as methods with `"""{.borrow.}"""` and can be called directly or via free-function UFCS dispatch:
 ```nim
   type otherint = distinct int
@@ -73,7 +73,7 @@ translates to
 ```python
   # Python Nimic
   @distinct
-  class otherint(int):
+  class otherint(nint):
     def __mul__(self: otherint, scalar: float64) -> otherint:
       """{.borrow.}"""
       return super().__mul__(scalar)
@@ -92,18 +92,18 @@ Functions use standard Python `def` definitions but might employ specific decora
 
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
-| **Implicit `result` Variable** | `def foo() -> int:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`result = 5`<br>&nbsp;&nbsp;&nbsp;&nbsp;`return result` | Nim's `result` variable is implicitly declared and returned. In Nimic, you must explicitly assign `result = ...` and write `return result` at the end. Note: There is no need to declare a default instantiation `result = Type()` if the value is defined or overwritten immediately on the next line! |
+| **Implicit `result` Variable** | `def foo() -> nint:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`result = nint(5)`<br>&nbsp;&nbsp;&nbsp;&nbsp;`return result` | Nim's `result` variable is implicitly declared and returned. In Nimic, you must explicitly assign `result = ...` and write `return result` at the end. Note: There is no need to declare a default instantiation `result = Type()` if the value is defined or overwritten immediately on the next line! |
 | `discard foo()` | `_ = foo()` | Discarding a function call result |
 | `proc foo(x: var SomeType)` | `def foo(x: mut@SomeType):` | Assigning new value requires `<<=`, e.g., `x <<= y` (not needed for attributes and array elements). |
-| `iterator myIter(x: int): int`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | `def myIter(x: int) -> int:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | |
+| `iterator myIter(x: int): int`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | `def myIter(x: nint) -> nint:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | |
 | `proc foo(x:int)`<br>`proc foo(x:float)` | `@dispatch`<br>`def foo(...)` | "Static" dispatch. |
 | `foo(x = 1)` | `foo(x = 1)` | Call and dispatch with keyword arguments. |
-| `proc foo(x: int, y = 5)` | `@dispatch`<br>`def foo(x: int32, y = 5):` | Default parameter values are supported in `@dispatch`/`@template`; types are inferred and missing trailing arguments populated automatically. |
+| `proc foo(x: int, y = 5)` | `@dispatch`<br>`def foo(x: nint, y = 5):` | Default parameter values are supported in `@dispatch`/`@template`; types are inferred and missing trailing arguments populated automatically. |
 | `proc foo(...)` | `def foo(...)` | Methods of classes inheriting from `Object` are dispatched automatically. |
 | `0 ..< a` | `range(a)` | Range syntax. |
 | `a .. b` | `inrange(a, b)` | Inclusive range syntax, frequently used for sets (e.g. `Tset[TNoteKind](inrange(low, high))`). |
 | `[a ..< b]`,  `[a ..^1]` | `[a:b]`, `[a:]` | Slicing syntax. Upper bound can not be negative. |
-| `proc `+`(a: SomeType, b:int):` | `class SomeType(Object):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`def __add__(self: static[SomeType], b:int):` | Operator overloading via dunder methods. To avoid monkey-patching in Python, function definitions acting as operators or methods for a specific type should be included as methods within the class definition. The transpiler natively unpacks them to freestanding `proc`s. |
+| `proc `+`(a: SomeType, b:int):` | `class SomeType(Object):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`def __add__(self: static[SomeType], b: nint):` | Operator overloading via dunder methods. To avoid monkey-patching in Python, function definitions acting as operators or methods for a specific type should be included as methods within the class definition. The transpiler natively unpacks them to freestanding `proc`s. |
 | `func foo(x:uint):` | `def foo(x:uint):` `"""{.noSideEffect.}"""` | function is proc without side effect |
 | `proc `+`=(a: uint, b:uint):` | `def __iadd__(a: uint, b:uint):` | In-place operators in Python should return the modified object. |
 | `proc `+`=(a: uint, b:uint):` | `def __radd__(a: uint, b:uint):` | Right-hand side binary operators swap arguments. |
@@ -148,7 +148,8 @@ Memory primitives are strongly enforced to mirror Nim.
 Because the transpiler is sensitive to Python's internal logic versus Nim's system macros, specific mappings apply:
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
-| `bool`, `int` | `bool`, `nint` |
+| `bool` | `bool` | |
+| `int` | `nint` | Nimic must NOT shadow Python's built-in `int` type. Use `nint` for Nim `int` type annotations, field types, parameter types, return types, and conversions (e.g. `nint(x)`). Integer literals (e.g. `0`, `1`, `42`) are standard Python literals and are allowed. Transpiles to Nim `int` (`rule:nint`). |
 | `string` | `string` | `string` should be used instead of Python's `str` |
 | `str1 / str2` (Paths) | `string(str1) / str2` | |
 | `str1 & str2` | `str1 + str2` | String concatenation |
@@ -184,7 +185,7 @@ Because the transpiler is sensitive to Python's internal logic versus Nim's syst
 ## 9. Callable type (`rule:calltype`)
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
-| `type`<br>`Name* = proc(x: int): int` | `@calltype`<br>`def Name(x: int) -> int: pass` | |
+| `type`<br>`Name* = proc(x: int): int` | `@calltype`<br>`def Name(x: nint) -> nint: pass` | |
 
 ## 10. Block Statements (`rule:block`, `rule:dropwith`)
 | Nim | Python (Nimic) | Notes |

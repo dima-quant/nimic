@@ -51,7 +51,7 @@ Translate every construct following `nimic_translation_rules.md`. Key rules to r
 - **Loops**: Convert Nim loops as Python loops. Do not use Python expressions or idioms (no list comprehensions replacing loops).
 - **Ranges**: Inclusive ranges `a..b` → `inrange(a, b)`. Half-open ranges `0 ..<a` → `range(a)`.
 - **Sets**: `set[T]` → `Tset[T]`. Initialize with `Tset[T](inrange(low(T), high(T)))`.
-- **Types**: `int` → `nint`, `string` → `string`, `bool` → `bool`. Char literals: `'#'` → `ch("#")`.
+- **Types**: `int` → `nint`, `string` → `string`, `bool` → `bool`. Char literals: `'#'` → `ch("#")`. **Do not shadow Python's `int`**: always use `nint` for Nim `int` (in type annotations, field types, parameter types, return types, and explicit casts like `nint(x)`). Standard Python integer literals (e.g. `0`, `1`, `42`) are allowed.
 - **Operators**: Nim binary `and`/`or` → Python `&`/`|`. Bitwise shift `shr`/`shl` → `>>`/`<<`.
 - **Local variables**: Variables without `*` export marker should be prefixed with `_` to prevent transpiling as public.
 - **Pointers**: `ptr T` → `ptr[T]`, `p[]` → `p.contents`, `addr x` → `addr(x)`.

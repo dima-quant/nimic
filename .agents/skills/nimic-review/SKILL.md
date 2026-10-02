@@ -57,7 +57,7 @@ Compare `compiler/[filename].nim` against `ncompiler/[filename].py` **line by li
 2. **Translation rules compliance**: All mappings follow `nimic_translation_rules.md`. Check especially:
    - No Python builtins used where `nimic.std` equivalents exist
    - No Python idioms replacing Nim loops (no list comprehensions, no `enumerate` replacing `mitems`, etc.)
-   - Correct use of `Tset` vs `set`, `nint` vs `int`, `string` vs `str`
+   - Correct use of `Tset` vs `set`, `nint` vs `int` (verify that Python's built-in `int` is never shadowed, and `nint` is used for Nim's `int` in type annotations, fields, parameters, return types, and explicit casts; int literals like `0`, `1` are allowed), `string` vs `str`
    - Export markers: public Nim identifiers (with `*`) must NOT have `_` prefix; private ones MUST have `_` prefix
    - No extra module qualification beyond what the original Nim uses
    - `result` variable pattern: no redundant `result = Type()` before immediate assignment
