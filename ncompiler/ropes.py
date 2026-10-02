@@ -1,77 +1,83 @@
 # /// nimic
 #
+#
+#           The Nim Compiler
+#        (c) Copyright 2012 Andreas Rumpf
+#
+#    See the file "copying.txt", included in this
+#    distribution, for details about the copyright.
+#
+
+# Ropes for the C code generator. Ropes are mapped to `string` directly nowadays.
 # ///
+
 from __future__ import annotations
 from nimic.ntypes import *
-
-from pathutils import AbsoluteFile
+from .pathutils import AbsoluteFile
+from nimic.std.syncio import readBuffer, close, open, fmWrite, fmRead
 
 if comptime(defined("nimPreviewSlimSystem")):
-    import nimic.std.assertions
-    import nimic.std.syncio
-    import nimic.std.formatfloat
+    from nimic.std.assertions import *
+    from nimic.std.syncio import *
+    from nimic.std.formatfloat import *
+
+class FormatStr(string):
+    # later we may change it to CString for better
+    # performance of the code generator (assignments
+    # copy the format strings
+    # though it is not necessary)
+    pass
 
 class Rope(string):
     pass
 
-class FormatStr(string):
-    def __mod__(self: static[FormatStr], args: openArray[Rope]) -> Rope:
-        result = Rope()
-        result = runtimeFormat(self, args)
-        return result
 
 def newRopeAppender(cap: nint = 80) -> string:
     """{.inline.}"""
-    result = string()
-    result = string("")
-    return result
+    return newStringOfCap(cap)
 
 def freeze(r: Rope) -> None:
     """{.inline.}"""
-    pass
+    discard
 
 def resetRopeCache() -> None:
-    pass
+    discard
 
 @template
-def rope(s: string) -> string:
-    return s
+def rope(s: string) -> Rope:
+    return Rope(s)
 
 @dispatch
-def rope(i: int64) -> Rope:
-    result = Rope()
-    result = rope(string(str(i)))
-    return result
+def rope(i: BiggestInt) -> Rope:
+    """## Converts an int to a rope."""
+    return rope(string(str(i)))
 
 @dispatch
-def rope(f: float64) -> Rope:
-    result = Rope()
-    result = rope(string(str(f)))
-    return result
+def rope(f: BiggestFloat) -> Rope:
+    """## Converts a float to a rope."""
+    return rope(string(str(f)))
 
 @dispatch
 def writeRope(f: File, r: Rope) -> None:
+    """## writes a rope to a file."""
     f.write(r)
 
 @dispatch
 def writeRope(head: Rope, filename: AbsoluteFile) -> bool:
-    result = bool()
     with var:
         f = default(File)
-    if f.open(filename.string, fmWrite):
+    if open(f, filename.string, fmWrite):
         writeRope(f, head)
-        f.close()
-        result = True
+        close(f)
+        return True
     else:
-        result = False
-    return result
+        return False
 
-@template
-def prepend(a: mut @ Rope, b: string) -> untyped:
-    a = Rope(b + a)
+def prepend(a: mut @ Rope, b: string) -> None:
+    a <<= b + a
+
 
 def runtimeFormat(frmt: FormatStr, args: openArray[Rope]) -> Rope:
-    result = Rope()
     with var:
         i = 0
     result = newRopeAppender()
@@ -80,70 +86,76 @@ def runtimeFormat(frmt: FormatStr, args: openArray[Rope]) -> Rope:
     while i < len(frmt):
         if frmt[i] == ch('$'):
             i += 1
+            if i >= len(frmt):
+                raiseAssert(string("invalid format string: ") + frmt)
             if frmt[i] == ch('$'):
-                result += string("$")
+                result.add(string("$"))
                 i += 1
             elif frmt[i] == ch('#'):
                 i += 1
-                result += args[num]
+                result.add(args[num])
                 num += 1
-            elif ch('0') <= frmt[i] <= ch('9'):
+            elif frmt[i] >= ch('0') and frmt[i] <= ch('9'):
                 with var:
                     j = 0
                 while True:
                     j = j * 10 + ord(frmt[i]) - ord(ch('0'))
                     i += 1
-                    if i >= len(frmt) or not (ch('0') <= frmt[i] <= ch('9')):
+                    if i >= len(frmt) or not (frmt[i] >= ch('0') and frmt[i] <= ch('9')):
                         break
                 num = j
                 if j > high(args) + 1:
-                    doAssert(False, string("invalid format string: ") + frmt)
+                    raiseAssert(string("invalid format string: ") + frmt)
                 else:
-                    result += args[j-1]
+                    result.add(args[j - 1])
             elif frmt[i] == ch('{'):
                 i += 1
                 with var:
                     j = 0
-                while ch('0') <= frmt[i] <= ch('9'):
+                while i < len(frmt) and frmt[i] >= ch('0') and frmt[i] <= ch('9'):
                     j = j * 10 + ord(frmt[i]) - ord(ch('0'))
                     i += 1
                 num = j
-                if frmt[i] == ch('}'):
+                if i < len(frmt) and frmt[i] == ch('}'):
                     i += 1
                 else:
-                    doAssert(False, string("invalid format string: ") + frmt)
+                    raiseAssert(string("invalid format string: ") + frmt)
 
                 if j > high(args) + 1:
-                    doAssert(False, string("invalid format string: ") + frmt)
+                    raiseAssert(string("invalid format string: ") + frmt)
                 else:
-                    result += args[j-1]
+                    result.add(args[j - 1])
             elif frmt[i] == ch('n'):
                 result.add(string("\n"))
                 i += 1
             elif frmt[i] == ch('N'):
-                result += string("\n")
+                result.add(string("\n"))
                 i += 1
             else:
-                doAssert(False, string("invalid format string: ") + frmt)
+                raiseAssert(string("invalid format string: ") + frmt)
         else:
-            result += frmt[i]
+            result.add(frmt[i])
             i += 1
     return result
 
+def __mod__(frmt: static[FormatStr], args: openArray[Rope]) -> Rope:
+    return runtimeFormat(frmt, args)
 
+FormatStr.__mod__ = __mod__
 
 @template
 def addf(c: mut @ Rope, frmt: FormatStr, args: openArray[Rope]) -> untyped:
-    c += (frmt % args)
+    """## shortcut for ``add(c, frmt % args)``."""
+    c.add(frmt % args)
 
 with const:
-    bufSize = 1024
+    _bufSize = 1024
 
 @dispatch
 def equalsFile(s: Rope, f: File) -> bool:
-    result = bool()
+    """## returns true if the contents of the file `f` equal `r`."""
     with var:
-        buf = default(array[bufSize, char])
+        buf = default(array[_bufSize, char])
         bpos = len(buf)
         blen = len(buf)
         btotal = 0
@@ -159,22 +171,19 @@ def equalsFile(s: Rope, f: File) -> bool:
                 blen = readBuffer(f, addr(buf[0]), len(buf))
                 btotal += blen
                 if blen == 0:
-                    result = False
-                    return result
+                    return False
             with let:
                 n = min(blen - bpos, len(s) - spos)
             if not equalMem(addr(buf[bpos]), cast[pointer](cast[intp](cstring(s)) + spos), n):
-                result = False
-                return result
+                return False
             spos += n
             bpos += n
 
-    result = readBuffer(f, addr(buf[0]), 1) == 0 and btotal == rtotal
-    return result
+    return readBuffer(f, addr(buf[0]), 1) == 0 and btotal == rtotal
 
 @dispatch
 def equalsFile(r: Rope, filename: AbsoluteFile) -> bool:
-    result = bool()
+    """## returns true if the contents of the file `f` equal `r`. If `f` does not exist, false is returned."""
     with var:
         f = default(File)
     result = open(f, filename.string)
@@ -184,30 +193,176 @@ def equalsFile(r: Rope, filename: AbsoluteFile) -> bool:
     return result
 
 if comptime(__name__ == "__main__"):
-    @template_expand
-    def run_tests():
+    from nimic.std.os import removeFile, fileExists
+    from nimic.std.strutils import repeat
+
+    # 1. newRopeAppender, freeze, resetRopeCache
+    with var:
+        app = newRopeAppender(50)
+    assert len(app) == 0
+    freeze(rope(string("test")))
+    resetRopeCache()
+
+    # 2. Basic rope conversions
+    with var:
         r1 = rope(string("Hello"))
-        r2 = rope(int64(123))
-        r3 = rope(float64(45.67))
-        
-        doAssert(str(r1) == "Hello", string("r1 failed: " + str(r1)))
-        doAssert(str(r2) == "123", string("r2 failed: " + str(r2)))
-        doAssert(str(r3) == "45.67", string("r3 failed: " + str(r3)))
-        
-        # Test prepending
+        r2 = rope(BiggestInt(123))
+        r2_i64 = rope(int64(456))
+        r2_neg = rope(BiggestInt(-999))
+        r3 = rope(BiggestFloat(45.67))
+        r3_f64 = rope(float64(89.01))
+    assert str(r1) == "Hello"
+    assert str(r2) == "123"
+    assert str(r2_i64) == "456"
+    assert str(r2_neg) == "-999"
+    assert str(r3) == "45.67"
+    assert str(r3_f64) == "89.01"
+
+    # 3. Prepend
+    with var:
         r_prep = rope(string("world"))
-        prepend(r_prep, string("Hello "))
-        doAssert(str(r_prep) == "Hello world", string("prep failed: " + str(r_prep)))
-        
-        # Test runtimeFormat
+    prepend(r_prep, string("Hello "))
+    assert str(r_prep) == "Hello world"
+
+    # 4. runtimeFormat and % operator
+    with var:
         f_str = FormatStr("Value: $1, another: $2")
         res = runtimeFormat(f_str, [rope(string("A")), rope(string("B"))])
-        doAssert(str(res) == "Value: A, another: B", string("runtimeFormat failed: " + str(res)))
-        
-        # Test __mod__
-        res_mod = f_str % [rope(string("A")), rope(string("B"))]
-        doAssert(str(res_mod) == "Value: A, another: B", string("mod failed: " + str(res_mod)))
-        
-        print("All ropes tests passed.")
-    
-    run_tests()
+    assert str(res) == "Value: A, another: B"
+
+    with var:
+        res_mod = FormatStr("Value: $1, another: $2") % [rope(string("A")), rope(string("B"))]
+    assert str(res_mod) == "Value: A, another: B"
+
+    # Auto-increment format $#
+    with var:
+        res_auto = FormatStr("$# + $# = $#") % [rope(string("1")), rope(string("2")), rope(string("3"))]
+    assert str(res_auto) == "1 + 2 = 3"
+
+    # Escaped $$
+    with var:
+        res_esc = FormatStr("Cost is $$5") % []
+    assert str(res_esc) == "Cost is $5"
+
+    # Bracket format ${1}
+    with var:
+        res_bracket = FormatStr("Item: ${1}") % [rope(string("Widget"))]
+    assert str(res_bracket) == "Item: Widget"
+
+    # Multi-digit specifiers: $10 and ${10}
+    with var:
+        ten_args = [
+            rope(string("1")), rope(string("2")), rope(string("3")),
+            rope(string("4")), rope(string("5")), rope(string("6")),
+            rope(string("7")), rope(string("8")), rope(string("9")),
+            rope(string("10")), rope(string("11"))
+        ]
+        res_multi = FormatStr("tenth is $10 and eleventh is ${11}") % ten_args
+    assert str(res_multi) == "tenth is 10 and eleventh is 11"
+
+    # Newlines $n and $N
+    with var:
+        res_nl = FormatStr("Line 1$nLine 2$NLine 3") % []
+    assert str(res_nl) == "Line 1\nLine 2\nLine 3"
+
+    # Empty format string
+    assert str(FormatStr("") % []) == ""
+
+    # Plain format string without specifiers
+    assert str(FormatStr("Just some plain text") % []) == "Just some plain text"
+
+    # Consecutive specifiers
+    with var:
+        f_consec = FormatStr("$1$2$3")
+    assert str(f_consec % [rope(string("X")), rope(string("Y")), rope(string("Z"))]) == "XYZ"
+
+    # addf template
+    with var:
+        accum = Rope(string("Start: "))
+    addf(accum, FormatStr("$1 $2"), [rope(string("Alpha")), rope(string("Beta"))])
+    assert str(accum) == "Start: Alpha Beta"
+
+    # 5. Error conditions for runtimeFormat
+    with var:
+        raised = False
+    try:
+        _ = FormatStr("too high: $5") % [rope(string("A")), rope(string("B"))]
+    except Exception:
+        raised = True
+    assert raised, "Expected exception for index > args length"
+
+    raised = False
+    try:
+        _ = FormatStr("too high: ${5}") % [rope(string("A")), rope(string("B"))]
+    except Exception:
+        raised = True
+    assert raised, "Expected exception for ${index} > args length"
+
+    raised = False
+    try:
+        _ = FormatStr("trailing $") % []
+    except Exception:
+        raised = True
+    assert raised, "Expected exception for trailing $"
+
+    raised = False
+    try:
+        _ = FormatStr("unclosed ${1") % [rope(string("A"))]
+    except Exception:
+        raised = True
+    assert raised, "Expected exception for unclosed ${"
+
+    raised = False
+    try:
+        _ = FormatStr("invalid $z") % []
+    except Exception:
+        raised = True
+    assert raised, "Expected exception for invalid specifier $z"
+
+    # 6. File I/O operations
+    with var:
+        tmp_path = string(".scratch/test_rope_tmp.txt")
+        abs_file = AbsoluteFile(tmp_path)
+        test_rope = Rope(string("Rope content for file test\nLine 2"))
+    assert writeRope(test_rope, abs_file) == True
+    assert equalsFile(test_rope, abs_file) == True
+    assert equalsFile(Rope(string("Different content")), abs_file) == False
+
+    with var:
+        f_direct = default(File)
+    assert open(f_direct, tmp_path, fmWrite) == True
+    writeRope(f_direct, Rope(string("Direct File write")))
+    close(f_direct)
+
+    assert open(f_direct, tmp_path, fmRead) == True
+    assert equalsFile(Rope(string("Direct File write")), f_direct) == True
+    close(f_direct)
+
+    with var:
+        large_content = repeat(string("X"), 2500)
+        large_rope = Rope(large_content)
+    assert writeRope(large_rope, abs_file) == True
+    assert equalsFile(large_rope, abs_file) == True
+
+    with var:
+        diff_in_buf2 = Rope(repeat(string("X"), 1500) + string("Y") + repeat(string("X"), 999))
+    assert equalsFile(diff_in_buf2, abs_file) == False
+
+    with var:
+        shorter_rope = Rope(repeat(string("X"), 2400))
+    assert equalsFile(shorter_rope, abs_file) == False
+
+    with var:
+        longer_rope = Rope(repeat(string("X"), 2600))
+    assert equalsFile(longer_rope, abs_file) == False
+
+    # Non-existent file operations
+    with var:
+        non_existent = AbsoluteFile(string("/nonexistent_dir_12345/no_such_file.txt"))
+    assert equalsFile(test_rope, non_existent) == False
+    assert writeRope(test_rope, non_existent) == False
+
+    if fileExists(tmp_path):
+        removeFile(tmp_path)
+
+    echo("All ropes tests passed.")

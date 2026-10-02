@@ -132,8 +132,8 @@ if comptime(__name__ == "__main__"):
 
     # Test overflow saturation
     with let:
-        _max_val = int(high(int64))
-        _min_val = int(low(int64))
+        _max_val = nint(high(int64))
+        _min_val = nint(low(int64))
     assert sat_plus(_max_val, 1) == _max_val  # saturates to max
     assert sat_plus(_min_val, -1) == _min_val  # saturates to min
     assert sat_plus(_max_val, -10) == _max_val - 10  # within bounds

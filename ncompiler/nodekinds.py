@@ -191,7 +191,12 @@ class TNodeKind(NIntEnum):
     nkOpenSym = auto()            # container for captured sym
 
 
+TNodeKind.nkWhen = TNodeKind.nkWhenStmt
+TNodeKind.nkWhenExpr = TNodeKind.nkWhenStmt
+
 with const:
+    nkWhen = TNodeKind.nkWhenStmt
+    nkWhenExpr = TNodeKind.nkWhenStmt
     nkCallKinds = {TNodeKind.nkCall, TNodeKind.nkInfix, TNodeKind.nkPrefix,
                    TNodeKind.nkPostfix, TNodeKind.nkCommand, TNodeKind.nkCallStrLit,
                    TNodeKind.nkHiddenCallConv}

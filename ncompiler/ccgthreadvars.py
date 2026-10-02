@@ -213,7 +213,7 @@ if comptime(__name__ == "__main__"):
             self.data = data
 
         @property
-        def len(self) -> int:
+        def len(self) -> nint:
             return len(self.data)
 
     class Builder(Object):
@@ -286,7 +286,7 @@ if comptime(__name__ == "__main__"):
                 self.module.flags.add(sfMainModule)
             if compile_to_cpp:
                 self.module.flags.add(sfCompileToCpp)
-            self.s = [Builder() for _ in range(int(TCFileSection.cfsCount))]
+            self.s = [Builder() for _ in range(nint(TCFileSection.cfsCount))]
 
         @property
         def config(self) -> ConfigRef:
@@ -303,7 +303,7 @@ if comptime(__name__ == "__main__"):
             return self.module.g.config
 
         def procSec(self, sec: TCProcSection) -> Builder:
-            return self.sections[int(sec)]
+            return self.sections[nint(sec)]
 
     class TLoc(Object):
         def __init__(self, snippet="varA", t="intType", flags=None):

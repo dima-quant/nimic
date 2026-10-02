@@ -1,12 +1,12 @@
 # Nim Compiler → Nimic: Conversion Queue
 
-> **Generated**: 2026-09-14 | **Total modules**: 164 | **Converted**: 13 | **Remaining**: 151
+> **Generated**: 2026-09-15 | **Total modules**: 164 | **Converted**: 18 | **Remaining**: 146
 
 ## Progress Summary
 
 | Tier | Modules | Converted | Remaining | Description |
 |------|---------|-----------|-----------|-------------|
-| 0 | 37 | 7 | 30 | No dependencies (leaf modules) |
+| 0 | 37 | 12 | 25 | No dependencies (leaf modules) |
 | 1 | 7 | 3 | 4 | Single-tier dependencies |
 | 2 | 3 | 1 | 2 | Depends on Tiers 0–1 |
 | 3 | 11 | 2 | 9 | Core infrastructure (options, msgs, trees) |
@@ -15,7 +15,7 @@
 | 11–15 | 43 | 0 | 43 | Type analysis, semantic data |
 | 16–22 | 20 | 0 | 20 | Semantic analysis, code generation |
 | 23–28 | 9 | 0 | 9 | VM, sem, pipelines, main |
-| **Total** | **164** | **13** | **151** | |
+| **Total** | **164** | **18** | **146** | |
 
 ## Conversion Rules
 
@@ -31,53 +31,49 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 
 | Priority | Module | Size | Notes |
 |----------|--------|------|-------|
-| 1 | `nversion` | 764 bytes | Version constant |
-| 2 | `packagehandling` | 1,343 bytes | Small utility |
-| 3 | `saturate` | 2,189 bytes | Math utilities |
-| 4 | `sinkparameter_inference` | 2,393 bytes | Small analysis |
-| 5 | `ccgthreadvars` | 2,429 bytes | C gen helpers |
-| 6 | `bitsets` | 2,754 bytes | Bit set operations |
-| 7 | `hlo` | 3,811 bytes | High-level optimizer |
-| 8 | `inliner` | 4,217 bytes | Inlining |
-| 9 | `aliasanalysis` | 4,352 bytes | Alias analysis |
-| 10 | `ccgreset` | 4,536 bytes | C gen reset |
-| 11 | `rodutils` | 4,802 bytes | Rod file utilities |
-| 12 | `btrees` | 5,048 bytes | B-tree implementation |
-| 13 | `jstypes` | 6,158 bytes | JS type gen |
-| 14 | `cbuilderexprs` | 6,794 bytes | C builder expressions |
-| 15 | `sourcemap` | 7,591 bytes | Source maps |
-| 16 | `ccgtrav` | 8,380 bytes | C gen traversal |
-| 17 | `cbuilderstmts` | 9,403 bytes | C builder statements |
-| 18 | `ccgliterals` | 13,946 bytes | C gen literals |
-| 19 | `int128` | 16,767 bytes | 128-bit integer |
-| 20 | `sizealignoffsetimpl` | 17,025 bytes | Size/align computation |
-| 21 | `cbuilderdecls` | 22,463 bytes | C builder declarations |
-| 22 | `semobjconstr` | 23,372 bytes | Object construction (sem) |
-| 23 | `semgnrc` | 24,878 bytes | Generic sem |
-| 24 | `semmagic` | 27,519 bytes | Magic sem |
-| 25 | `semtempl` | 31,451 bytes | Template sem |
-| 26 | `semcall` | 44,523 bytes | Call sem |
-| 27 | `semfields` | 6,625 bytes | Field sem |
-| 28 | `seminst` | 18,919 bytes | Instantiation sem |
-| 29 | `ccgstmts` | 71,794 bytes | C gen statements (large) |
-| 30 | `semtypes` | 106,643 bytes | Type sem (very large) |
+| 1 | `bitsets` | 2,754 bytes | Bit set operations |
+| 2 | `hlo` | 3,811 bytes | High-level optimizer |
+| 6 | `inliner` | 4,217 bytes | Inlining |
+| 7 | `aliasanalysis` | 4,352 bytes | Alias analysis |
+| 8 | `ccgreset` | 4,536 bytes | C gen reset |
+| 9 | `rodutils` | 4,802 bytes | Rod file utilities |
+| 10 | `btrees` | 5,048 bytes | B-tree implementation |
+| 11 | `jstypes` | 6,158 bytes | JS type gen |
+| 12 | `cbuilderexprs` | 6,794 bytes | C builder expressions |
+| 13 | `sourcemap` | 7,591 bytes | Source maps |
+| 14 | `ccgtrav` | 8,380 bytes | C gen traversal |
+| 15 | `cbuilderstmts` | 9,403 bytes | C builder statements |
+| 16 | `ccgliterals` | 13,946 bytes | C gen literals |
+| 17 | `int128` | 16,767 bytes | 128-bit integer |
+| 18 | `sizealignoffsetimpl` | 17,025 bytes | Size/align computation |
+| 19 | `cbuilderdecls` | 22,463 bytes | C builder declarations |
+| 20 | `semobjconstr` | 23,372 bytes | Object construction (sem) |
+| 21 | `semgnrc` | 24,878 bytes | Generic sem |
+| 22 | `semmagic` | 27,519 bytes | Magic sem |
+| 23 | `semtempl` | 31,451 bytes | Template sem |
+| 24 | `semcall` | 44,523 bytes | Call sem |
+| 25 | `semfields` | 6,625 bytes | Field sem |
+| 26 | `seminst` | 18,919 bytes | Instantiation sem |
+| 27 | `ccgstmts` | 71,794 bytes | C gen statements (large) |
+| 28 | `semtypes` | 106,643 bytes | Type sem (very large) |
 
-### Already Converted (Needs Re-verification)
+### Already Converted & Reviewed
 
-| Module | Tier | Has Review | Action |
+| Module | Tier | Review Log | Status |
 |--------|------|------------|--------|
-| `wordrecg` | 0 | ✅ | Re-verify |
-| `pathutils` | 0 | ✅ | Re-verify |
-| `nimpaths` | 0 | ❌ | Review needed |
-| `nodekinds` | 0 | ❌ | Review needed |
-| `platform` | 0 | ❌ | Review needed |
-| `prefixmatches` | 0 | ❌ | Review needed |
-| `idents` | 1 | ✅ | Re-verify |
-| `llstream` | 1 | ❌ | Review needed |
-| `ropes` | 1 | ❌ | Review needed |
-| `lineinfos` | 2 | ❌ | Review needed |
-| `msgs` | 3 | ❌ | Review needed |
-| `options` | 3 | ❌ | Review needed |
+| `wordrecg` | 0 | `ncompiler/review_wordrecg.md` | ✅ Complete |
+| `pathutils` | 0 | `ncompiler/review_pathutils.md` | ✅ Complete |
+| `nimpaths` | 0 | `ncompiler/review_nimpaths.md` | ✅ Complete |
+| `nodekinds` | 0 | — | 🔲 Review needed |
+| `platform` | 0 | `ncompiler/review_platform.md` | ✅ Complete |
+| `prefixmatches` | 0 | `ncompiler/review_prefixmatches.md` | ✅ Complete |
+| `saturate` | 0 | `ncompiler/review_saturate.md` | ✅ Complete |
+| `idents` | 1 | `ncompiler/review_idents.md` | ✅ Complete |
+| `llstream` | 1 | `ncompiler/review_llstream.md` | ✅ Complete |
+| `ropes` | 1 | `ncompiler/review_ropes.md` | ✅ Complete |
+| `lineinfos` | 2 | `ncompiler/review_lineinfos.md` | ✅ Complete |
+| `msgs` | 3 | `ncompiler/review_msgs.md` | ✅ Complete |
+| `options` | 3 | `ncompiler/review_options.md` | ✅ Complete |
 
 ---
 
@@ -96,22 +92,22 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 | `ccgliterals` | 13,946 bytes |  | 🔲 Pending |
 | `ccgreset` | 4,536 bytes |  | 🔲 Pending |
 | `ccgstmts` | 71,794 bytes |  | 🔲 Pending |
-| `ccgthreadvars` | 2,429 bytes |  | 🔲 Pending |
+| `ccgthreadvars` | 2,429 bytes |  | ✅ Converted + Reviewed |
 | `ccgtrav` | 8,380 bytes |  | 🔲 Pending |
 | `hlo` | 3,811 bytes |  | 🔲 Pending |
 | `inliner` | 4,217 bytes |  | 🔲 Pending |
 | `int128` | 16,767 bytes |  | 🔲 Pending |
 | `jstypes` | 6,158 bytes |  | 🔲 Pending |
-| `nimpaths` | 2,194 bytes |  | ✅ Converted |
+| `nimpaths` | 2,194 bytes |  | ✅ Converted + Reviewed |
 | `nodejs` | 347 bytes |  | ✅ Converted + Reviewed |
 | `nodekinds` | 9,756 bytes |  | ✅ Converted |
-| `nversion` | 764 bytes |  | 🔲 Pending |
-| `packagehandling` | 1,343 bytes |  | 🔲 Pending |
+| `nversion` | 764 bytes |  | ✅ Converted + Reviewed |
+| `packagehandling` | 1,343 bytes |  | ✅ Converted + Reviewed |
 | `pathutils` | 5,089 bytes |  | ✅ Converted + Reviewed |
-| `platform` | 14,313 bytes |  | ✅ Converted |
-| `prefixmatches` | 1,543 bytes |  | ✅ Converted |
+| `platform` | 14,313 bytes |  | ✅ Converted + Reviewed |
+| `prefixmatches` | 1,543 bytes |  | ✅ Converted + Reviewed |
 | `rodutils` | 4,802 bytes |  | 🔲 Pending |
-| `saturate` | 2,189 bytes |  | 🔲 Pending |
+| `saturate` | 2,189 bytes |  | ✅ Converted + Reviewed |
 | `semcall` | 44,523 bytes |  | 🔲 Pending |
 | `semfields` | 6,625 bytes |  | 🔲 Pending |
 | `semgnrc` | 24,878 bytes |  | 🔲 Pending |
@@ -120,19 +116,19 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 | `semobjconstr` | 23,372 bytes |  | 🔲 Pending |
 | `semtempl` | 31,451 bytes |  | 🔲 Pending |
 | `semtypes` | 106,643 bytes |  | 🔲 Pending |
-| `sinkparameter_inference` | 2,393 bytes |  | 🔲 Pending |
+| `sinkparameter_inference` | 2,393 bytes |  | ✅ Converted + Reviewed |
 | `sizealignoffsetimpl` | 17,025 bytes |  | 🔲 Pending |
 | `sourcemap` | 7,591 bytes |  | 🔲 Pending |
 | `wordrecg` | 8,361 bytes |  | ✅ Converted + Reviewed |
 
-### Tier 1 — Depends on Tiers 0–0 (3/7 converted)
+### Tier 1 — Depends on Tiers 0–0 (4/7 converted)
 
 | Module | Size | Dependencies | Status |
 |--------|------|--------------|--------|
 | `ccgcalls` | 33,985 bytes | aliasanalysis | 🔲 Pending |
 | `idents` | 3,574 bytes | wordrecg | ✅ Converted + Reviewed |
-| `llstream` | 7,399 bytes | pathutils | ✅ Converted |
-| `ropes` | 4,172 bytes | pathutils | ✅ Converted |
+| `llstream` | 7,399 bytes | pathutils | ✅ Converted + Reviewed |
+| `ropes` | 4,172 bytes | pathutils | ✅ Converted + Reviewed |
 | `semexprs` | 142,092 bytes | semmagic, semobjconstr | 🔲 Pending |
 | `semstmts` | 117,249 bytes | semfields | 🔲 Pending |
 | `vmhooks` | 2,334 bytes | pathutils | 🔲 Pending |
@@ -142,7 +138,7 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 | Module | Size | Dependencies | Status |
 |--------|------|--------------|--------|
 | `cbuilderbase` | 4,152 bytes | ropes, int128 | 🔲 Pending |
-| `lineinfos` | 16,909 bytes | ropes, pathutils | ✅ Converted |
+| `lineinfos` | 16,909 bytes | ropes, pathutils | ✅ Converted + Reviewed |
 | `nimlexbase` | 5,417 bytes | llstream | 🔲 Pending |
 
 ### Tier 3 — Depends on Tiers 0–2 (2/11 converted)
@@ -156,8 +152,8 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 | `debuginfo` | 2,052 bytes | sighashes | 🔲 Pending |
 | `debugutils` | 2,192 bytes | options | 🔲 Pending |
 | `index` | 478 bytes | nim | 🔲 Pending |
-| `msgs` | 28,370 bytes | options, lineinfos, pathutils, ropes | ✅ Converted |
-| `options` | 42,863 bytes | lineinfos, platform, prefixmatches, pathutils, nimpaths +2 more | ✅ Converted |
+| `msgs` | 28,370 bytes | options, lineinfos, pathutils, ropes | ✅ Converted + Reviewed |
+| `options` | 42,863 bytes | lineinfos, platform, prefixmatches, pathutils, nimpaths +2 more | ✅ Converted + Reviewed |
 | `suggest` | 36,588 bytes | prefixmatches, suggestsymdb, wordrecg, pathutils | 🔲 Pending |
 | `trees` | 9,171 bytes | ast, wordrecg, idents | 🔲 Pending |
 

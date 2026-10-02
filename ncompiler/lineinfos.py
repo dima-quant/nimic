@@ -3,11 +3,11 @@
 # ///
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.hashes import hash as std_hash, Hash
+from nimic.std.hashes import hash, Hash
 from nimic.std.tables import Table
 
-from ropes import Rope
-from pathutils import AbsoluteFile, RelativeFile
+from .ropes import Rope
+from .pathutils import AbsoluteFile, RelativeFile
 
 
 with const:
@@ -17,11 +17,13 @@ with const:
 
 def createDocLink(urlSuffix: string) -> string:
     # os.`/` is not appropriate for urls.
-    result = string(explanationsBaseUrl)
-    if len(urlSuffix) > 0 and ord(urlSuffix[0]) == ord('/'):
-        result += urlSuffix
+    with var:
+        result = string(explanationsBaseUrl)
+    if len(urlSuffix) > 0 and urlSuffix[0] == ch('/'):
+        result.add(urlSuffix)
     else:
-        result += string("/") + urlSuffix
+        result.add(string("/"))
+        result.add(urlSuffix)
     return result
 
 class TMsgKind(NStrEnum):
@@ -293,12 +295,12 @@ with const:
     hintMax = high(TMsgKind)
     rstWarnings = Tset[TMsgKind]({TMsgKind.warnRstRedefinitionOfLabel, TMsgKind.warnRstUnknownSubstitutionX, TMsgKind.warnRstAmbiguousLink, TMsgKind.warnRstBrokenLink, TMsgKind.warnRstLanguageXNotSupported, TMsgKind.warnRstFieldXNotSupported, TMsgKind.warnRstUnusedImportdoc, TMsgKind.warnRstStyle})
 
-class TNoteKind(TMsgKind): pass
+class TNoteKind(Trange[warnMin, hintMax]): pass
 class TNoteKinds(Tset[TNoteKind]): pass
 
 def computeNotesVerbosity() -> array[4, TNoteKinds]:
-    result = array[4, TNoteKinds]()
-    result = default(array[4, TNoteKinds])
+    with var:
+        result = default(array[4, TNoteKinds])
     result[3] = Tset[TNoteKind](inrange(low(TNoteKind), high(TNoteKind))) - Tset[TNoteKind]({TMsgKind.warnObservableStores, TMsgKind.warnResultUsed, TMsgKind.warnAnyEnumConv, TMsgKind.warnBareExcept, TMsgKind.warnStdPrefix, TMsgKind.warnSystemRangeConversion})
     result[2] = result[3] - Tset[TNoteKind]({TMsgKind.hintStackTrace, TMsgKind.hintExtendedContext, TMsgKind.hintDeclaredLoc, TMsgKind.hintProcessingStmt})
     result[1] = result[2] - Tset[TNoteKind]({TMsgKind.warnImplicitRangeConversion, TMsgKind.warnProveField, TMsgKind.warnProveIndex, TMsgKind.warnGcUnsafe, TMsgKind.hintPath, TMsgKind.hintDependency, TMsgKind.hintCodeBegin, TMsgKind.hintCodeEnd, TMsgKind.hintSource, TMsgKind.hintGlobalVar, TMsgKind.hintGCStats, TMsgKind.hintMsgOrigin, TMsgKind.hintPerformance})
@@ -339,7 +341,7 @@ class TFileInfo(Object):
 
 @distinct
 class FileIndex(int32):
-    def __eq__(self: static[FileIndex], b: FileIndex) -> bool:
+    def __eq__(self, b: FileIndex) -> bool:
         """{.borrow.}"""
         return super().__eq__(b)
 
@@ -362,12 +364,13 @@ class TErrorOutputs(Tset[TErrorOutput]): pass
 class ERecoverableError(ValueError): pass
 class ESuggestDone(ValueError): pass
 
+@dispatch
 def hash(i: TLineInfo) -> Hash:
-    return std_hash((int(i.line), int(i.col), int(i.fileIndex)))
+    return hash((nint(i.line), nint(i.col), nint(i.fileIndex)))
 
 def raiseRecoverableError(msg: string):
     """{.noinline, noreturn.}"""
-    raise ERecoverableError(msg)
+    raise newException(ERecoverableError, msg)
 
 with const:
     InvalidFileIdx = FileIndex(-1)
@@ -404,19 +407,61 @@ def initMsgConfig() -> MsgConfig:
     return result
 
 if comptime(__name__ == '__main__'):
-    import nimic.std.assertions
+    # 1. createDocLink
+    assert createDocLink(string("manual.html")) == string("https://nim-lang.github.io/Nim/manual.html")
+    assert createDocLink(string("/manual.html")) == string("https://nim-lang.github.io/Nim/manual.html")
+    assert createDocLink(string("")) == string("https://nim-lang.github.io/Nim/")
 
-    link = createDocLink(string("foo"))
-    assert link == string("https://nim-lang.github.io/Nim/foo")
-
-    link2 = createDocLink(string("/bar"))
-    assert link2 == string("https://nim-lang.github.io/Nim/bar")
-
-    msgConfig = initMsgConfig()
-    assert msgConfig.lastError == unknownLineInfo
-    assert string("???") in msgConfig.filenameToIndexTbl
-    assert msgConfig.filenameToIndexTbl[string("???")] == FileIndex(-1)
-
+    # 2. MsgKindToStr & sets
     assert MsgKindToStr[TMsgKind.errUnknown] == string("unknown error")
+    assert MsgKindToStr[TMsgKind.errFatal] == string("fatal error: $1")
+    assert TMsgKind.errFatal in fatalMsgs
+    assert TMsgKind.warnRstBrokenLink in rstWarnings
 
-    print("All lineinfos tests passed.")
+    # 3. NotesVerbosity
+    assert len(NotesVerbosity) == 4
+
+    # 4. TFileInfo
+    with var:
+        fi = TFileInfo(
+            fullPath=AbsoluteFile("/path/to/file.nim"),
+            projPath=RelativeFile("file.nim"),
+            shortName=string("file"),
+            quotedName=Rope(string("")),
+            quotedFullName=Rope(string("")),
+            lines=seq[string](),
+            dirtyFile=AbsoluteFile(""),
+            hash=string("abc123hash"),
+            dirty=False,
+            kind=FileInfoKind.fikSource
+        )
+    assert fi.shortName == string("file")
+    assert fi.kind == FileInfoKind.fikSource
+
+    # 5. TLineInfo & hash
+    with var:
+        li = TLineInfo(line=42, col=15, fileIndex=FileIndex(3))
+    assert li.line == 42
+    assert li.col == 15
+    assert li.fileIndex == FileIndex(3)
+    with var:
+        h = hash(li)
+    assert nint(h) != 0
+
+    # 6. Exceptions
+    try:
+        raiseRecoverableError(string("something bad"))
+        assert False, "should have raised"
+    except ERecoverableError as e:
+        assert e.msg == string("something bad")
+
+    # 7. initMsgConfig
+    with var:
+        mc = initMsgConfig()
+    assert mc.lastError == unknownLineInfo
+    assert mc.filenameToIndexTbl[string("???")] == FileIndex(-1)
+    assert TErrorOutput.eStdOut in mc.errorOutputs
+    assert TErrorOutput.eStdErr in mc.errorOutputs
+
+    echo(string("All lineinfos tests passed."))
+

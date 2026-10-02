@@ -123,7 +123,7 @@ if comptime(__name__ == "__main__"):
             self.s = string(s)
 
     class PType(Object):
-        def __init__(self, kind: TTypeKind, size: int = 8, align: int = 8, hasDestructor: bool = True):
+        def __init__(self, kind: TTypeKind, size: nint = 8, align: nint = 8, hasDestructor: bool = True):
             self.kind = kind
             self.size = size
             self.align = align
@@ -141,7 +141,7 @@ if comptime(__name__ == "__main__"):
             self.sons.append(son)
 
     class PSym(Object):
-        def __init__(self, kind: TSymKind, owner: PSym = None, typ: PType = None, name: str = "p", position: int = 0):
+        def __init__(self, kind: TSymKind, owner: PSym = None, typ: PType = None, name: str = "p", position: nint = 0):
             self.kind = kind
             self.owner = owner
             self.typ = typ
@@ -162,10 +162,10 @@ if comptime(__name__ == "__main__"):
         def lastSon(self) -> PNode:
             return self.sons[-1] if self.sons else None
 
-        def __getitem__(self, index: int) -> PNode:
+        def __getitem__(self, index: nint) -> PNode:
             return self.sons[index]
 
-        def __len__(self) -> int:
+        def __len__(self) -> nint:
             return len(self.sons)
 
         def __iter__(self):
@@ -184,7 +184,7 @@ if comptime(__name__ == "__main__"):
         pass
 
     _messages = []
-    def message(conf: ConfigRef, info: object, msgKind: int, msgText: string) -> None:
+    def message(conf: ConfigRef, info: object, msgKind: nint, msgText: string) -> None:
         _messages.append((msgKind, msgText))
 
     # Test 1: Successful inference of parameter to sink
