@@ -31,35 +31,35 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 
 | Priority | Module | Size | Notes |
 |----------|--------|------|-------|
-| 1 | `hlo` | 3,811 bytes | High-level optimizer |
-| 2 | `inliner` | 4,217 bytes | Inlining |
-| 3 | `aliasanalysis` | 4,352 bytes | Alias analysis |
-| 4 | `ccgreset` | 4,536 bytes | C gen reset |
-| 5 | `rodutils` | 4,802 bytes | Rod file utilities |
-| 6 | `btrees` | 5,048 bytes | B-tree implementation |
-| 7 | `jstypes` | 6,158 bytes | JS type gen |
-| 8 | `cbuilderexprs` | 6,794 bytes | C builder expressions |
-| 9 | `sourcemap` | 7,591 bytes | Source maps |
-| 10 | `ccgtrav` | 8,380 bytes | C gen traversal |
-| 11 | `cbuilderstmts` | 9,403 bytes | C builder statements |
-| 12 | `ccgliterals` | 13,946 bytes | C gen literals |
-| 13 | `int128` | 16,767 bytes | 128-bit integer |
-| 14 | `sizealignoffsetimpl` | 17,025 bytes | Size/align computation |
-| 15 | `cbuilderdecls` | 22,463 bytes | C builder declarations |
-| 16 | `semobjconstr` | 23,372 bytes | Object construction (sem) |
-| 17 | `semgnrc` | 24,878 bytes | Generic sem |
-| 18 | `semmagic` | 27,519 bytes | Magic sem |
-| 19 | `semtempl` | 31,451 bytes | Template sem |
-| 20 | `semcall` | 44,523 bytes | Call sem |
-| 21 | `semfields` | 6,625 bytes | Field sem |
-| 22 | `seminst` | 18,919 bytes | Instantiation sem |
-| 23 | `ccgstmts` | 71,794 bytes | C gen statements (large) |
-| 24 | `semtypes` | 106,643 bytes | Type sem (very large) |
+| 1 | `inliner` | 4,217 bytes | Inlining |
+| 2 | `aliasanalysis` | 4,352 bytes | Alias analysis |
+| 3 | `ccgreset` | 4,536 bytes | C gen reset |
+| 4 | `rodutils` | 4,802 bytes | Rod file utilities |
+| 5 | `btrees` | 5,048 bytes | B-tree implementation |
+| 6 | `jstypes` | 6,158 bytes | JS type gen |
+| 7 | `cbuilderexprs` | 6,794 bytes | C builder expressions |
+| 8 | `sourcemap` | 7,591 bytes | Source maps |
+| 9 | `ccgtrav` | 8,380 bytes | C gen traversal |
+| 10 | `cbuilderstmts` | 9,403 bytes | C builder statements |
+| 11 | `ccgliterals` | 13,946 bytes | C gen literals |
+| 12 | `int128` | 16,767 bytes | 128-bit integer |
+| 13 | `sizealignoffsetimpl` | 17,025 bytes | Size/align computation |
+| 14 | `cbuilderdecls` | 22,463 bytes | C builder declarations |
+| 15 | `semobjconstr` | 23,372 bytes | Object construction (sem) |
+| 16 | `semgnrc` | 24,878 bytes | Generic sem |
+| 17 | `semmagic` | 27,519 bytes | Magic sem |
+| 18 | `semtempl` | 31,451 bytes | Template sem |
+| 19 | `semcall` | 44,523 bytes | Call sem |
+| 20 | `semfields` | 6,625 bytes | Field sem |
+| 21 | `seminst` | 18,919 bytes | Instantiation sem |
+| 22 | `ccgstmts` | 71,794 bytes | C gen statements (large) |
+| 23 | `semtypes` | 106,643 bytes | Type sem (very large) |
 
 ### Already Converted & Reviewed
 
 | Module | Tier | Review Log | Status |
 |--------|------|------------|--------|
+| `hlo` | 0 | `ncompiler/review_hlo.md` | ✅ Complete |
 | `wordrecg` | 0 | `ncompiler/review_wordrecg.md` | ✅ Complete |
 | `pathutils` | 0 | `ncompiler/review_pathutils.md` | ✅ Complete |
 | `nimpaths` | 0 | `ncompiler/review_nimpaths.md` | ✅ Complete |
