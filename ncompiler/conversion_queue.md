@@ -1,12 +1,12 @@
 # Nim Compiler → Nimic: Conversion Queue
 
-> **Generated**: 2026-09-15 | **Total modules**: 164 | **Converted**: 18 | **Remaining**: 146
+> **Generated**: 2026-09-15 | **Total modules**: 164 | **Converted**: 19 | **Remaining**: 145
 
 ## Progress Summary
 
 | Tier | Modules | Converted | Remaining | Description |
 |------|---------|-----------|-----------|-------------|
-| 0 | 37 | 12 | 25 | No dependencies (leaf modules) |
+| 0 | 37 | 13 | 24 | No dependencies (leaf modules) |
 | 1 | 7 | 3 | 4 | Single-tier dependencies |
 | 2 | 3 | 1 | 2 | Depends on Tiers 0–1 |
 | 3 | 11 | 2 | 9 | Core infrastructure (options, msgs, trees) |
@@ -15,7 +15,7 @@
 | 11–15 | 43 | 0 | 43 | Type analysis, semantic data |
 | 16–22 | 20 | 0 | 20 | Semantic analysis, code generation |
 | 23–28 | 9 | 0 | 9 | VM, sem, pipelines, main |
-| **Total** | **164** | **18** | **146** | |
+| **Total** | **164** | **19** | **145** | |
 
 ## Conversion Rules
 
@@ -31,31 +31,30 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 
 | Priority | Module | Size | Notes |
 |----------|--------|------|-------|
-| 1 | `bitsets` | 2,754 bytes | Bit set operations |
-| 2 | `hlo` | 3,811 bytes | High-level optimizer |
-| 6 | `inliner` | 4,217 bytes | Inlining |
-| 7 | `aliasanalysis` | 4,352 bytes | Alias analysis |
-| 8 | `ccgreset` | 4,536 bytes | C gen reset |
-| 9 | `rodutils` | 4,802 bytes | Rod file utilities |
-| 10 | `btrees` | 5,048 bytes | B-tree implementation |
-| 11 | `jstypes` | 6,158 bytes | JS type gen |
-| 12 | `cbuilderexprs` | 6,794 bytes | C builder expressions |
-| 13 | `sourcemap` | 7,591 bytes | Source maps |
-| 14 | `ccgtrav` | 8,380 bytes | C gen traversal |
-| 15 | `cbuilderstmts` | 9,403 bytes | C builder statements |
-| 16 | `ccgliterals` | 13,946 bytes | C gen literals |
-| 17 | `int128` | 16,767 bytes | 128-bit integer |
-| 18 | `sizealignoffsetimpl` | 17,025 bytes | Size/align computation |
-| 19 | `cbuilderdecls` | 22,463 bytes | C builder declarations |
-| 20 | `semobjconstr` | 23,372 bytes | Object construction (sem) |
-| 21 | `semgnrc` | 24,878 bytes | Generic sem |
-| 22 | `semmagic` | 27,519 bytes | Magic sem |
-| 23 | `semtempl` | 31,451 bytes | Template sem |
-| 24 | `semcall` | 44,523 bytes | Call sem |
-| 25 | `semfields` | 6,625 bytes | Field sem |
-| 26 | `seminst` | 18,919 bytes | Instantiation sem |
-| 27 | `ccgstmts` | 71,794 bytes | C gen statements (large) |
-| 28 | `semtypes` | 106,643 bytes | Type sem (very large) |
+| 1 | `hlo` | 3,811 bytes | High-level optimizer |
+| 2 | `inliner` | 4,217 bytes | Inlining |
+| 3 | `aliasanalysis` | 4,352 bytes | Alias analysis |
+| 4 | `ccgreset` | 4,536 bytes | C gen reset |
+| 5 | `rodutils` | 4,802 bytes | Rod file utilities |
+| 6 | `btrees` | 5,048 bytes | B-tree implementation |
+| 7 | `jstypes` | 6,158 bytes | JS type gen |
+| 8 | `cbuilderexprs` | 6,794 bytes | C builder expressions |
+| 9 | `sourcemap` | 7,591 bytes | Source maps |
+| 10 | `ccgtrav` | 8,380 bytes | C gen traversal |
+| 11 | `cbuilderstmts` | 9,403 bytes | C builder statements |
+| 12 | `ccgliterals` | 13,946 bytes | C gen literals |
+| 13 | `int128` | 16,767 bytes | 128-bit integer |
+| 14 | `sizealignoffsetimpl` | 17,025 bytes | Size/align computation |
+| 15 | `cbuilderdecls` | 22,463 bytes | C builder declarations |
+| 16 | `semobjconstr` | 23,372 bytes | Object construction (sem) |
+| 17 | `semgnrc` | 24,878 bytes | Generic sem |
+| 18 | `semmagic` | 27,519 bytes | Magic sem |
+| 19 | `semtempl` | 31,451 bytes | Template sem |
+| 20 | `semcall` | 44,523 bytes | Call sem |
+| 21 | `semfields` | 6,625 bytes | Field sem |
+| 22 | `seminst` | 18,919 bytes | Instantiation sem |
+| 23 | `ccgstmts` | 71,794 bytes | C gen statements (large) |
+| 24 | `semtypes` | 106,643 bytes | Type sem (very large) |
 
 ### Already Converted & Reviewed
 
@@ -73,6 +72,7 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 | `packagehandling` | 0 | `ncompiler/review_packagehandling.md` | ✅ Complete |
 | `sinkparameter_inference` | 0 | `ncompiler/review_sinkparameter_inference.md` | ✅ Complete |
 | `ccgthreadvars` | 0 | `ncompiler/review_ccgthreadvars.md` | ✅ Complete |
+| `bitsets` | 0 | `ncompiler/review_bitsets.md` | ✅ Complete |
 | `idents` | 1 | `ncompiler/review_idents.md` | ✅ Complete |
 | `llstream` | 1 | `ncompiler/review_llstream.md` | ✅ Complete |
 | `ropes` | 1 | `ncompiler/review_ropes.md` | ✅ Complete |
@@ -84,12 +84,12 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 
 ## Full Tier Breakdown
 
-### Tier 0 — No dependencies (6/37 converted)
+### Tier 0 — No dependencies (13/37 converted)
 
 | Module | Size | Dependencies | Status |
 |--------|------|--------------|--------|
 | `aliasanalysis` | 4,352 bytes |  | 🔲 Pending |
-| `bitsets` | 2,754 bytes |  | 🔲 Pending |
+| `bitsets` | 2,754 bytes |  | ✅ Converted + Reviewed |
 | `btrees` | 5,048 bytes |  | 🔲 Pending |
 | `cbuilderdecls` | 22,463 bytes |  | 🔲 Pending |
 | `cbuilderexprs` | 6,794 bytes |  | 🔲 Pending |
