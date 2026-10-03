@@ -407,7 +407,7 @@ def dispatch(fn: callable) -> callable:
                 _annotations[name] = "untyped"
 
     sig_list = [
-        _annotations[name].removeprefix("mut @ ")
+        (_annotations[name].removeprefix("mut @ ") if isinstance(_annotations[name], str) else getattr(_annotations[name], '__name__', str(_annotations[name])))
         for name in raw_arg_names
         if name in _annotations
     ]
@@ -1509,6 +1509,12 @@ class _Object(Ntype):
         """Nim: isNil — check if pointer-type object is nil."""
         return getattr(self, '_n_view', None) is None
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+
     @classmethod
     def _n_ptr_cast(cls, instance: pointer | ByteAddress) -> pointer:
         """Cast raw pointer/memory to this Object type."""
@@ -2127,7 +2133,7 @@ class array(Ntype):
                 if it is not None:
                     if isinstance(it, dict):
                         for key, value in it.items():
-                            self[int(key)] = value
+                            self[self._n_normalize_index(key)] = value
                     else:
                         for index in range(min(len(it), self._n_size)):
                             self[self._n_first + index] = it[index]
@@ -2137,7 +2143,7 @@ class array(Ntype):
                     if isinstance(it, dict):
                         self._n_cache = {self._n_first + j: self._n_type() for j in range(self._n_size)}
                         for key, value in it.items():
-                            self._n_cache[int(key)] = value
+                            self._n_cache[self._n_normalize_index(key)] = value
                     else:
                         for index in range(min(len(it), self._n_size)):
                             self._n_cache[self._n_first + index] = it[index]
@@ -2147,6 +2153,19 @@ class array(Ntype):
                 self._n_view = None
         else:
             raise Exception("array type or size not specified")
+
+    @staticmethod
+    def _n_normalize_index(index: object) -> int:
+        if isinstance(index, NStrEnum):
+            cls = index.__class__
+            if cls.__n_members_tuple__ is None:
+                cls._n_set_indices()
+            return cls.__n_indices__[index]
+        if hasattr(index, 'value'):
+            v = index.value
+            if isinstance(v, int):
+                return v
+        return int(index)
 
     def __del__(self):
         addr = getattr(self, '_n_owned_addr', None)
@@ -2178,7 +2197,7 @@ class array(Ntype):
         return self._n_size
 
     def __getitem__(self, index: int) -> object:
-        index = int(index)
+        index = self._n_normalize_index(index)
         if self._n_view is not None:
             if hasattr(self, '_n_type') and isinstance(self._n_type, type) and issubclass(self._n_type, (char, NScalar, bool)):
                 return self._n_type._n_on_array(self._n_view, index - self._n_first)
@@ -2188,7 +2207,7 @@ class array(Ntype):
         return self._n_cache[index]
 
     def __setitem__(self, index: int, value: object) -> None:
-        index = int(index)
+        index = self._n_normalize_index(index)
         if self._n_view is None:
             self._n_cache[index] = value
             return
@@ -2256,20 +2275,28 @@ class seq(Ntype):
         self.len = 0
         self._n_reserved = 1
         if hasattr(self, "_n_type"):
-            type_name = self._n_type.__name__
-            if (isinstance(self._n_type, type) and issubclass(self._n_type, string)) or not hasattr(self._n_type, '_n_on_array'):
-                # List-based mode for non-ctypes types (e.g. string)
+            ntype = self._n_type
+            if isinstance(ntype, str) and ntype in _n_registry.types:
+                ntype = _n_registry.types[ntype]
+                self._n_type = ntype
+            type_name = ntype.__name__ if hasattr(ntype, '__name__') else str(ntype)
+            if (isinstance(ntype, type) and issubclass(ntype, string)) or not hasattr(ntype, '_n_on_array') or getattr(ntype, '_n_is_ref', False):
+                # List-based mode for non-ctypes types (e.g. string, ref types)
                 self._n_is_list = True
-                self._n_list = []
+                self._n_list = list(c_base) if isinstance(c_base, (list, tuple)) else []
                 return
             if type_name not in DICT_OF_C_TYPES:
-                if hasattr(self._n_type, '_n_register_type'):
-                    self._n_type._n_register_type()
+                if hasattr(ntype, '_n_register_type'):
+                    ntype._n_register_type()
                 else:
-                    for base in getattr(self._n_type, '__mro__', [])[1:]:
+                    for base in getattr(ntype, '__mro__', [])[1:]:
                         if base.__name__ in DICT_OF_C_TYPES:
                             DICT_OF_C_TYPES[type_name] = DICT_OF_C_TYPES[base.__name__]
                             break
+            if type_name not in DICT_OF_C_TYPES:
+                self._n_is_list = True
+                self._n_list = list(c_base) if isinstance(c_base, (list, tuple)) else []
+                return
             if c_base:
                 self._n_backing = c_base
             else:
@@ -2374,6 +2401,14 @@ class seq(Ntype):
 
     def set_len(self, new_len: int) -> None:
         """Set logical length, resizing buffer if needed."""
+        if getattr(self, '_n_is_list', False):
+            if new_len < len(self._n_list):
+                del self._n_list[new_len:]
+            elif new_len > len(self._n_list):
+                factory = getattr(self, '_n_type', None)
+                for _ in range(new_len - len(self._n_list)):
+                    self._n_list.append(factory() if callable(factory) else None)
+            return
         if new_len > self._n_reserved:
             self._n_reserved = new_len
             self._n_resize()
