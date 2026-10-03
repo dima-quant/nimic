@@ -17,7 +17,7 @@ from nimic.ntypes import *
 
 def sat_plus(a: BiggestInt, b: BiggestInt) -> BiggestInt:
     """saturated addition."""
-    result = int64(uint64(a) + uint64(b))
+    result = cast[int64](uint64(a) + uint64(b))
     if ((result ^ a) >= i64(0)) | ((result ^ b) >= i64(0)):
         return result
     if (a < 0) | (b < 0):
@@ -28,7 +28,7 @@ def sat_plus(a: BiggestInt, b: BiggestInt) -> BiggestInt:
 
 def sat_minus(a: BiggestInt, b: BiggestInt) -> BiggestInt:
     """saturated subtraction."""
-    result = int64(uint64(a) - uint64(b))
+    result = cast[int64](uint64(a) - uint64(b))
     if ((result ^ a) >= i64(0)) | ((result ^ ~b) >= i64(0)):
         return result
     if b > 0:
@@ -73,7 +73,7 @@ def sat_mul(a: BiggestInt, b: BiggestInt) -> BiggestInt:
     with var:
         _resAsFloat = float64(0.0)
         _floatProd = float64(0.0)
-    result = int64(uint64(a) * uint64(b))
+    result = cast[int64](uint64(a) * uint64(b))
     _floatProd = float64(a)  # conversion
     _floatProd = _floatProd * float64(b)
     _resAsFloat = float64(result)

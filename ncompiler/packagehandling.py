@@ -15,6 +15,13 @@ from nimic.std.os import *
 #
 #
 
+if comptime(__name__ == "__main__"):
+    from nimic.std.strtabs import StringTableRef, newStringTable
+
+    @ref
+    class ConfigRef(Object):
+        packageCache: StringTableRef
+
 def _myParentDirs(p: string) -> string:
     # XXX os's parentDirs is stupid (multiple yields) and triggers an old bug...
     with var:
@@ -61,11 +68,6 @@ def getPackageName(conf: ConfigRef, path: string) -> string:
         return "unknown"
 
 if comptime(__name__ == "__main__"):
-    from nimic.std.strtabs import StringTableRef, newStringTable
-
-    class ConfigRef(Object):
-        packageCache: StringTableRef
-
     with var:
         _conf = ConfigRef(packageCache=newStringTable())
     with let:

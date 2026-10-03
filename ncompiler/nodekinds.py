@@ -1,16 +1,23 @@
-"""
-ncompiler/nodekinds.py — TNodeKind enum
-Converted from compiler/nodekinds.nim
-"""
 # /// nimic
-#
+
 # ///
 from __future__ import annotations
 from nimic.ntypes import *
 
+#
+#
+#           The Nim Compiler
+#        (c) Copyright 2015 Andreas Rumpf
+#
+#    See the file "copying.txt", included in this
+#    distribution, for details about the copyright.
+#
+
+## NodeKind enum.
+
 
 class TNodeKind(NIntEnum):
-    nkNone = auto()               # unknown node kind: indicates an error
+    nkNone = 0                    # unknown node kind: indicates an error
     # Expressions:
     # Atoms:
     nkEmpty = auto()              # the node is empty
@@ -204,3 +211,45 @@ with const:
     # routineDefs = {TNodeKind.nkProcDef, TNodeKind.nkMethodDef, TNodeKind.nkConverterDef,
     #            TNodeKind.nkMacroDef, TNodeKind.nkTemplateDef, TNodeKind.nkIteratorDef,
     #            TNodeKind.nkFuncDef}
+
+if comptime(__name__ == "__main__"):
+    # 1. Ordering and sentinel checks
+    assert int(TNodeKind.nkNone) == 0
+    assert int(TNodeKind.nkEmpty) == 1
+    assert int(TNodeKind.nkIdent) == 2
+    assert int(TNodeKind.nkSym) == 3
+    assert int(TNodeKind.nkOpenSym) == 165
+
+    # 2. Range order checks (critical for compiler node classifications)
+    assert int(TNodeKind.nkEmpty) < int(TNodeKind.nkNilLit)
+    assert int(TNodeKind.nkCharLit) < int(TNodeKind.nkFloatLit)
+    assert int(TNodeKind.nkFloatLit) < int(TNodeKind.nkStrLit)
+    assert int(TNodeKind.nkStrLit) < int(TNodeKind.nkNilLit)
+    assert int(TNodeKind.nkCall) < int(TNodeKind.nkProcDef)
+    assert int(TNodeKind.nkIfStmt) < int(TNodeKind.nkStmtList)
+
+    # 3. Aliases
+    assert nkWhen == TNodeKind.nkWhenStmt
+    assert nkWhenExpr == TNodeKind.nkWhenStmt
+
+    # 4. nkCallKinds set membership
+    assert TNodeKind.nkCall in nkCallKinds
+    assert TNodeKind.nkInfix in nkCallKinds
+    assert TNodeKind.nkPrefix in nkCallKinds
+    assert TNodeKind.nkPostfix in nkCallKinds
+    assert TNodeKind.nkCommand in nkCallKinds
+    assert TNodeKind.nkCallStrLit in nkCallKinds
+    assert TNodeKind.nkHiddenCallConv in nkCallKinds
+
+    # Non-call kinds must not be in nkCallKinds
+    assert TNodeKind.nkNone not in nkCallKinds
+    assert TNodeKind.nkEmpty not in nkCallKinds
+    assert TNodeKind.nkIdent not in nkCallKinds
+    assert TNodeKind.nkStmtList not in nkCallKinds
+    assert TNodeKind.nkIfStmt not in nkCallKinds
+    assert TNodeKind.nkProcDef not in nkCallKinds
+
+    # 5. Set cardinality
+    assert len(nkCallKinds) == 7
+
+    echo("All nodekinds tests passed.")

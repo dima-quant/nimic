@@ -64,10 +64,15 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 | `wordrecg` | 0 | `ncompiler/review_wordrecg.md` | ✅ Complete |
 | `pathutils` | 0 | `ncompiler/review_pathutils.md` | ✅ Complete |
 | `nimpaths` | 0 | `ncompiler/review_nimpaths.md` | ✅ Complete |
-| `nodekinds` | 0 | — | 🔲 Review needed |
+| `nodekinds` | 0 | `ncompiler/review_nodekinds.md` | ✅ Complete |
 | `platform` | 0 | `ncompiler/review_platform.md` | ✅ Complete |
 | `prefixmatches` | 0 | `ncompiler/review_prefixmatches.md` | ✅ Complete |
 | `saturate` | 0 | `ncompiler/review_saturate.md` | ✅ Complete |
+| `nodejs` | 0 | `ncompiler/review_nodejs.md` | ✅ Complete |
+| `nversion` | 0 | `ncompiler/review_nversion.md` | ✅ Complete |
+| `packagehandling` | 0 | `ncompiler/review_packagehandling.md` | ✅ Complete |
+| `sinkparameter_inference` | 0 | `ncompiler/review_sinkparameter_inference.md` | ✅ Complete |
+| `ccgthreadvars` | 0 | `ncompiler/review_ccgthreadvars.md` | ✅ Complete |
 | `idents` | 1 | `ncompiler/review_idents.md` | ✅ Complete |
 | `llstream` | 1 | `ncompiler/review_llstream.md` | ✅ Complete |
 | `ropes` | 1 | `ncompiler/review_ropes.md` | ✅ Complete |
