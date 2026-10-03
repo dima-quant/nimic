@@ -312,6 +312,8 @@ def _match_subtype(arg_type_name: str, sig_type_name: str) -> bool:
     # Resolve aliases to canonical names (e.g. nint → int64, int → int32)
     arg_canonical = _n_aliases.get(arg_type_name, arg_type_name)
     sig_canonical = _n_aliases.get(sig_type_name, sig_type_name)
+    if sig_canonical == "untyped":
+        return True
     if arg_canonical == sig_canonical:
         return True
     # Generic type classes (SomeInteger, SomeFloat)
@@ -2239,12 +2241,16 @@ class array(Ntype):
         elif isinstance(n, type) and issubclass(n, Trange):
             first_val = int(n.first())
             n_val = int(n.last()) - int(n.first()) + 1
+        elif isinstance(n, type) and issubclass(n, NInteger):
+            first_val = int(low(n))
+            n_val = int(high(n)) - int(low(n)) + 1
         else:
             n_val = int(n)
 
         if _ntype.__name__ not in DICT_OF_TYPES and hasattr(_ntype, '_n_register_type'):
             _ntype._n_register_type()
-        class_name = f"array[{n}, {_ntype.__name__}]"
+        n_name = n.__name__ if hasattr(n, '__name__') else str(n)
+        class_name = f"array[{n_name}, {_ntype.__name__}]"
         # also register array[N, T] in DICT_OF_TYPES and DICT_OF_C_TYPES
         arr_type = type(class_name, (array,), {"_n_type": _ntype, "_n_size": n_val, "_n_first": first_val})
         arr_type._n_register_type()
@@ -2333,6 +2339,7 @@ class seq(Ntype):
         self._n_cache = {}
 
     def __getitem__(self, index: int) -> object:
+        index = int(index)
         if self._n_is_list:
             return self._n_list[index]
         if index not in self._n_cache:
@@ -2356,6 +2363,7 @@ class seq(Ntype):
                 for i in range(start, stop, step):
                     self._n_cache.pop(i, None)
             return
+        index = int(index)
         if self._n_is_list:
             self._n_list[index] = value
             return
@@ -3132,7 +3140,7 @@ class NScalar:
         addr_val = get_addr()
         if addr_val is not None:
             c_type = DICT_OF_C_TYPES[self._n_type.__name__]
-            self._n_view = c_type.from_address(addr_val)
+            self._n_view = c_type.from_address(int(addr_val))
         else:
             self._n_view = None
 
@@ -3161,6 +3169,7 @@ class NScalar:
         # parent_elems is expected to be a ctypes array (e.g. from seq[int32]) or a pointer (to array),
         # e.g. from UncheckedArray
         self = cls.__new__(cls)
+        id = int(id)
         offset = id * cls._n_sizeof()
         self._n_bind(
             get_value=lambda: parent_elems[id],

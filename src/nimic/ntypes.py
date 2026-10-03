@@ -114,8 +114,10 @@ SomeInteger = int
 SomeFloat = float
 
 BiggestInt = int64
+BiggestUInt = uint64
 BiggestFloat = float64
 DICT_OF_TYPES["BiggestInt"] = int64
+DICT_OF_TYPES["BiggestUInt"] = uint64
 DICT_OF_TYPES["BiggestFloat"] = float64
 
 RootObj = Object

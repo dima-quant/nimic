@@ -73,13 +73,16 @@ writeBytes = write_bytes
 
 
 class _NewSeqHelper:
-    """Nim: newSeq[T](n) — create a seq[T] of length n."""
+    """Nim: newSeq[T](n) — create a seq[T] of length n, or newSeq(s, n) — mutate s to length n."""
     def __getitem__(self, _ntype: type):
         def _make(n: int):
             s = seq[_ntype]()
             s.new_seq(n)
             return s
         return _make
+
+    def __call__(self, s, n: int):
+        s.new_seq(n)
 
 newSeq = _NewSeqHelper()
 new_seq = newSeq
