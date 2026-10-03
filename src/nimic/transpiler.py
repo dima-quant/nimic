@@ -860,6 +860,7 @@ class _Unparser(NodeVisitor):
         self._keywords_rename = {}
         self._keywords_no_with_colon = ["block"]  # rule:dropwith
         self._context_stack = []
+        self._block_nodes = []
         self._attribute_replace = {"copy": "", "contents": "[]"}
         self._set_low_precedence = ["export"]
         self._class_def_methods = []
@@ -1098,6 +1099,21 @@ class _Unparser(NodeVisitor):
         # self.write("import ")
         # self.interleave(lambda: self.write(", "), self.traverse, node.names)
 
+    def _write_block_body(self):
+        # rule:block
+        self.write(" = block:")
+        if self._block_nodes:
+            func_node = self._block_nodes.pop()
+            body = func_node.body
+            with self.block(start=""):
+                if isinstance(body, list) and isinstance(body[-1], Return):
+                    if body[:-1]:
+                        self.traverse(body[:-1])
+                    if body[-1].value:
+                        # do not print "return"
+                        self.fill()
+                        self.traverse(body[-1].value)
+
     def visit_Assign(self, node):
         if (
             len(node.targets) == 1
@@ -1132,17 +1148,7 @@ class _Unparser(NodeVisitor):
         ):
             if node.value.func.id == "_block":
                 # rule:block
-                self.write(" = block:")
-                func_node = self._context_stack.pop()
-                body = func_node.body
-                with self.block(start=""):
-                    if isinstance(body, list) and isinstance(body[-1], Return):
-                        if body[:-1]:
-                            self.traverse(body[:-1])
-                        if body[-1].value:
-                            # do not print "return"
-                            self.fill()
-                            self.traverse(body[-1].value)
+                self._write_block_body()
             elif "var" in self._context_stack and node.value.func.id in self._type_registry.types:
                 type_name = self._adjust_name(node.value.func.id, definition=False)
                 self.write(": " + type_name) # needed for tuple declaration
@@ -1216,7 +1222,15 @@ class _Unparser(NodeVisitor):
             # if value is a empty call with the same name as annotation then this is a declaration
             if isinstance(node.value, Call) and len(node.value.args) == 0:
                 var_declaration = isinstance(node.value.func, Name) and node.value.func.id == node.annotation.id
-        if node.value and not var_declaration:
+        if (
+            isinstance(node.value, Call)
+            and isinstance(node.value.func, Name)
+            and not node.value.args and not node.value.keywords
+            and node.value.func.id == "_block"
+        ):
+            # rule:block
+            self._write_block_body()
+        elif node.value and not var_declaration:
             self.write(" = ")
             self.traverse(node.value)
 
@@ -1530,7 +1544,7 @@ class _Unparser(NodeVisitor):
 
     def _function_helper(self, node, fill_suffix):
         if node.name == "_block":
-            self._context_stack.append(node)
+            self._block_nodes.append(node)
             return
         # rule:funcdef
         self.maybe_newline()
@@ -2059,7 +2073,7 @@ class _Unparser(NodeVisitor):
 
     unop = {"Invert": "not", "Not": "not", "UAdd": "+", "USub": "-"}
     unop_precedence = {
-        "not": _Precedence.NOT,
+        "not": _Precedence.FACTOR,
         "~": _Precedence.FACTOR,
         "+": _Precedence.FACTOR,
         "-": _Precedence.FACTOR,
@@ -2070,9 +2084,9 @@ class _Unparser(NodeVisitor):
         operator_precedence = self.unop_precedence[operator]
         with self.require_parens(operator_precedence, node):
             self.write(operator)
-            # factor prefixes (+, -, ~) shouldn't be separated
-            # from the value they belong, (e.g: +1 instead of + 1)
-            if operator_precedence is not _Precedence.FACTOR:
+            # factor prefixes (+, -) shouldn't be separated
+            # from the value they belong, (e.g: +1 instead of + 1), but "not" always needs a space
+            if operator not in ("+", "-"):
                 self.write(" ")
             self.set_precedence(operator_precedence, node.operand)
             self.traverse(node.operand)
