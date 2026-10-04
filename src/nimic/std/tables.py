@@ -49,6 +49,9 @@ class Table(Object):
     def get(self, key, default=None):
         return self._dict.get(key, default)
 
+    getOrDefault = get
+    get_or_default = get
+
     def hasKey(self, key):
         return key in self._dict
 
@@ -57,6 +60,17 @@ class Table(Object):
     def __str__(self):
         return str(self._dict)
 
+
+class _GenTable:
+    def __getitem__(self, tp):
+        return Table[tp]
+
+    def __call__(self, *args, **kwargs):
+        return Table(*args, **kwargs)
+
+
+initTable = _GenTable()
+init_table = initTable
 
 DICT_OF_TYPES["Table"] = Table
 DICT_OF_TYPES["CountTable"] = CountTable
