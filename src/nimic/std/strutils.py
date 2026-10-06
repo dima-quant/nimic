@@ -93,3 +93,13 @@ toOctal = to_octal
 def spaces(n: int) -> string:
     """Nim: spaces — returns a string of n spaces."""
     return repeat(' ', n)
+
+
+def to_hex(n: int, length: int = 0) -> string:
+    """Nim: toHex — converts integer to uppercase hexadecimal representation."""
+    h = f"{int(n):X}"
+    if length > len(h):
+        h = h.zfill(length)
+    return string(h)
+
+toHex = to_hex
