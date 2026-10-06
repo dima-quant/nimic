@@ -103,26 +103,29 @@ Nim allows defining operators with backtick-quoted names (e.g., `` proc `|+|`*(a
 
 **General rule**: Any operator with a limited scope that cannot be expressed as a Python operator should be converted to a descriptively named function. The downstream call sites (consumers listed in `compiler/dep_tree.md`) must also be updated to use the new function name.
 
-### Legacy Unsigned Wrap-around Operators (`+%`, `-%`, `*%`)
+### Unsigned Wrap-around Operators (`+%`, `-%`, `*%`)
 
-These operators perform unsigned 64-bit wrapping arithmetic. They are legacy Nim operators rarely used in modern Nim. Replace them with **explicit unsigned type conversions** using the nimic type system:
+These operators perform unsigned 64-bit wrapping arithmetic on signed integers (`cast[int](cast[uint](a) + cast[uint](b))`).
+Do **NOT** use `int64(uint64(a) + uint64(b))` because in native Nim, `int64(...)` is a range-checked conversion that throws `RangeDefect` at compile-time or runtime whenever the unsigned sum exceeds `high(int64)`.
 
-| Nim | Python (Nimic) |
-|---|---|
-| `a +% b` | `int64(uint64(a) + uint64(b))` |
-| `a -% b` | `int64(uint64(a) - uint64(b))` |
-| `a *% b` | `int64(uint64(a) * uint64(b))` |
+Instead, use `plus_percent` and `minus_percent` from `nimic.ntypes` (supported via `rule:percentops` in the transpiler):
 
-This works because `uint64` and `int64` in nimic are `NInteger` subclasses that handle overflow wrapping via `_n_normalize`. If a variable has only a limited local scope, it can be directly defined as having the unsigned type instead of casting back and forth.
+| Nim | Python (Nimic) | Transpiles To |
+|---|---|---|
+| `a +% b` | `plus_percent(a, b)` | `a +% b` |
+| `a -% b` | `minus_percent(a, b)` | `a -% b` |
+
+In Python mode, these helpers execute 64-bit unsigned wrapping arithmetic via `ctypes.c_uint64` / `ctypes.c_int64`. In transpiled Nim, `rule:percentops` emits the native `+%` / `-%` operators directly without casts.
 
 ### Nimic Type System Awareness
 
 The nimic type system is defined in `src/nimic/ntypesystem.py`. Key types available for conversions:
 - **Integer types**: `int8`, `int16`, `int32`, `int64`, `uint8`, `uint16`, `uint32`, `uint64`, `nint`
 - **Float types**: `float16`, `float32`, `float64`
-- **Type aliases**: `BiggestInt = int` (Python int, unbounded), `BiggestFloat = float`
+- **Type aliases**: `BiggestInt = int64`, `BiggestUInt = uint64`, `BiggestFloat = float64`
 - **Shorthand constructors**: `u64(x)`, `i64(x)`, `u32(x)`, `i32(x)`, etc.
 - All `NInteger` subclasses handle overflow wrapping automatically via `_n_normalize`
+- **Integer division and modulo (`//`, `%`)**: On all `NInteger` types, `//` and `%` implement truncation towards zero (matching Nim's `div` and `mod`, identical to Rust's `/` and `%`). The transpiler maps `//` $\rightarrow$ `div` and `%` $\rightarrow$ `mod` directly.
 
 Refer to `src/nimic/ntypesystem.py` for the full type hierarchy and `tests/nraytracer/` for a working medium-size nimic project that demonstrates correct usage patterns.
 
