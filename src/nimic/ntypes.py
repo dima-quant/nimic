@@ -80,6 +80,7 @@ from nimic.ntypesystem import (
     int16,
     int32,
     int64,
+    NInteger,
     low,
     nint,
     nord,
@@ -157,6 +158,7 @@ Type = contextlib.nullcontext()
 template_inline = contextlib.nullcontext()
 export = contextlib.nullcontext()
 alias = contextlib.nullcontext()
+do = contextlib.nullcontext()
 
 static = set
 
@@ -315,3 +317,48 @@ def setLen(s, new_len: int) -> None:
         else:
             s.extend([None] * (nl - len(s)))
 
+
+def plus_percent(a, b):
+    """Nim: a +% b — wrapping addition. Delegates to NInteger.plus_percent;
+    a plain int operand adopts the type of its NInteger peer (else Nim int)."""
+    return NInteger._n_lift(a, b).plus_percent(b)
+
+
+def minus_percent(a, b):
+    """Nim: a -% b — wrapping subtraction. Delegates to NInteger.minus_percent;
+    a plain int operand adopts the type of its NInteger peer (else Nim int)."""
+    return NInteger._n_lift(a, b).minus_percent(b)
+
+
+def move(x):
+    """Nim: move — move value / transfer ownership."""
+    return x
+
+
+def shallowCopy(dest, src):
+    """Nim: shallowCopy — shallow copy from src to dest."""
+    return src
+
+
+def cmp(x, y) -> int:
+    """Nim: cmp — three-way comparison (-1 if x < y, 0 if x == y, 1 if x > y)."""
+    return (x > y) - (x < y)
+
+
+def generic(fn):
+    """Decorator allowing generic functions with 0 args to be subscripted with types in Python, e.g. fn[T, U]()."""
+    class _GenericWrapper:
+        def __init__(self, target):
+            self._target = target
+            self.__name__ = getattr(target, "__name__", "")
+            self.__doc__ = getattr(target, "__doc__", "")
+            self.__qualname__ = getattr(target, "__qualname__", "")
+            self.__annotations__ = getattr(target, "__annotations__", {})
+
+        def __call__(self, *args, **kwargs):
+            return self._target(*args, **kwargs)
+
+        def __getitem__(self, types):
+            return self
+
+    return _GenericWrapper(fn)

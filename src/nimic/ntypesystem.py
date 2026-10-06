@@ -659,7 +659,36 @@ def dispatch(fn: callable) -> callable:
     # for debugging save in visible debugG
     for nm in __resolved__:
         debugG[nm] = __resolved__[nm].copy()
-    return fn_dispatch
+
+    class _DispatchedCallable:
+        def __init__(self, target, orig_fn):
+            self._target = target
+            self._fn = orig_fn
+            self.__name__ = getattr(orig_fn, "__name__", "")
+            self.__doc__ = getattr(orig_fn, "__doc__", "")
+            self.__qualname__ = getattr(orig_fn, "__qualname__", "")
+            self.__annotations__ = getattr(orig_fn, "__annotations__", {})
+            self.__code__ = getattr(orig_fn, "__code__", None)
+            self.__defaults__ = getattr(orig_fn, "__defaults__", None)
+            self.__wrapped__ = orig_fn
+
+        def __call__(self, *args, **kwargs):
+            return self._target(*args, **kwargs)
+
+        def __get__(self, instance, owner=None):
+            if instance is None:
+                return self
+            import types as _types
+            return _types.MethodType(self, instance)
+
+        def __getitem__(self, types_param):
+            if self.__name__ == "__getitem__":
+                if isinstance(types_param, tuple):
+                    return self._target(*types_param)
+                return self._target(types_param)
+            return self
+
+    return _DispatchedCallable(fn_dispatch, fn)
 
 
 # --- Converter Registry ---
@@ -1493,18 +1522,92 @@ class _Object(Ntype):
         # Resolve annotations by replacing type variable names
         resolved = {}
         for attr_name, type_str in cls.__annotations__.items():
-            new_str = type_str
-            for t_name, t_concrete in T_map.items():
-                new_str = new_str.replace(t_name, t_concrete)
-            resolved[attr_name] = new_str
+            if isinstance(type_str, str):
+                new_str = type_str
+                for t_name, t_concrete in T_map.items():
+                    new_str = new_str.replace(t_name, t_concrete)
+                resolved[attr_name] = new_str
+            else:
+                resolved[attr_name] = type_str
 
         # Create specialized subclass
         suffix = "_".join(T_map.values())
         specialized_name = f"{cls.__name__}[{suffix}]"
-        specialized = type(specialized_name, (cls,), {'__annotations__': resolved})
-        specialized._n_register_type()
+        caller_globals = getattr(cls, '_n_caller_globals', {})
+        specialized = type(specialized_name, (cls,), {
+            '__annotations__': resolved,
+            '_n_caller_globals': caller_globals,
+        })
         _Object._n_specializations[cache_key] = specialized
         return specialized
+
+    @classmethod
+    def _n_extract_variant_fields(cls) -> dict[str, str]:
+        """Extract field annotations from all Match statement cases in the class definition."""
+        cached = getattr(cls, "_n_variant_fields", None)
+        if cached is not None:
+            return cached
+
+        src = None
+        for c in cls.__mro__:
+            if c is not object and c is not _Object and issubclass(c, _Object):
+                try:
+                    src = ins.getsource(c)
+                    break
+                except Exception:
+                    continue
+
+        variant_fields = {}
+        if src:
+            try:
+                tree = ast.parse(textwrap.dedent(src))
+                class_def = None
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ClassDef):
+                        class_def = node
+                        break
+                if class_def:
+                    for stmt in class_def.body:
+                        if isinstance(stmt, ast.Match):
+                            for case in stmt.cases:
+                                for c_stmt in case.body:
+                                    if isinstance(c_stmt, ast.AnnAssign) and isinstance(c_stmt.target, ast.Name):
+                                        variant_fields[c_stmt.target.id] = ast.unparse(c_stmt.annotation)
+            except Exception:
+                pass
+
+        cls._n_variant_fields = variant_fields
+        return variant_fields
+
+    def __getattr__(self, name: str) -> object:
+        cls = type(self)
+        ann = cls.__annotations__.get(name)
+        if ann is None:
+            vf = cls._n_extract_variant_fields()
+            ann = vf.get(name)
+        if ann is not None:
+            fc = getattr(cls, "_n_field_types", {}).get(name)
+            if fc is not None and hasattr(fc, "_n_size"):
+                try:
+                    val = fc()
+                    self.__dict__[name] = val
+                    return val
+                except Exception:
+                    pass
+            if isinstance(ann, str) and ann.startswith("array["):
+                inner = ann[6:]
+                comma_idx = inner.find(",")
+                if comma_idx != -1:
+                    size_expr = inner[:comma_idx].strip()
+                    caller_globals = getattr(cls, "_n_caller_globals", {})
+                    try:
+                        size_val = eval(size_expr, caller_globals)
+                        val = [None] * int(size_val)
+                        self.__dict__[name] = val
+                        return val
+                    except Exception:
+                        pass
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
     @property
     def is_nil(self) -> bool:
@@ -1804,7 +1907,7 @@ class _Object(Ntype):
                 continue
 
             # B. Ctypes-backed fields with _n_on_struct
-            if name not in python_fields and hasattr(field_cls, '_n_on_struct'):
+            if name not in python_fields and hasattr(field_cls, '_n_on_struct') and not getattr(field_cls, '_n_is_ref', False):
                 val = getattr(other, name, None) if other else None
                 if val is not None:
                     setattr(self, name, field_cls._n_on_struct(self._n_view, name, val))
@@ -1965,8 +2068,8 @@ class _Object(Ntype):
             if c_name in dict_of_c_types:
                 return True
             is_class = isinstance(field_cls, type)
-            if is_class and _pointer and issubclass(field_cls, _pointer):
-                return True  # pointer/ptr[X] → c_void_p
+            if is_class and ((_pointer and issubclass(field_cls, _pointer)) or getattr(field_cls, '_n_is_ref', False)):
+                return True  # pointer/ptr[X] or ref object → c_void_p
             if getattr(field_cls, '_n_is_calltype', False):
                 return True  # calltype → c_void_p
             if is_class and _ua and issubclass(field_cls, _ua):
@@ -1986,7 +2089,8 @@ class _Object(Ntype):
         cls._n_ptr_fields = {name for name, fc in cls._n_field_types.items()
             if isinstance(fc, type) and (
                 (_pointer and issubclass(fc, _pointer)) or
-                (_ua and issubclass(fc, _ua))
+                (_ua and issubclass(fc, _ua)) or
+                getattr(fc, '_n_is_ref', False)
             )}
         dict_of_types[class_name] = cls
         has_c_type = len(python_fields) < len(_annotations)
@@ -1998,12 +2102,12 @@ class _Object(Ntype):
                     continue
                 is_class = isinstance(field_cls, type)
                 c_name = field_cls.__name__
-                if c_name in dict_of_c_types:
+                if is_class and ((_pointer and issubclass(field_cls, _pointer)) or getattr(field_cls, '_n_is_ref', False)):
+                    # pointer or ptr[X] or ref object → c_void_p
+                    f_list.append((key, ctypes.c_void_p))
+                elif c_name in dict_of_c_types:
                     # Direct ctypes mapping (scalars, cstring, Object structs, arrays)
                     f_list.append((key, dict_of_c_types[c_name]))
-                elif is_class and _pointer and issubclass(field_cls, _pointer):
-                    # pointer or ptr[X] → c_void_p
-                    f_list.append((key, ctypes.c_void_p))
                 elif getattr(field_cls, '_n_is_calltype', False):
                     # Calltype (proc type) → opaque pointer
                     f_list.append((key, ctypes.c_void_p))
@@ -2022,8 +2126,8 @@ class Object(_Object, metaclass=NMetaClass):
         # Capture the defining module's globals so that eval() in
         # get_or_eval_type can resolve constants used in type annotations
         # (e.g. array[_MINIMP4_MAX_SPS, pointer]).
-        caller_globals = sys._getframe(1).f_globals
-        cls._n_caller_globals = caller_globals
+        if "_n_caller_globals" not in cls.__dict__:
+            cls._n_caller_globals = sys._getframe(1).f_globals
         type_params = getattr(cls, '__type_params__', ())
         if not type_params:
             cls._n_register_type()
@@ -2038,8 +2142,8 @@ DICT_OF_TYPES["_Object"] = _Object
 
 class NTuple(_Object):
     def __init_subclass__(cls) -> None:
-        caller_globals = sys._getframe(1).f_globals
-        cls._n_caller_globals = caller_globals
+        if "_n_caller_globals" not in cls.__dict__:
+            cls._n_caller_globals = sys._getframe(1).f_globals
         type_params = getattr(cls, '__type_params__', ())
         if not type_params:
             cls._n_register_type()
@@ -2143,14 +2247,20 @@ class array(Ntype):
                 # Scalar/simple types: use a plain Python list as backing store
                 if it is not None:
                     if isinstance(it, dict):
-                        self._n_cache = {self._n_first + j: self._n_type() for j in range(self._n_size)}
+                        try:
+                            self._n_cache = {self._n_first + j: self._n_type() for j in range(self._n_size)}
+                        except Exception:
+                            self._n_cache = {self._n_first + j: None for j in range(self._n_size)}
                         for key, value in it.items():
                             self._n_cache[self._n_normalize_index(key)] = value
                     else:
                         for index in range(min(len(it), self._n_size)):
                             self._n_cache[self._n_first + index] = it[index]
                 else:
-                    self._n_cache = {self._n_first + j: self._n_type() for j in range(self._n_size)}
+                    try:
+                        self._n_cache = {self._n_first + j: self._n_type() for j in range(self._n_size)}
+                    except Exception:
+                        self._n_cache = {self._n_first + j: None for j in range(self._n_size)}
                 self._n_backing = None
                 self._n_view = None
         else:
@@ -3513,7 +3623,16 @@ class NFloat(NScalar):
         return cls(val)
 
 
-# --- Integers (NInteger) ---
+def _n_trunc_div(a, b):
+    ia, ib = int(a), int(b)
+    q = abs(ia) // abs(ib)
+    return -q if (ia < 0) ^ (ib < 0) else q
+
+
+def _n_trunc_mod(a, b):
+    ia, ib = int(a), int(b)
+    r = abs(ia) % abs(ib)
+    return -r if ia < 0 else r
 
 
 class NInteger(NScalar):
@@ -3548,6 +3667,48 @@ class NInteger(NScalar):
             signed = cls._n_signed
         val = int.from_bytes(bytes, byteorder=byteorder, signed=signed)
         return cls(val)
+
+    def __floordiv__(self, other):
+        return self._n_op(other, _n_trunc_div)
+
+    def __rfloordiv__(self, other):
+        return self._n_rop(other, _n_trunc_div)
+
+    def __ifloordiv__(self, other):
+        self._n_iop(other, _n_trunc_div)
+        return self
+
+    def __mod__(self, other):
+        return self._n_op(other, _n_trunc_mod)
+
+    def __rmod__(self, other):
+        return self._n_rop(other, _n_trunc_mod)
+
+    def __imod__(self, other):
+        self._n_iop(other, _n_trunc_mod)
+        return self
+
+    # --- Wrapping arithmetic (Nim: +%, -%) ---
+    # Values are always reduced modulo 2**_n_bits by _n_normalize, so wrapping
+    # is a property of the type itself. These go through _n_op (not __add__ /
+    # __sub__) so they stay wrapping even if ordinary +/- gain overflow checks.
+    def plus_percent(self, other):
+        """Nim: self +% other — wrapping addition in this type's width."""
+        return self._n_op(other, operator.add)
+
+    def minus_percent(self, other):
+        """Nim: self -% other — wrapping subtraction in this type's width."""
+        return self._n_op(other, operator.sub)
+
+    @staticmethod
+    def _n_lift(value, peer=None) -> NInteger:
+        """Return `value` as an NInteger: kept as is if it already is one, otherwise
+        converted to the type of an NInteger `peer` (Nim literal conversion),
+        or to Nim `int` (nint) when there is no typed peer."""
+        if isinstance(value, NInteger):
+            return value
+        target = type(peer) if isinstance(peer, NInteger) else nint
+        return target(value)
 
     def __lshift__(self, other):
         return self._n_op(other, operator.lshift)
@@ -3693,6 +3854,31 @@ class float64(NFloat):
 #             return cls(value)
 
 
+def _n_encode_str(s) -> bytes:
+    """Python text -> Nim byte string. Chars <= 0xFF map 1:1 to bytes (latin-1);
+    text outside that range falls back to UTF-8. Inverse: _n_decode_bytes."""
+    if s is None:
+        return None
+    if isinstance(s, (bytes, bytearray)):
+        return bytes(s)
+    if hasattr(s, 'data'):
+        s = s.data
+    val = str(s)
+    try:
+        return val.encode('latin-1')
+    except UnicodeEncodeError:
+        return val.encode('utf-8', errors='replace')
+
+
+def _n_decode_bytes(raw: bytes) -> str:
+    """Nim byte string -> Python text; the single decoder shared by string and cstring.
+    Valid UTF-8 is decoded as UTF-8, anything else byte-per-char (latin-1)."""
+    try:
+        return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        return raw.decode('latin-1')
+
+
 class cstring:
     """Nim cstring — a nullable pointer to a null-terminated char buffer.
 
@@ -3711,13 +3897,13 @@ class cstring:
             # new_string(length) path
             self._value = b'\x00' * value
         elif isinstance(value, str):
-            self._value = value.encode('utf-8')
+            self._value = _n_encode_str(value)
         elif isinstance(value, bytes):
             self._value = value
         elif value is None:
             self._value = None
         else:
-            self._value = bytes(value)
+            self._value = _n_encode_str(value)
         if self._n_view is None and self._value is not None:
             self._n_view = (ctypes.c_char * len(self._value)).from_buffer_copy(self._value)
 
@@ -3734,11 +3920,11 @@ class cstring:
             elif isinstance(value, bytes):
                 inst._value = value
             elif isinstance(value, str):
-                inst._value = value.encode('utf-8')
+                inst._value = _n_encode_str(value)
             elif value is None:
                 inst._value = None
             else:
-                inst._value = bytes(value)
+                inst._value = _n_encode_str(value)
             setattr(parent_elems, id, inst._value)
         else:
             inst._value = raw
@@ -3750,11 +3936,11 @@ class cstring:
         elif value is None:
             self._value = None
         elif isinstance(value, str):
-            self._value = value.encode('utf-8')
+            self._value = _n_encode_str(value)
         elif isinstance(value, bytes):
             self._value = value
         else:
-            self._value = bytes(value)
+            self._value = _n_encode_str(value)
 
     @classmethod
     def _n_sizeof(cls) -> int:
@@ -3794,7 +3980,7 @@ class cstring:
     def __str__(self):
         if self._value is None:
             return ""
-        return self._value.decode('utf-8', errors='replace')
+        return _n_decode_bytes(self._value)
 
     def __repr__(self):
         if self._value is None:
@@ -3901,14 +4087,7 @@ class string(collections.UserString):
                 BUFFER_REGISTRY.register(self._n_view_ref[0])
             return
             
-        if isinstance(bs, (bytes, bytearray)):
-            bs_bytes = bytes(bs)
-        elif isinstance(bs, str):
-            bs_bytes = bs.encode('utf-8', errors='replace')
-        elif hasattr(bs, 'data'):
-            bs_bytes = bs.data.encode('utf-8', errors='replace')
-        else:
-            bs_bytes = str(bs).encode('utf-8', errors='replace')
+        bs_bytes = _n_encode_str(bs) or b""  # Nim strings are never nil
             
         self._n_len = len(bs_bytes)
         self._n_view_ref = [(ctypes.c_char * len(bs_bytes)).from_buffer_copy(bs_bytes)]
@@ -3922,10 +4101,7 @@ class string(collections.UserString):
                 raw = bytes(self._n_view_ref[0])[:self._n_len]
             else:
                 raw = bytes(self._n_view_ref[0]).split(b'\0', 1)[0]
-            try:
-                return raw.decode('utf-8')
-            except UnicodeDecodeError:
-                return raw.decode('latin-1')
+            return _n_decode_bytes(raw)
         return ""
 
     @property
@@ -3934,8 +4110,7 @@ class string(collections.UserString):
         
     @data.setter
     def data(self, value):
-        bs = value.data if hasattr(value, 'data') else str(value)
-        bs_bytes = bs.encode('utf-8', errors='replace')
+        bs_bytes = _n_encode_str(value)
         if hasattr(self, '_n_view_ref') and self._n_view_ref[0] is not None:
             BUFFER_REGISTRY.unregister(self._n_view_ref[0])
         self._n_len = len(bs_bytes)
@@ -3978,14 +4153,8 @@ class string(collections.UserString):
             BUFFER_REGISTRY.register(self._n_view)
 
     def add(self, other):
-        if isinstance(other, str):
-            other_bytes = other.encode('utf-8')
-        elif hasattr(other, 'data'):
-            other_bytes = other.data.encode('utf-8')
-        else:
-            other_bytes = str(other).encode('utf-8')
-            
-        cur_bytes = self.data.encode('utf-8')
+        other_bytes = _n_encode_str(other)
+        cur_bytes = _n_encode_str(self.data)
         new_len = len(cur_bytes) + len(other_bytes) + 1
         self._n_ensure_capacity(new_len)
         
@@ -3995,7 +4164,7 @@ class string(collections.UserString):
         self._n_len = len(cur_bytes) + len(other_bytes)
 
     def _n_get_value(self):
-        return self.data.encode('utf-8')
+        return _n_encode_str(self.data)
 
     def __str__(self):
         return self.data

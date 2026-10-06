@@ -83,6 +83,11 @@ Operators & renaming:
   rule:strformat -> Python % on string operands transpiles as Nim % (format) instead of mod
   rule:nilident -> "is None" / "is not None" transpile as == nil / != nil
   rule:keywordescape -> trailing _ stripped from Python keyword clashes (None_ -> None, type_ -> type)
+  rule:percentops -> plus_percent(a, b) / a.plus_percent(b) and minus_percent(a, b) / a.minus_percent(b) transpile as a +% b and a -% b
+  rule:isinstance -> isinstance(x, T) transpiles as x is T (type query)
+  rule:formatstr -> FormatStr(s) unwraps to string literal s in Nim (where string is FormatStr)
+  rule:doblock -> with do: block translates as do: block in Nim
+  rule:tupletype -> tuple[T1, T2] slice translates as (T1, T2) tuple type in Nim
 
 Imports:
   rule:import -> write import from as import, drop from __future__ import ...
@@ -1484,24 +1489,33 @@ class _Unparser(NodeVisitor):
                         body_rest.append(b)
             if body_rest:
                 with self.block(start=""):
-                    # rule:matchcase, check for variant types
-                    if (len(body_rest) > 1) and isinstance(body_rest[0], AnnAssign) and isinstance(body_rest[1], Match):
-                        discriminator_name = self._adjust_name(body_rest[0].target.id) # rule:localname
-                        discriminator_type = body_rest[0].annotation.id
-                        self.fill(f"case {discriminator_name}: {discriminator_type}")
-                        with self.block(start=""):
-                            for case in body_rest[1].cases:
-                                self.traverse(case)
-                        if (len(body_rest) > 2):
-                            self.traverse(body_rest[2:])
+                    if enum:
+                        self.fill()
+                        self.interleave(lambda: self.write(", "), self.traverse, body_rest)
                     else:
-                        if enum:
-                            self.fill()
-                            self.interleave(lambda: self.write(", "), self.traverse, body_rest)
-                        else:
-                            self._context_stack.append(from_object)
-                            self.traverse(body_rest)
-                            self._context_stack.pop()
+                        self._context_stack.append(from_object)
+                        i = 0
+                        while i < len(body_rest):
+                            b = body_rest[i]
+                            # rule:matchcase, check for variant types
+                            if (
+                                i + 1 < len(body_rest)
+                                and isinstance(b, AnnAssign)
+                                and isinstance(body_rest[i + 1], Match)
+                                and isinstance(body_rest[i + 1].subject, Name)
+                                and body_rest[i + 1].subject.id == b.target.id
+                            ):
+                                discriminator_name = self._adjust_name(b.target.id)  # rule:localname
+                                self.fill(f"case {discriminator_name}: ")
+                                self.traverse(b.annotation)
+                                with self.block(start=""):
+                                    for case in body_rest[i + 1].cases:
+                                        self.traverse(case)
+                                i += 2
+                            else:
+                                self.traverse(b)
+                                i += 1
+                        self._context_stack.pop()
         self.maybe_newline()
 
     def visit_FunctionDef(self, node):
@@ -1777,6 +1791,14 @@ class _Unparser(NodeVisitor):
                 self.fill()
                 self._context_stack.append(name)
                 cont_pop = True
+            elif name == "do":
+                # rule:doblock -> with do: block translates as do: block in Nim
+                self._indent -= 1
+                self.fill("do")
+                with self.block(start=":"):
+                    self.traverse(node.body)
+                self._indent += 1
+                return
             if name in self._keywords_rename:
                 node.items[0].context_expr.id = self._keywords_rename[name]
         else:
@@ -2217,6 +2239,23 @@ class _Unparser(NodeVisitor):
             self.set_precedence(right_precedence, node.right)
             self.traverse(node.right)
 
+    # rule:percentops -> Nim wrapping operators, spelled as calls / NInteger methods in nimic.
+    # Nim derives operator precedence from the first character, so +% / -% bind like + / -.
+    percent_ops = {
+        "plus_percent": ("+%", _Precedence.ARITH),
+        "minus_percent": ("-%", _Precedence.ARITH),
+    }
+
+    def _write_infix(self, operator, precedence, node, left, right):
+        """Emit `left operator right` for a call-spelled binary operator (left-associative),
+        parenthesized when the surrounding context binds tighter."""
+        with self.require_parens(precedence, node):
+            self.set_precedence(precedence, left)
+            self.traverse(left)
+            self.write(f" {operator} ")
+            self.set_precedence(precedence.next(), right)
+            self.traverse(right)
+
     cmpops = {
         "Eq": "==",
         "NotEq": "!=",
@@ -2312,11 +2351,20 @@ class _Unparser(NodeVisitor):
             else:
                 st = val.encode("Latin-1").hex()
                 self.write(f"'\\x{st}'")
+        elif isinstance(node.func, Name) and node.func.id == "FormatStr" and len(node.args) == 1:
+            # rule:formatstr -> FormatStr(s) unwraps to s in Nim (where string is FormatStr)
+            self.traverse(node.args[0])
         elif isinstance(node.func, Name) and node.func.id == "inrange" and len(node.args) == 2:
             # rule:inrange -> inrange(a, b) translates to a .. b in Nim
             self.traverse(node.args[0])
             self.write(" .. ")
             self.traverse(node.args[1])
+        elif isinstance(node.func, Name) and node.func.id in self.percent_ops and len(node.args) == 2:
+            # rule:percentops -> plus_percent(a, b) / minus_percent(a, b) translate to a +% b / a -% b
+            self._write_infix(*self.percent_ops[node.func.id], node, node.args[0], node.args[1])
+        elif isinstance(node.func, Attribute) and node.func.attr in self.percent_ops and len(node.args) == 1:
+            # rule:percentops -> method form a.plus_percent(b) / a.minus_percent(b) (NInteger methods)
+            self._write_infix(*self.percent_ops[node.func.attr], node, node.func.value, node.args[0])
         elif isinstance(node.func, Attribute) and node.func.attr in self._attribute_replace and not node.args:
             # rule:deref and rule:copy
             self.traverse(node.func.value)
@@ -2324,6 +2372,11 @@ class _Unparser(NodeVisitor):
         elif isinstance(node.func, Name) and node.func.id == "defined" and len(node.args) == 1 and isinstance(node.args[0], Constant) and isinstance(node.args[0].value, str):
             # rule:defined -> defined("identifier") translates to defined(identifier) in Nim
             self.write(f"defined({node.args[0].value})")
+        elif isinstance(node.func, Name) and node.func.id == "isinstance" and len(node.args) == 2:
+            # rule:isinstance -> isinstance(x, T) translates to x is T in Nim
+            self.traverse(node.args[0])
+            self.write(" is ")
+            self.traverse(node.args[1])
         # rule:tuplelit -> NTuple subclass constructor calls transpile as Nim tuple literals
         elif isinstance(node.func, Name) and node.func.id in self._tuple_types:
             with self.delimit("(", ")"):
@@ -2373,10 +2426,16 @@ class _Unparser(NodeVisitor):
                     self.interleave(lambda: self.write(", "), self.traverse, node.args)
         else:
             pop = False
+            func_name = None
             if isinstance(node.func, Name):
-                _name = node.func.id
-                is_local_class = _name.startswith("_") and _name[1].isupper() or \
-                    _name.startswith("local_") and _name[6].isupper()
+                func_name = node.func.id
+            elif isinstance(node.func, Subscript) and isinstance(node.func.value, Name):
+                func_name = node.func.value.id
+
+            if func_name is not None:
+                _name = func_name
+                is_local_class = _name.startswith("_") and len(_name) > 1 and _name[1].isupper() or \
+                    _name.startswith("local_") and len(_name) > 6 and _name[6].isupper()
                 if _name[0].isupper() or is_local_class:
                     # rule:instantiation, classes instantiated with keywords should be named starting with a capital letter
                     self._context_stack.append("instance")
@@ -2384,7 +2443,7 @@ class _Unparser(NodeVisitor):
                     self._context_stack.append("call")
                 pop = True
                 # rule:funcrename
-                if _name in self._func_rename:
+                if isinstance(node.func, Name) and _name in self._func_rename:
                     node.func.id = self._func_rename[_name]
             elif (
                 isinstance(node.func, Subscript)
@@ -2434,6 +2493,15 @@ class _Unparser(NodeVisitor):
             else:
                 self.traverse(node.slice)
             self.write("]")
+            return
+
+        # rule:tupletype -> tuple[T1, T2] slice translates as (T1, T2) tuple type in Nim
+        if isinstance(node.value, Name) and node.value.id == "tuple":
+            with self.delimit("(", ")"):
+                if is_non_empty_tuple(node.slice):
+                    self.items_view(self.traverse, node.slice.elts)
+                else:
+                    self.traverse(node.slice)
             return
 
         if isinstance(node.value, Name) and node.value.id == "Tset":

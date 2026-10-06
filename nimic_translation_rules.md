@@ -110,6 +110,8 @@ Functions use standard Python `def` definitions but might employ specific decora
 | `converter toFloat(x: int): float` | `@converter`<br>`def toFloat(x: nint) -> float:` | Converter functions. |
 | `iterator myIter(x: int): int = yield x` | `def myIter(x: nint) -> nint:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | Iterators are translated to generator functions. |
 | `for (a, b) in pairs:` | `for (a, b) in pairs:` | Tuple unpacking in for-loops; parentheses preserved for Nim (`rule:fortupleunpack`) |
+| `proc foo[T, U](): ...` | `@generic`<br>`def foo[T, U](): ...` | `@generic` decorator allows 0-arg generic functions to be parameterized via `foo[T, U]()` in Python runtime. Transpiler strips `@generic`. |
+| `(T1, T2)` (tuple type) | `tuple[T1, T2]` | Tuple type annotations in function return or variable types transpile as Nim parenthesized tuple types `(T1, T2)` (`rule:tupletype`). |
 
 **Get/Set Operators (`rule:funcdefrenamedunder`)** Nim get/set operators map to Python dunder (magic) methods.
   - `[]=` ➔ `__setitem__`
@@ -173,6 +175,15 @@ Because the transpiler is sensitive to Python's internal logic versus Nim's syst
 | `for item in arr.mitems:` | `for item in arr.mitems:` | In-place mutation loops translate directly, do not replace with `enumerate`. |
 | `data[i] == ' '` (chars) | `ord(data[i]) == 32` | Python string chars don't map smoothly to Nim `char`. Use `ord()` for comparisons. |
 | `not x` (bitwise) | `~x` | Nim bitwise `not` maps to Python bitwise inversion `~` (`rule:bitwiserename`) |
+| `a +% b` | `plus_percent(a, b)` or `a.plus_percent(b)` | Nim wrapping addition in the operand type's width (`NInteger.plus_percent`; a plain `int` adopts its `NInteger` peer's type, else Nim `int`) (`rule:percentops`) |
+| `a -% b` | `minus_percent(a, b)` or `a.minus_percent(b)` | Nim wrapping subtraction in the operand type's width (`NInteger.minus_percent`) (`rule:percentops`) |
+| `a div b` | `a // b` | Nim integer division truncated toward zero (native on `NInteger`) |
+| `a mod b` | `a % b` | Nim integer modulo truncated toward zero (native on `NInteger`) |
+| `x is T` | `isinstance(x, T)` | Nim type query translates as `x is T` (`rule:isinstance`) |
+| `cmp(a, b)` | `cmp(a, b)` | Standard three-way comparison `(a > b) - (a < b)` |
+| `FormatStr(s)` | `FormatStr(s)` | Wraps format string for `%` operator; unwraps to string literal in Nim (`rule:formatstr`) |
+| `move x` | `move(x)` | Nim ownership transfer; identity operation in Python runtime |
+| `shallowCopy(d, s)` | `shallowCopy(d, s)` | Nim shallow copy; returns source in Python runtime |
 
 ## 8. Exporting and Scope (`rule:writeexport`, `rule:localname`, `rule:modulepath`)
 | Nim | Python (Nimic) | Notes |
@@ -192,6 +203,7 @@ Because the transpiler is sensitive to Python's internal logic versus Nim's syst
 | --- | --- | --- |
 | `block:` (statement) | `with block:` | Prevent variable leaking |
 | `block:` (value return) | `def _block():`<br>&nbsp;&nbsp;&nbsp;&nbsp;`return val`<br>`result = _block()` | Emulate value-returning blocks with immediately invoked localized functions. |
+| `do:` | `with do:` | Nim `do:` block statement (`rule:doblock`) |
 
 
 ## 11. Variant type and `case` statements

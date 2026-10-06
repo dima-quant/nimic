@@ -1714,6 +1714,155 @@ class TestNTypes(unittest.TestCase):
         joined = os.path.join(s, "subpath")
         self.assertEqual(joined, "hello world/subpath")
 
+    def test_cstring_and_string_non_ascii_roundtrip(self):
+        """string and cstring share one encode/decode pair, so non-ASCII text round-trips identically."""
+        for text in ("é", "naïve", "\xff\x80", "€uro"):
+            self.assertEqual(str(string(text)), text)
+            self.assertEqual(str(cstring(text)), text)
+        # chars <= 0xFF are stored one byte each (Nim byte-string model)
+        self.assertEqual(len(string("é")), 1)
+        self.assertEqual(len(cstring("é")), 1)
+
+    def test_wrapping_percent_ops(self):
+        """plus_percent and minus_percent on plain ints wrap in Nim `int` (64-bit) width."""
+        max_i64 = 0x7FFFFFFFFFFFFFFF
+        min_i64 = -0x8000000000000000
+        self.assertEqual(plus_percent(max_i64, 1), min_i64)
+        self.assertEqual(minus_percent(min_i64, 1), max_i64)
+        self.assertEqual(plus_percent(10, 20), 30)
+        self.assertEqual(minus_percent(30, 20), 10)
+        self.assertIs(type(plus_percent(10, 20)), nint)
+
+    def test_wrapping_percent_methods_on_ninteger(self):
+        """NInteger.plus_percent / minus_percent wrap in the operand type's own width."""
+        r = int8(127).plus_percent(1)
+        self.assertIs(type(r), int8)
+        self.assertEqual(int(r), -128)
+        r = int8(-128).minus_percent(1)
+        self.assertEqual(int(r), 127)
+        r = uint8(0).minus_percent(1)
+        self.assertIs(type(r), uint8)
+        self.assertEqual(int(r), 255)
+        r = uint32(0xFFFFFFFF).plus_percent(uint32(1))
+        self.assertIs(type(r), uint32)
+        self.assertEqual(int(r), 0)
+        r = int16(0x7FFF).plus_percent(int16(1))
+        self.assertEqual(int(r), -0x8000)
+        r = uint64(0).minus_percent(1)
+        self.assertEqual(int(r), 0xFFFFFFFFFFFFFFFF)
+
+    def test_wrapping_percent_free_functions_delegate(self):
+        """Free plus_percent/minus_percent delegate to NInteger; a plain int adopts the NInteger peer's type."""
+        r = plus_percent(int32(0x7FFFFFFF), 1)
+        self.assertIs(type(r), int32)
+        self.assertEqual(int(r), -0x80000000)
+        # plain int on the left adopts the type of the NInteger on the right
+        r = plus_percent(1, uint32(0xFFFFFFFF))
+        self.assertIs(type(r), uint32)
+        self.assertEqual(int(r), 0)
+        r = minus_percent(0, uint8(1))
+        self.assertIs(type(r), uint8)
+        self.assertEqual(int(r), 255)
+        # operands are not mutated
+        a = int8(127)
+        plus_percent(a, 1)
+        self.assertEqual(int(a), 127)
+
+    def test_transpile_percent_ops(self):
+        """rule:percentops emits Nim +% / -% with additive precedence, for call and method forms."""
+        import ast
+        from nimic.transpiler import unparse
+
+        def nim(src):
+            return unparse(ast.parse(src))[0].strip()
+
+        self.assertEqual(nim("x = plus_percent(a, b)"), "x = a +% b")
+        self.assertEqual(nim("x = minus_percent(a, b)"), "x = a -% b")
+        self.assertEqual(nim("x = a.plus_percent(b)"), "x = a +% b")
+        self.assertEqual(nim("x = a.minus_percent(b)"), "x = a -% b")
+        # the infix result must be parenthesized inside tighter-binding contexts
+        self.assertEqual(nim("x = plus_percent(a, b) * 2"), "x = (a +% b) * 2")
+        self.assertEqual(nim("x = -minus_percent(a, b)"), "x = -(a -% b)")
+        # left-associative, same level as + / -
+        self.assertEqual(nim("x = plus_percent(a + b, c)"), "x = a + b +% c")
+        self.assertEqual(nim("x = minus_percent(a, b - c)"), "x = a -% (b - c)")
+        self.assertEqual(nim("x = plus_percent(a, b) + c"), "x = a +% b + c")
+
+    def test_move_and_shallow_copy(self):
+        """move and shallowCopy act as identity operations in Python runtime."""
+        obj = [1, 2, 3]
+        self.assertIs(move(obj), obj)
+        dest = []
+        self.assertIs(shallowCopy(dest, obj), obj)
+
+    def test_cmp_three_way(self):
+        """cmp provides standard three-way comparison (-1, 0, 1)."""
+        self.assertEqual(cmp(1, 2), -1)
+        self.assertEqual(cmp(2, 2), 0)
+        self.assertEqual(cmp(3, 2), 1)
+        self.assertEqual(cmp("abc", "def"), -1)
+        self.assertEqual(cmp("abc", "abc"), 0)
+        self.assertEqual(cmp("xyz", "abc"), 1)
+
+    def test_generic_decorator(self):
+        """@generic allows parameterless generic functions to be subscripted with types in Python."""
+        @generic
+        def make_btree[T, U]():
+            return "ok"
+
+        res = make_btree[int, str]()
+        self.assertEqual(res, "ok")
+
+    def test_do_context_manager(self):
+        """do context manager allows with do: block execution in Python."""
+        executed = False
+        with do:
+            executed = True
+        self.assertTrue(executed)
+
+    def test_variant_record_generic_attributes(self):
+        """Variant record branches with array fields instantiate and access attributes cleanly."""
+        @ref
+        class MockVariantNode[K, V](Object):
+            entries: nint
+            keys: array[16, K]
+            isInternal: bool = False
+            match isInternal:
+                case False:
+                    vals: array[16, V]
+                case True:
+                    links: array[16, MockVariantNode[K, V]]
+
+        leaf = MockVariantNode[str, int](entries=1, isInternal=False)
+        self.assertEqual(len(leaf.keys), 16)
+        self.assertEqual(len(leaf.vals), 16)
+
+        internal = MockVariantNode[str, int](entries=2, isInternal=True)
+        self.assertEqual(len(internal.keys), 16)
+        # links accessed on internal node initializes array of size 16 without error
+        self.assertEqual(len(internal.links), 16)
+        internal.links[0] = leaf
+    def test_ninteger_trunc_div_and_mod(self):
+        """NInteger __floordiv__ and __mod__ implement Nim-style truncation towards zero."""
+        a = nint(-7)
+        b = nint(3)
+        self.assertEqual(int(a // b), -2)
+        self.assertEqual(int(a % b), -1)
+
+        c = nint(7)
+        d = nint(-3)
+        self.assertEqual(int(c // d), -2)
+        self.assertEqual(int(c % d), 1)
+
+        e = nint(-7)
+        f = nint(-3)
+        self.assertEqual(int(e // f), 2)
+        self.assertEqual(int(e % f), -1)
+
+        # Reflected
+        self.assertEqual(int(-7 // b), -2)
+        self.assertEqual(int(-7 % b), -1)
+
 
 if __name__ == '__main__':
     unittest.main()

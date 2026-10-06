@@ -20,6 +20,9 @@ template `+`*(x: string, y: string): string =
   x & y
 template `~`*(x: untyped): untyped =
   not x
+template isinstance*(x, t: untyped): untyped =
+  x is t
+
 
 template range3(t) {.dirty.} =
   iterator range*(a, b, c: t): t {.inline.} =
