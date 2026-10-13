@@ -1,12 +1,12 @@
 # Nim Compiler → Nimic: Conversion Queue
 
-> **Generated**: 2026-09-15 | **Total modules**: 164 | **Converted**: 26 | **Remaining**: 138
+> **Generated**: 2026-09-15 | **Total modules**: 164 | **Converted**: 28 | **Remaining**: 136
 
 ## Progress Summary
 
 | Tier | Modules | Converted | Remaining | Description |
 |------|---------|-----------|-----------|-------------|
-| 0 | 37 | 20 | 17 | No dependencies (leaf modules) |
+| 0 | 37 | 22 | 15 | No dependencies (leaf modules) |
 | 1 | 7 | 3 | 4 | Single-tier dependencies |
 | 2 | 3 | 1 | 2 | Depends on Tiers 0–1 |
 | 3 | 11 | 2 | 9 | Core infrastructure (options, msgs, trees) |
@@ -15,7 +15,7 @@
 | 11–15 | 43 | 0 | 43 | Type analysis, semantic data |
 | 16–22 | 20 | 0 | 20 | Semantic analysis, code generation |
 | 23–28 | 9 | 0 | 9 | VM, sem, pipelines, main |
-| **Total** | **164** | **26** | **138** | |
+| **Total** | **164** | **28** | **136** | |
 
 ## Conversion Rules
 
@@ -31,28 +31,28 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 
 | Priority | Module | Size | Notes |
 |----------|--------|------|-------|
-| 1 | `cbuilderexprs` | 6,794 bytes | C builder expressions |
-| 2 | `sourcemap` | 7,591 bytes | Source maps |
-| 3 | `ccgtrav` | 8,380 bytes | C gen traversal |
-| 4 | `cbuilderstmts` | 9,403 bytes | C builder statements |
-| 5 | `ccgliterals` | 13,946 bytes | C gen literals |
-| 6 | `int128` | 16,767 bytes | 128-bit integer |
-| 7 | `sizealignoffsetimpl` | 17,025 bytes | Size/align computation |
-| 8 | `cbuilderdecls` | 22,463 bytes | C builder declarations |
-| 9 | `semobjconstr` | 23,372 bytes | Object construction (sem) |
-| 10 | `semgnrc` | 24,878 bytes | Generic sem |
-| 11 | `semmagic` | 27,519 bytes | Magic sem |
-| 12 | `semtempl` | 31,451 bytes | Template sem |
-| 13 | `semcall` | 44,523 bytes | Call sem |
-| 14 | `semfields` | 6,625 bytes | Field sem |
-| 15 | `seminst` | 18,919 bytes | Instantiation sem |
-| 16 | `ccgstmts` | 71,794 bytes | C gen statements (large) |
-| 17 | `semtypes` | 106,643 bytes | Type sem (very large) |
+| 1 | `ccgtrav` | 8,380 bytes | C gen traversal |
+| 2 | `cbuilderstmts` | 9,403 bytes | C builder statements |
+| 3 | `ccgliterals` | 13,946 bytes | C gen literals |
+| 4 | `int128` | 16,767 bytes | 128-bit integer |
+| 5 | `sizealignoffsetimpl` | 17,025 bytes | Size/align computation |
+| 6 | `cbuilderdecls` | 22,463 bytes | C builder declarations |
+| 7 | `semobjconstr` | 23,372 bytes | Object construction (sem) |
+| 8 | `semgnrc` | 24,878 bytes | Generic sem |
+| 9 | `semmagic` | 27,519 bytes | Magic sem |
+| 10 | `semtempl` | 31,451 bytes | Template sem |
+| 11 | `semcall` | 44,523 bytes | Call sem |
+| 12 | `semfields` | 6,625 bytes | Field sem |
+| 13 | `seminst` | 18,919 bytes | Instantiation sem |
+| 14 | `ccgstmts` | 71,794 bytes | C gen statements (large) |
+| 15 | `semtypes` | 106,643 bytes | Type sem (very large) |
 
 ### Already Converted & Reviewed
 
 | Module | Tier | Review Log | Status |
 |--------|------|------------|--------|
+| `sourcemap` | 0 | `ncompiler/review_sourcemap.md` | ✅ Complete |
+| `cbuilderexprs` | 0 | `ncompiler/review_cbuilderexprs.md` | ✅ Complete |
 | `jstypes` | 0 | `ncompiler/review_jstypes.md` | ✅ Complete |
 | `btrees` | 0 | `ncompiler/review_btrees.md` | ✅ Complete |
 | `rodutils` | 0 | `ncompiler/review_rodutils.md` | ✅ Complete |
@@ -84,7 +84,7 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 
 ## Full Tier Breakdown
 
-### Tier 0 — No dependencies (20/37 converted)
+### Tier 0 — No dependencies (21/37 converted)
 
 | Module | Size | Dependencies | Status |
 |--------|------|--------------|--------|
@@ -92,7 +92,7 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 | `bitsets` | 2,754 bytes |  | ✅ Converted + Reviewed |
 | `btrees` | 5,048 bytes |  | ✅ Converted + Reviewed |
 | `cbuilderdecls` | 22,463 bytes |  | 🔲 Pending |
-| `cbuilderexprs` | 6,794 bytes |  | 🔲 Pending |
+| `cbuilderexprs` | 6,794 bytes |  | ✅ Converted + Reviewed |
 | `cbuilderstmts` | 9,403 bytes |  | 🔲 Pending |
 | `ccgliterals` | 13,946 bytes |  | 🔲 Pending |
 | `ccgreset` | 4,536 bytes |  | ✅ Converted + Reviewed |
@@ -123,7 +123,7 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 | `semtypes` | 106,643 bytes |  | 🔲 Pending |
 | `sinkparameter_inference` | 2,393 bytes |  | ✅ Converted + Reviewed |
 | `sizealignoffsetimpl` | 17,025 bytes |  | 🔲 Pending |
-| `sourcemap` | 7,591 bytes |  | 🔲 Pending |
+| `sourcemap` | 7,591 bytes |  | ✅ Converted + Reviewed |
 | `wordrecg` | 8,361 bytes |  | ✅ Converted + Reviewed |
 
 ### Tier 1 — Depends on Tiers 0–0 (4/7 converted)
