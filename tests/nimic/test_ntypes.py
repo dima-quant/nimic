@@ -1,8 +1,32 @@
 
 from __future__ import annotations
-import unittest
+import ast
+import builtins
+import contextlib
+import ctypes
+import io
 import math
+import os
+import subprocess
+import sys
+import tempfile
+import textwrap
+import unittest
+
 from nimic.ntypes import *
+from nimic.nsystem import ord as nim_ord
+from nimic.ntypesystem import (BUFFER_REGISTRY, BufferRegistry, DICT_OF_C_TYPES, _match_subtype,
+                               _n_aliases, _n_distinct_types, _n_from_text, _n_to_text, char as _char)
+from nimic.std.endians import big_endian32
+from nimic.std.math import classify, fcNegSubnormal, fcNormal, fcSubnormal
+from nimic.std.options import Option, none, some
+from nimic.std.os import fileExists, getCurrentDir, getEnv, walkDir
+from nimic.std.parseutils import parse_hex, parse_ident
+from nimic.std.strscans import scanf
+from nimic.std.strutils import find, nimIdentNormalize, repeat, rfind, strip, toLowerAscii
+from nimic.std.syncio import lines, read_file
+from nimic.system.ansi_c import c_free, c_malloc, csize_t
+from nimic.transpiler import unparse
 
 class TestNTypes(unittest.TestCase):
 
@@ -194,7 +218,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_unchecked_array_cast(self):
         # Simulate memory allocation
-        from nimic.system.ansi_c import c_malloc, c_free, csize_t
 
         count = 10
         size_bytes = count * 4 # 4 bytes for int32
@@ -216,7 +239,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_object_array_cast(self):
         # Simulate memory allocation for Objects
-        from nimic.system.ansi_c import c_malloc, c_free, csize_t
 
         class Point(Object):
             x: int32
@@ -461,7 +483,6 @@ class TestNTypes(unittest.TestCase):
             c = Vec3(a) + Vec3(b)
 
     def test_option(self):
-        from nimic.std.options import Option, some, none
 
         # some() wraps a value
         opt_s = some(int32(42))
@@ -503,7 +524,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_generic_dispatch(self):
         """Test that generic [T] functions are specialized on first call."""
-        import io, contextlib
 
         @dispatch
         def foo[T](x: T) -> seq[T]:
@@ -539,8 +559,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_pointer_arithmetic(self):
         """Test arithmetic on byte addresses via intp/uintp."""
-        from nimic.system.ansi_c import c_malloc, c_free, csize_t
-        import ctypes
 
         # Test basic pointer logic
         class SimpleObj(Object):
@@ -581,7 +599,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_pointer_arithmetic_cast(self):
         """Test casting from advanced intp back to a structured pointer."""
-        from nimic.system.ansi_c import c_malloc, c_free, csize_t
 
         class MultiFields(Object):
             a: int32
@@ -616,7 +633,6 @@ class TestNTypes(unittest.TestCase):
 
 
     def test_addr(self):
-        from nimic.std.endians import big_endian32
 
         class BitBuffer(Object):
             shift: nint
@@ -746,8 +762,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_buffer_registry_register_find(self):
         """Register a buffer and find it by interior address."""
-        import ctypes
-        from nimic.ntypesystem import BufferRegistry
         reg = BufferRegistry()
         buf = (ctypes.c_char * 256)()
         addr = reg.register(buf)
@@ -763,8 +777,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_buffer_registry_update(self):
         """Resize a buffer and verify the registry re-keys correctly."""
-        import ctypes
-        from nimic.ntypesystem import BufferRegistry
         reg = BufferRegistry()
         buf = (ctypes.c_char * 64)()
         old_addr = reg.register(buf)
@@ -778,8 +790,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_buffer_registry_free(self):
         """Free a buffer and verify it's no longer found."""
-        import ctypes
-        from nimic.ntypesystem import BufferRegistry
         reg = BufferRegistry()
         buf = (ctypes.c_char * 64)()
         addr = reg.register(buf)
@@ -791,7 +801,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_buffer_registry_object_init(self):
         """After Phase 2: creating an Object should register its buffer."""
-        from nimic.ntypesystem import BUFFER_REGISTRY
         initial = len(BUFFER_REGISTRY)
         class Point(Object):
             x: int32
@@ -802,7 +811,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_buffer_registry_seq_resize(self):
         """After Phase 2: seq resize should update the registry."""
-        from nimic.ntypesystem import BUFFER_REGISTRY
         s = seq[int32]()
         initial = len(BUFFER_REGISTRY)
         for i in range(10):
@@ -884,7 +892,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_ptr_ptr(self):
         
-        from nimic.system.ansi_c import c_malloc, c_free, csize_t
 
         def _fourCC(a: char, b: char, c: char, d: char) -> uint32:
             """{.inline.}"""
@@ -972,7 +979,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_string_distinct_view(self):
         """string(x) on a distinct/alias string subclass shares the _n_view buffer."""
-        import ctypes
 
         @distinct
         class AbsFile(string): pass
@@ -1151,7 +1157,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_string_getitem_returns_char(self):
         """Indexing a string always returns a char."""
-        from nimic.ntypesystem import char as _char
         s = string("abc")
         c = s[0]
         self.assertIsInstance(c, _char)
@@ -1221,7 +1226,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_object_callable_field(self):
         """Object with a function-typed field initializes to None."""
-        from nimic.ntypesystem import calltype
 
         @calltype
         def my_callback(x: int32) -> int32: ...
@@ -1266,7 +1270,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_char_from_bytes(self):
         """char() accepts bytes and bytearray."""
-        from nimic.ntypesystem import char as _char
         c1 = _char(b'A')
         self.assertEqual(str(c1), 'A')
         self.assertEqual(int(c1), 65)
@@ -1277,7 +1280,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_char_sizeof(self):
         """char._n_sizeof() returns 1."""
-        from nimic.ntypesystem import char as _char
         self.assertEqual(_char._n_sizeof(), 1)
 
     # --- Trange inherits from Trange ---
@@ -1291,13 +1293,11 @@ class TestNTypes(unittest.TestCase):
 
     def test_endianness_enum(self):
         """Endianness enum has expected members."""
-        from nimic.nsystem import Endianness
         self.assertEqual(int(Endianness.littleEndian), 0)
         self.assertEqual(int(Endianness.bigEndian), 1)
 
     def test_host_os_cpu(self):
         """hostOS and hostCPU return non-empty strings."""
-        from nimic.nsystem import hostOS, hostCPU
         self.assertIsInstance(hostOS, string)
         self.assertIsInstance(hostCPU, string)
         self.assertGreater(len(str(hostOS)), 0)
@@ -1305,7 +1305,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_substr(self):
         """substr() implements Nim's inclusive slicing."""
-        from nimic.nsystem import substr
         s = string("hello world")
         self.assertEqual(str(substr(s, 0, 4)), "hello")
         self.assertEqual(str(substr(s, 6)), "world")
@@ -1313,8 +1312,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_ord_function(self):
         """ord() works on enum, char, int, bool."""
-        from nimic.nsystem import ord as nim_ord
-        from nimic.ntypesystem import char as _char
 
         # char
         self.assertEqual(nim_ord(_char('A')), 65)
@@ -1334,8 +1331,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_write_read_file(self):
         """writeFile / readFile round-trip."""
-        import tempfile, os
-        from nimic.ntypes import writeFile, readFile
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
             path = f.name
         try:
@@ -1349,14 +1344,12 @@ class TestNTypes(unittest.TestCase):
 
     def test_setLen_string(self):
         """setLen on string truncates or pads."""
-        from nimic.ntypes import setLen
         s = string("hello")
         setLen(s, 3)
         self.assertEqual(str(s), "hel")
 
     def test_setLen_list(self):
         """setLen on a plain list extends or truncates."""
-        from nimic.ntypes import setLen
         lst = [1, 2, 3]
         setLen(lst, 5)
         self.assertEqual(len(lst), 5)
@@ -1367,8 +1360,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_file_context_manager(self):
         """File supports with-statement (context manager)."""
-        import tempfile, os
-        from nimic.ntypesystem import File
         with tempfile.NamedTemporaryFile(mode='wb', suffix='.bin', delete=False) as f:
             path = f.name
 
@@ -1391,7 +1382,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_raise_assert(self):
         """raiseAssert raises AssertionError."""
-        from nimic.ntypes import raiseAssert
         with self.assertRaises(AssertionError):
             raiseAssert("test message")
 
@@ -1470,7 +1460,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_openarray_protocol(self):
         """openArray matches seq, array, and list via protocol."""
-        from nimic.ntypesystem import _match_subtype
         self.assertTrue(_match_subtype("seq", "openArray"))
         self.assertTrue(_match_subtype("array", "openArray"))
         self.assertTrue(_match_subtype("list", "openArray"))
@@ -1478,7 +1467,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_distinct_in_registry(self):
         """@distinct adds the type name to _n_distinct_types."""
-        from nimic.ntypesystem import _n_distinct_types
 
         @distinct
         class TDistReg(Object):
@@ -1489,7 +1477,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_distinct_match_subtype_returns_false(self):
         """_match_subtype returns False when arg is a distinct type."""
-        from nimic.ntypesystem import _match_subtype, _n_distinct_types
 
         @distinct
         class TDistSub(Object):
@@ -1503,7 +1490,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_inheritance_not_confused_with_distinct(self):
         """Non-distinct subclass still matches via _match_subtype."""
-        from nimic.ntypesystem import _match_subtype
 
         class TAnimal(Object):
             name: string
@@ -1535,7 +1521,6 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(str(c.breed), "Labrador")
 
         # Verify C struct backing preserves field order
-        from nimic.ntypesystem import DICT_OF_C_TYPES
         c_type = DICT_OF_C_TYPES.get("TCanine")
         self.assertIsNotNone(c_type)
         c_field_names = [f[0] for f in c_type._fields_]
@@ -1588,7 +1573,6 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(int(b.wheels), 2)
 
         # TBicycle is a subtype of TVehicle
-        from nimic.ntypesystem import _match_subtype
         self.assertTrue(_match_subtype("TBicycle", "TVehicle"))
         # TVehicle is NOT a subtype of TBicycle
         self.assertFalse(_match_subtype("TVehicle", "TBicycle"))
@@ -1608,12 +1592,10 @@ class TestNTypes(unittest.TestCase):
         class TFilePath(string):
             def baseName(self) -> string:
                 """{.borrow.}"""
-                import os
                 return string(os.path.basename(str(self)))
 
         @dispatch
         def baseName(p: string) -> string:
-            import os
             return string(os.path.basename(str(p)))
 
         fp = TFilePath("/path/to/file.txt")
@@ -1650,8 +1632,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_read_file_binary_content(self):
         """read_file reads binary files (e.g. H.264 streams) without UnicodeDecodeError."""
-        import tempfile, os
-        from nimic.std.syncio import read_file
 
         with tempfile.NamedTemporaryFile(delete=False) as f:
             f.write(b'\x00\x00\x00\x01\xf8\xca\xfe\xba\xbe')
@@ -1702,7 +1682,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_string_add_and_fspath(self):
         """string.add updates _n_len and content, and string implements os.PathLike."""
-        import os.path
         s = newStringOfCap(80)
         s.add("hello")
         s.add(" ")
@@ -1715,13 +1694,90 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(joined, "hello world/subpath")
 
     def test_cstring_and_string_non_ascii_roundtrip(self):
-        """string and cstring share one encode/decode pair, so non-ASCII text round-trips identically."""
-        for text in ("é", "naïve", "\xff\x80", "€uro"):
+        """string and cstring are Latin-1 byte views: one char per byte, lossless round-trip."""
+        for text in ("é", "naïve", "\xff\x80"):
             self.assertEqual(str(string(text)), text)
             self.assertEqual(str(cstring(text)), text)
-        # chars <= 0xFF are stored one byte each (Nim byte-string model)
-        self.assertEqual(len(string("é")), 1)
-        self.assertEqual(len(cstring("é")), 1)
+            self.assertEqual(len(string(text)), len(text))
+            self.assertEqual(len(cstring(text)), len(text))
+        # no UTF-8 guessing on decode: the bytes C3 83 C2 A9 stay four bytes
+        self.assertEqual(string("Ã©").data, "Ã©")
+        self.assertEqual(string(b"\xc3\xa9").data, "\xc3\xa9")
+        self.assertEqual(cstring(b"\xc3\xa9")._value, b"\xc3\xa9")
+
+    def test_string_rejects_chars_above_latin1(self):
+        """A char > 0xFF cannot be a Nim byte; string/cstring/char raise NimicEncodingError."""
+        with self.assertRaises(NimicEncodingError) as cm:
+            string("€")
+        self.assertIn("U+20AC", str(cm.exception))
+        self.assertIn("utf8(", str(cm.exception))
+        self.assertIsInstance(cm.exception, ValueError)
+        with self.assertRaises(NimicEncodingError):
+            cstring("€uro")
+        with self.assertRaises(NimicEncodingError):
+            char("€")
+
+    def test_utf8_builds_nim_literal_bytes(self):
+        """utf8("é") mirrors the Nim literal "é": the UTF-8 bytes C3 A9."""
+        s = utf8("é")
+        self.assertIsInstance(s, string)
+        self.assertEqual(len(s), 2)
+        self.assertEqual(s.data, "\xc3\xa9")
+        self.assertEqual(utf8("abc"), "abc")
+
+    def _run_nimic_snippet(self, code, **env_overrides):
+        """Run `code` in a fresh interpreter after `from nimic.ntypes import *`; return raw stdout bytes."""
+        env = {k: v for k, v in os.environ.items() if k != "NIMIC_NO_STDIO_RECONFIGURE"}
+        env.update(env_overrides)
+        proc = subprocess.run([sys.executable, "-c", "from nimic.ntypes import *\n" + code],
+                              capture_output=True, env=env, check=True)
+        return proc.stdout
+
+    def test_stdio_is_byte_transparent(self):
+        """print/echo of a byte view emits its raw bytes, like Nim's echo."""
+        self.assertEqual(self._run_nimic_snippet("print(string(b'\\xc3\\xa9'))"), b"\xc3\xa9\n")
+        self.assertEqual(self._run_nimic_snippet("echo(string('\\xe9'))"), b"\xe9\n")
+        # Unicode text above 0xFF (Python-side) still reaches the terminal as UTF-8
+        self.assertEqual(self._run_nimic_snippet("print('\\u20ac')"), b"\xe2\x82\xac\n")
+
+    def test_stdio_reconfigure_opt_out(self):
+        """NIMIC_NO_STDIO_RECONFIGURE=1 leaves stdout as a UTF-8 text stream."""
+        out = self._run_nimic_snippet("print(string(b'\\xc3\\xa9'))",
+                                      NIMIC_NO_STDIO_RECONFIGURE="1", PYTHONIOENCODING="utf-8")
+        self.assertEqual(out, b"\xc3\x83\xc2\xa9\n")
+
+    def test_files_and_paths_are_byte_transparent(self):
+        """writeFile/readFile/lines/walkDir/getEnv move raw bytes; non-ASCII paths hit the same on-disk name."""
+        with tempfile.TemporaryDirectory() as d:
+            name = utf8(os.path.join(d, "café.txt"))
+            writeFile(name, utf8("é\n"))
+            on_disk = os.path.join(d, "café.txt")
+            self.assertTrue(os.path.exists(on_disk))
+            with builtins.open(on_disk, "rb") as f:
+                self.assertEqual(f.read(), b"\xc3\xa9\n")
+            self.assertEqual(readFile(name).data, "\xc3\xa9\n")
+            self.assertTrue(fileExists(name))
+            names = [e.path for e in walkDir(utf8(d), relative=True)]
+            self.assertEqual(names, [utf8("café.txt")])
+            # lines() keeps invalid UTF-8 byte-exact
+            raw_path = os.path.join(d, "raw.bin")
+            with builtins.open(raw_path, "wb") as f:
+                f.write(b"\xff\x80\nab\r\n")
+            self.assertEqual([l.data for l in lines(raw_path)], ["\xff\x80", "ab"])
+        os.environ["NIMIC_TEST_ENV"] = "café"
+        try:
+            self.assertEqual(getEnv(string("NIMIC_TEST_ENV")), utf8("café"))
+        finally:
+            del os.environ["NIMIC_TEST_ENV"]
+        self.assertEqual(getCurrentDir(), utf8(os.getcwd()))
+
+    def test_text_boundary_helpers_roundtrip(self):
+        """_n_from_text/_n_to_text convert Unicode text <-> byte view; arbitrary bytes survive."""
+        self.assertEqual(_n_to_text(utf8("€uro")), "€uro")
+        self.assertEqual(_n_from_text("€"), "\xe2\x82\xac")
+        all_bytes = bytes(range(256)).decode("latin-1")
+        self.assertEqual(_n_from_text(_n_to_text(all_bytes)), all_bytes)
+        self.assertEqual(_n_from_text(_n_to_text(string(all_bytes))), all_bytes)
 
     def test_wrapping_percent_ops(self):
         """plus_percent and minus_percent on plain ints wrap in Nim `int` (64-bit) width."""
@@ -1770,8 +1826,6 @@ class TestNTypes(unittest.TestCase):
 
     def test_transpile_percent_ops(self):
         """rule:percentops emits Nim +% / -% with additive precedence, for call and method forms."""
-        import ast
-        from nimic.transpiler import unparse
 
         def nim(src):
             return unparse(ast.parse(src))[0].strip()
@@ -1787,6 +1841,160 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(nim("x = plus_percent(a + b, c)"), "x = a + b +% c")
         self.assertEqual(nim("x = minus_percent(a, b - c)"), "x = a -% (b - c)")
         self.assertEqual(nim("x = plus_percent(a, b) + c"), "x = a +% b + c")
+
+    def test_dispatch_resolves_module_level_type_aliases(self):
+        """`Label = string` in the function's module makes `x: Label` dispatch as `string`,
+        also inside generic subscripts (`vararg[Label]` with `vararg = seq`), without core edits."""
+        ns = {}
+        exec(textwrap.dedent('''
+            from __future__ import annotations
+            from nimic.ntypes import *
+            AliasLabel = string
+            aliasvararg = seq
+
+            @dispatch
+            def _t_alias_describe(x: AliasLabel) -> string:
+                return string("label")
+
+            @dispatch
+            def _t_alias_describe(x: nint) -> string:
+                return string("int")
+
+            @dispatch
+            def _t_alias_count(xs: aliasvararg[AliasLabel]) -> nint:
+                return nint(len(xs))
+        '''), ns)
+        self.assertEqual(ns["_t_alias_describe"](string("a")), "label")
+        self.assertEqual(ns["_t_alias_describe"](nint(1)), "int")
+        xs = seq[string]()
+        xs.add(string("a"))
+        xs.add(string("b"))
+        self.assertEqual(int(ns["_t_alias_count"](xs)), 2)
+        # aliases are resolved per module: nothing leaks into the core alias table
+        self.assertNotIn("AliasLabel", _n_aliases)
+
+    def test_ufcs_installs_free_proc_as_method(self):
+        """@ufcs(T) gives Nim method-call syntax: x.f(a) == f(x, a); aliases too; never shadows."""
+        class _UBox:
+            def __init__(self, v):
+                self.v = v
+            def existing(self):
+                return "own"
+
+        @ufcs(_UBox, aliases=("plusOne",))
+        def plus_one(b, k=1):
+            return b.v + k
+
+        self.assertEqual(plus_one(_UBox(1)), 2)  # still a free function
+        self.assertEqual(_UBox(1).plus_one(), 2)
+        self.assertEqual(_UBox(1).plusOne(5), 6)
+
+        @ufcs(_UBox)
+        @dispatch
+        def _t_ufcs_scale(b: _UBox, k: nint) -> nint:
+            return nint(b.v * int(k))
+
+        self.assertEqual(int(_UBox(3)._t_ufcs_scale(nint(2))), 6)
+        # re-registering the same name (e.g. a further @dispatch overload) is allowed
+        ufcs(_UBox)(_t_ufcs_scale)
+        # an attribute the class already defines is never shadowed
+        with self.assertRaises(TypeError):
+            @ufcs(_UBox)
+            def existing(b):
+                return "free"
+        with self.assertRaises(TypeError):
+            @ufcs(string)
+            def find(s, sub):
+                return -1
+
+    def test_std_string_procs_use_ufcs(self):
+        """std procs used with method syntax in converted code are available on string."""
+        s = string("  ab_cd")
+        self.assertTrue(string("abc").startsWith(string("ab")))
+        self.assertTrue(string("abc").endsWith(string("bc")))
+        self.assertEqual([x.data for x in string("a\nb").splitLines()], ["a", "b"])
+        self.assertEqual(int(s.skipWhitespace(0)), 2)
+
+    def test_strutils_nim_semantics(self):
+        """strutils procs follow Nim: ASCII-only whitespace/case, char args, last = -1 means 'to the end'."""
+        self.assertEqual(rfind(string("abca"), ch('a')), 3)
+        self.assertEqual(rfind(string("abca"), ch('a'), 0, 2), 0)
+        self.assertEqual(find(string("abca"), ch('a'), 1), 3)
+        self.assertEqual(find(string("abca"), ch('b'), 0, 0), -1)
+        self.assertEqual(repeat(ch('a'), 3), "aaa")
+        # NBSP (\xa0) is not Nim whitespace
+        self.assertEqual(strip(string("\xa0 x \t\n")), "\xa0 x")
+        self.assertEqual(strip(string("  x  "), leading=False), "  x")
+        self.assertEqual(strip(string("xxayx"), chars={ch('x')}), "ay")
+        self.assertEqual(toLowerAscii(string("\xc0B_")), "\xc0b_")
+        lc = toLowerAscii(ch('A'))
+        self.assertIsInstance(lc, char)
+        self.assertEqual(lc, 'a')
+        self.assertEqual(nimIdentNormalize(string("Foo_Bar")), "Foobar")
+
+    def test_parseutils_nim_semantics(self):
+        """parseIdent stops at non-ASCII bytes; parseHex accepts 0x/# prefixes and underscores."""
+        ident = string("")
+        self.assertEqual(int(parse_ident(string("ab\xe9c"), ident)), 2)
+        self.assertEqual(ident, "ab")
+        n = nint(0)
+        self.assertEqual(int(parse_hex(string("0x1F_a!"), n)), 6)
+        self.assertEqual(int(n), 0x1FA)
+        self.assertEqual(int(parse_hex(string("#ff"), n)), 3)
+        self.assertEqual(int(n), 255)
+        self.assertEqual(int(parse_hex(string("abcd"), n, 0, 2)), 2)
+        self.assertEqual(int(n), 0xAB)
+        n2 = nint(7)
+        self.assertEqual(int(parse_hex(string("zz"), n2)), 0)
+        self.assertEqual(int(n2), 7)  # untouched when nothing was parsed
+
+    def test_scanf_nim_semantics(self):
+        """$s skips whitespace (no capture), $w is an identifier, $. anchors the end, matching is a prefix match."""
+        n, m = nint(0), nint(0)
+        self.assertTrue(scanf(string("x=   5"), string("x=$s$i"), n))
+        self.assertEqual(int(n), 5)
+        self.assertTrue(scanf(string("12 rest"), string("$i"), n))
+        self.assertFalse(scanf(string("12 rest"), string("$i$."), n))
+        a, b = string(""), string("")
+        self.assertTrue(scanf(string("foo_1 bar"), string("$w $w"), a, b))
+        self.assertEqual((a.data, b.data), ("foo_1", "bar"))
+        p = string("")
+        self.assertTrue(scanf(string('/* line 3:4 "a.nim" */'), string('/* line $i:$i "$+" */'), n, m, p))
+        self.assertEqual((int(n), int(m), p.data), (3, 4, "a.nim"))
+        self.assertTrue(scanf(string("key: tail end"), string("key: $+"), p))
+        self.assertEqual(p.data, "tail end")
+        with self.assertRaises(ValueError):
+            scanf(string("x"), string("$q"))
+
+    def test_math_classify_subnormals(self):
+        """classify reports subnormal floats like Nim's fcSubnormal / fcNegSubnormal."""
+        tiny = sys.float_info.min / 2
+        self.assertEqual(classify(tiny), fcSubnormal)
+        self.assertEqual(classify(-tiny), fcNegSubnormal)
+        self.assertEqual(classify(sys.float_info.min), fcNormal)
+
+    def test_transpile_string_literal_bytes(self):
+        """rule:latin1literal / rule:utf8literal keep Python and Nim literals byte-identical."""
+
+        def nim(src):
+            return unparse(ast.parse(src))[0].strip()
+
+        # a bare "é" is the byte E9 in nimic -> Nim escape
+        self.assertEqual(nim('x = "é"'), 'x = "\\xE9"')
+        self.assertEqual(nim('x = "a\\xffb"'), 'x = "a\\xFFb"')
+        self.assertEqual(nim('x = "plain"'), 'x = "plain"')
+        # utf8("é") is the UTF-8 text -> raw Nim literal (Nim source is UTF-8)
+        self.assertEqual(nim('x = utf8("é")'), 'x = "é"')
+        self.assertEqual(nim('x = utf8("€uro")'), 'x = "€uro"')
+        self.assertEqual(nim('x = utf8(s)'), 'x = utf8(s)')
+        # chars above 0xFF cannot be bytes
+        with self.assertRaises(SyntaxError) as cm:
+            nim('x = "€"')
+        self.assertIn("utf8(", str(cm.exception))
+        # f-string literal parts get the same escape; expressions are untouched
+        self.assertEqual(nim('x = f"é{n}"'), 'x = &"\\xE9{n}"')
+        with self.assertRaises(SyntaxError):
+            nim('x = f"€{n}"')
 
     def test_move_and_shallow_copy(self):
         """move and shallowCopy act as identity operations in Python runtime."""

@@ -1,6 +1,7 @@
 """Nim std/math — re-exports Python's math module and adds Nim math types and functions."""
 from math import *
 import math as _math
+import sys as _sys
 from enum import Enum
 
 
@@ -41,6 +42,8 @@ def classify(x: float) -> FloatClass:
         return fcNegInf if signbit(fx) else fcInf
     if fx == 0.0:
         return fcNegZero if signbit(fx) else fcZero
+    if abs(fx) < _sys.float_info.min:
+        return fcNegSubnormal if signbit(fx) else fcSubnormal
     return fcNegNormal if signbit(fx) else fcNormal
 
 

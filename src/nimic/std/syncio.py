@@ -5,9 +5,11 @@ write_buffer, set_file_pos, open (with Nim file modes from std/os).
 """
 from __future__ import annotations
 from enum import Enum
+import builtins
 import ctypes
 import os
 from nimic.ntypes import File
+from nimic.ntypesystem import string, _n_encode_str, _n_decode_bytes, _n_os_arg
 
 
 
@@ -26,12 +28,10 @@ fmReadWriteExisting = FileMode.fmReadWriteExisting
 
 def open(*args):
     """Nim-style open — supports both open(path, mode) and open(f, path, mode)."""
-    from nimic.ntypes import File
-    import builtins
     _binary_map = {"w": "wb", "a": "ab", "r+": "r+b", "w+": "w+b", "r": "rb"}
     if len(args) >= 2 and isinstance(args[0], File):
         f = args[0]
-        filename = str(args[1])
+        filename = _n_os_arg(args[1])
         raw_mode = args[2] if len(args) > 2 else "r"
         mode = str(raw_mode.value if hasattr(raw_mode, "value") else raw_mode)
         actual_mode = _binary_map.get(mode, mode)
@@ -44,7 +44,7 @@ def open(*args):
         except Exception:
             return False
     elif len(args) >= 1:
-        path = str(args[0])
+        path = _n_os_arg(args[0])
         raw_mode = args[1] if len(args) > 1 else "r"
         mode = str(raw_mode.value if hasattr(raw_mode, "value") else raw_mode)
         actual_mode = _binary_map.get(mode, mode)
@@ -54,32 +54,28 @@ def open(*args):
 
 def read_file(path: str | string) -> string:
     """Read entire file contents as a string."""
-    from nimic.ntypesystem import string
-    import builtins
-    with builtins.open(str(path), 'rb') as f:
+    with builtins.open(_n_os_arg(path), 'rb') as f:
         return string(f.read())
 
 
 def lines(filename: str | string):
-    """Nim: lines — iterates over lines in filename."""
-    from nimic.ntypesystem import string
-    import builtins
-    with builtins.open(str(filename), 'r', encoding='utf-8', errors='replace') as f:
+    """Nim: lines — iterates over lines in filename (raw bytes, no decoding)."""
+    with builtins.open(_n_os_arg(filename), 'rb') as f:
         for line in f:
-            yield string(line.rstrip('\r\n'))
+            yield string(line.rstrip(b'\r\n'))
 
 
 
 def read_file_bytes(path: str | string) -> bytes:
     """Read entire file contents as bytes."""
-    with open(str(path), 'rb') as f:
+    with builtins.open(_n_os_arg(path), 'rb') as f:
         return f.read()
 
 
 def write_file(path: str | string, content: str | string) -> None:
     """Write string content to a file."""
-    with open(str(path), 'w') as f:
-        f.write(str(content))
+    with builtins.open(_n_os_arg(path), 'wb') as f:
+        f.write(_n_encode_str(content))
 
 
 readFile = read_file
@@ -116,7 +112,7 @@ def read_buffer(f, buffer, size: int) -> int:
     if not data:
         return 0
     if isinstance(data, str):
-        data = data.encode('utf-8')
+        data = _n_encode_str(data)
     n = len(data)
     if hasattr(buffer, '_n_addr'):
         addr = buffer._n_addr
@@ -159,22 +155,27 @@ stdout = sys.stdout
 stderr = sys.stderr
 
 
+def _n_write_view(f_handle, s: str) -> None:
+    """Write byte view `s` to a binary handle as its bytes, or to a text stream
+    as-is (nimic reconfigures stdio to Latin-1, so the bytes come out unchanged)."""
+    if 'b' in getattr(f_handle, 'mode', ''):
+        f_handle.write(_n_encode_str(s))
+    else:
+        try:
+            f_handle.write(s)
+        except TypeError:  # binary handle without a `mode` attribute
+            f_handle.write(_n_encode_str(s))
+
+
 def write(f, data) -> None:
     """Nim: write(f, data) — write string or char to file f."""
     f_handle = getattr(f, '_handle', f)
     s = data.data if hasattr(data, 'data') else str(data)
-    if hasattr(f_handle, 'mode') and 'b' in getattr(f_handle, 'mode', ''):
-        f_handle.write(s.encode('utf-8') if isinstance(s, str) else bytes(s))
-    else:
-        try:
-            f_handle.write(s)
-        except TypeError:
-            f_handle.write(s.encode('utf-8'))
+    _n_write_view(f_handle, s)
 
 
 def read_line(f, line=None):
     """Nim: readLine(f, line: var string): bool or readLine(f): string."""
-    from nimic.ntypesystem import string
     f_handle = getattr(f, '_handle', f)
     raw = f_handle.readline()
     if not raw:
@@ -182,7 +183,7 @@ def read_line(f, line=None):
             return False
         return string("")
     if isinstance(raw, bytes):
-        raw = raw.decode('utf-8', errors='replace')
+        raw = _n_decode_bytes(raw)
     if raw.endswith('\r\n'):
         raw = raw[:-2]
     elif raw.endswith('\n') or raw.endswith('\r'):
@@ -200,13 +201,7 @@ def write_line(f, *args) -> None:
     """Nim: writeLine(f, *args) — write strings followed by newline."""
     f_handle = getattr(f, '_handle', f)
     s = "".join(a.data if hasattr(a, 'data') else str(a) for a in args) + "\n"
-    if hasattr(f_handle, 'mode') and 'b' in getattr(f_handle, 'mode', ''):
-        f_handle.write(s.encode('utf-8'))
-    else:
-        try:
-            f_handle.write(s)
-        except TypeError:
-            f_handle.write(s.encode('utf-8'))
+    _n_write_view(f_handle, s)
 
 writeLine = write_line
 

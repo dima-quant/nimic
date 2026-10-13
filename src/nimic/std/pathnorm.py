@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from nimic.ntypes import string
+from nimic.ntypesystem import _n_encode_str
 
 def normalizePath(path: str, dirSep: str = '/') -> str:
     """Nim: pathnorm.normalizePath"""
@@ -13,16 +14,17 @@ def addNormalizePath(x: str, result: string, state: object, dirSep: str = '/'):
     if not isinstance(result, string):
         return
         
-    current_bytes = result.data.encode('utf-8')
+    # pure path arithmetic: separators are single bytes, so it works on the byte view
+    current = result.data
     
-    if len(current_bytes) > 0:
+    if len(current) > 0:
         # simple fallback since this is just a python shim
-        new_path = os.path.normpath(current_bytes.decode('utf-8', 'ignore') + dirSep + str(x))
+        new_path = os.path.normpath(current + dirSep + str(x))
     else:
         new_path = os.path.normpath(str(x))
         
     new_path = new_path.replace('\\', dirSep)
-    new_bytes = new_path.encode('utf-8')
+    new_bytes = _n_encode_str(new_path)
     
     result._n_ensure_capacity(len(new_bytes) + 1)
     

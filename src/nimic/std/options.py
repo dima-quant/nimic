@@ -54,7 +54,7 @@ class Option:
         Raises UnpackDefect (ValueError) if the Option is empty.
         """
         if not self._has_value:
-            raise ValueError("Option is none — cannot get value (UnpackDefect)")
+            raise ValueError("Option is none - cannot get value (UnpackDefect)")
         return self._value
 
     def unsafe_get(self):

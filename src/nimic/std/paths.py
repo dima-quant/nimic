@@ -11,8 +11,5 @@ class Path(string):
     def __truediv__(self, tail: string | Path | str) -> Path:
         return Path(path.join(str(self), str(tail)))
 
-    def __fspath__(self) -> str:
-        return str(self.data)
-
     def __str__(self) -> str:
         return str(self.data)

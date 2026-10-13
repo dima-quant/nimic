@@ -30,6 +30,7 @@ Contents:
 from __future__ import annotations
 
 import contextlib
+import ctypes as _ctypes  # underscore: not re-exported by `from nimic.ntypes import *`
 from enum import auto
 
 from nimic.inliner import template, template_expand
@@ -54,7 +55,9 @@ from nimic.nsystem import (
     substr,
     ord,
     quit,
+    _n_setup_stdio,
 )
+_n_setup_stdio()  # stdio is byte-transparent, like Nim's echo/readLine
 from nimic.ntypesystem import (
     DICT_OF_TYPES,
     addr,
@@ -104,6 +107,9 @@ from nimic.ntypesystem import (
     uint32,
     uint64,
     cstring,
+    utf8,
+    NimicEncodingError,
+    ufcs,
 )
 
 
@@ -209,31 +215,18 @@ def new_exception(except_cls: type, msg: str):
 newException = new_exception
 
 
-def writeFile(filename: str | string, content: str | string) -> None:
-    """Nim: writeFile — write string content to a file."""
-    with open(str(filename), 'w') as f:
-        f.write(str(content))
-
-
-def readFile(filename: str | string) -> string:
-    """Nim: readFile — read entire file contents as string."""
-    with open(str(filename), 'rb') as f:
-        return string(f.read())
-
-
 def equalMem(a, b, size: int) -> bool:
     """Nim: equalMem — compare memory regions."""
-    import ctypes
     def _to_addr(p):
         if hasattr(p, '_n_addr'): return p._n_addr
-        if hasattr(p, '_n_view'): return ctypes.addressof(p._n_view)
+        if hasattr(p, '_n_view'): return _ctypes.addressof(p._n_view)
         if hasattr(p, 'contents'):
             c = p.contents
             if hasattr(c, '_n_addr'): return c._n_addr
-            if hasattr(c, '_n_view'): return ctypes.addressof(c._n_view)
+            if hasattr(c, '_n_view'): return _ctypes.addressof(c._n_view)
         if isinstance(p, int): return p
         try:
-            return ctypes.cast(p, ctypes.c_void_p).value or 0
+            return _ctypes.cast(p, _ctypes.c_void_p).value or 0
         except Exception:
             return 0
     addr_a = _to_addr(a)
@@ -241,8 +234,8 @@ def equalMem(a, b, size: int) -> bool:
     s = int(size)
     if s == 0: return True
     if addr_a == 0 or addr_b == 0: return False
-    buf_a = (ctypes.c_char * s).from_address(addr_a).raw
-    buf_b = (ctypes.c_char * s).from_address(addr_b).raw
+    buf_a = (_ctypes.c_char * s).from_address(addr_a).raw
+    buf_b = (_ctypes.c_char * s).from_address(addr_b).raw
     return buf_a == buf_b
 
 
@@ -266,6 +259,8 @@ from nimic.std.syncio import (
     close,
     write,
     readLine,
+    readFile,
+    writeFile,
     readBuffer,
     write_buffer,
     stdin,

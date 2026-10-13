@@ -1,11 +1,15 @@
 """Nim system/io and os — file mode constants and OS utilities."""
 from __future__ import annotations
+import glob as _glob
 import os as _os
+import pathlib as _pathlib
+import shlex as _shlex
 from sys import stdout, stderr
 import sys
 from io import TextIOWrapper
 from enum import Enum
 from nimic.ntypes import char, string, dispatch
+from nimic.ntypesystem import _n_os_arg, _n_os_result
 
 from nimic.std.syncio import read_file, read_file_bytes, write_buffer, set_file_pos, open
 
@@ -25,7 +29,7 @@ stdout.flush_file = stdout.flush
 
 def create_dir(dir: str) -> None:
     """Create directory and parents if needed (Nim: os.createDir)."""
-    _os.makedirs(dir, exist_ok=True)
+    _os.makedirs(_n_os_arg(dir), exist_ok=True)
 
 
 class PathComponent(Enum):
@@ -54,8 +58,8 @@ class _WalkEntry(tuple):
 def walk_dir(path: string | str, relative: bool = False, check_dir: bool = False):
     """Iterate over directory entries (Nim: os.walkDir)."""
     try:
-        for entry in _os.scandir(str(path)):
-            p = string(entry.name) if relative else string(entry.path)
+        for entry in _os.scandir(_n_os_arg(path)):
+            p = _n_os_result(entry.name if relative else entry.path)
             if entry.is_symlink():
                 k = pcLinkToDir if entry.is_dir() else pcLinkToFile
             elif entry.is_dir():
@@ -75,7 +79,7 @@ def extract_filename(path: str | string) -> string:
     return string(_os.path.basename(str(path)))
 
 def expandFilename(path: string) -> string:
-    return string(_os.path.abspath(str(path)))
+    return _n_os_result(_os.path.abspath(_n_os_arg(path)))
 
 
 
@@ -84,9 +88,9 @@ def param_count() -> int:
     return len(sys.argv) - 1
 
 
-def param_str(i: int) -> str:
+def param_str(i: int) -> string:
     """Get i-th command-line argument (Nim: os.paramStr)."""
-    return sys.argv[i]
+    return _n_os_result(sys.argv[i])
 
 
 if _os.name == 'nt':
@@ -98,12 +102,12 @@ else:
 
 def getCurrentDir() -> string:
     """Get the current directory (Nim: os.getCurrentDir)."""
-    return string(_os.getcwd())
+    return _n_os_result(_os.getcwd())
 
 
-def get_app_filename() -> str:
+def get_app_filename() -> string:
     """Get the application filename (Nim: os.getAppFilename)."""
-    return sys.argv[0]
+    return _n_os_result(sys.argv[0])
 
 
 
@@ -135,10 +139,10 @@ def splitFile(path: string) -> _SplitFileTuple:
 split_file = splitFile
 
 def relativePath(path: string, base: string = string("."), sep: char = DirSep) -> string:
-    res = os.path.relpath(str(path), str(base))
+    res = os.path.relpath(_n_os_arg(path), _n_os_arg(base))  # resolves against the cwd
     if str(sep) != _os.sep:
         res = res.replace(_os.sep, str(sep))
-    return string(res)
+    return _n_os_result(res)
 
 @dispatch
 def changeFileExt(filename: string, ext: string) -> string:
@@ -159,27 +163,27 @@ def addFileExt(filename: string, ext: string) -> string:
 
 @dispatch
 def removeFile(file: string) -> None:
-    if os.path.exists(str(file)):
-        _os.remove(str(file))
+    if os.path.exists(_n_os_arg(file)):
+        _os.remove(_n_os_arg(file))
 
 @dispatch
 def fileExists(file: string) -> bool:
-    return os.path.isfile(str(file))
+    return os.path.isfile(_n_os_arg(file))
 
 @dispatch
 def dirExists(dir: string) -> bool:
-    return os.path.isdir(str(dir))
+    return os.path.isdir(_n_os_arg(dir))
 
 @dispatch
 def createDir(dir: string) -> None:
-    _os.makedirs(str(dir), exist_ok=True)
+    _os.makedirs(_n_os_arg(dir), exist_ok=True)
 
 create_dir = createDir
 
 @dispatch
 def removeDir(dir: string) -> None:
-    if _os.path.exists(str(dir)):
-        shutil.rmtree(str(dir))
+    if _os.path.exists(_n_os_arg(dir)):
+        shutil.rmtree(_n_os_arg(dir))
 
 remove_dir = removeDir
 
@@ -202,21 +206,20 @@ def lastPathPart(path: string) -> string:
 
 @dispatch
 def quoteShell(path: string) -> string:
-    import shlex
-    return string(shlex.quote(str(path)))
+    return string(_shlex.quote(str(path)))
 
 @dispatch
 def copyFile(source: string, dest: string) -> None:
-    shutil.copy2(str(source), str(dest))
+    shutil.copy2(_n_os_arg(source), _n_os_arg(dest))
 
 @dispatch
 def execShellCmd(cmd: string) -> int:
-    return _os.system(str(cmd))
+    return _os.system(_n_os_arg(cmd))
 
 @dispatch
 def findExe(exe: string) -> string:
-    res = shutil.which(str(exe))
-    return string(res) if res is not None else string("")
+    res = shutil.which(_n_os_arg(exe))
+    return _n_os_result(res) if res is not None else string("")
 
 find_exe = findExe
 
@@ -233,42 +236,36 @@ def parentDir(path: string) -> string:
 parent_dir = parentDir
 
 def walkFiles(pattern: string | str):
-    import glob
-    for p in glob.iglob(str(pattern)):
+    for p in _glob.iglob(_n_os_arg(pattern)):
         if _os.path.isfile(p):
-            yield string(p)
+            yield _n_os_result(p)
 
 walk_files = walkFiles
 
 def getCurrentCompilerExe() -> string:
     # mock
-    return string(sys.executable)
+    return _n_os_result(sys.executable)
 
 get_current_compiler_exe = getCurrentCompilerExe
 
 @dispatch
 def isRelativeTo(path: string, base: string) -> bool:
-    try:
-        import pathlib
-        return pathlib.Path(str(path)).is_relative_to(str(base))
-    except (ValueError, Exception):
-        return False
+    return _pathlib.PurePath(str(path)).is_relative_to(str(base))
 
 is_relative_to = isRelativeTo
 
 @dispatch
 def get_env(var: string, default: string = string("")) -> string:
-    val = _os.environ.get(str(var))
+    val = _os.environ.get(_n_os_arg(var))
     if val is None:
         return default
-    return string(val)
+    return _n_os_result(val)
 
 getEnv = get_env
 last_path_part = lastPathPart
 
 @dispatch
 def unix_to_native_path(path: string | str, drive: string | str = string("")) -> string:
-    import sys
     p = str(path)
     if sys.platform == "win32":
         p = p.replace("/", "\\")
@@ -280,6 +277,6 @@ unixToNativePath = unix_to_native_path
 
 @dispatch
 def expand_tilde(path: string | str) -> string:
-    return string(_os.path.expanduser(str(path)))
+    return _n_os_result(_os.path.expanduser(_n_os_arg(path)))  # reads $HOME
 
 expandTilde = expand_tilde

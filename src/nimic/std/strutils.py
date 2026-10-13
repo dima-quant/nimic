@@ -1,6 +1,9 @@
 """Nim std/strutils — string utility functions."""
 from __future__ import annotations
-from nimic.ntypes import dispatch, string, char, Tset
+from nimic.ntypes import dispatch, ufcs, string, char, ch, Tset
+
+# Nim strutils.Whitespace (ASCII only: nimic strings are bytes)
+Whitespace = " \t\v\r\n\f"
 
 
 def int_to_str(i: int, minchars: int = 1):
@@ -16,7 +19,7 @@ parseInt = parse_int
 
 def normalize(s: str) -> str:
     """Nim: normalize — normalize string (remove underscores and to lowercase)."""
-    return str(s).replace("_", "").lower()
+    return _n_lower_ascii(str(s).replace("_", ""))
 
 def cmpIgnoreStyle(a: str, b: str) -> int:
     a_norm = normalize(str(a))
@@ -24,16 +27,25 @@ def cmpIgnoreStyle(a: str, b: str) -> int:
     if a_norm == b_norm: return 0
     return -1 if a_norm < b_norm else 1
 
-def toLowerAscii(c) -> str:
-    if isinstance(c, str):
-        return c.lower()
-    return chr(c).lower() if isinstance(c, int) else str(c).lower()
+def _n_lower_ascii(s: str) -> str:
+    return "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in s)
 
 
+def toLowerAscii(c):
+    """Nim: toLowerAscii — lowercases only A..Z; a char gives a char, anything else a string."""
+    if isinstance(c, int):
+        c = char(c)
+    if isinstance(c, char):
+        return char(_n_lower_ascii(c))
+    return string(_n_lower_ascii(str(c)))
+
+
+@ufcs(string)
 @dispatch
 def startsWith(s: string, prefix: string) -> bool:
     return str(s).startswith(str(prefix))
 
+@ufcs(string)
 @dispatch
 def endsWith(s: string, suffix: string) -> bool:
     return str(s).endswith(str(suffix))
@@ -57,14 +69,16 @@ def replace(s: string, sub: char, by: char) -> string:
 
 
 def nimIdentNormalize(s: string | str) -> string:
-    """Nim: nimIdentNormalize — normalize identifier (lowercase and strip underscores)."""
+    """Nim: nimIdentNormalize — keep the first char, lowercase (ASCII) the rest and drop '_'."""
     s_val = str(s)
-    res = [c.lower() for c in s_val if c != '_']
-    return string("".join(res))
+    if not s_val:
+        return string("")
+    return string(s_val[0] + _n_lower_ascii(s_val[1:].replace("_", "")))
 
-def find(s: string | str, sub: set | Tset | char | string | str, start: int = 0, last: int = 0) -> int:
+def find(s: string | str, sub: set | Tset | char | string | str, start: int = 0, last: int = -1) -> int:
+    """Nim: find — first index of sub in s[start..last] (last = -1: to the end), else -1."""
     s_str = str(s)
-    end_pos = len(s_str) if last <= 0 else last + 1
+    end_pos = len(s_str) if last < 0 else last + 1
     if isinstance(sub, (set, frozenset, Tset)):
         char_set = {str(c) for c in sub}
         for i in range(start, min(len(s_str), end_pos)):
@@ -77,9 +91,7 @@ def find(s: string | str, sub: set | Tset | char | string | str, start: int = 0,
 
 def repeat(s: str | string | char, count: int) -> string:
     """Nim: repeat — returns a string of count copies of s."""
-    if isinstance(s, char):
-        return string(s.val * count)
-    return string(str(s) * count)
+    return string(str(s) * int(count))
 
 
 def to_octal(c: char | str | int) -> string:
@@ -103,3 +115,60 @@ def to_hex(n: int, length: int = 0) -> string:
     return string(h)
 
 toHex = to_hex
+
+
+def strip(s: string | str, leading: bool = True, trailing: bool = True,
+          chars: set | Tset | str = Whitespace) -> string:
+    """Nim: strip — strip `chars` (default: ASCII Whitespace) from the ends of s."""
+    s_str = str(s)
+    char_set = "".join(str(c) for c in chars)
+    if leading:
+        s_str = s_str.lstrip(char_set)
+    if trailing:
+        s_str = s_str.rstrip(char_set)
+    return string(s_str)
+
+
+def r_find(s: string | str, sub: str | string | char, start: int = 0, last: int = -1) -> int:
+    """Nim: rfind — last index of sub in s[start..last] (last = -1: to the end), else -1."""
+    s_str = str(s)
+    end_pos = len(s_str) if last < 0 else last + 1
+    return s_str.rfind(str(sub), start, end_pos)
+
+rfind = r_find
+
+
+@ufcs(string, aliases=("splitLines",))
+def split_lines(s: string | str) -> list[string]:
+    """Nim: splitLines — split string into lines."""
+    s_val = str(s)
+    lines = []
+    i = 0
+    start = 0
+    while i < len(s_val):
+        if s_val[i] == '\r':
+            lines.append(string(s_val[start:i]))
+            if i + 1 < len(s_val) and s_val[i + 1] == '\n':
+                i += 1
+            i += 1
+            start = i
+        elif s_val[i] == '\n':
+            lines.append(string(s_val[start:i]))
+            i += 1
+            start = i
+        else:
+            i += 1
+    if start <= len(s_val):
+        lines.append(string(s_val[start:]))
+    return lines
+
+splitLines = split_lines
+
+
+IdentStartChars = Tset[char]({ch(chr(c)) for c in range(ord('a'), ord('z') + 1)} |
+                             {ch(chr(c)) for c in range(ord('A'), ord('Z') + 1)} |
+                             {ch('_')})
+
+IdentChars = Tset[char](set(IdentStartChars) |
+                        {ch(chr(c)) for c in range(ord('0'), ord('9') + 1)})
+

@@ -1,10 +1,15 @@
 from __future__ import annotations
+import builtins as _builtins
+import codecs
 import ctypes
+import io
+import os
+import sys
 from enum import StrEnum, auto
 from typing import Generator, TypeVar
 
 from nimic.system.ansi_c import c_malloc, c_free
-from nimic.ntypesystem import char, seq, NIntEnum
+from nimic.ntypesystem import char, cstring, seq, string, NIntEnum
 
 class _SomeCastClass:
     def __getitem__(self, other_cls: type) -> callable:
@@ -92,7 +97,6 @@ def new_string_of_cap(cap: int):
     """Nim: newStringOfCap — create a string with a zero-filled buffer of
     *cap* bytes.  The resulting string is empty (len 0 in str terms) but its
     ``_n_view`` ctypes buffer has *cap* bytes available for in-place writes."""
-    from nimic.ntypesystem import string
     return string(cap)
 
 newStringOfCap = new_string_of_cap
@@ -100,7 +104,6 @@ newStringOfCap = new_string_of_cap
 
 def new_cstring_of_cap(cap: int):
     """Create a cstring with a zero-filled buffer of *cap* bytes."""
-    from nimic.ntypesystem import cstring
     return cstring(cap)
 
 newCStringOfCap = new_cstring_of_cap
@@ -112,8 +115,6 @@ class Endianness(NIntEnum):
 
 
 def _detect_host_os():
-    import sys
-    from nimic.ntypesystem import string
     if sys.platform == "darwin":
         return string("macosx")
     elif sys.platform == "win32":
@@ -134,13 +135,10 @@ def _detect_host_os():
 
 
 def _detect_host_cpu():
-    import os
-    from nimic.ntypesystem import string
     if hasattr(os, "uname"):
         arch = os.uname().machine.lower()
     else:
-        import os as _os
-        arch = _os.environ.get("PROCESSOR_ARCHITECTURE", "any").lower()
+        arch = os.environ.get("PROCESSOR_ARCHITECTURE", "any").lower()
     if arch in ["x86_64", "amd64"]:
         return string("amd64")
     elif arch in ["i386", "i686", "x86"]:
@@ -176,7 +174,6 @@ hostCPU = _detect_host_cpu()
 
 def substr(s, first: int = 0, last: int | None = None):
     """Nim: substr — slice string from `first` to `last` (inclusive)."""
-    from nimic.ntypesystem import string
     s_val = str(s)
     f = max(int(first), 0)
     if last is None:
@@ -187,8 +184,6 @@ def substr(s, first: int = 0, last: int | None = None):
         return string(s_val[f:l + 1])
     return string("")
 
-
-import builtins as _builtins
 
 def ord(x) -> int:
     """Nim: ord(x) — returns ordinal integer of an enum, char, int, bool, or StrEnum."""
@@ -201,9 +196,37 @@ def ord(x) -> int:
     return _builtins.ord(x)
 
 
+# --- Byte-transparent stdio (Nim echo/readLine move raw bytes) ---
+
+def _n_utf8_fallback(e: UnicodeEncodeError):
+    """Codec error handler "nimic.utf8": chars > 0xFF (Python-side Unicode text)
+    are written as their UTF-8 bytes instead of failing the Latin-1 encode."""
+    return e.object[e.start:e.end].encode("utf-8"), e.end
+
+
+_n_stdio_configured = False
+
+
+def _n_setup_stdio() -> None:
+    """Make stdin/stdout/stderr Latin-1 streams so a string byte view is
+    read/written as its exact bytes. Idempotent; skipped when the env var
+    NIMIC_NO_STDIO_RECONFIGURE is set or a stream is not a TextIOWrapper."""
+    global _n_stdio_configured
+    if _n_stdio_configured or os.environ.get("NIMIC_NO_STDIO_RECONFIGURE"):
+        return
+    _n_stdio_configured = True
+    codecs.register_error("nimic.utf8", _n_utf8_fallback)
+    for stream, errors in ((sys.stdout, "nimic.utf8"), (sys.stderr, "nimic.utf8"),
+                           (sys.stdin, "strict")):  # Latin-1 decoding never fails
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="latin-1", errors=errors)
+            except io.UnsupportedOperation:
+                pass  # stream already read from (e.g. interactive stdin): keep its encoding
+
+
 def quit(error: int | str = 0) -> None:
     """Nim: quit — exit process with exit code or message."""
-    import sys
     if isinstance(error, int):
         sys.exit(error)
     else:

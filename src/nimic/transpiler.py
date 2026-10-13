@@ -76,6 +76,10 @@ Operators & renaming:
   rule:stringjoin -> replace "f" by "&"
   rule:literaltypes -> write as type suffix u64(0x9e3779b97f4a7c15) -> 0x9e3779b97f4a7c15'u64
   rule:char -> chars written as ch("#") transpile as char literals '#'
+  rule:latin1literal -> str literals are byte views: chars 0x80-0xFF emit as \\xNN ("é" -> "\\xE9"),
+    chars above 0xFF raise SyntaxError (use utf8()); applies to f-string literal parts too
+  rule:utf8literal -> utf8("é") with a constant argument emits the raw Nim literal "é" (its UTF-8 bytes);
+    a non-constant argument stays utf8(x) (identity template in pydefs.nim)
   rule:array -> add array type to the first array element
   rule:isnot -> write isnot according to Nim syntax
   rule:notin -> write notin according to Nim syntax
@@ -131,11 +135,15 @@ The docstring for the original ``ast`` module is given below:
     :copyright: Copyright 2008 by Armin Ronacher.
     :license: Python License.
 """
+import argparse
 import ast
+import inspect
 import keyword as pykeyword
 import re
 import sys
+import warnings
 from _ast import *
+from collections import deque
 from contextlib import contextmanager, nullcontext
 from enum import IntEnum, _simple_enum, auto
 
@@ -408,7 +416,6 @@ def get_docstring(node, clean=True):
     else:
         return None
     if clean:
-        import inspect
         text = inspect.cleandoc(text)
     return text
 
@@ -481,7 +488,6 @@ def walk(node):
     (including *node* itself), in no specified order.  This is useful if you
     only want to modify nodes in place and don't care about the context.
     """
-    from collections import deque
     todo = deque([node])
     while todo:
         node = todo.popleft()
@@ -540,7 +546,6 @@ class NodeVisitor(object):
             except AttributeError:
                 pass
             else:
-                import warnings
                 warnings.warn(f"{method} is deprecated; add visit_Constant",
                               DeprecationWarning, 2)
                 return visitor(node)
@@ -622,14 +627,12 @@ if not hasattr(Constant, 'n'):
 
     def _n_getter(self):
         """Deprecated. Use value instead."""
-        import warnings
         warnings._deprecated(
             "Attribute n", message=_DEPRECATED_VALUE_ALIAS_MESSAGE, remove=(3, 14)
         )
         return self.value
 
     def _n_setter(self, value):
-        import warnings
         warnings._deprecated(
             "Attribute n", message=_DEPRECATED_VALUE_ALIAS_MESSAGE, remove=(3, 14)
         )
@@ -637,14 +640,12 @@ if not hasattr(Constant, 'n'):
 
     def _s_getter(self):
         """Deprecated. Use value instead."""
-        import warnings
         warnings._deprecated(
             "Attribute s", message=_DEPRECATED_VALUE_ALIAS_MESSAGE, remove=(3, 14)
         )
         return self.value
 
     def _s_setter(self, value):
-        import warnings
         warnings._deprecated(
             "Attribute s", message=_DEPRECATED_VALUE_ALIAS_MESSAGE, remove=(3, 14)
         )
@@ -660,7 +661,6 @@ class _ABC(type):
 
     def __instancecheck__(cls, inst):
         if cls in _const_types:
-            import warnings
             warnings._deprecated(
                 f"ast.{cls.__qualname__}",
                 message=_DEPRECATED_CLASS_MESSAGE,
@@ -689,7 +689,6 @@ def _new(cls, *args, **kwargs):
         if pos < len(args):
             raise TypeError(f"{cls.__name__} got multiple values for argument {key!r}")
     if cls in _const_types:
-        import warnings
         warnings._deprecated(
             f"ast.{cls.__qualname__}", message=_DEPRECATED_CLASS_MESSAGE, remove=(3, 14)
         )
@@ -716,7 +715,6 @@ class Ellipsis(Constant, metaclass=_ABC):
 
     def __new__(cls, *args, **kwargs):
         if cls is _ast_Ellipsis:
-            import warnings
             warnings._deprecated(
                 "ast.Ellipsis", message=_DEPRECATED_CLASS_MESSAGE, remove=(3, 14)
             )
@@ -1884,6 +1882,7 @@ class _Unparser(NodeVisitor):
                     quote_types=quote_types,
                     escape_special_whitespace=True,
                 )
+                value = self._latin1_escape(value)  # rule:latin1literal
                 if set(new_quote_types).isdisjoint(quote_types):
                     fallback_to_repr = True
                     break
@@ -1903,6 +1902,7 @@ class _Unparser(NodeVisitor):
                     # Escape inner double quotes for triple-double-quoted string
                     value = value.replace("\\", "\\\\")
                     value = value.replace('"', '\\"')
+                    value = self._latin1_escape(value)  # rule:latin1literal
                 new_fstring_parts.append(value)
 
         value = "".join(new_fstring_parts)
@@ -1956,6 +1956,35 @@ class _Unparser(NodeVisitor):
             self.write("u")
         self._write_str_avoiding_backslashes(node.value, quote_types=_MULTI_QUOTES)
 
+    @staticmethod
+    def _latin1_escape(text):
+        """rule:latin1literal -> a nimic str literal is a byte view: chars 0x80-0xFF are
+        the bytes themselves and become Nim \\xNN escapes; chars above 0xFF are no bytes."""
+        out = []
+        for c in text:
+            o = ord(c)
+            if o > 0xFF:
+                raise SyntaxError(
+                    f"character {c!r} (U+{o:04X}) in a string literal cannot be a Nim byte; "
+                    f"use utf8(\"...\") for UTF-8 text or escape bytes explicitly")
+            out.append(f"\\x{o:02X}" if o >= 0x80 else c)
+        return "".join(out)
+
+    def _nim_str_literal(self, value, *, utf8=False):
+        """Nim double-quoted literal for str constant `value`. Byte semantics by
+        default (rule:latin1literal); utf8=True keeps the text raw, since Nim source
+        is UTF-8 and the literal then holds its UTF-8 bytes (rule:utf8literal)."""
+        # Escape inner double quotes and special chars, wrap in double quotes
+        escaped = value.replace("\\", "\\\\")
+        escaped = escaped.replace('"', '\\"')
+        escaped = escaped.replace("\n", "\\n")
+        escaped = escaped.replace("\t", "\\t")
+        escaped = escaped.replace("\r", "\\r")
+        escaped = escaped.replace("\0", "\\0")
+        if not utf8:
+            escaped = self._latin1_escape(escaped)  # rule:latin1literal
+        return f'"{escaped}"'
+
     def _write_constant(self, value):
         if isinstance(value, (float, complex)):
             # Substitute overflowing decimal literal for AST infinities,
@@ -1970,14 +1999,7 @@ class _Unparser(NodeVisitor):
         else:
             # rule:quote
             if isinstance(value, str):
-                # Escape inner double quotes and special chars, wrap in double quotes
-                escaped = value.replace("\\", "\\\\")
-                escaped = escaped.replace('"', '\\"')
-                escaped = escaped.replace("\n", "\\n")
-                escaped = escaped.replace("\t", "\\t")
-                escaped = escaped.replace("\r", "\\r")
-                escaped = escaped.replace("\0", "\\0")
-                repr_value = f'"{escaped}"'
+                repr_value = self._nim_str_literal(value)
             else:
                 repr_value = repr(value)
             if repr_value in self._const_rename:
@@ -2351,6 +2373,10 @@ class _Unparser(NodeVisitor):
             else:
                 st = val.encode("Latin-1").hex()
                 self.write(f"'\\x{st}'")
+        elif (isinstance(node.func, Name) and node.func.id == "utf8" and len(node.args) == 1
+              and isinstance(node.args[0], Constant) and isinstance(node.args[0].value, str)):
+            # rule:utf8literal -> utf8("é") emits the raw Nim literal "é" (its UTF-8 bytes)
+            self.write(self._nim_str_literal(node.args[0].value, utf8=True))
         elif isinstance(node.func, Name) and node.func.id == "FormatStr" and len(node.args) == 1:
             # rule:formatstr -> FormatStr(s) unwraps to s in Nim (where string is FormatStr)
             self.traverse(node.args[0])
@@ -2769,7 +2795,6 @@ _deprecated_globals = {
 def __getattr__(name):
     if name in _deprecated_globals:
         globals()[name] = value = _deprecated_globals[name]
-        import warnings
         warnings._deprecated(
             f"ast.{name}", message=_DEPRECATED_CLASS_MESSAGE, remove=(3, 14)
         )
@@ -2778,7 +2803,6 @@ def __getattr__(name):
 
 
 def main():
-    import argparse
 
     parser = argparse.ArgumentParser(prog='python -m ast')
     parser.add_argument('infile', type=argparse.FileType(mode='rb'), nargs='?',

@@ -22,6 +22,9 @@ template `~`*(x: untyped): untyped =
   not x
 template isinstance*(x, t: untyped): untyped =
   x is t
+template utf8*(s: string): string =
+  ## nimic utf8(text): Nim strings already hold UTF-8 bytes, so this is identity.
+  s
 
 
 template range3(t) {.dirty.} =

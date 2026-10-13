@@ -66,6 +66,7 @@ import re
 import struct
 import sys
 import textwrap
+import types
 from enum import IntEnum, StrEnum, Enum
 from string import Template
 from typing import Sequence
@@ -367,6 +368,40 @@ def _match_converter(arg_type_name: str, sig_type_name: str) -> bool:
     return sig_type_name in __converters__.get(arg_type_name, set())
 
 
+def _n_resolve_type_aliases(ann: str, namespace: dict) -> str:
+    """Resolve module-level type aliases in a string annotation through `namespace`
+    (the function's globals): with `Snippet = string; varargs = seq`, the annotation
+    "varargs[Snippet]" becomes "seq[string]". Only names bound to a class with a
+    different __name__ are rewritten; otherwise the annotation is returned unchanged
+    (also for forward references and non-type expressions such as `ptr @ T`)."""
+    try:
+        node = ast.parse(ann, mode="eval").body
+    except SyntaxError:
+        return ann
+    changed = False
+
+    def resolve(n):
+        nonlocal changed
+        if isinstance(n, ast.Name):
+            obj = namespace.get(n.id)
+            if isinstance(obj, type) and obj.__name__ != n.id:
+                changed = True
+                return obj.__name__
+            return n.id
+        if isinstance(n, ast.Subscript):
+            elts = n.slice.elts if isinstance(n.slice, ast.Tuple) else [n.slice]
+            parts = [resolve(n.value)] + [resolve(e) for e in elts]
+            if None in parts:
+                return None
+            return f"{parts[0]}[{', '.join(parts[1:])}]"
+        if isinstance(n, ast.Constant) and isinstance(n.value, int):  # array[N, T]
+            return str(n.value)
+        return None
+
+    resolved = resolve(node)
+    return resolved if changed and resolved is not None else ann
+
+
 def dispatch(fn: callable) -> callable:
     """Decorator implementing Nim-style multi-dispatch based on argument type annotations.
 
@@ -413,6 +448,7 @@ def dispatch(fn: callable) -> callable:
         for name in raw_arg_names
         if name in _annotations
     ]
+    sig_list = [_n_resolve_type_aliases(v, fn.__globals__) for v in sig_list]
     sig_list = [_n_aliases[v] if v in _n_aliases else v for v in sig_list]
     arg_names = tuple(name for name in raw_arg_names if name in _annotations)
 
@@ -678,8 +714,7 @@ def dispatch(fn: callable) -> callable:
         def __get__(self, instance, owner=None):
             if instance is None:
                 return self
-            import types as _types
-            return _types.MethodType(self, instance)
+            return types.MethodType(self, instance)
 
         def __getitem__(self, types_param):
             if self.__name__ == "__getitem__":
@@ -689,6 +724,30 @@ def dispatch(fn: callable) -> callable:
             return self
 
     return _DispatchedCallable(fn_dispatch, fn)
+
+
+# --- UFCS (Nim method-call syntax) ---
+
+# (class, method name) -> free proc installed by @ufcs
+_n_ufcs_registry: dict = {}
+
+
+def ufcs(*classes: type, aliases: tuple = ()) -> callable:
+    """Nim method-call syntax for a free proc: after `@ufcs(string)` on `def f(s, ...)`,
+    `s.f(...)` calls `f(s, ...)`. The proc is installed under its own name and each of
+    `aliases` (e.g. the camelCase spelling). An attribute the class already has is never
+    shadowed (TypeError); re-registering a name installed by @ufcs (a further @dispatch
+    overload, a module reload) replaces it. Returns the proc unchanged."""
+    def install(fn):
+        for cls in classes:
+            for name in (fn.__name__, *aliases):
+                if hasattr(cls, name) and (cls, name) not in _n_ufcs_registry:
+                    raise TypeError(f"@ufcs: {cls.__name__}.{name} already exists; "
+                                    f"refusing to shadow it with the free proc {fn.__name__}")
+                _n_ufcs_registry[(cls, name)] = fn
+                setattr(cls, name, fn)
+        return fn
+    return install
 
 
 # --- Converter Registry ---
@@ -1687,6 +1746,8 @@ class _Object(Ntype):
         _seq = DICT_OF_TYPES.get("seq")
         # Initialize python-side fields (seq and Object subclasses without ctypes backing)
         for name in python_fields:
+            if name not in field_types:
+                continue
             fc = field_types.get(name)
             if fc is not None and getattr(fc, '_n_is_calltype', False):
                 setattr(self, name, None)
@@ -1916,7 +1977,7 @@ class _Object(Ntype):
                 continue
 
             # C. Python-side fields (pointers→NilPtr, calltypes→None, seq→already init'd, etc.)
-            if other and hasattr(other, name):
+            if other and (hasattr(other, name) if other is not self else name in other.__dict__):
                 super(_Object, self).__setattr__(name, getattr(other, name))
             elif getattr(field_cls, '_n_is_calltype', False):
                 super(_Object, self).__setattr__(name, None)
@@ -2084,6 +2145,10 @@ class _Object(Ntype):
                 python_fields.add(key)
             elif not _has_c_backing(field_cls):
                 python_fields.add(key)
+        if class_name not in DICT_OF_VARIANTS:
+            vf = cls._n_extract_variant_fields()
+            if vf:
+                python_fields.update(vf.keys())
         cls._n_python_fields = python_fields
         # Cache set of pointer/UncheckedArray field names for fast __setattr__ sync
         cls._n_ptr_fields = {name for name, fc in cls._n_field_types.items()
@@ -2396,8 +2461,8 @@ class seq(Ntype):
                 ntype = _n_registry.types[ntype]
                 self._n_type = ntype
             type_name = ntype.__name__ if hasattr(ntype, '__name__') else str(ntype)
-            if (isinstance(ntype, type) and issubclass(ntype, string)) or not hasattr(ntype, '_n_on_array') or getattr(ntype, '_n_is_ref', False):
-                # List-based mode for non-ctypes types (e.g. string, ref types)
+            if (isinstance(ntype, type) and issubclass(ntype, string)) or not hasattr(ntype, '_n_on_array') or getattr(ntype, '_n_is_ref', False) or bool(getattr(ntype, '_n_python_fields', None)):
+                # List-based mode for non-ctypes types (e.g. string, ref types, structs with python fields)
                 self._n_is_list = True
                 self._n_list = list(c_base) if isinstance(c_base, (list, tuple)) else []
                 return
@@ -2562,6 +2627,18 @@ class seq(Ntype):
             for i, v in enumerate(values):
                 self[i] = v
 
+    def find(self, item: object) -> nint:
+        """Nim: find — returns the index of the first occurrence of item, or -1."""
+        if getattr(self, '_n_is_list', False):
+            try:
+                return nint(self._n_list.index(item))
+            except ValueError:
+                return nint(-1)
+        for i in range(self.len):
+            if self[i] == item:
+                return nint(i)
+        return nint(-1)
+
     @property
     def items(self):
         """Yield immutable copies of elements (Nim's items)."""
@@ -2673,7 +2750,8 @@ class File:
         _binary_map = {"w": "wb", "a": "ab", "r+": "r+b", "w+": "w+b", "r": "rb"}
         actual_mode = _binary_map.get(str(mode), str(mode))
         try:
-            self._handle = __builtins__["open"](str(filename), actual_mode) if isinstance(__builtins__, dict) else __builtins__.open(str(filename), actual_mode)
+            path = _n_os_arg(filename)
+            self._handle = __builtins__["open"](path, actual_mode) if isinstance(__builtins__, dict) else __builtins__.open(path, actual_mode)
             self._id = id(self)
             File._registry[self._id] = self
             return True
@@ -2687,12 +2765,8 @@ class File:
 
     def write(self, data):
         if hasattr(self._handle, 'mode') and 'b' in self._handle.mode:
-            if isinstance(data, char):
-                return self._handle.write(bytes(data))
-            if hasattr(data, 'data'):
-                data = data.data.encode('utf-8')
-            elif isinstance(data, str):
-                data = data.encode('utf-8')
+            if isinstance(data, str) or hasattr(data, 'data'):  # str, char, string byte views
+                data = _n_encode_str(data)
         return self._handle.write(data)
 
     def read(self, *args):
@@ -3854,9 +3928,22 @@ class float64(NFloat):
 #             return cls(value)
 
 
-def _n_encode_str(s) -> bytes:
-    """Python text -> Nim byte string. Chars <= 0xFF map 1:1 to bytes (latin-1);
-    text outside that range falls back to UTF-8. Inverse: _n_decode_bytes."""
+# --- Byte-string codec (single source of truth) ---
+#
+# Nim strings are bytes. nimic holds them as a Python `str` *view* in which
+# every char is one byte (code point 0..0xFF, i.e. Latin-1). Unicode text only
+# meets byte strings at I/O boundaries (stdio, files, OS paths, Python-library
+# text), and those boundaries convert via _n_from_text / _n_to_text (UTF-8).
+# Every other encode/decode in the runtime goes through these helpers.
+
+
+class NimicEncodingError(ValueError):
+    """A char above 0xFF was stored into a Nim byte string (string/cstring/char)."""
+
+
+def _n_encode_str(s) -> bytes | None:
+    """Byte view -> bytes (strict Latin-1). bytes/bytearray pass through, objects
+    with `.data` are unwrapped, None stays None. Inverse: _n_decode_bytes."""
     if s is None:
         return None
     if isinstance(s, (bytes, bytearray)):
@@ -3866,17 +3953,48 @@ def _n_encode_str(s) -> bytes:
     val = str(s)
     try:
         return val.encode('latin-1')
-    except UnicodeEncodeError:
-        return val.encode('utf-8', errors='replace')
+    except UnicodeEncodeError as e:
+        i = e.start
+        c = val[i]
+        raise NimicEncodingError(
+            f"character {c!r} (U+{ord(c):04X}) at index {i} cannot be stored in a Nim byte string; "
+            f"nimic strings are bytes (Latin-1 view). Use utf8({val!r}) for UTF-8 text "
+            f"or escape bytes explicitly") from None
 
 
 def _n_decode_bytes(raw: bytes) -> str:
-    """Nim byte string -> Python text; the single decoder shared by string and cstring.
-    Valid UTF-8 is decoded as UTF-8, anything else byte-per-char (latin-1)."""
-    try:
-        return raw.decode('utf-8')
-    except UnicodeDecodeError:
-        return raw.decode('latin-1')
+    """Bytes -> byte view (Latin-1, one char per byte; never fails)."""
+    return raw.decode('latin-1')
+
+
+def _n_from_text(text: str) -> str:
+    """Unicode text -> byte view of its UTF-8 bytes (I/O boundary helper).
+    surrogateescape restores undecodable bytes produced by _n_to_text / os APIs."""
+    return str(text).encode('utf-8', 'surrogateescape').decode('latin-1')
+
+
+def _n_to_text(view) -> str:
+    """Byte view (str or string) -> Unicode text by decoding its bytes as UTF-8
+    (I/O boundary helper). Invalid UTF-8 bytes become lone surrogates, so
+    _n_from_text(_n_to_text(v)) == v for any bytes."""
+    return _n_encode_str(view).decode('utf-8', 'surrogateescape')
+
+
+def utf8(text) -> 'string':
+    """Nim string literal semantics for Unicode text: utf8("é") is the 2-byte
+    string C3 A9, exactly like the Nim literal "é" (a bare "é" is the byte E9)."""
+    return string(_n_from_text(text))
+
+
+def _n_os_arg(p) -> str:
+    """Byte-view path/name/env value -> text for Python's os APIs, which
+    fsencode it back to exactly the same bytes (surrogateescape)."""
+    return _n_to_text(p)
+
+
+def _n_os_result(s) -> 'string':
+    """Path/name/env text returned by Python's os APIs -> nimic byte string."""
+    return string(_n_from_text(s))
 
 
 class cstring:
@@ -3888,6 +4006,7 @@ class cstring:
 
     Python-side it stores either None (nil) or a bytes value, and
     provides len(), str(), __eq__(None), and c_free compatibility.
+    str(cs) is the Latin-1 byte view (one char per byte), as for `string`.
     """
     __slots__ = ('_value', '_n_view')
 
@@ -3961,8 +4080,10 @@ class cstring:
         if isinstance(other, cstring):
             return self._value == other._value
         if isinstance(other, (str, bytes)):
-            cmp = other.encode('utf-8') if isinstance(other, str) else other
-            return self._value == cmp
+            try:
+                return self._value == _n_encode_str(other)
+            except NimicEncodingError:
+                return False  # chars above 0xFF never equal a byte string
         return NotImplemented
 
     def __ne__(self, other):
@@ -4026,7 +4147,7 @@ class char(str):
             # char('A') or char('A', addr)
             ch = value[:1] if value else '\x00'
             obj = super().__new__(cls, ch)
-            obj._n_byte = ord(ch)
+            obj._n_byte = _n_encode_str(ch)[0]  # raises NimicEncodingError above 0xFF
         obj._n_slot_addr = addr
         return obj
 
@@ -4061,7 +4182,13 @@ class char(str):
         DICT_OF_C_TYPES[cls.__name__] = ctypes.c_char
 
 class string(collections.UserString):
-    """Nim-compatible string with C-buffer backing to support addr()."""
+    """Nim-compatible string with C-buffer backing to support addr().
+
+    A Nim string is a sequence of bytes. `.data` is its Latin-1 *byte view*:
+    one Python char (code point 0..0xFF) per byte, so len(s) is the byte count
+    and s[i] is byte i. A char above 0xFF raises NimicEncodingError; use
+    utf8(text) to get the UTF-8 bytes of Unicode text (Nim literal semantics).
+    """
     
     @property
     def _n_view(self):
@@ -4128,7 +4255,8 @@ class string(collections.UserString):
         return self
 
     def __fspath__(self) -> str:
-        return str(self.data)
+        # os re-encodes this text (fsencode) to exactly the string's bytes
+        return _n_to_text(self)
 
     def setLen(self, new_len: int) -> None:
         nl = int(new_len)
@@ -4234,7 +4362,7 @@ class string(collections.UserString):
     @classmethod
     def _n_on_array(cls, parent_elems, index, value=None):
         if value is not None:
-            b_val = value.data.encode('utf-8') if hasattr(value, 'data') else str(value).encode('utf-8')
+            b_val = _n_encode_str(value)
             if isinstance(index, str):
                 setattr(parent_elems, index, b_val)
             else:
@@ -4243,7 +4371,7 @@ class string(collections.UserString):
         if raw is None:
             return cls("")
         if isinstance(raw, bytes):
-            return cls(raw.decode('utf-8', 'replace'))
+            return cls(raw)
         return cls(str(raw))
         
     def __getitem__(self, index):

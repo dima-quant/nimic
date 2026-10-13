@@ -163,7 +163,25 @@ Because the transpiler is sensitive to Python's internal logic versus Nim's syst
 | `"format: $1" % [arg]` | `string("format: $1") % [arg]` | String `%` operator transpiles as Nim `%` (formatting), not `mod` (`rule:strformat`) |
 | `readFile(f)` | `read_file(f)` / `readFile(f)` | Reads binary-safe byte buffer into Nimic `string`. |
 | `Path(str)` | `Path(str)` | `from nimic.std.paths import Path`. Supports `/` (`__truediv__`) and `os.PathLike` (`__fspath__`). |
+| `s.skipWhitespace(i)` (UFCS on a std proc) | `s.skipWhitespace(i)` | Works when the Python std shim declares the proc with `@ufcs(string, aliases=("skipWhitespace",))`; std shims must not `setattr` methods onto core types. Python's own `str` methods (`find`, `rfind`, `strip`, …) are never shadowed — call the strutils proc as a function (`rfind(s, c)`) when Nim semantics differ |
+| `type Snippet = string` | `Snippet = string` | A plain module-level alias; `@dispatch` resolves it (also in `varargs[Snippet]`) through the defining module's globals |
 | `== nil` / `!= nil` | `is None` / `is not None` | Python identity checks transpile as Nim nil comparisons (`rule:nilident`) |
+
+### 6.1 Strings are bytes (`rule:latin1literal`, `rule:utf8literal`)
+A Nim `string` is a sequence of bytes. A nimic `string`/`cstring`/`char` holds those bytes as a Python `str` *byte view*: one char per byte (code points 0–0xFF, i.e. Latin-1).
+
+| Nim | Python (Nimic) | Notes |
+| --- | --- | --- |
+| `string` = bytes, `len` = byte count, `s[i]` = byte i | `s.data` is the Latin-1 byte view | `len(s)` and `s[i]` are byte-exact |
+| `"\xE9"` (one byte) | `"é"` or `"\xe9"` | A bare non-ASCII char ≤ 0xFF *is* that byte; transpiles as `"\xE9"` (`rule:latin1literal`) |
+| `"é"` (UTF-8 bytes `C3 A9`) | `utf8("é")` | `utf8(text)` gives the UTF-8 bytes of Unicode text; a constant argument transpiles as the raw literal `"é"` (`rule:utf8literal`) |
+| — | `"€"` (char > 0xFF) | Not a byte: `string("€")` raises `NimicEncodingError` (a `ValueError`); the transpiler raises `SyntaxError`. Use `utf8("€")` |
+| `echo`, `readLine`, `write` (byte-transparent) | `print`/`echo`, stdio | Importing `nimic.ntypes` reconfigures stdin/stdout/stderr to Latin-1, so byte views are written as their exact bytes. Python-side text > 0xFF is still written as UTF-8. Opt out with env `NIMIC_NO_STDIO_RECONFIGURE=1` |
+| `readFile`, `writeFile`, `lines`, `File` | same names | Binary I/O, no decoding |
+| OS paths, env vars, `paramStr`, `getCurrentDir`, `walkDir` | `nimic.std.os` | Paths are bytes on disk: `utf8("café.txt")` names the same file Nim's `"café.txt"` does |
+| `std/unicode` (runes) | — | Not yet available: Unicode handling is explicit on UTF-8 byte views |
+
+Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_text` (Unicode text → byte view), `_n_to_text` (byte view → text), `_n_os_arg`, `_n_os_result`.
 
 ## 7. Operators and Logic (`rule:bitwiserename`)
 | Nim | Python (Nimic) | Notes |
