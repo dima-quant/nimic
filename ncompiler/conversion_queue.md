@@ -1,12 +1,12 @@
 # Nim Compiler → Nimic: Conversion Queue
 
-> **Generated**: 2026-09-15 | **Total modules**: 164 | **Converted**: 28 | **Remaining**: 136
+> **Generated**: 2026-09-15 | **Total modules**: 164 | **Converted**: 29 | **Remaining**: 135
 
 ## Progress Summary
 
 | Tier | Modules | Converted | Remaining | Description |
 |------|---------|-----------|-----------|-------------|
-| 0 | 37 | 22 | 15 | No dependencies (leaf modules) |
+| 0 | 37 | 23 | 14 | No dependencies (leaf modules) |
 | 1 | 7 | 3 | 4 | Single-tier dependencies |
 | 2 | 3 | 1 | 2 | Depends on Tiers 0–1 |
 | 3 | 11 | 2 | 9 | Core infrastructure (options, msgs, trees) |
@@ -15,7 +15,7 @@
 | 11–15 | 43 | 0 | 43 | Type analysis, semantic data |
 | 16–22 | 20 | 0 | 20 | Semantic analysis, code generation |
 | 23–28 | 9 | 0 | 9 | VM, sem, pipelines, main |
-| **Total** | **164** | **28** | **136** | |
+| **Total** | **164** | **29** | **135** | |
 
 ## Conversion Rules
 
@@ -31,21 +31,20 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 
 | Priority | Module | Size | Notes |
 |----------|--------|------|-------|
-| 1 | `ccgtrav` | 8,380 bytes | C gen traversal |
-| 2 | `cbuilderstmts` | 9,403 bytes | C builder statements |
-| 3 | `ccgliterals` | 13,946 bytes | C gen literals |
-| 4 | `int128` | 16,767 bytes | 128-bit integer |
-| 5 | `sizealignoffsetimpl` | 17,025 bytes | Size/align computation |
-| 6 | `cbuilderdecls` | 22,463 bytes | C builder declarations |
-| 7 | `semobjconstr` | 23,372 bytes | Object construction (sem) |
-| 8 | `semgnrc` | 24,878 bytes | Generic sem |
-| 9 | `semmagic` | 27,519 bytes | Magic sem |
-| 10 | `semtempl` | 31,451 bytes | Template sem |
-| 11 | `semcall` | 44,523 bytes | Call sem |
-| 12 | `semfields` | 6,625 bytes | Field sem |
-| 13 | `seminst` | 18,919 bytes | Instantiation sem |
-| 14 | `ccgstmts` | 71,794 bytes | C gen statements (large) |
-| 15 | `semtypes` | 106,643 bytes | Type sem (very large) |
+| 1 | `cbuilderstmts` | 9,403 bytes | C builder statements |
+| 2 | `ccgliterals` | 13,946 bytes | C gen literals |
+| 3 | `int128` | 16,767 bytes | 128-bit integer |
+| 4 | `sizealignoffsetimpl` | 17,025 bytes | Size/align computation |
+| 5 | `cbuilderdecls` | 22,463 bytes | C builder declarations |
+| 6 | `semobjconstr` | 23,372 bytes | Object construction (sem) |
+| 7 | `semgnrc` | 24,878 bytes | Generic sem |
+| 8 | `semmagic` | 27,519 bytes | Magic sem |
+| 9 | `semtempl` | 31,451 bytes | Template sem |
+| 10 | `semcall` | 44,523 bytes | Call sem |
+| 11 | `semfields` | 6,625 bytes | Field sem |
+| 12 | `seminst` | 18,919 bytes | Instantiation sem |
+| 13 | `ccgstmts` | 71,794 bytes | C gen statements (large) |
+| 14 | `semtypes` | 106,643 bytes | Type sem (very large) |
 
 ### Already Converted & Reviewed
 
@@ -73,6 +72,7 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 | `sinkparameter_inference` | 0 | `ncompiler/review_sinkparameter_inference.md` | ✅ Complete |
 | `ccgthreadvars` | 0 | `ncompiler/review_ccgthreadvars.md` | ✅ Complete |
 | `bitsets` | 0 | `ncompiler/review_bitsets.md` | ✅ Complete |
+| `ccgtrav` | 0 | `ncompiler/review_ccgtrav.md` | ✅ Complete |
 | `idents` | 1 | `ncompiler/review_idents.md` | ✅ Complete |
 | `llstream` | 1 | `ncompiler/review_llstream.md` | ✅ Complete |
 | `ropes` | 1 | `ncompiler/review_ropes.md` | ✅ Complete |
@@ -84,7 +84,7 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 
 ## Full Tier Breakdown
 
-### Tier 0 — No dependencies (21/37 converted)
+### Tier 0 — No dependencies (23/37 converted)
 
 | Module | Size | Dependencies | Status |
 |--------|------|--------------|--------|
@@ -98,7 +98,7 @@ These are Tier 0 modules not yet converted, sorted by file size (smallest first)
 | `ccgreset` | 4,536 bytes |  | ✅ Converted + Reviewed |
 | `ccgstmts` | 71,794 bytes |  | 🔲 Pending |
 | `ccgthreadvars` | 2,429 bytes |  | ✅ Converted + Reviewed |
-| `ccgtrav` | 8,380 bytes |  | 🔲 Pending |
+| `ccgtrav` | 8,380 bytes |  | ✅ Converted + Reviewed |
 | `hlo` | 3,811 bytes |  | ✅ Converted + Reviewed |
 | `inliner` | 4,217 bytes |  | ✅ Converted + Reviewed |
 | `int128` | 16,767 bytes |  | 🔲 Pending |
