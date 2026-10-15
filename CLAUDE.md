@@ -95,20 +95,39 @@ For modifications in `src/nimic/ntypesystem.py` and `src/nimic/ntypes.py`:
 2. Run core unit tests:
    ```bash
    .venv/bin/python -m unittest tests/nimic/test_ntypes.py
+   .venv/bin/python -m unittest tests.nimic.test_nvariants tests.nimic.test_inliner
    ```
-3. Run compiler module verification loop across all converted modules:
+3. Run compiler module verification loop across all converted modules (Python execution of their `__main__` tests):
    ```bash
    for m in prefixmatches wordrecg idents platform pathutils nimpaths ropes llstream lineinfos options msgs bitsets hlo inliner aliasanalysis ccgreset rodutils btrees jstypes saturate nodekinds nversion packagehandling ccgthreadvars sinkparameter_inference sourcemap cbuilderexprs; do
      .venv/bin/python -m ncompiler.$m || echo "FAIL: $m"
    done
    ```
+4. **Execution tests in Python and transpiled Nim** (required for every core review; unit tests alone
+   missed non-compiling transpiler output and a dispatch regression that broke the converters):
+   ```bash
+   .venv/bin/python tests/verify_transpiled.py            # modules + raytracer + converters, several minutes
+   .venv/bin/python tests/verify_transpiled.py modules    # or a single check: modules | raytracer | converters
+   ```
+   - **modules**: each converted `ncompiler/<m>.py` is transpiled, swapped into a copy of the Nim compiler
+     sources (`compiler/`) and must pass `nim check`. NEP-1 naming errors (`--styleCheck`) are accepted:
+     nimic keeps snake_case names, so the check runs with `--styleCheck:off`.
+   - **raytracer**: `trace_of_radiance_animation` runs in Python and as `nim c -d:danger` binary; the
+     rendered frames must be byte-identical.
+   - **converters**: `test_converter_ppm_to_h264` / `test_converter_h264_to_mp4` in Python and compiled Nim
+     must reproduce `reference.264` / `reference.mp4` byte-for-byte (inputs live in the ignored, local-only
+     `tests/nraytracer/ncache/build/rendered_test`, so this check only runs in the main checkout).
+   - Pitfalls: never run `tests/nraytracer/test_*.py` (e.g. `test_nast.py`) or `ntranspile` inside the repo
+     to check compilation: they regenerate the **tracked** `tests/nraytracer/ncache/*.nim`. The script works
+     in `.scratch/verify_transpiled`. Transpile modules the way `nimic.nimp` does (import, then `unparse`
+     with `_n_registry`); a bare `transpiler.unparse(ast)` fails for modules needing the type registry.
 
 ### Step 6 — Remediate Issues
 For every ad hoc fix found:
 1. **Tests First**: Add unit tests in `tests/nimic/test_ntypes.py` testing the generic behavior and edge cases.
 2. **Implement Generic Solution**: Refactor the implementation to the correct class or protocol.
 3. **Remove Ad Hoc Hack**: Eliminate the hardcoded branch / workaround.
-4. **Verify**: Ensure both `test_ntypes.py` and all `ncompiler` modules pass.
+4. **Verify**: Ensure `test_ntypes.py`, all `ncompiler` modules and `tests/verify_transpiled.py` pass.
 5. **Complex Redesigns**: If a proper fix requires a large-scale architectural overhaul, write a formal proposal in `ncompiler/proposals/feature_<name>.md` and implement a safe, clean interim fix.
 
 ### Step 7 — Write Review Report
@@ -215,7 +234,8 @@ Whenever adding or remediating a feature in Nimic core:
 3. **Step C — Document**:
    Update `nimic_translation_rules.md` if the change affects user-facing DSL syntax or semantics.
 4. **Step D — Full Verification**:
-   Ensure all 100+ core unit tests and all 28+ compiler modules pass cleanly.
+   Ensure all core unit tests, all 28+ compiler modules and the Python/Nim execution tests
+   (`tests/verify_transpiled.py`, Step 5.4) pass cleanly.
 
 ---
 
@@ -273,6 +293,10 @@ Save reports in `ncompiler/review_core_YYYY_MM_DD.md`:
    - Result: X/X passed (list newly added tests)
 2. **Compiler Modules Verification:**
    - All 28+ converted modules verified: ✅ All pass / [List failures]
+3. **Execution Tests (Python vs transpiled Nim)** — `tests/verify_transpiled.py`:
+   - Modules `nim check` in `compiler/`: X/X
+   - Raytracer frames Python == Nim: ✅ / ❌
+   - Converters reproduce `reference.264` / `reference.mp4` (Python and Nim): ✅ / ❌ / skipped (no inputs)
 
 ---
 
