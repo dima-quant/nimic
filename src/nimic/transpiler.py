@@ -45,7 +45,8 @@ Function definitions:
   rule:block -> function definition named "_block" is inserted as "block:" where called
   rule:templateinline -> "with template_inline" is replaced by template definition
   rule:funcdefyield -> definitions with yield or decorated with "iterator" are converted to iterators
-  rule:funcdefmut -> arguments denoted as "mut@" are mutable in function definition -> "var "
+  rule:funcdefmut -> arguments and return types denoted as "mut@" are mutable in function definition -> "var "
+    (also in calltype signatures): def s(self: BProc) -> mut @ Builder -> proc s*(self: BProc): var Builder
   rule:funcdefbody -> no body is written for function definition with "borrow" in pragma or only "pass"
   rule:funcdefinplace -> remove return ... from dunder defs for binary in-place operators __i...__, first argument is
     annotated as mutable if not done already
@@ -112,7 +113,8 @@ Memory & variables:
   rule:copy -> value types are copied, drop .copy()
   rule:varini -> var initialization call without arguments with the same name as annotation is interpreted as
     declaration ("with var: a: Rng = Rng()" transpiles as "var a: Rng"), e.g. if the type is tuple. Also holds
-    without annotation for registered classes or native types as array, openArray, etc.
+    without annotation for registered classes or native types as array, openArray, etc. Ref types (registered
+    with _n_is_ref or decorated @ref in the module) keep the constructor call, since `var x: T` would be nil.
 
 The docstring for the original ``ast`` module is given below:
 
@@ -849,6 +851,7 @@ class _Unparser(NodeVisitor):
         self._in_try_star = False
         self._aliases = {"Object": "object", "NTuple": "tuple"}
         self._tuple_types = set()
+        self._ref_types = set()
         self._set_types = set()
         self._seq_types = set()
         self._native_type_subscript = ["array", "openArray", "seq"]
@@ -864,6 +867,8 @@ class _Unparser(NodeVisitor):
                     if isinstance(tp, type):
                         if tp.__name__ == "NTuple" or any(base.__name__ == "NTuple" for base in getattr(tp, "__mro__", [])):
                             self._tuple_types.add(name)
+                        if getattr(tp, "_n_is_ref", False):
+                            self._ref_types.add(name)
         self._no_bracket_subscript = ["ptr", "ref"]  # rule:dropbrackets
         self._keywords_no_with = ["const", "let", "var", "export"]  # rule:dropwith
         self._template_tail_returns = []  # rule:templatereturn, one set of Return ids per open template
@@ -1159,7 +1164,12 @@ class _Unparser(NodeVisitor):
             if node.value.func.id == "_block":
                 # rule:block
                 self._write_block_body()
-            elif "var" in self._context_stack and node.value.func.id in self._type_registry.types:
+            elif (
+                "var" in self._context_stack
+                and self._type_registry is not None
+                and node.value.func.id in self._type_registry.types
+                and node.value.func.id not in self._ref_types  # rule:varini, a ref type must allocate: x = T()
+            ):
                 type_name = self._adjust_name(node.value.func.id, definition=False)
                 self.write(": " + type_name) # needed for tuple declaration
             else:
@@ -1387,6 +1397,8 @@ class _Unparser(NodeVisitor):
         # rule:classdef
         if node.decorator_list:
             deco = node.decorator_list[0].id
+            if deco == "ref":
+                self._ref_types.add(node.name)  # rule:varini, module-local @ref classes
         else:
             deco = ""
         # for deco in node.decorator_list:
@@ -1629,7 +1641,7 @@ class _Unparser(NodeVisitor):
                 self.traverse(node.args)
             if node.returns and not isinstance(node.returns, Constant):
                 self.write(": ")
-                self.traverse(node.returns)
+                self._write_annotation(node.returns)  # rule:funcdefmut
             if pragma:
                 self.write(" {." + pragma + ".}")
             return
@@ -1646,7 +1658,7 @@ class _Unparser(NodeVisitor):
             self.traverse(node.args)
         if node.returns and not isinstance(node.returns, Constant) and not inplace:
             self.write(": ")
-            self.traverse(node.returns)
+            self._write_annotation(node.returns)  # rule:funcdefmut
             typed_template = decl_str == "template"
             no_return = typed_template or decl_str == "converter"
         if pragma:
@@ -2657,14 +2669,17 @@ class _Unparser(NodeVisitor):
         self.write(_name)
         if node.annotation:
             self.write(": ")
-            ann = node.annotation
-            # rule:funcdefmut, check if annotated as mutable "mut @"
-            if isinstance(ann, BinOp) and isinstance(ann.op, MatMult) and \
-                isinstance(ann.left, Name) and ann.left.id == "mut":
-                self.write("var ")
-                self.traverse(ann.right)
-            else:
-                self.traverse(node.annotation)
+            self._write_annotation(node.annotation)
+
+    def _write_annotation(self, ann):
+        """Parameter or return type annotation; `mut @ T` is written as `var T`."""
+        # rule:funcdefmut, check if annotated as mutable "mut @"
+        if isinstance(ann, BinOp) and isinstance(ann.op, MatMult) and \
+            isinstance(ann.left, Name) and ann.left.id == "mut":
+            self.write("var ")
+            self.traverse(ann.right)
+        else:
+            self.traverse(ann)
 
     def visit_arguments(self, node):
         first = True
