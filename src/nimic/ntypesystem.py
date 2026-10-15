@@ -362,6 +362,9 @@ def _match_subtype(arg_type_name: str, sig_type_name: str) -> bool:
         return True
     if arg_canonical == sig_canonical:
         return True
+    # None (nil in Nim) matches the nilable types only: ref, ptr, pointer, proc
+    if arg_canonical == "NoneType":
+        return _n_is_nilable(DICT_OF_TYPES.get(sig_type_name))
     # Generic type classes (SomeInteger, SomeFloat)
     if sig_canonical in _n_generic_types and arg_canonical in _n_generic_types[sig_canonical]:
         return True
@@ -1640,6 +1643,14 @@ class Tset(set):
 
 # --- Structured Objects (Object) ---
 
+def _n_is_nilable(fc: object) -> bool:
+    """True if `nil` is a valid value of type `fc`: ref, ptr, pointer and proc (calltype) types."""
+    if getattr(fc, '_n_is_calltype', False) or getattr(fc, '_n_is_ref', False) or getattr(fc, '_n_is_ptr', False):
+        return True
+    _pointer = DICT_OF_TYPES.get("pointer")
+    return bool(isinstance(fc, type) and _pointer and issubclass(fc, _pointer))
+
+
 def _n_default_value(fc: object) -> object:
     """Nim's zero value for a field / element type `fc` (default(T))."""
     if isinstance(fc, TypeAliasType):  # `type D = dict[str, int]`
@@ -1648,10 +1659,7 @@ def _n_default_value(fc: object) -> object:
         return _n_default_value(fc.__origin__)  # generic alias such as dict[str, int]
     if not isinstance(fc, type):
         return None  # e.g. an unbound type variable
-    if getattr(fc, '_n_is_calltype', False) or getattr(fc, '_n_is_ref', False) or getattr(fc, '_n_is_ptr', False):
-        return None
-    _pointer = DICT_OF_TYPES.get("pointer")
-    if _pointer and issubclass(fc, _pointer):
+    if _n_is_nilable(fc):
         return None
     if issubclass(fc, Enum):
         return low(fc)
