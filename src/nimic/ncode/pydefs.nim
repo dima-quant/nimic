@@ -4,6 +4,17 @@ type
   uintp* = uint
   intp* = int
 
+when defined(nimPreviewSlimSystem):
+  # under a slim system File / assert / doAssert / raiseAssert are not in system:
+  # every transpiled module imports this prelude, so re-export them
+  import std/[syncio, assertions]
+  export syncio, assertions
+
+# Python enumerate(s): Nim's for-loop macro handles `for (i, x) in enumerate(s)` (emitted by
+# rule:fortupleunpack) as well as `for i, x in ...`, over any iterable
+import std/enumerate
+export enumerate
+
 type
   TextIOWrapper* = File
 

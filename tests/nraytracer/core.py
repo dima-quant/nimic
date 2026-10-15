@@ -29,7 +29,7 @@ class MaterialKind(NIntEnum):
 
 
 class Material(Object):
-    kind: MaterialKind = None
+    kind: MaterialKind
     match kind:
         case MaterialKind.kMetal:
             fMetal: Metal

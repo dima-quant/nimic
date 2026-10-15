@@ -57,14 +57,20 @@ Function definitions:
   rule:calltype -> def decorated with "calltype" emit as type alias: Name* = proc(...): T {.pragma.}
 
 Control flow:
-  rule:matchcase -> adjust match case according to Nim syntax, also for variant types
+  rule:matchcase -> adjust match case according to Nim syntax, also for variant types: in a class body,
+    `field: T` followed by `match field:` is a record case `case field*: T` (discriminator default dropped),
+    `case _` -> else, `A | B` -> of A, B; branch bodies are records, so cases nest
+  rule:uncheckedassign -> with uncheckedAssign: block transpiles as {.cast(uncheckedAssign).}: block
   rule:inlineif -> write inline if according to Nim syntax
   rule:comptime -> the expression "if comptime(x)" is written as "when x" ("if" directly followed by "comptime"
     should be resolvable at comptime (is interpreted as "when")
   rule:main -> replace __name__ == "__main__" by isMainModule
   rule:defined -> defined("identifier") transpiles as defined(identifier) without quotes
-  rule:fortupleunpack -> tuple unpacking in for-loops emits parenthesized (a, b) syntax
-  rule:templatereturn -> inside templates, "return expr" emits just the expression (Nim template result semantics)
+  rule:fortupleunpack -> tuple unpacking in for-loops emits parenthesized (a, b) syntax, except for Nim's
+    multi-value magic iterators fields(a, b) / fieldPairs(x), which need bare `for a, b in`
+  rule:templatereturn -> in templates, a "return expr" in tail position (end of every path: last statement, both
+    arms of if/else, all arms of a match with case _) emits just the expression (template value); any other
+    `return` stays, since in Nim it leaves the enclosing routine
 
 Operators & renaming:
   rule:assign -> operator <<= is defined as value assignment to a mutable variable, i.e. a <<= b transpiles as a = b,
@@ -860,6 +866,7 @@ class _Unparser(NodeVisitor):
                             self._tuple_types.add(name)
         self._no_bracket_subscript = ["ptr", "ref"]  # rule:dropbrackets
         self._keywords_no_with = ["const", "let", "var", "export"]  # rule:dropwith
+        self._template_tail_returns = []  # rule:templatereturn, one set of Return ids per open template
         self._keywords_rename = {}
         self._keywords_no_with_colon = ["block"]  # rule:dropwith
         self._context_stack = []
@@ -1176,6 +1183,10 @@ class _Unparser(NodeVisitor):
             and node.value.func.value.id == "array"
             and len(node.value.args) == 1
             and isinstance(node.value.args[0], (List, Dict))
+            # `name: array[N, T] = [...]` is a declaration: only for a variable being declared,
+            # not for `x.s[0:4] = array[...](...)` or a plain reassignment (rule:array call form)
+            and len(node.targets) == 1 and isinstance(node.targets[0], Name)
+            and any(x in self._context_stack for x in ("var", "let", "const"))
         ):
             self.write(": ")
             self.traverse(node.value.func)
@@ -1238,8 +1249,8 @@ class _Unparser(NodeVisitor):
             self.traverse(node.value)
 
     def visit_Return(self, node):
-        # rule:templatereturn -> inside templates, emit just the expression (no "return")
-        if "template" in self._context_stack and node.value:
+        # rule:templatereturn -> a `return x` in tail position of a template is its value: emit just x
+        if self._template_tail_returns and id(node) in self._template_tail_returns[-1]:
             self.fill()
             self.traverse(node.value)
             return
@@ -1492,29 +1503,46 @@ class _Unparser(NodeVisitor):
                         self.interleave(lambda: self.write(", "), self.traverse, body_rest)
                     else:
                         self._context_stack.append(from_object)
-                        i = 0
-                        while i < len(body_rest):
-                            b = body_rest[i]
-                            # rule:matchcase, check for variant types
-                            if (
-                                i + 1 < len(body_rest)
-                                and isinstance(b, AnnAssign)
-                                and isinstance(body_rest[i + 1], Match)
-                                and isinstance(body_rest[i + 1].subject, Name)
-                                and body_rest[i + 1].subject.id == b.target.id
-                            ):
-                                discriminator_name = self._adjust_name(b.target.id)  # rule:localname
-                                self.fill(f"case {discriminator_name}: ")
-                                self.traverse(b.annotation)
-                                with self.block(start=""):
-                                    for case in body_rest[i + 1].cases:
-                                        self.traverse(case)
-                                i += 2
-                            else:
-                                self.traverse(b)
-                                i += 1
+                        self._traverse_record_items(body_rest)
                         self._context_stack.pop()
         self.maybe_newline()
+
+    def _traverse_record_items(self, items):
+        """Object fields, where `field: T` followed by `match field:` is a Nim record case
+        (`case field*: T` with `of` / `else` branches). Branch bodies are records too,
+        so cases nest. The discriminator's default value is a nimic artifact and is dropped."""
+        i = 0
+        while i < len(items):
+            b = items[i]
+            # rule:matchcase, check for variant types
+            if (
+                i + 1 < len(items)
+                and isinstance(b, AnnAssign)
+                and isinstance(b.target, Name)
+                and isinstance(items[i + 1], Match)
+                and isinstance(items[i + 1].subject, Name)
+                and items[i + 1].subject.id == b.target.id
+            ):
+                discriminator_name = self._adjust_name(b.target.id)  # rule:localname
+                self.fill(f"case {discriminator_name}: ")
+                self.traverse(b.annotation)
+                with self.block(start=""):
+                    for case in items[i + 1].cases:
+                        self._write_record_branch(case)
+                i += 2
+            else:
+                self.traverse(b)
+                i += 1
+
+    def _write_record_branch(self, case):
+        # rule:matchcase: `case _` -> else, `A | B` -> of A, B (via visit_MatchOr)
+        if isinstance(case.pattern, MatchAs) and case.pattern.name is None and case.pattern.pattern is None:
+            self.fill("else")
+        else:
+            self.fill("of ")
+            self.traverse(case.pattern)
+        with self.block():
+            self._traverse_record_items(case.body)
 
     def visit_FunctionDef(self, node):
         self._scope_depth += 1
@@ -1581,6 +1609,9 @@ class _Unparser(NodeVisitor):
         no_return = False  # rule:typedtemplate
         if func_name[0:2] == "__" and func_name in self.dunder_ops:
             do_arg_swap = func_name in self.binpops_with_arg_swap
+            # rule:funcdefinplace: __i<op>__ mapped to an assignment operator (`+=`, `<<=`, ...);
+            # excludes other __i...__ dunders such as __invert__ / __iter__ / __index__
+            inplace = func_name.startswith("__i") and self.dunder_ops[func_name].endswith("=`")
             func_name = self.dunder_ops[func_name]   # rule:funcdefrenamedunder
             if func_name == "`mod`" and node.args.args and node.args.args[0].annotation:
                 ann_str = ast.unparse(node.args.args[0].annotation)
@@ -1623,6 +1654,7 @@ class _Unparser(NodeVisitor):
         if write_body:
             if decl_str == "template":
                 self._context_stack.append("template")
+                self._template_tail_returns.append(self._tail_returns(body if isinstance(body, list) else [body]))
             with self.block(extra=self.get_type_comment(node), start=" ="):
                 if isinstance(body, list) and isinstance(body[-1], Return):
                     if body[:-1]:
@@ -1638,6 +1670,27 @@ class _Unparser(NodeVisitor):
                     self.traverse(body)
             if decl_str == "template":
                 self._context_stack.pop()
+                self._template_tail_returns.pop()
+
+    def _tail_returns(self, stmts) -> set:
+        """ids of the `return` statements in tail position of a template body: the template's
+        value on every path (last statement, or the tails of an if/else or a match with `case _`
+        that is itself in tail position). Other returns leave the enclosing routine, as in Nim."""
+        if not stmts:
+            return set()
+        last = stmts[-1]
+        if isinstance(last, Return):
+            return {id(last)} if last.value is not None else set()
+        if isinstance(last, If) and last.orelse:
+            body, orelse = self._tail_returns(last.body), self._tail_returns(last.orelse)
+            return body | orelse if body and orelse else set()
+        if isinstance(last, Match) and last.cases and isinstance(last.cases[-1].pattern, MatchAs) \
+                and last.cases[-1].pattern.pattern is None:
+            tails = [self._tail_returns(c.body) for c in last.cases]
+            return set().union(*tails) if all(tails) else set()
+        if isinstance(last, With):
+            return self._tail_returns(last.body)
+        return set()
 
     def _get_pragma(self, docstring_value):
         doc = docstring_value
@@ -1689,10 +1742,16 @@ class _Unparser(NodeVisitor):
 
     def _for_helper(self, fill, node):
         self.fill(fill)
-        # rule:fortupleunpack -> parenthesized tuple unpacking in for-loops
-        if isinstance(node.target, Tuple):
+        # rule:fortupleunpack -> Python unpacks each item, which in Nim is `for (a, b) in xs`
+        # (bare `for a, b in xs` would mean pairs: index + item). Nim's magic iterators
+        # fields(a, b) / fieldPairs(x) yield separate values, not a tuple: they need bare names.
+        if isinstance(node.target, Tuple) and not (
+                isinstance(node.iter, Call) and isinstance(node.iter.func, Name)
+                and node.iter.func.id in self._multi_value_iterators):
             with self.delimit("(", ")"):
                 self.items_view(self.traverse, node.target.elts)
+        elif isinstance(node.target, Tuple):
+            self.items_view(self.traverse, node.target.elts)
         else:
             self.set_precedence(_Precedence.TUPLE, node.target)
             self.traverse(node.target)
@@ -1789,6 +1848,12 @@ class _Unparser(NodeVisitor):
                 self.fill()
                 self._context_stack.append(name)
                 cont_pop = True
+            elif name == "uncheckedAssign":
+                # rule:uncheckedassign -> with uncheckedAssign: is a {.cast(uncheckedAssign).}: block
+                self.fill("{.cast(uncheckedAssign).}")
+                with self.block(start=":"):
+                    self.traverse(node.body)
+                return
             elif name == "do":
                 # rule:doblock -> with do: block translates as do: block in Nim
                 self._indent -= 1
@@ -2169,6 +2234,9 @@ class _Unparser(NodeVisitor):
     # rule:funcdefargswap
     binpops_with_arg_swap = ["__radd__", "__rmul__", "__rmatmul__", "__rdiv__", "__rfloordiv__"]
     # rule:funcdefrenamedunder
+    # Nim magic iterators yielding several values (not a tuple) per step (rule:fortupleunpack)
+    _multi_value_iterators = frozenset({"fields", "fieldPairs"})
+
     dunder_ops = {
         # unops
         "__str__": "`$`",
@@ -2471,7 +2539,8 @@ class _Unparser(NodeVisitor):
                 # rule:funcrename
                 if isinstance(node.func, Name) and _name in self._func_rename:
                     node.func.id = self._func_rename[_name]
-            elif (
+            # independent of the call-context branch above (array[N, T] calls also set func_name)
+            if (
                 isinstance(node.func, Subscript)
                 and node.args
                 and isinstance(node.args[0], List)

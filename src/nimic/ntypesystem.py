@@ -9,7 +9,7 @@ Architecture (layers from low-level to high-level):
 
   Memory layer (ctypes-backed)
     Ntype              — base class wrapping a ctypes buffer + view for value semantics
-    NTypeRegistry      — unified registry (types, c_types, variants, max_variants)
+    NTypeRegistry      — unified registry (types, c_types)
     BufferRegistry     — registry of ctypes buffers (shared memory).
 
   Scalar numerics (NScalar → NInteger / NFloat)
@@ -24,7 +24,9 @@ Architecture (layers from low-level to high-level):
                          (e.g. x: float64), backed by ctypes.Structure.
     NTuple             — Nim tuple; similar to Object, but with tuple-style unpacking.
     NIntEnum           — Nim integer enum; auto-registers in DICT_OF_TYPES.
-    Variant types      — Nim "case object"; detected by the presence of a match/case block.
+    Variant types      — Nim "case object": `match <discriminator>:` after the field;
+                         layout from the declaration (nvariants), FieldDefect on
+                         inactive fields, `with uncheckedAssign:` for branch changes.
 
   Containers
     seq[T]             — Nim's growable sequence; ctypes array + cache.
@@ -60,16 +62,59 @@ import ast
 import bisect
 import ctypes
 import collections
+import contextvars
+import functools
 import inspect as ins
+import linecache
 import operator
 import re
 import struct
 import sys
 import textwrap
 import types
+import warnings
 from enum import IntEnum, StrEnum, Enum
 from string import Template
-from typing import Sequence
+from typing import Sequence, TypeAliasType
+
+from nimic.nvariants import NCase, NField, NRecord, NVariantLayout, parse_record
+
+
+# --- Defects and {.cast(uncheckedAssign).} ---
+
+class Defect(Exception):
+    """Nim: Defect — non-catchable-by-convention runtime error."""
+
+
+class FieldDefect(Defect):
+    """Nim: FieldDefect — access to a field of an inactive object branch, or a
+    discriminator assignment that would change the active branch."""
+
+
+_N_UNCHECKED_ASSIGN = contextvars.ContextVar("_N_UNCHECKED_ASSIGN", default=0)
+
+
+class _UncheckedAssign:
+    """`with uncheckedAssign:` ≙ Nim `{.cast(uncheckedAssign).}:` — discriminator
+    assignments inside may change the active branch. Re-entrant (token stack)."""
+
+    def __init__(self):
+        self._tokens = []
+
+    def __enter__(self):
+        self._tokens.append(_N_UNCHECKED_ASSIGN.set(_N_UNCHECKED_ASSIGN.get() + 1))
+        return self
+
+    def __exit__(self, *exc):
+        _N_UNCHECKED_ASSIGN.reset(self._tokens.pop())
+        return False
+
+
+uncheckedAssign = _UncheckedAssign()
+
+
+def _n_unchecked_assign_active() -> bool:
+    return _N_UNCHECKED_ASSIGN.get() > 0
 
 
 # --- NilPtr sentinel ---
@@ -373,7 +418,12 @@ def _n_resolve_type_aliases(ann: str, namespace: dict) -> str:
     (the function's globals): with `Snippet = string; varargs = seq`, the annotation
     "varargs[Snippet]" becomes "seq[string]". Only names bound to a class with a
     different __name__ are rewritten; otherwise the annotation is returned unchanged
-    (also for forward references and non-type expressions such as `ptr @ T`)."""
+    (also for forward references and non-type expressions such as `ptr @ T`).
+    Names the type system already knows (aliases such as "static[bool]", generic type
+    classes such as SomeInteger, registered types) are kept, and a name only resolves to
+    a nimic class, never to the Python builtin it may alias (`static = set`, `SomeInteger = int`)."""
+    if ann in _n_aliases or ann in _n_generic_types:
+        return ann
     try:
         node = ast.parse(ann, mode="eval").body
     except SyntaxError:
@@ -383,8 +433,10 @@ def _n_resolve_type_aliases(ann: str, namespace: dict) -> str:
     def resolve(n):
         nonlocal changed
         if isinstance(n, ast.Name):
+            if n.id in _n_aliases or n.id in _n_generic_types or n.id in DICT_OF_TYPES:
+                return n.id
             obj = namespace.get(n.id)
-            if isinstance(obj, type) and obj.__name__ != n.id:
+            if isinstance(obj, type) and obj.__name__ != n.id and obj.__module__ != "builtins":
                 changed = True
                 return obj.__name__
             return n.id
@@ -402,6 +454,36 @@ def _n_resolve_type_aliases(ann: str, namespace: dict) -> str:
     return resolved if changed and resolved is not None else ann
 
 
+class _DispatchedCallable:
+    """Callable returned by @dispatch: forwards calls to the dispatcher and looks like
+    the decorated function (name, annotations, code, type params, globals), so it can
+    be re-dispatched (e.g. by DispDict) and bound as a method."""
+
+    def __init__(self, target, orig_fn):
+        functools.update_wrapper(self, orig_fn)  # copies __type_params__ (3.12+) and __dict__
+        self._target = target
+        self._fn = orig_fn
+        # not covered by update_wrapper, but read by dispatch() on re-dispatch
+        self.__code__ = getattr(orig_fn, "__code__", None)
+        self.__defaults__ = getattr(orig_fn, "__defaults__", None)
+        self.__globals__ = getattr(orig_fn, "__globals__", {})
+
+    def __call__(self, *args, **kwargs):
+        return self._target(*args, **kwargs)
+
+    def __get__(self, instance, owner=None):
+        if instance is None:
+            return self
+        return types.MethodType(self, instance)
+
+    def __getitem__(self, types_param):
+        if self.__name__ == "__getitem__":
+            if isinstance(types_param, tuple):
+                return self._target(*types_param)
+            return self._target(types_param)
+        return self
+
+
 def dispatch(fn: callable) -> callable:
     """Decorator implementing Nim-style multi-dispatch based on argument type annotations.
 
@@ -417,6 +499,10 @@ def dispatch(fn: callable) -> callable:
     4. On successful resolution, cache the result in __resolved__ for future calls.
     5. Raise NotImplementedError if no matching signature is found.
     """
+    if isinstance(fn, _DispatchedCallable):
+        # re-dispatch (e.g. DispDict overloading an explicit @dispatch method): register the
+        # original function; registering the wrapper would make it dispatch to itself forever
+        fn = fn._fn
     # No kwargs in dispatched functions. Types should match. TODO: Python types should be treated as literals
     # TODO properly remove prefix
     _annotations = {}
@@ -696,33 +782,6 @@ def dispatch(fn: callable) -> callable:
     for nm in __resolved__:
         debugG[nm] = __resolved__[nm].copy()
 
-    class _DispatchedCallable:
-        def __init__(self, target, orig_fn):
-            self._target = target
-            self._fn = orig_fn
-            self.__name__ = getattr(orig_fn, "__name__", "")
-            self.__doc__ = getattr(orig_fn, "__doc__", "")
-            self.__qualname__ = getattr(orig_fn, "__qualname__", "")
-            self.__annotations__ = getattr(orig_fn, "__annotations__", {})
-            self.__code__ = getattr(orig_fn, "__code__", None)
-            self.__defaults__ = getattr(orig_fn, "__defaults__", None)
-            self.__wrapped__ = orig_fn
-
-        def __call__(self, *args, **kwargs):
-            return self._target(*args, **kwargs)
-
-        def __get__(self, instance, owner=None):
-            if instance is None:
-                return self
-            return types.MethodType(self, instance)
-
-        def __getitem__(self, types_param):
-            if self.__name__ == "__getitem__":
-                if isinstance(types_param, tuple):
-                    return self._target(*types_param)
-                return self._target(types_param)
-            return self
-
     return _DispatchedCallable(fn_dispatch, fn)
 
 
@@ -898,15 +957,20 @@ def distinct(cls: type) -> type:
 class NTypeRegistry:
     """Centralized registry for all nimic type information.
 
-    Consolidates DICT_OF_TYPES, DICT_OF_C_TYPES, DICT_OF_VARIANTS,
-    and DICT_OF_MAX_VARIANTS into a single object.
+    Consolidates DICT_OF_TYPES and DICT_OF_C_TYPES into a single object.
     """
 
     def __init__(self) -> None:
         self.types = {}  # name → Python class
         self.c_types = {}  # name → ctypes struct type
-        self.variants = {}  # name → {kind_val: {field: type_name, ...}, ...}
-        self.max_variants = {}  # name → kind_val of largest variant
+
+    def _ensure_registered(self, resolved: type) -> type:
+        """Register a specialization unless it already is (Object specializations register
+        themselves in __class_getitem__; registering twice would re-evaluate self-referential
+        fields such as `links: array[M, Node[K, V]]` forever)."""
+        if hasattr(resolved, '_n_register_type') and self.types.get(getattr(resolved, '__name__', None)) is not resolved:
+            resolved._n_register_type()
+        return resolved
 
     def get_or_eval_type(self, t_name: str, caller_globals: dict | None = None) -> type:
         if not isinstance(t_name, str):
@@ -938,20 +1002,14 @@ class NTypeRegistry:
                     if canonic_arr_name in self.types:
                         return self.types[canonic_arr_name]
                     resolved = base_type[(n, self.get_or_eval_type(_ntype.strip(), caller_globals))]
-                    if hasattr(resolved, '_n_register_type'):
-                        resolved._n_register_type()  # should be performed in __class_getitem__
-                    return resolved
+                    return self._ensure_registered(resolved)
                 elif "," in params:
                     param_types = tuple(self.get_or_eval_type(p.strip(), caller_globals) for p in params.split(","))
                     resolved = base_type[param_types]
-                    if hasattr(resolved, '_n_register_type'):
-                        resolved._n_register_type()
-                    return resolved
+                    return self._ensure_registered(resolved)
                 else:
                     resolved = base_type[self.get_or_eval_type(params.strip(), caller_globals)]
-                    if hasattr(resolved, '_n_register_type'):
-                        resolved._n_register_type()  # should be performed in __class_getitem__
-                    return resolved
+                    return self._ensure_registered(resolved)
         try:
             type_obj = eval(t_name, caller_globals or {})
             if isinstance(type_obj, type):
@@ -968,8 +1026,6 @@ _n_registry = NTypeRegistry()
 # Backward-compatible aliases — these point to the same dict objects
 DICT_OF_TYPES = _n_registry.types
 DICT_OF_C_TYPES = _n_registry.c_types
-DICT_OF_VARIANTS = _n_registry.variants
-DICT_OF_MAX_VARIANTS = _n_registry.max_variants
 
 # --- Base Memory Type (Ntype) ---
 
@@ -1414,7 +1470,34 @@ class NBool:
 # --- Dispatch Metaclass (DispDict / NMetaClass) ---
 
 
+class _NUnset:
+    """Value of an annotated class-body name that has no default (a variant
+    discriminator read by `match kind:`). Equal to nothing, so no branch matches."""
+
+    def __repr__(self) -> str:
+        return "<unset discriminator>"
+
+    def __eq__(self, other) -> bool:
+        return False
+
+    def __ne__(self, other) -> bool:
+        return True
+
+    __hash__ = object.__hash__
+
+
+_N_UNSET = _NUnset()
+
+
 class DispDict(dict):
+    def __missing__(self, key: str):
+        # class-body read of an annotated name without a default (`kind: K` then `match kind:`);
+        # anything else falls through to globals/builtins (CPython LOAD_NAME honours __missing__)
+        if key in dict.get(self, "__annotations__", {}):
+            self._n_unset_read = True
+            return _N_UNSET
+        raise KeyError(key)
+
     def __setitem__(self, key: str, fn: callable) -> None:
         # apply dispatch to all duplicate methods within a class definition
         if key in self:
@@ -1432,6 +1515,18 @@ class NMetaClass(type):
     @classmethod
     def __prepare__(mcs, name: str, bases: tuple) -> DispDict:
         return DispDict()
+
+    def __new__(mcs, name: str, bases: tuple, namespace: DispDict, **kwargs):
+        # set before type.__new__ so __init_subclass__ (type registration) can see them
+        if getattr(namespace, "_n_unset_read", False):
+            namespace["_n_body_has_case"] = True
+        if "_n_caller_globals" not in namespace:
+            # the defining module's globals: frame 1 runs the class statement
+            frame = sys._getframe(1)
+            namespace["_n_caller_globals"] = frame.f_globals
+            if frame.f_locals is not frame.f_globals:  # class defined inside a function
+                namespace["_n_caller_locals"] = dict(frame.f_locals)
+        return super().__new__(mcs, name, bases, dict(namespace), **kwargs)
 
 
 
@@ -1545,6 +1640,140 @@ class Tset(set):
 
 # --- Structured Objects (Object) ---
 
+def _n_default_value(fc: object) -> object:
+    """Nim's zero value for a field / element type `fc` (default(T))."""
+    if isinstance(fc, TypeAliasType):  # `type D = dict[str, int]`
+        return _n_default_value(fc.__value__)
+    if not isinstance(fc, type) and isinstance(getattr(fc, '__origin__', None), type):
+        return _n_default_value(fc.__origin__)  # generic alias such as dict[str, int]
+    if not isinstance(fc, type):
+        return None  # e.g. an unbound type variable
+    if getattr(fc, '_n_is_calltype', False) or getattr(fc, '_n_is_ref', False) or getattr(fc, '_n_is_ptr', False):
+        return None
+    _pointer = DICT_OF_TYPES.get("pointer")
+    if _pointer and issubclass(fc, _pointer):
+        return None
+    if issubclass(fc, Enum):
+        return low(fc)
+    if fc is bool:
+        return False
+    try:
+        return fc()  # seq, Object, array, NBool, NScalar, string, ... default-construct
+    except TypeError:  # type without a no-argument constructor
+        return None
+
+
+def _n_disc_ordinal(value: object) -> int:
+    """Discriminator identity for branch selection: the stored integer value (what the
+    ctypes view holds), so pattern values and raw view reads compare equal."""
+    if isinstance(value, Enum) and not isinstance(value, int):
+        return nord(value)  # e.g. NStrEnum: no integer value, use the member index
+    return int(value)
+
+
+_n_module_asts: dict = {}
+
+
+def _n_class_def(cls: type) -> ast.ClassDef | None:
+    """The ClassDef of `cls` in its source file, found by __qualname__ (also inside
+    functions and `if comptime(...)` blocks). None when the source is unavailable.
+    Each module is parsed once."""
+    try:
+        filename = ins.getsourcefile(cls)
+    except (OSError, TypeError):
+        return None
+    if not filename:
+        return None
+    tree = _n_module_asts.get(filename)
+    if tree is None:
+        lines = linecache.getlines(filename)
+        if not lines:
+            return None
+        tree = _n_module_asts[filename] = ast.parse("".join(lines))
+
+    def scope_defs(stmts):
+        for s in stmts:
+            if isinstance(s, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield s
+            else:  # if / with / try / for / while bodies stay in the same scope
+                for field in ("body", "orelse", "finalbody", "handlers", "cases"):
+                    sub = getattr(s, field, None)
+                    if isinstance(sub, list):
+                        yield from scope_defs(sub if field not in ("handlers", "cases")
+                                              else [x for h in sub for x in h.body])
+
+    nodes = [tree]
+    for part in cls.__qualname__.split("."):
+        if part == "<locals>":
+            continue
+        nodes = [d for n in nodes for d in scope_defs(n.body) if d.name == part]
+        if not nodes:
+            return None
+    candidates = [n for n in nodes if isinstance(n, ast.ClassDef)]
+    if not candidates:
+        return None
+    # same name defined more than once (e.g. under alternative `if comptime(...)` branches):
+    # prefer the definition whose top-level fields match the class's own annotations
+    own = set(cls.__dict__.get("__annotations__", {}))
+    return max(candidates, key=lambda c: len(own & {s.target.id for s in c.body
+                                                  if isinstance(s, ast.AnnAssign)
+                                                  and isinstance(s.target, ast.Name)}))
+
+
+def _n_subst_type_vars(type_str: object, T_map: dict) -> object:
+    """Substitute type-parameter names in an annotation string (generic specialization)."""
+    if not isinstance(type_str, str) or not T_map:
+        return type_str
+    # whole identifiers only: `V` must not rewrite the V inside `MockVariantNode`
+    pattern = re.compile(r"\b(" + "|".join(map(re.escape, T_map)) + r")\b")
+    return pattern.sub(lambda m: T_map[m.group(1)], type_str)
+
+
+def _n_c_field_type(field_cls: object) -> object:
+    """ctypes type of a ctypes-backed field, or None."""
+    is_class = isinstance(field_cls, type)
+    _pointer = DICT_OF_TYPES.get("pointer")
+    _ua = DICT_OF_TYPES.get("UncheckedArray")
+    if is_class and ((_pointer and issubclass(field_cls, _pointer)) or getattr(field_cls, '_n_is_ref', False)):
+        return ctypes.c_void_p  # pointer, ptr[X] or ref object
+    if getattr(field_cls, '__name__', None) in DICT_OF_C_TYPES:
+        return DICT_OF_C_TYPES[field_cls.__name__]  # scalars, cstring, Object structs, arrays
+    if getattr(field_cls, '_n_is_calltype', False):
+        return ctypes.c_void_p  # proc type → opaque pointer
+    if is_class and _ua and issubclass(field_cls, _ua):
+        return ctypes.c_uint8 * 0  # flexible array member
+    return None
+
+
+def _n_build_c_fields(items: tuple, field_types: dict, python_fields: set, prefix: str) -> tuple[list, list]:
+    """ctypes `_fields_` and `_anonymous_` for record items (Nim C layout, N2): common
+    fields in order; each case = its discriminator, then an anonymous union of one
+    anonymous struct per branch, so branch fields are promoted with correct offsets."""
+    fields, anonymous = [], []
+    for it in items:
+        if isinstance(it, NField):
+            if it.name not in python_fields:
+                ct = _n_c_field_type(field_types.get(it.name))
+                if ct is not None:
+                    fields.append((it.name, ct))
+            continue
+        disc = it.discriminator.name
+        if disc not in python_fields:
+            ct = _n_c_field_type(field_types.get(disc))
+            if ct is not None:
+                fields.append((disc, ct))
+        members = []
+        for i, br in enumerate(it.branches):
+            b_fields, b_anon = _n_build_c_fields(br.items, field_types, python_fields, f"{prefix}_{disc}_b{i}")
+            members.append((f"_n_b{i}", type(f"{prefix}_{disc}_b{i}", (ctypes.Structure,),
+                                              {"_anonymous_": tuple(b_anon), "_fields_": b_fields})))
+        union = type(f"{prefix}_u_{disc}", (ctypes.Union,),
+                     {"_anonymous_": tuple(name for name, _ in members), "_fields_": members})
+        fields.append((f"_n_u_{disc}", union))
+        anonymous.append(f"_n_u_{disc}")
+    return fields, anonymous
+
+
 class _Object(Ntype):
     # Cache for specialized generic classes
     _n_specializations = {}
@@ -1579,93 +1808,70 @@ class _Object(Ntype):
             return _Object._n_specializations[cache_key]
 
         # Resolve annotations by replacing type variable names
-        resolved = {}
-        for attr_name, type_str in cls.__annotations__.items():
-            if isinstance(type_str, str):
-                new_str = type_str
-                for t_name, t_concrete in T_map.items():
-                    new_str = new_str.replace(t_name, t_concrete)
-                resolved[attr_name] = new_str
-            else:
-                resolved[attr_name] = type_str
+        resolved = {attr_name: _n_subst_type_vars(type_str, T_map)
+                    for attr_name, type_str in cls.__annotations__.items()}
+        record = getattr(cls, '_n_record', None)
 
-        # Create specialized subclass
+        # Create specialized subclass. Registration is deferred until the class is
+        # cached, so self-referential fields (links: array[M, Node[K, V]]) resolve to it.
         suffix = "_".join(T_map.values())
         specialized_name = f"{cls.__name__}[{suffix}]"
         caller_globals = getattr(cls, '_n_caller_globals', {})
         specialized = type(specialized_name, (cls,), {
             '__annotations__': resolved,
             '_n_caller_globals': caller_globals,
+            '_n_caller_locals': getattr(cls, '_n_caller_locals', None),
+            '_n_record': record.map_annotations(lambda a: _n_subst_type_vars(a, T_map)) if record else None,
+            '_n_defer_register': True,
         })
         _Object._n_specializations[cache_key] = specialized
+        specialized._n_register_type()
         return specialized
 
     @classmethod
-    def _n_extract_variant_fields(cls) -> dict[str, str]:
-        """Extract field annotations from all Match statement cases in the class definition."""
-        cached = getattr(cls, "_n_variant_fields", None)
-        if cached is not None:
-            return cached
+    def _n_build_record(cls) -> NRecord | None:
+        """The record (declaration tree) of this class, parsed once from its source and
+        cached as cls._n_record. A subclass appends its own fields to a variant base's
+        record (Nim inheritance); a class without own fields inherits the base record.
+        Specializations receive the record from __class_getitem__."""
+        if "_n_record" in cls.__dict__:
+            return cls.__dict__["_n_record"]
+        base_record = next((b.__dict__["_n_record"] for b in cls.__mro__[1:]
+                            if b.__dict__.get("_n_record") is not None), None)
+        own_record = None
+        if cls.__dict__.get("__annotations__") or cls.__dict__.get("_n_body_has_case"):
+            class_def = _n_class_def(cls)
+            if class_def is not None:
+                own_record = parse_record(class_def)
+            elif cls.__dict__.get("_n_body_has_case"):
+                raise TypeError(f"variant object {cls.__name__} needs its source (define it in a .py file)")
+        if own_record is None:
+            record = base_record if base_record is not None and base_record.is_variant else None
+        elif base_record is not None and base_record.is_variant:
+            record = NRecord(base_record.items + own_record.items)
+        else:
+            record = own_record
+        cls._n_record = record
+        return record
 
-        src = None
-        for c in cls.__mro__:
-            if c is not object and c is not _Object and issubclass(c, _Object):
-                try:
-                    src = ins.getsource(c)
-                    break
-                except Exception:
-                    continue
-
-        variant_fields = {}
-        if src:
-            try:
-                tree = ast.parse(textwrap.dedent(src))
-                class_def = None
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.ClassDef):
-                        class_def = node
-                        break
-                if class_def:
-                    for stmt in class_def.body:
-                        if isinstance(stmt, ast.Match):
-                            for case in stmt.cases:
-                                for c_stmt in case.body:
-                                    if isinstance(c_stmt, ast.AnnAssign) and isinstance(c_stmt.target, ast.Name):
-                                        variant_fields[c_stmt.target.id] = ast.unparse(c_stmt.annotation)
-            except Exception:
-                pass
-
-        cls._n_variant_fields = variant_fields
-        return variant_fields
+    def _n_field_defect_msg(self, name: str) -> str:
+        """Nim: field 'x' is not accessible for type 'T' using 'kind = k'."""
+        layout = type(self)._n_variant_layout
+        case = layout.owner_case(name)
+        if case is None:
+            return f"field '{name}' is not accessible for type '{type(self).__name__}'"
+        disc = case.discriminator.name
+        value = self._n_typed_disc(disc, self.__dict__.get("_n_discs", {}).get(disc))
+        return (f"field '{name}' is not accessible for type '{type(self).__name__}' "
+                f"using '{disc} = {getattr(value, 'name', value)}'")
 
     def __getattr__(self, name: str) -> object:
-        cls = type(self)
-        ann = cls.__annotations__.get(name)
-        if ann is None:
-            vf = cls._n_extract_variant_fields()
-            ann = vf.get(name)
-        if ann is not None:
-            fc = getattr(cls, "_n_field_types", {}).get(name)
-            if fc is not None and hasattr(fc, "_n_size"):
-                try:
-                    val = fc()
-                    self.__dict__[name] = val
-                    return val
-                except Exception:
-                    pass
-            if isinstance(ann, str) and ann.startswith("array["):
-                inner = ann[6:]
-                comma_idx = inner.find(",")
-                if comma_idx != -1:
-                    size_expr = inner[:comma_idx].strip()
-                    caller_globals = getattr(cls, "_n_caller_globals", {})
-                    try:
-                        size_val = eval(size_expr, caller_globals)
-                        val = [None] * int(size_val)
-                        self.__dict__[name] = val
-                        return val
-                    except Exception:
-                        pass
+        # only reached when normal lookup fails: an inactive variant field never lives in
+        # __dict__ (python-side) nor is bound to the view (ctypes-side)
+        layout = getattr(type(self), "_n_variant_layout", None)
+        if (layout is not None and name in layout.fields and "_n_discs" in self.__dict__
+                and name not in self.__dict__.get("_n_fields", ())):
+            raise FieldDefect(self._n_field_defect_msg(name))
         raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
     @property
@@ -1741,33 +1947,14 @@ class _Object(Ntype):
 
     def __init__(self, _n_value: Object | None = None, **kwargs: object) -> None:
         """_n_value is an instance of Object or an object with the same structure or None"""
+        if getattr(type(self), '_n_variant_layout', None) is not None:
+            self._n_init_variant(_n_value, kwargs)
+            return
         python_fields = getattr(self.__class__, '_n_python_fields', set())
         field_types = getattr(self.__class__, '_n_field_types', {})
-        _seq = DICT_OF_TYPES.get("seq")
         # Initialize python-side fields (seq and Object subclasses without ctypes backing)
         for name in python_fields:
-            if name not in field_types:
-                continue
-            fc = field_types.get(name)
-            if fc is not None and getattr(fc, '_n_is_calltype', False):
-                setattr(self, name, None)
-            elif fc is not None and isinstance(fc, type):
-                if _seq and issubclass(fc, _seq):
-                    setattr(self, name, fc())
-                elif getattr(fc, '_n_is_ref', False) or getattr(fc, '_n_is_ptr', False):
-                    setattr(self, name, None)    
-                elif issubclass(fc, _Object):
-                    setattr(self, name, fc())
-                elif hasattr(fc, '_n_size'):  # array
-                    setattr(self, name, fc())
-                else:
-                    # Fallback: default-construct (covers string, Hash, etc.)
-                    try:
-                        setattr(self, name, fc())
-                    except (TypeError, Exception):
-                        setattr(self, name, None)
-            else:
-                setattr(self, name, None)
+            setattr(self, name, _n_default_value(field_types.get(name)))
 
         _has_c_type = type(self).__name__ in DICT_OF_C_TYPES
         if kwargs:
@@ -1793,6 +1980,119 @@ class _Object(Ntype):
                 self._n_fields = list(self.__annotations__)
                 self._n_annotations = self.__annotations__
 
+    # --- object variants (case objects) ---
+
+    def _n_init_variant(self, _n_value: Object | None, kwargs: dict) -> None:
+        """Nim N3: discriminators first (given, or their zero value), then only the fields of
+        the selected branches are initialized; a field of another branch is an error."""
+        cls = type(self)
+        layout = cls._n_variant_layout
+        field_types = cls._n_field_types
+        if _n_value is not None and not kwargs:
+            discs = dict(_n_value._n_discs) if '_n_discs' in getattr(_n_value, '__dict__', {}) else \
+                {d: getattr(_n_value, d) for d in layout.discriminators}
+        else:
+            discs = {d: kwargs[d] if d in kwargs else _n_default_value(field_types.get(d))
+                     for d in layout.discriminators}
+        active = layout.active_fields(discs)
+        set_attr = super(_Object, self).__setattr__
+        set_attr('_n_discs', discs)
+        set_attr('_n_fields', list(active))
+        set_attr('_n_annotations', cls.__annotations__)
+        for name in kwargs:
+            if name in layout.fields and name not in active:
+                raise FieldDefect(self._n_field_defect_msg(name))
+        python_fields = cls._n_python_fields
+        for name in active:
+            if name in python_fields:
+                set_attr(name, _n_default_value(field_types.get(name)))
+        if cls.__name__ in DICT_OF_C_TYPES:
+            _buf = DICT_OF_C_TYPES[cls.__name__]()
+            self._n_owned_addr = BUFFER_REGISTRY.register(_buf)
+            self._n_view = _buf
+            disc_source = types.SimpleNamespace(**discs)  # discriminators are written, not read
+            for name in active:
+                self._n_bind_field(name, disc_source if name in discs else None)
+        else:
+            for d in layout.discriminators:
+                if d in active:
+                    setattr(self, d, discs[d])
+        source = _n_value if _n_value is not None and not kwargs else None
+        for name in active:
+            if name in kwargs:
+                setattr(self, name, kwargs[name])
+            elif source is not None and name not in layout.discriminators:
+                setattr(self, name, getattr(source, name))
+
+    def _n_typed_disc(self, name: str, raw: object) -> object:
+        """A discriminator value as its declared type (an enum member rather than an int)."""
+        ft = type(self)._n_field_types.get(name)
+        if isinstance(ft, type) and issubclass(ft, Enum) and not isinstance(raw, ft) and raw is not None:
+            try:
+                return ft(raw)
+            except ValueError:
+                return raw
+        return raw
+
+    def _n_disc_values(self, value: Object | None) -> dict:
+        """Discriminators of a view-backed object: from `value` when given, else from the view."""
+        layout = type(self)._n_variant_layout
+        if value is not None:
+            if '_n_discs' in getattr(value, '__dict__', {}):
+                return dict(value._n_discs)
+            return {d: getattr(value, d) for d in layout.discriminators}
+        view = getattr(self, '_n_view', None)
+        field_types = type(self)._n_field_types
+        discs = {}
+        for d in layout.discriminators:
+            if view is not None and d not in type(self)._n_python_fields:
+                value = self._n_typed_disc(d, getattr(view, d))
+                ft = field_types.get(d)
+                if isinstance(ft, type) and issubclass(ft, Enum) and not isinstance(value, ft):
+                    # zero-initialized memory of an enum without a 0 member (e.g. auto() starting
+                    # at 1): Nim's default(K) is low(K); store it so the view is consistent
+                    value = _n_default_value(ft)
+                    setattr(view, d, _n_disc_ordinal(value))
+                discs[d] = value
+            else:
+                discs[d] = _n_default_value(field_types.get(d))
+        return discs
+
+    def _n_switch_branch(self, new_discs: dict) -> None:
+        """Make the branches selected by `new_discs` active: drop the python-side fields of
+        deactivated branches, default the newly active python-side fields, and bind the
+        newly active ctypes fields WITHOUT zeroing (the union memory is reused, as in Nim)."""
+        cls = type(self)
+        old_active = set(self._n_fields)
+        new_active = cls._n_variant_layout.active_fields(new_discs)
+        for name in old_active.difference(new_active):
+            self.__dict__.pop(name, None)
+        set_attr = super(_Object, self).__setattr__
+        set_attr('_n_discs', dict(new_discs))
+        set_attr('_n_fields', list(new_active))
+        for name in new_active:
+            if name in old_active:
+                continue
+            if name in cls._n_python_fields:
+                set_attr(name, _n_default_value(cls._n_field_types.get(name)))
+            elif getattr(self, '_n_view', None) is not None:
+                self._n_bind_field(name, None)
+
+    def _n_check_variant_access(self, name: str, value: object) -> None:
+        """Nim N4/N5/N7 for an assignment to field `name` of a variant object."""
+        layout = type(self)._n_variant_layout
+        discs = self._n_discs
+        if name not in self._n_fields:
+            raise FieldDefect(self._n_field_defect_msg(name))
+        if name in layout.discriminators:
+            new_discs = {**discs, name: value}
+            if layout.branch_key(new_discs) != layout.branch_key(discs):
+                if not _n_unchecked_assign_active():
+                    raise FieldDefect("assignment to discriminant changes object branch")
+                self._n_switch_branch(new_discs)
+            else:
+                discs[name] = value
+
     @classmethod
     def _n_on_array(
         cls, parent_elems: object, id: int, value: Object | None = None
@@ -1817,62 +2117,26 @@ class _Object(Ntype):
         return self
 
     def _n_setup(self, value: Object | None = None) -> None:
-        """Initialize object fields after construction.
+        """Initialize object fields after construction (view-backed or copied objects).
 
-        Detects variant types (objects with a 'kind' field) and resolves
-        the appropriate variant layout from DICT_OF_VARIANTS. For non-variant
-        types, directly initializes fields by calling _n_set_value.
-        """
-        attributes = list(self.__annotations__)
-        set_fields = True
-        class_name = type(self).__name__
-        if class_name in DICT_OF_VARIANTS:
-            if value and hasattr(value, 'kind'):
-                kind = value.kind
-            elif value:
-                # value is a sub-type (e.g. Sphere) — find which kind matches
-                value_type_name = type(value).__name__
-                kind = None
-                for k, ann in DICT_OF_VARIANTS[class_name].items():
-                    for _field_name, _field_type in ann.items():
-                        if _field_type == value_type_name:
-                            kind = k
-                            break
-                    if kind is not None:
-                        break
-                if kind is None:
-                    kind = DICT_OF_MAX_VARIANTS[class_name]
-            else:
-                kind = self._n_view.kind
-            var_class_name = class_name + f"_kind_{int(kind)}"
-            if var_class_name not in DICT_OF_C_TYPES:
-                kind = DICT_OF_MAX_VARIANTS[class_name]
-                var_class_name = class_name + f"_kind_{int(kind)}"
-                set_fields = False
-            self._n_view = (DICT_OF_C_TYPES[var_class_name]).from_address(
-                ctypes.addressof(self._n_view)
-            )
-            # Write the resolved kind into the ctypes struct
-            self._n_view.kind = int(kind)
-            self._n_annotations = DICT_OF_VARIANTS[class_name][int(kind)]
-            attributes = list(self._n_annotations.keys())
-            # If value is a sub-type without 'kind', wrap it for _n_set_value
-            if value and not hasattr(value, 'kind'):
-                # Find which field in the variant matches this sub-type
-                value_type_name = type(value).__name__
-                _wrapped = type('_VariantProxy', (), {'kind': kind})()
-                for _field_name, _field_type in self._n_annotations.items():
-                    if _field_type == value_type_name:
-                        setattr(_wrapped, _field_name, value)
-                        break
-                value = _wrapped
+        Variant objects first determine their discriminators (from `value`, else from the
+        view) and expose only the fields of the active branches."""
+        layout = getattr(type(self), '_n_variant_layout', None)
+        if layout is not None:
+            discs = self._n_disc_values(value if value is not self else None)
+            set_attr = super(_Object, self).__setattr__
+            set_attr('_n_discs', discs)
+            set_attr('_n_annotations', self.__annotations__)
+            set_attr('_n_fields', list(layout.active_fields(discs)))
         else:
             self._n_annotations = self.__annotations__
-        self._n_fields = attributes
-        if set_fields:
-            self._n_set_value(value)
+            self._n_fields = list(self.__annotations__)
+        self._n_set_value(value)
 
     def __setattr__(self, name: str, value: object) -> None:
+        layout = type(self).__dict__.get('_n_variant_layout') or getattr(type(self), '_n_variant_layout', None)
+        if layout is not None and name in layout.fields and '_n_discs' in self.__dict__:
+            self._n_check_variant_access(name, value)
         attr_exists = (
             hasattr(self, name)
             and hasattr(self, "_n_fields")
@@ -1898,10 +2162,7 @@ class _Object(Ntype):
                 super().__setattr__(name, value)
                 return
             if attr is not None:
-                if type(attr).__name__ in DICT_OF_VARIANTS:
-                    _val = type(attr)._n_on_struct(self._n_view, name, value)
-                    super().__setattr__(name, _val)
-                elif isinstance(attr, bool):
+                if isinstance(attr, bool):
                     super().__setattr__(name, value)
                 elif isinstance(attr, NIntEnum):
                     if hasattr(attr, "_n_set_value"):
@@ -1922,12 +2183,18 @@ class _Object(Ntype):
 
     def __getitem__(self, name: str) -> object:
         if name not in self._n_fields:
-            raise KeyError
+            layout = getattr(type(self), '_n_variant_layout', None)
+            if layout is not None and name in layout.fields:
+                raise FieldDefect(self._n_field_defect_msg(name))
+            raise KeyError(name)
         return getattr(self, name)
 
     def __setitem__(self, name: str, value: object) -> None:
         if name not in self._n_fields:
-            raise KeyError
+            layout = getattr(type(self), '_n_variant_layout', None)
+            if layout is not None and name in layout.fields:
+                raise FieldDefect(self._n_field_defect_msg(name))
+            raise KeyError(name)
         setattr(self, name, value)
 
     def _n_get_value(self) -> object:
@@ -1941,51 +2208,59 @@ class _Object(Ntype):
           B. Ctypes-backed fields with _n_on_struct (scalars, arrays, Object structs, NBool)
           C. Python-side fields (pointers, seq, calltypes, etc.)
         """
+        layout = getattr(type(self), '_n_variant_layout', None)
+        if layout is not None and other is not None and other is not self and '_n_discs' in self.__dict__:
+            # Nim N6: replacing the whole object selects the other object's branches
+            self._n_switch_branch(self._n_disc_values(other))
+        for name in list(self._n_fields):
+            self._n_bind_field(name, other)
+
+    def _n_bind_field(self, name: str, other: Object | None) -> None:
+        """Bind field `name` to the view (ctypes-side) or set it (python-side), copying the
+        value from `other` when given."""
         python_fields = getattr(self.__class__, '_n_python_fields', set())
         field_types = getattr(self.__class__, '_n_field_types', {})
         _ua = DICT_OF_TYPES.get("UncheckedArray")
+        field_cls = field_types.get(name)
+        # Variant fields may not be in _n_field_types (only max-size variant is registered)
+        if field_cls is None:
+            type_name = self._n_annotations[name]
+            field_cls = DICT_OF_TYPES.get(type_name)
+        is_class = field_cls is not None and isinstance(field_cls, type)
 
-        for name in self._n_fields:
-            field_cls = field_types.get(name)
-            # Variant fields may not be in _n_field_types (only max-size variant is registered)
-            if field_cls is None:
-                type_name = self._n_annotations[name]
-                field_cls = DICT_OF_TYPES.get(type_name)
-            is_class = field_cls is not None and isinstance(field_cls, type)
+        # A. UncheckedArray trailing fields
+        if is_class and _ua and issubclass(field_cls, _ua):
+            if hasattr(self, '_n_view') and self._n_view is not None:
+                field_desc = getattr(type(self._n_view), name, None)
+                offset = field_desc.offset if field_desc is not None else ctypes.sizeof(type(self._n_view))  # Trailing
+                base_addr = ctypes.addressof(self._n_view) + offset
+                arr_view = (ctypes.c_uint8 * 1).from_address(base_addr)
+                arr_ptr = field_cls.__new__(field_cls)
+                arr_ptr._n_view = arr_view
+                setattr(self, name, arr_ptr)
+            else:
+                setattr(self, name, NilPtr(self._n_annotations.get(name, '')))
+            return
 
-            # A. UncheckedArray trailing fields
-            if is_class and _ua and issubclass(field_cls, _ua):
-                if hasattr(self, '_n_view') and self._n_view is not None:
-                    field_desc = getattr(type(self._n_view), name, None)
-                    offset = field_desc.offset if field_desc is not None else ctypes.sizeof(type(self._n_view))  # Trailing
-                    base_addr = ctypes.addressof(self._n_view) + offset
-                    arr_view = (ctypes.c_uint8 * 1).from_address(base_addr)
-                    arr_ptr = field_cls.__new__(field_cls)
-                    arr_ptr._n_view = arr_view
-                    setattr(self, name, arr_ptr)
-                else:
-                    setattr(self, name, NilPtr(self._n_annotations.get(name, '')))
-                continue
+        # B. Ctypes-backed fields with _n_on_struct
+        if name not in python_fields and hasattr(field_cls, '_n_on_struct') and not getattr(field_cls, '_n_is_ref', False):
+            val = getattr(other, name, None) if other else None
+            if val is not None:
+                setattr(self, name, field_cls._n_on_struct(self._n_view, name, val))
+            else:
+                setattr(self, name, field_cls._n_on_struct(self._n_view, name))
+            return
 
-            # B. Ctypes-backed fields with _n_on_struct
-            if name not in python_fields and hasattr(field_cls, '_n_on_struct') and not getattr(field_cls, '_n_is_ref', False):
-                val = getattr(other, name, None) if other else None
-                if val is not None:
-                    setattr(self, name, field_cls._n_on_struct(self._n_view, name, val))
-                else:
-                    setattr(self, name, field_cls._n_on_struct(self._n_view, name))
-                continue
-
-            # C. Python-side fields (pointers→NilPtr, calltypes→None, seq→already init'd, etc.)
-            if other and (hasattr(other, name) if other is not self else name in other.__dict__):
-                super(_Object, self).__setattr__(name, getattr(other, name))
-            elif getattr(field_cls, '_n_is_calltype', False):
-                super(_Object, self).__setattr__(name, None)
-            elif is_class and DICT_OF_TYPES.get('pointer') and issubclass(field_cls, pointer):
-                super(_Object, self).__setattr__(name, NilPtr(self._n_annotations.get(name, '')))
-            elif name not in python_fields and field_cls is not None:
-                # Non-seq python field with a default constructor
-                super(_Object, self).__setattr__(name, field_cls())
+        # C. Python-side fields (pointers→NilPtr, calltypes→None, seq→already init'd, etc.)
+        if other and (hasattr(other, name) if other is not self else name in other.__dict__):
+            super(_Object, self).__setattr__(name, getattr(other, name))
+        elif getattr(field_cls, '_n_is_calltype', False):
+            super(_Object, self).__setattr__(name, None)
+        elif is_class and DICT_OF_TYPES.get('pointer') and issubclass(field_cls, pointer):
+            super(_Object, self).__setattr__(name, NilPtr(self._n_annotations.get(name, '')))
+        elif name not in python_fields and field_cls is not None:
+            # Non-seq python field with a default constructor
+            super(_Object, self).__setattr__(name, field_cls())
 
     def _n_get_address(self) -> object:
         return self._n_view
@@ -2002,68 +2277,6 @@ class _Object(Ntype):
 
 
     @classmethod
-    def _n_resolve_variant(
-        cls, dict_of_types: dict[str, type], dict_of_c_types: dict[str, type]
-    ) -> dict[str, str]:
-        """Parse the match/case AST in the class source to build variant layouts.
-
-        Reads the class source code, extracts case branches with their
-        kind values and field types, and returns:
-          _annotations — dict of fields for the largest variant
-        """
-        try:
-            src = ins.getsource(cls)
-            aast = ast.parse(textwrap.dedent(src))
-            variant_type_suspected = (
-                isinstance(aast.body[0].body[0], ast.AnnAssign)
-                and len(aast.body[0].body) > 1
-            )
-            variant_type = variant_type_suspected and isinstance(
-                aast.body[0].body[1], ast.Match
-            )
-        except Exception:
-            variant_type = False
-        if not variant_type:
-            _annotations = cls.__annotations__
-        else:
-            dc = {}
-            maxsize = 0
-            # the first field is the kind
-            kind_alias = aast.body[0].body[0].target.id
-            kind_type_name = aast.body[0].body[0].annotation.id
-            kind_type = dict_of_types[kind_type_name]
-            cases = aast.body[0].body[1].cases
-            for cs in cases:
-                type_name = cs.body[0].annotation.id
-                attr_name = cs.body[0].target.id
-                kind_val = cs.pattern.value.value
-                if not isinstance(kind_val, int):
-                    kind_attr = cs.pattern.value.attr
-                    kind_val = int(getattr(kind_type, kind_attr))
-                dc[kind_val] = {kind_alias: kind_type_name, attr_name: type_name}
-                size = dict_of_types[type_name]._n_sizeof()
-                if size > maxsize:
-                    maxsize = size
-                    max_type = type_name
-                    max_attr = attr_name
-                    max_kind = kind_val
-            _annotations = {kind_alias: kind_type_name, max_attr: max_type}
-            class_name = cls.__name__
-            DICT_OF_VARIANTS[class_name] = dc
-            DICT_OF_MAX_VARIANTS[class_name] = max_kind
-            for kind_num, ann in dc.items():
-                var_class_name = class_name + f"_kind_{kind_num}"
-                c_class_name = "c_" + var_class_name
-                f_list = [
-                    (key, dict_of_c_types[value])
-                    for key, value in ann.items()
-                    if value in dict_of_c_types
-                ]
-                _c_type = type(c_class_name, (ctypes.Structure,), {"_fields_": f_list})
-                dict_of_c_types[var_class_name] = _c_type
-        return _annotations
-
-    @classmethod
     def _n_sizeof(cls) -> int:
         return ctypes.sizeof(cls._n_c_type())  # get type size in bytes
 
@@ -2074,7 +2287,8 @@ class _Object(Ntype):
         Called automatically via __init_subclass__. Handles:
           - Object inheritance: inherits base class fields in MRO order
           - Alias types: @ref or _n_is_alias with no annotations
-          - Variant types: builds per-variant ctypes
+          - Variant types (object variants): all branch fields from the declaration
+            record, NVariantLayout, ctypes anonymous unions per case
           - Regular structs: builds a ctypes.Structure with _fields_
         """
         dict_of_types, dict_of_c_types = DICT_OF_TYPES, DICT_OF_C_TYPES
@@ -2100,17 +2314,22 @@ class _Object(Ntype):
                 else:
                     _n_aliases[cls.__name__] = base_name
 
+        record = getattr(cls, '_n_record', None)
+        is_variant = record is not None and record.is_variant
+        if is_variant:
+            # the declaration is the source of truth: every field of every branch is part
+            # of the type (N1); own __annotations__ may hold branch fields leaked by a
+            # legacy dummy discriminator default, and miss the other branches
+            own_annotations = {name: f.annotation for name, f in record.all_fields().items()}
+            inherited_annotations = {k: v for k, v in inherited_annotations.items()
+                                     if k not in own_annotations}
+
         # Merge base annotations + own annotations
         merged_annotations = dict(inherited_annotations)
         merged_annotations.update(own_annotations)
         cls.__annotations__ = merged_annotations
 
-        attributes = list(cls.__annotations__)
-        # variant type is suspected if there is only one attribute in own annotations
-        if len(own_annotations) == 1:
-            _annotations = cls._n_resolve_variant(dict_of_types, dict_of_c_types)
-        else:
-            _annotations = cls.__annotations__
+        _annotations = cls.__annotations__
         cls._n_annotations = _annotations
         cls._n_fields = list(_annotations.keys())
         dict_of_types[class_name] = cls  # add to dict for resolver
@@ -2145,10 +2364,6 @@ class _Object(Ntype):
                 python_fields.add(key)
             elif not _has_c_backing(field_cls):
                 python_fields.add(key)
-        if class_name not in DICT_OF_VARIANTS:
-            vf = cls._n_extract_variant_fields()
-            if vf:
-                python_fields.update(vf.keys())
         cls._n_python_fields = python_fields
         # Cache set of pointer/UncheckedArray field names for fast __setattr__ sync
         cls._n_ptr_fields = {name for name, fc in cls._n_field_types.items()
@@ -2158,29 +2373,52 @@ class _Object(Ntype):
                 getattr(fc, '_n_is_ref', False)
             )}
         dict_of_types[class_name] = cls
+        if is_variant:
+            caller_locals = getattr(cls, '_n_caller_locals', None)
+            cls._n_variant_layout = NVariantLayout(
+                record, eval_value=lambda src: eval(src, caller_globals, caller_locals),
+                ordinal=_n_disc_ordinal)
+            cls._n_check_exhaustive()
+        else:
+            cls._n_variant_layout = None
         has_c_type = len(python_fields) < len(_annotations)
         if has_c_type:
             c_class_name = "c_" + class_name
-            f_list = []
-            for key, field_cls in cls._n_field_types.items():
-                if key in python_fields:
-                    continue
-                is_class = isinstance(field_cls, type)
-                c_name = field_cls.__name__
-                if is_class and ((_pointer and issubclass(field_cls, _pointer)) or getattr(field_cls, '_n_is_ref', False)):
-                    # pointer or ptr[X] or ref object → c_void_p
-                    f_list.append((key, ctypes.c_void_p))
-                elif c_name in dict_of_c_types:
-                    # Direct ctypes mapping (scalars, cstring, Object structs, arrays)
-                    f_list.append((key, dict_of_c_types[c_name]))
-                elif getattr(field_cls, '_n_is_calltype', False):
-                    # Calltype (proc type) → opaque pointer
-                    f_list.append((key, ctypes.c_void_p))
-                elif is_class and _ua and issubclass(field_cls, _ua):
-                    # Flexible array member at end of struct
-                    f_list.append((key, ctypes.c_uint8 * 0))
-            _c_type = type(c_class_name, (ctypes.Structure,), {"_fields_": f_list})
+            if is_variant:
+                # common fields of inherited (non-record) bases first, then the record (N2)
+                flat = tuple(NField(k, v) for k, v in inherited_annotations.items())
+                f_list, anonymous = _n_build_c_fields(flat + record.items, cls._n_field_types,
+                                                      python_fields, c_class_name)
+            else:
+                flat = tuple(NField(k, v) for k, v in _annotations.items())
+                f_list, anonymous = _n_build_c_fields(flat, cls._n_field_types, python_fields, c_class_name)
+            _c_type = type(c_class_name, (ctypes.Structure,), {"_anonymous_": tuple(anonymous), "_fields_": f_list})
             dict_of_c_types[class_name] = _c_type
+
+    @classmethod
+    def _n_check_exhaustive(cls) -> None:
+        """Nim N8: a case on an enum/bool discriminator must cover every value or have
+        `case _`; for other ordinal types a missing `case _` only warns."""
+        layout = cls._n_variant_layout
+        for case in layout.record.cases():
+            disc = case.discriminator.name
+            ft = cls._n_field_types.get(disc)
+            if isinstance(ft, type) and issubclass(ft, Enum):
+                all_values = {_n_disc_ordinal(m) for m in ft}
+            elif ft is bool or (isinstance(ft, type) and issubclass(ft, NBool)):
+                all_values = {0, 1}
+            else:
+                if all(br.values is not None for br in case.branches):
+                    warnings.warn(f"{cls.__name__}: case on '{disc}' has no `case _`; "
+                                  f"values without a branch have no fields", stacklevel=4)
+                continue
+            try:
+                exhaustive = layout.is_exhaustive(case, all_values)
+            except NameError:
+                continue  # a pattern names something defined later: checked on first use
+            if not exhaustive:
+                raise TypeError(f"{cls.__name__}: case on '{disc}' does not cover all values of "
+                                f"{getattr(ft, '__name__', ft)}; add the missing branches or `case _`")
 
     @classmethod
     def _n_c_type(cls) -> type:
@@ -2193,6 +2431,9 @@ class Object(_Object, metaclass=NMetaClass):
         # (e.g. array[_MINIMP4_MAX_SPS, pointer]).
         if "_n_caller_globals" not in cls.__dict__:
             cls._n_caller_globals = sys._getframe(1).f_globals
+        cls._n_build_record()  # generic classes too: specializations map its annotations
+        if cls.__dict__.get("_n_defer_register"):
+            return  # specialization: __class_getitem__ registers it once it is cached
         type_params = getattr(cls, '__type_params__', ())
         if not type_params:
             cls._n_register_type()
@@ -2209,6 +2450,8 @@ class NTuple(_Object):
     def __init_subclass__(cls) -> None:
         if "_n_caller_globals" not in cls.__dict__:
             cls._n_caller_globals = sys._getframe(1).f_globals
+        if cls.__dict__.get("_n_defer_register"):
+            return  # specialization: __class_getitem__ registers it once it is cached
         type_params = getattr(cls, '__type_params__', ())
         if not type_params:
             cls._n_register_type()
@@ -2312,20 +2555,15 @@ class array(Ntype):
                 # Scalar/simple types: use a plain Python list as backing store
                 if it is not None:
                     if isinstance(it, dict):
-                        try:
-                            self._n_cache = {self._n_first + j: self._n_type() for j in range(self._n_size)}
-                        except Exception:
-                            self._n_cache = {self._n_first + j: None for j in range(self._n_size)}
+                        self._n_cache = {self._n_first + j: _n_default_value(self._n_type) for j in range(self._n_size)}
                         for key, value in it.items():
                             self._n_cache[self._n_normalize_index(key)] = value
                     else:
                         for index in range(min(len(it), self._n_size)):
                             self._n_cache[self._n_first + index] = it[index]
                 else:
-                    try:
-                        self._n_cache = {self._n_first + j: self._n_type() for j in range(self._n_size)}
-                    except Exception:
-                        self._n_cache = {self._n_first + j: None for j in range(self._n_size)}
+                    # Nim default(T) per element: ref/ptr elements are nil, not constructed objects
+                    self._n_cache = {self._n_first + j: _n_default_value(self._n_type) for j in range(self._n_size)}
                 self._n_backing = None
                 self._n_view = None
         else:
@@ -3372,12 +3610,9 @@ class NScalar:
     ) -> NScalar:
         """Struct-embedded: reads/writes via ctypes struct field on `parent_elems` with field name `id`."""
         self = cls.__new__(cls)
-        offset = 0
-        i = 0
-        list_fields = [x for (x, t) in parent_elems._fields_]
-        while not id == list_fields[i]:
-            offset += ctypes.sizeof(parent_elems._fields_[i][1])
-            i += 1
+        # the field descriptor knows the real offset: alignment padding included, and
+        # fields promoted from anonymous unions/structs (variant branches) are found too
+        offset = getattr(type(parent_elems), id).offset
         self._n_bind(
             get_value=lambda: getattr(parent_elems, id),
             set_value=lambda _value: setattr(

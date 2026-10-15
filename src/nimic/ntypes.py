@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes as _ctypes  # underscore: not re-exported by `from nimic.ntypes import *`
+import functools as _functools
 from enum import auto
 
 from nimic.inliner import template, template_expand
@@ -110,6 +111,10 @@ from nimic.ntypesystem import (
     utf8,
     NimicEncodingError,
     ufcs,
+    _n_default_value,
+    Defect,
+    FieldDefect,
+    uncheckedAssign,
 )
 
 
@@ -152,7 +157,13 @@ def f64(x: float) -> float64: return float64(x)
 
 def ch(x: str) -> char: return char(x)
 
-from nimic._nkeywords import default
+
+def default(T: type) -> object:
+    """Nim: default(T) — the zero value of type T (0, "", nil for ref/ptr, low(T) for enums,
+    default-filled arrays and objects). Delegates to the type system's per-type rule."""
+    return _n_default_value(T)
+
+
 discard = None
 
 # compiler hints
@@ -344,11 +355,8 @@ def generic(fn):
     """Decorator allowing generic functions with 0 args to be subscripted with types in Python, e.g. fn[T, U]()."""
     class _GenericWrapper:
         def __init__(self, target):
+            _functools.update_wrapper(self, target)
             self._target = target
-            self.__name__ = getattr(target, "__name__", "")
-            self.__doc__ = getattr(target, "__doc__", "")
-            self.__qualname__ = getattr(target, "__qualname__", "")
-            self.__annotations__ = getattr(target, "__annotations__", {})
 
         def __call__(self, *args, **kwargs):
             return self._target(*args, **kwargs)

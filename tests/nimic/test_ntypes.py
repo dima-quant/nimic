@@ -688,7 +688,7 @@ class TestNTypes(unittest.TestCase):
             radius: float64
 
         class HittableVariant(Object):
-            kind: HittableVariantKind = None
+            kind: HittableVariantKind
             match kind:
                 case HittableVariantKind.kSphere:
                     fSphere: Sphere
@@ -718,16 +718,22 @@ class TestNTypes(unittest.TestCase):
             point: Vec3
             scene: Scene
 
+        # Nim has no implicit payload -> variant conversion: construct the variant explicitly
         result = Scene()
-        result.add(Sphere(center=Vec3(x=0, y=-1000, z=0), radius=1000.0))
-        result.add(MovingSphere(center0=Vec3(x=0, y=0, z=0), center1=Vec3(x=0, y=0, z=0), time0=0.0, time1=1.0, radius=1.0))
+        result.add(HittableVariant(kind=HittableVariantKind.kSphere,
+                                   fSphere=Sphere(center=Vec3(x=0, y=-1000, z=0), radius=1000.0)))
+        result.add(HittableVariant(kind=HittableVariantKind.kMovingSphere,
+                                   fMovingSphere=MovingSphere(center0=Vec3(x=0, y=0, z=0), center1=Vec3(x=0, y=0, z=0),
+                                                              time0=0.0, time1=1.0, radius=1.0)))
         world_list = result.list()
         self.assertEqual(world_list.len, 2)
         self.assertEqual(world_list.objects[0].kind, HittableVariantKind.kSphere)
         self.assertEqual(world_list.objects[1].kind, HittableVariantKind.kMovingSphere)
 
         result = _ReturnScenes()
-        result.scene.add(Sphere(center=Vec3(x=0, y=-1000, z=0), radius=1000.0))
+        result.scene.add(HittableVariant(kind=HittableVariantKind.kSphere,
+                                         fSphere=Sphere(center=Vec3(x=0, y=-1000, z=0), radius=1000.0)))
+        self.assertEqual(float(result.scene.objects[0].fSphere.radius), 1000.0)
         self.assertEqual(result.scene.objects[0].kind, HittableVariantKind.kSphere)
 
     def test_keyword_dispatch(self):
@@ -1873,6 +1879,16 @@ class TestNTypes(unittest.TestCase):
         # aliases are resolved per module: nothing leaks into the core alias table
         self.assertNotIn("AliasLabel", _n_aliases)
 
+    def test_dispatch_keeps_type_classes_and_static(self):
+        """Names the type system already knows (SomeInteger, static[bool]) are not resolved to the
+        Python builtins they alias (int, set): generic matching and static params keep working."""
+        @dispatch
+        def _t_tc_width[T](buf: T, width: SomeInteger, subsampled: static[bool]) -> nint:
+            return nint(int(width) * (2 if subsampled else 1))
+        self.assertEqual(int(_t_tc_width(string("x"), int32(4), True)), 8)
+        self.assertEqual(int(_t_tc_width(string("x"), int64(4), False)), 4)
+        self.assertEqual(int(_t_tc_width(string("x"), 4, subsampled=False)), 4)
+
     def test_ufcs_installs_free_proc_as_method(self):
         """@ufcs(T) gives Nim method-call syntax: x.f(a) == f(x, a); aliases too; never shadows."""
         class _UBox:
@@ -1973,6 +1989,345 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(classify(-tiny), fcNegSubnormal)
         self.assertEqual(classify(sys.float_info.min), fcNormal)
 
+    def test_dispatched_callable_keeps_function_metadata(self):
+        """A @dispatch wrapper exposes __type_params__/__globals__/__code__, so it can be re-dispatched."""
+        def _t_ident[T](x: T) -> T:
+            return x
+        d = dispatch(_t_ident)
+        self.assertEqual(d.__type_params__, _t_ident.__type_params__)
+        self.assertIs(d.__globals__, _t_ident.__globals__)
+        self.assertIs(d.__code__, _t_ident.__code__)
+        d2 = dispatch(d)  # re-dispatching a wrapper (DispDict does this) must not fail ...
+        self.assertIs(d2._fn, _t_ident)  # ... and registers the original function, not the wrapper
+        self.assertEqual(int(d2(nint(3))), 3)  # no self-dispatch recursion
+
+    def test_dispatch_overload_of_explicitly_dispatched_method(self):
+        """A class with an explicit @dispatch method plus an overload (DispDict re-dispatches) calls through."""
+        class _TReDisp(Object):
+            v: nint
+
+            @dispatch
+            def scale(self, k: nint) -> nint:
+                return nint(int(self.v) * int(k))
+
+            @dispatch
+            def scale(self, k: float64) -> float64:
+                return float64(float(self.v) * float(k))
+        o = _TReDisp(v=nint(2))
+        self.assertEqual(int(o.scale(nint(3))), 6)
+        self.assertEqual(float(o.scale(float64(1.5))), 3.0)
+
+    def test_default_is_nim_zero_value(self):
+        """default(T) is Nim's zero value: scalars 0, ref types nil, arrays default-filled,
+        enums low(T), type aliases / generic aliases via their target type, type variables nil."""
+        from typing import TypeVar
+
+        @ref
+        class _TDefRef(Object):
+            x: nint
+
+        class _TDefKind(NIntEnum):
+            a = 1
+            b = 2
+        type _TDefDict = dict[str, int]
+        self.assertEqual(int(default(int32)), 0)
+        self.assertIsNone(default(_TDefRef))
+        self.assertEqual(len(default(array[3, int8])), 3)
+        self.assertEqual(default(_TDefKind), _TDefKind.a)
+        self.assertEqual(default(_TDefDict), {})
+        self.assertEqual(default(dict[str, int]), {})
+        self.assertEqual(default(string), "")
+        self.assertIsNone(default(TypeVar("Val")))
+
+    def test_field_defect_hierarchy(self):
+        """Nim: FieldDefect is a Defect."""
+        self.assertTrue(issubclass(FieldDefect, Defect))
+        self.assertTrue(issubclass(Defect, Exception))
+
+    def test_unchecked_assign_is_reentrant(self):
+        """Nested `with uncheckedAssign:` keeps the flag active until the outer block exits."""
+        from nimic.ntypesystem import _n_unchecked_assign_active
+        self.assertFalse(_n_unchecked_assign_active())
+        with uncheckedAssign:
+            self.assertTrue(_n_unchecked_assign_active())
+            with uncheckedAssign:
+                self.assertTrue(_n_unchecked_assign_active())
+            self.assertTrue(_n_unchecked_assign_active())
+        self.assertFalse(_n_unchecked_assign_active())
+        with self.assertRaises(ZeroDivisionError):
+            with uncheckedAssign:
+                1 / 0
+        self.assertFalse(_n_unchecked_assign_active())
+
+    def test_variant_discriminator_needs_no_dummy_default(self):
+        """`kind: bool` + `match kind:` without a default defines the class (no NameError)."""
+        class _TNoDefault(Object):
+            n: nint
+            isLeaf: bool
+            match isLeaf:
+                case True:
+                    leafVal: nint
+                case False:
+                    pass
+        self.assertTrue(getattr(_TNoDefault, "_n_body_has_case", False))
+
+    def test_class_body_unknown_name_still_raises(self):
+        """Only annotated names are filled by the unset sentinel; other free names still fail."""
+        with self.assertRaises(NameError):
+            class _TBadName(Object):
+                x: nint
+                y = _t_undefined_free_name_  # noqa: F821
+
+    def test_class_body_method_named_like_annotation(self):
+        """A method whose name is also annotated is still a normal method."""
+        class _TMethodName(Object):
+            size: nint
+
+            def area(self) -> nint:
+                return self.size * self.size
+        self.assertEqual(int(_TMethodName(size=nint(3)).area()), 9)
+        self.assertFalse(getattr(_TMethodName, "_n_body_has_case", False))
+
+    # --- object variants (proposals/feature_object_variants.md, V5–V8) ---
+
+    def _variant_types(self):
+        """NodeObj from the proposal (python-side ref variant) and a ctypes-backed scalar variant."""
+        class TNodeKind(NIntEnum):
+            nkInt = 0
+            nkAdd = 1
+            nkSub = 2
+            nkIf = 3
+
+        @ref
+        class TNodeObj(Object):
+            info: nint
+            kind: TNodeKind
+            match kind:
+                case TNodeKind.nkInt:
+                    intVal: nint
+                case TNodeKind.nkAdd | TNodeKind.nkSub:
+                    leftOp: string
+                    rightOp: string
+                case TNodeKind.nkIf:
+                    cond: string
+                    hasElse: bool
+                    match hasElse:
+                        case True:
+                            elsePart: string
+                        case False:
+                            pass
+            tail: nint
+
+        class TShapeKind(NIntEnum):
+            skCircle = 1
+            skRect = 2
+
+        class TShape(Object):
+            kind: TShapeKind
+            match kind:
+                case TShapeKind.skCircle:
+                    radius: float64
+                case TShapeKind.skRect:
+                    w: int32
+                    h: int32
+            tag: int8
+        return TNodeKind, TNodeObj, TShapeKind, TShape
+
+    def test_variant_layout_registered_from_declaration(self):
+        """Every field of every branch is part of the type, also for generic specializations."""
+        @ref
+        class TVNode[K, V](Object):
+            entries: nint
+            keys: array[4, K]
+            isInternal: bool
+            match isInternal:
+                case False:
+                    vals: array[4, V]
+                case True:
+                    links: array[4, TVNode[K, V]]
+
+        spec = TVNode[str, int]
+        self.assertEqual(list(spec._n_variant_layout.fields),
+                         ["entries", "keys", "isInternal", "vals", "links"])
+        self.assertEqual(spec._n_variant_layout.fields["vals"].annotation, "array[4, int]")
+        self.assertEqual(spec._n_variant_layout.fields["links"].annotation, "array[4, TVNode[str, int]]")
+        self.assertIs(spec._n_field_types["links"]._n_type, spec)  # self-reference resolves to itself
+
+    def test_variant_non_exhaustive_case_raises(self):
+        """Nim N8: a bool/enum case must cover all values or have `case _`."""
+        with self.assertRaises(TypeError):
+            class _TBadCase(Object):
+                flag: bool
+                match flag:
+                    case True:
+                        x: nint
+
+        class _TElseCase(Object):
+            flag: bool
+            match flag:
+                case True:
+                    x: nint
+                case _:
+                    pass
+        self.assertIsNotNone(_TElseCase._n_variant_layout)
+
+    def test_variant_without_source_raises(self):
+        """A variant defined via exec() has no source to read its declaration from."""
+        src = textwrap.dedent('''
+            class _TExecVariant(Object):
+                flag: bool
+                match flag:
+                    case True:
+                        x: nint
+                    case False:
+                        pass
+        ''')
+        with self.assertRaises(TypeError) as cm:
+            exec(src, {"Object": Object, "nint": nint})
+        self.assertIn("needs its source", str(cm.exception))
+
+    def test_struct_field_offsets_include_padding(self):
+        """NScalar fields use the real field offset (int8 then float64: b at offset 8)."""
+        class _TPadded(Object):
+            a: int8
+            b: int64
+        p = _TPadded(a=int8(1), b=int64(7))
+        self.assertEqual(ctypes.sizeof(p._n_view), 16)
+        q = _TPadded.cast(p)  # view-backed: fields are bound to the struct memory
+        self.assertEqual(ctypes.addressof(q.b._n_view) - ctypes.addressof(q._n_view), 8)
+        self.assertEqual(int(q.b), 7)
+        q.b = int64(9)
+        raw = bytes(p._n_view)
+        self.assertEqual(raw[0], 1)
+        self.assertEqual(raw[8:16], bytes(ctypes.c_int64(9)))
+
+    def test_variant_ctypes_union_layout(self):
+        """Branches share memory: sizeof = discriminator + largest branch + trailing fields."""
+        _, _, TShapeKind, TShape = self._variant_types()
+        c_type = DICT_OF_C_TYPES["TShape"]
+        # kind: uint64 @0 | union{ {radius: double}, {w, h: int32} } @8 | tag: int8 @16
+        self.assertEqual(ctypes.sizeof(c_type), 24)
+        self.assertEqual([c_type.radius.offset, c_type.w.offset, c_type.h.offset, c_type.tag.offset], [8, 8, 12, 16])
+        c = TShape(kind=TShapeKind.skCircle, radius=float64(1.5), tag=int8(7))
+        self.assertEqual(float(c.radius), 1.5)
+        self.assertEqual(int(c.tag), 7)
+        r = TShape(kind=TShapeKind.skRect, w=int32(3), h=int32(4))
+        self.assertEqual((int(r.w), int(r.h)), (3, 4))
+        self.assertEqual(r._n_view.kind, int(TShapeKind.skRect))
+        shapes = seq[TShape]()
+        shapes.add(c)
+        shapes.add(r)
+        # all elements share the max-size stride, whatever their branch
+        self.assertEqual(ctypes.addressof(shapes[1]._n_view) - ctypes.addressof(shapes[0]._n_view),
+                         ctypes.sizeof(c_type))
+        self.assertEqual(float(shapes[0].radius), 1.5)
+        self.assertEqual(int(shapes[1].h), 4)
+        with self.assertRaises(FieldDefect):
+            shapes[1].radius
+
+    def test_variant_construction_initializes_active_fields(self):
+        """Nim N3: discriminator first, omitted one = zero value, only active fields exist."""
+        TNodeKind, TNodeObj, TShapeKind, TShape = self._variant_types()
+        n = TNodeObj(kind=TNodeKind.nkAdd, leftOp=string("a"))
+        self.assertEqual(n._n_fields, ["info", "kind", "leftOp", "rightOp", "tail"])
+        self.assertEqual(n.leftOp, "a")
+        self.assertEqual(n.rightOp, "")
+        d = TNodeObj()
+        self.assertEqual(d.kind, TNodeKind.nkInt)
+        self.assertEqual(int(d.intVal), 0)
+        s = TShape()
+        self.assertEqual(s.kind, TShapeKind.skCircle)  # low(TShapeKind), not 0
+        self.assertEqual(float(s.radius), 0.0)
+
+    def test_variant_inactive_field_access_raises(self):
+        """Nim N4: reading/writing/constructing an inactive branch field raises FieldDefect."""
+        TNodeKind, TNodeObj, _, TShape = self._variant_types()
+        n = TNodeObj(kind=TNodeKind.nkInt, intVal=nint(3))
+        with self.assertRaises(FieldDefect) as cm:
+            n.leftOp
+        self.assertEqual(str(cm.exception),
+                         "field 'leftOp' is not accessible for type 'TNodeObj' using 'kind = nkInt'")
+        with self.assertRaises(FieldDefect):
+            n.leftOp = string("x")
+        with self.assertRaises(FieldDefect):
+            n["leftOp"]
+        with self.assertRaises(FieldDefect):
+            TNodeObj(kind=TNodeKind.nkInt, leftOp=string("x"))
+        with self.assertRaises(AttributeError):
+            n.notAField
+        self.assertFalse(hasattr(n, "notAField"))
+
+    def test_variant_discriminator_assignment(self):
+        """Nim N5/N7: same branch is fine, a branch change needs uncheckedAssign."""
+        TNodeKind, TNodeObj, TShapeKind, TShape = self._variant_types()
+        n = TNodeObj(kind=TNodeKind.nkAdd, leftOp=string("l"))
+        n.kind = TNodeKind.nkSub  # nkAdd and nkSub share a branch
+        self.assertEqual(n.kind, TNodeKind.nkSub)
+        self.assertEqual(n.leftOp, "l")
+        with self.assertRaises(FieldDefect) as cm:
+            n.kind = TNodeKind.nkInt
+        self.assertEqual(str(cm.exception), "assignment to discriminant changes object branch")
+        with uncheckedAssign:
+            n.kind = TNodeKind.nkInt
+        self.assertEqual(n.kind, TNodeKind.nkInt)
+        self.assertEqual(int(n.intVal), 0)  # newly active python-side field is defaulted
+        with self.assertRaises(FieldDefect):
+            n.leftOp
+        # ctypes-backed: the union memory is reused, not reset
+        s = TShape(kind=TShapeKind.skRect, w=int32(5))
+        with uncheckedAssign:
+            s.kind = TShapeKind.skCircle
+        self.assertEqual(s._n_view.kind, int(TShapeKind.skCircle))
+        self.assertEqual(ctypes.c_int32.from_address(ctypes.addressof(s._n_view) + 8).value, 5)
+
+    def test_variant_nested_case_activation(self):
+        """A nested case's fields follow its own discriminator inside the active outer branch."""
+        TNodeKind, TNodeObj, _, _ = self._variant_types()
+        n = TNodeObj(kind=TNodeKind.nkIf, cond=string("c"), hasElse=True, elsePart=string("e"))
+        self.assertEqual(n.elsePart, "e")
+        with self.assertRaises(FieldDefect):
+            n.hasElse = False
+        with uncheckedAssign:
+            n.hasElse = False
+        with self.assertRaises(FieldDefect):
+            n.elsePart
+        m = TNodeObj(kind=TNodeKind.nkInt)
+        with self.assertRaises(FieldDefect):
+            m.hasElse  # nested discriminator of an inactive branch
+
+    def test_variant_field_of_zeroed_struct_gets_default_discriminator(self):
+        """A variant embedded in a default-constructed object: zeroed memory is not a valid
+        enum value when the enum starts at 1, so the discriminator takes default(K) = low(K)."""
+        _, _, TShapeKind, TShape = self._variant_types()
+
+        class _THolder(Object):
+            id: nint
+            shape: TShape
+        h = _THolder()
+        self.assertEqual(h.shape.kind, TShapeKind.skCircle)
+        self.assertEqual(h.shape._n_view.kind, int(TShapeKind.skCircle))
+        self.assertEqual(float(h.shape.radius), 0.0)
+
+    def test_variant_whole_object_assignment_and_copy(self):
+        """Nim N6: replacing the whole object (`x[] = T(kind: ...)`) may change the branch."""
+        TNodeKind, TNodeObj, TShapeKind, TShape = self._variant_types()
+        n = TNodeObj(kind=TNodeKind.nkInt, intVal=nint(1))
+        n <<= TNodeObj(kind=TNodeKind.nkAdd, leftOp=string("a"), rightOp=string("b"))
+        self.assertEqual(n.kind, TNodeKind.nkAdd)
+        self.assertEqual((n.leftOp, n.rightOp), ("a", "b"))
+        with self.assertRaises(FieldDefect):
+            n.intVal
+        s = TShape(kind=TShapeKind.skCircle, radius=float64(2.0))
+        s <<= TShape(kind=TShapeKind.skRect, w=int32(1), h=int32(2))
+        self.assertEqual((s.kind, int(s.w), int(s.h)), (TShapeKind.skRect, 1, 2))
+        for orig in (TShape(kind=TShapeKind.skCircle, radius=float64(3.0)),
+                     TShape(kind=TShapeKind.skRect, w=int32(4), h=int32(5))):
+            c = orig.copy()
+            self.assertEqual(c.kind, orig.kind)
+            self.assertEqual(c._n_fields, orig._n_fields)
+            self.assertEqual(bytes(c._n_view), bytes(orig._n_view))
+            self.assertIsNot(c._n_view, orig._n_view)
+
     def test_transpile_string_literal_bytes(self):
         """rule:latin1literal / rule:utf8literal keep Python and Nim literals byte-identical."""
 
@@ -1995,6 +2350,132 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(nim('x = f"é{n}"'), 'x = &"\\xE9{n}"')
         with self.assertRaises(SyntaxError):
             nim('x = f"€{n}"')
+
+    def test_transpile_object_variant_record(self):
+        """rule:matchcase: nested record cases, `case _` -> else, discriminator defaults dropped."""
+        src = textwrap.dedent('''
+            class NodeObj(Object):
+                info: nint
+                kind: NodeKind
+                match kind:
+                    case NodeKind.nkInt:
+                        intVal: nint
+                    case NodeKind.nkAdd | NodeKind.nkSub:
+                        leftOp: Node
+                        rightOp: Node
+                    case NodeKind.nkIf:
+                        cond: Node
+                        hasElse: bool = False
+                        match hasElse:
+                            case True:
+                                elsePart: Node
+                            case False:
+                                pass
+                    case _:
+                        pass
+                tail: nint
+        ''')
+        expected = textwrap.dedent('''\
+            type
+              NodeObj* = object
+                info*: int
+                case kind*: NodeKind
+                  of NodeKind.nkInt:
+                    intVal*: int
+                  of NodeKind.nkAdd, NodeKind.nkSub:
+                    leftOp*: Node
+                    rightOp*: Node
+                  of NodeKind.nkIf:
+                    cond*: Node
+                    case hasElse*: bool
+                      of true:
+                        elsePart*: Node
+                      of false:
+                        discard
+                  else:
+                    discard
+                tail*: int''')
+        self.assertEqual(unparse(ast.parse(src))[0].strip(), expected)
+
+    def test_transpile_for_loop_targets(self):
+        """rule:fortupleunpack: Python item unpacking is Nim `for (a, b) in xs` (bare would mean
+        index + item); Nim's magic fields(a, b) / fieldPairs(x) yield separate values: bare names."""
+        def nim(src):
+            return unparse(ast.parse(src))[0].strip()
+        self.assertEqual(nim("for name, val in [(a, 1), (b, 2)]:\n    pass"),
+                         "for (name, val) in [(a, 1), (b, 2)]:\n  discard")
+        self.assertEqual(nim("for dst, src in fields(u, v):\n    pass"), "for dst, src in fields(u, v):\n  discard")
+        self.assertEqual(nim("for name, val in fieldPairs(u):\n    pass"), "for name, val in fieldPairs(u):\n  discard")
+        self.assertEqual(nim("for x in s:\n    pass"), "for x in s:\n  discard")
+
+    def test_transpile_inplace_operator(self):
+        """rule:funcdefinplace: __iadd__ etc. become `+=` procs without a return type or `return self`;
+        other __i...__ dunders (e.g. __invert__/__iter__) are not in-place operators."""
+        src = textwrap.dedent('''
+            class V(Object):
+                x: float64
+
+                def __iadd__(u: mut @ V, v: V):
+                    u.x += v.x
+                    return u
+        ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("proc `+=`*(u: var V, v: V) =", out)
+        self.assertNotIn("return u", out)
+        self.assertNotIn("result = u", out)
+
+    def test_transpile_template_return(self):
+        """rule:templatereturn: nested `return x` is the value of a typed template, but a real
+        `return` (leaving the caller) in an untyped statement template, as in Nim."""
+        typed = textwrap.dedent('''
+            @template
+            def pick(c: bool, a: int, b: int) -> int:
+                if c:
+                    return a
+                else:
+                    return b
+        ''')
+        out = unparse(ast.parse(typed))[0]
+        self.assertIn("    a\n", out)
+        self.assertNotIn("return a", out)
+        stmt = textwrap.dedent('''
+            @template
+            def checkSol(root: untyped) -> untyped:
+                """{.dirty.}"""
+                if root > 0:
+                    return True
+        ''')
+        self.assertIn("return true", unparse(ast.parse(stmt))[0])
+        # an untyped template whose if/else returns on every path is an expression template
+        expr = textwrap.dedent('''
+            @template
+            def containsOrIncl(s: untyped, val: untyped) -> untyped:
+                if val in s:
+                    return True
+                else:
+                    incl(s, val)
+                    return False
+        ''')
+        out = unparse(ast.parse(expr))[0]
+        self.assertNotIn("return", out)
+        self.assertIn("    true\n", out)
+
+    def test_transpile_array_literals(self):
+        """rule:array types the first element of an array[N, T](...) call; the declaration form
+        `x: array[N, T] = [...]` is only used for a variable being declared."""
+        def nim(src):
+            return unparse(ast.parse(src))[0].strip()
+        self.assertEqual(nim("x.s[0:4] = array[4, byte]([0, 0, 0, 1])"),
+                         "x.s[0..<4] = array[4, byte]([byte(0), 0, 0, 1])")
+        self.assertEqual(nim("with var:\n    a = array[4, byte]([0, 0, 0, 1])"),
+                         "var\n  a*: array[4, byte] = [0, 0, 0, 1]")
+        self.assertEqual(nim("f(array[2, float64]([1.0, 2.0]))"), "f(array[2, float64]([float64(1.0), 2.0]))")
+
+    def test_transpile_unchecked_assign(self):
+        """rule:uncheckedassign: `with uncheckedAssign:` is a {.cast(uncheckedAssign).}: block."""
+        src = "def f(x: Node):\n    with uncheckedAssign:\n        x.kind = NodeKind.nkInt\n"
+        self.assertIn("  {.cast(uncheckedAssign).}:\n    x.kind = NodeKind.nkInt",
+                      unparse(ast.parse(src))[0])
 
     def test_move_and_shallow_copy(self):
         """move and shallowCopy act as identity operations in Python runtime."""
@@ -2034,7 +2515,7 @@ class TestNTypes(unittest.TestCase):
         class MockVariantNode[K, V](Object):
             entries: nint
             keys: array[16, K]
-            isInternal: bool = False
+            isInternal: bool
             match isInternal:
                 case False:
                     vals: array[16, V]
@@ -2050,6 +2531,11 @@ class TestNTypes(unittest.TestCase):
         # links accessed on internal node initializes array of size 16 without error
         self.assertEqual(len(internal.links), 16)
         internal.links[0] = leaf
+        # each node only has the fields of its own branch
+        with self.assertRaises(FieldDefect):
+            leaf.links
+        with self.assertRaises(FieldDefect):
+            internal.vals
     def test_ninteger_trunc_div_and_mod(self):
         """NInteger __floordiv__ and __mod__ implement Nim-style truncation towards zero."""
         a = nint(-7)

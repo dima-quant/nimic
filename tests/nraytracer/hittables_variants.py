@@ -19,7 +19,7 @@ class HittableVariantKind(NIntEnum):
       kMovingSphere = auto()
 
 class HittableVariant(Object):
-    kind: HittableVariantKind = None
+    kind: HittableVariantKind
     match kind:
         case HittableVariantKind.kSphere:
             fSphere: Sphere

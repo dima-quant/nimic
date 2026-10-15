@@ -143,16 +143,11 @@ def __mod__(frmt: static[FormatStr], args: openArray[Rope]) -> Rope:
 
 FormatStr.__mod__ = __mod__
 
+@ufcs(Rope)
 @template
 def addf(c: mut @ Rope, frmt: FormatStr, args: openArray[Rope]) -> untyped:
     """## shortcut for ``add(c, frmt % args)``."""
-    f = FormatStr(frmt) if not isinstance(frmt, FormatStr) else frmt
-    c.add(f % args)
-
-def _rope_addf(self: mut @ Rope, frmt: FormatStr | string, args: openArray[Rope]) -> untyped:
-    addf(self, frmt, args)
-
-Rope.addf = _rope_addf
+    c.add(frmt % args)
 
 with const:
     _bufSize = 1024

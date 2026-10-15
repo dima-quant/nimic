@@ -60,6 +60,7 @@ Classes and objects use standard Python `class` definitions but employ specific 
 | `@[a, b, c]` | `seq[T]([a, b, c])` or `seq([a, b, c])` | Sequence literal (`rule:seqlit`) |
 | `@[]` | `seq()` or `seq[T]()` | Empty sequence literal (`rule:seqlit`) |
 | `[byte 1, 5]` | `array[2, byte]([1, 5])` | Arrays |
+| `type T = object` with `case kind: K` | `class T(Object):` with `kind: K` + `match kind:` | Object variants, see §11 (`rule:matchcase`) |
 | `ar: array[1, string] = [0: "some"]` | `ar = array[1, string]({0: string("some")})` | Arrays initialized with a dictionary |
 | `SomeTuple = tuple[x: int, y: float]` | `class SomeTuple(NTuple):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x: nint`<br>&nbsp;&nbsp;&nbsp;&nbsp;`y: float64` | Tuples should be defined as Named Tuple with an alias |
 
@@ -224,27 +225,63 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | `do:` | `with do:` | Nim `do:` block statement (`rule:doblock`) |
 
 
-## 11. Variant type and `case` statements
+## 11. Variant type and `case` statements (`rule:matchcase`, `rule:uncheckedassign`)
 - **`case` statements** ➔ `match` statements
-- **variant types** ➔ `Object` with `match` statement
+- **variant types (case objects)** ➔ `Object` with a `match` on the field declared immediately before it
 ```nim
-  HittableVariant* = object
-    case kind*: HittableVariantKind
-      of HittableVariantKind.kSphere:
-        fSphere*: Sphere
-      of HittableVariantKind.kMovingSphere:
-        fMovingSphere*: MovingSphere
+  NodeObj* = object
+    info*: int
+    case kind*: NodeKind
+      of nkInt: intVal*: int
+      of nkAdd, nkSub:
+        leftOp*, rightOp*: Node
+      of nkIf:
+        cond*: Node
+        case hasElse*: bool
+        of true: elsePart*: Node
+        of false: discard
+      else: discard
+    tail*: int
 ```
 translates in nimic Python as
 ```python
-class HittableVariant(Object):
-    kind: HittableVariantKind = None
+class NodeObj(Object):
+    info: nint
+    kind: NodeKind              # no dummy default needed
     match kind:
-        case HittableVariantKind.kSphere:
-            fSphere: Sphere
-        case HittableVariantKind.kMovingSphere:
-            fMovingSphere: MovingSphere
+        case NodeKind.nkInt:
+            intVal: nint
+        case NodeKind.nkAdd | NodeKind.nkSub:
+            leftOp: Node
+            rightOp: Node
+        case NodeKind.nkIf:
+            cond: Node
+            hasElse: bool
+            match hasElse:
+                case True:
+                    elsePart: Node
+                case False:
+                    pass
+        case _:
+            pass
+    tail: nint
 ```
+
+| Nim | Python (Nimic) | Notes |
+| --- | --- | --- |
+| `case kind*: K` | `kind: K` then `match kind:` | The discriminator needs no default (a legacy `= None` is accepted and dropped by the transpiler) |
+| `of A, B:` | `case K.A \| K.B:` | |
+| `else:` | `case _:` | Must be the last branch |
+| `discard` (empty branch) | `pass` | |
+| nested `case` inside a branch | nested `match` inside a `case` | |
+| — | — | Every field of every branch is part of the type; names must be unique across branches. Methods and guards are not allowed inside branches. The class must live in a `.py` file (its source is read once at definition) |
+| `T(kind: nkAdd, leftOp: x)` | `T(kind=K.nkAdd, leftOp=x)` | Discriminators are set first; an omitted one takes its zero value (`low(K)`, `False`); only the selected branch's fields exist and are zero-initialized |
+| `FieldDefect` | `FieldDefect` | Reading/writing a field of an inactive branch, or passing it to the constructor: `field 'x' is not accessible for type 'T' using 'kind = nkInt'` |
+| `x.kind = nkSub` (same branch) | `x.kind = K.nkSub` | Allowed when the active branch does not change; otherwise `FieldDefect("assignment to discriminant changes object branch")` |
+| `x[] = T(kind: nkInt, ...)` | `x <<= T(kind=K.nkInt, ...)` | Replacing the whole object may change the branch (also `copy()`) |
+| `{.cast(uncheckedAssign).}:` | `with uncheckedAssign:` | Branch-changing discriminator assignment; union memory is reused, newly active python-side fields are defaulted (`rule:uncheckedassign`) |
+| C layout | — | Common fields, the discriminator, then a union of one struct per branch: `sizeof` = common + largest branch; `seq[T]` elements share that stride |
+| `of 'a'..'z':` (range branch) | — | Not supported yet |
 
 ## 12. Closures and Nonlocal Scope (`rule:nonlocal`)
 | Nim | Python (Nimic) | Notes |

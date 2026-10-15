@@ -28,7 +28,7 @@ class Node[Key, Val](Object):
     """{.acyclic.}"""
     entries: nint
     keys: array[M, Key]
-    isInternal: bool = False
+    isInternal: bool
     match isInternal:
         case False:
             vals: array[M, Val]
