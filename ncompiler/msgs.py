@@ -11,6 +11,10 @@ from .pathutils import *
 from .options import *
 from .ropes import *
 
+if comptime(defined("nimPreviewSlimSystem")):
+    from nimic.std.syncio import *
+    from nimic.std.assertions import *
+
 
 class InstantiationInfo(NTuple):
     filename: string
@@ -82,7 +86,9 @@ if comptime(defined("nimpretty")):
         return substr(conf.m.fileInfos[nint(fid)].fullContent, a, b)
 
 def canonicalCase(path: mut @ string) -> None:
-    if not comptime(defined("FileSystemCaseSensitive")):
+    if comptime(FileSystemCaseSensitive):
+        discard
+    else:
         path <<= toLowerAscii(path)
 
 def fileInfoKnown(conf: ConfigRef, filename: AbsoluteFile) -> bool:
@@ -277,11 +283,19 @@ def setDirtyFile(conf: ConfigRef, fileIdx: FileIndex, filename: AbsoluteFile) ->
 
 def setHash(conf: ConfigRef, fileIdx: FileIndex, hash: string) -> None:
     assert nint(fileIdx) >= 0
-    conf.m.fileInfos[nint(fileIdx)].hash = hash
+    if comptime(defined("gcArc") or defined("gcOrc") or defined("gcAtomicArc") or defined("gcYrc")):
+        conf.m.fileInfos[nint(fileIdx)].hash = hash
+    else:
+        shallowCopy(conf.m.fileInfos[nint(fileIdx)].hash, hash)
 
 def getHash(conf: ConfigRef, fileIdx: FileIndex) -> string:
     assert nint(fileIdx) >= 0
-    return conf.m.fileInfos[nint(fileIdx)].hash
+    if comptime(defined("gcArc") or defined("gcOrc") or defined("gcAtomicArc") or defined("gcYrc")):
+        result = conf.m.fileInfos[nint(fileIdx)].hash
+    else:
+        result = string("")
+        shallowCopy(result, conf.m.fileInfos[nint(fileIdx)].hash)
+    return result
 
 
 def toFullPathConsiderDirty(conf: ConfigRef, fileIdx: FileIndex) -> AbsoluteFile:
@@ -527,6 +541,11 @@ def liMessage(conf: ConfigRef, info: TLineInfo, msg: TMsgKind, arg: string, eh: 
     if msg >= errMin and msg <= errMax:
         writeContext(conf, info)
         title = ErrorTitle
+        if comptime(False):
+            # we try to filter error messages so that not two error message
+            # in the same file and line are produced:
+            # xxx `lastError` is only used in this disabled code; but could be useful to revive
+            ignoreMsg = eqTLineInfo(conf.m.lastError, info) and not eqTLineInfo(info, unknownLineInfo) and eh != TErrorHandling.doAbort
         if not eqTLineInfo(info, unknownLineInfo):
             conf.m.lastError = info
     elif msg >= warnMin and msg <= warnMax:
@@ -589,16 +608,20 @@ def rawMessage(conf: ConfigRef, msg: TMsgKind, arg: string) -> None:
 def fatal(conf: ConfigRef, info: TLineInfo, arg: string = string(""), msg: TMsgKind = TMsgKind.errFatal) -> None:
     liMessage(conf, info, msg, arg, TErrorHandling.doAbort, instLoc())
 
+@dispatch
 def globalError(conf: ConfigRef, info: TLineInfo, msg: TMsgKind, arg: string = string("")) -> None:
     liMessage(conf, info, msg, arg, TErrorHandling.doRaise, instLoc())
 
-def globalErrorStr(conf: ConfigRef, info: TLineInfo, arg: string) -> None:
+@dispatch
+def globalError(conf: ConfigRef, info: TLineInfo, arg: string) -> None:
     liMessage(conf, info, TMsgKind.errGenerated, arg, TErrorHandling.doRaise, instLoc())
 
+@dispatch
 def localError(conf: ConfigRef, info: TLineInfo, msg: TMsgKind, arg: string = string("")) -> None:
     liMessage(conf, info, msg, arg, TErrorHandling.doNothing, instLoc())
 
-def localErrorStr(conf: ConfigRef, info: TLineInfo, arg: string) -> None:
+@dispatch
+def localError(conf: ConfigRef, info: TLineInfo, arg: string) -> None:
     liMessage(conf, info, TMsgKind.errGenerated, arg, TErrorHandling.doNothing, instLoc())
 
 def message(conf: ConfigRef, info: TLineInfo, msg: TMsgKind, arg: string = string("")) -> None:
@@ -612,10 +635,12 @@ def internalErrorImpl(conf: ConfigRef, info: TLineInfo, errMsg: string, info2: I
     writeContext(conf, info)
     liMessage(conf, info, TMsgKind.errInternal, errMsg, TErrorHandling.doAbort, info2)
 
+@dispatch
 def internalError(conf: ConfigRef, info: TLineInfo, errMsg: string) -> None:
     internalErrorImpl(conf, info, errMsg, instLoc())
 
-def internalErrorStr(conf: ConfigRef, errMsg: string) -> None:
+@dispatch
+def internalError(conf: ConfigRef, errMsg: string) -> None:
     internalErrorImpl(conf, unknownLineInfo, errMsg, instLoc())
 
 def internalAssert(conf: ConfigRef, e: bool) -> None:

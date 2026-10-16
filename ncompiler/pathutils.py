@@ -113,53 +113,62 @@ def toAbsoluteDir(path: string) -> AbsoluteDir:
 def __str__(x: AnyPath) -> string:
     return string(x)
 
-def eqImpl(x: string, y: string) -> bool:
-    """{.inline.}"""
-    result = cmpPaths(x, y) == 0
-    return result
+if comptime(True):
+    def eqImpl(x: string, y: string) -> bool:
+        """{.inline.}"""
+        result = cmpPaths(x, y) == 0
+        return result
 
-def __eq__[T: AnyPath](x: T, y: T) -> bool:
-    return eqImpl(string(x), string(y))
+    def __eq__[T: AnyPath](x: T, y: T) -> bool:
+        return eqImpl(string(x), string(y))
 
-@template
-def postProcessBase(base: AbsoluteDir) -> untyped:
-    return AbsoluteDir(getCurrentDir()) if isEmpty(base) else base
+    @template
+    def postProcessBase(base: AbsoluteDir) -> untyped:
+        # xxx: as argued here https://github.com/nim-lang/Nim/pull/10018#issuecomment-448192956
+        # empty paths should not mean `cwd` so the correct behavior would be to throw
+        # here and make sure `outDir` is always correctly initialized; for now
+        # we simply preserve pre-existing external semantics and treat it as `cwd`
+        if comptime(False):
+            doAssert(isAbsolute(string(base)), string(base))
+            return base
+        else:
+            return AbsoluteDir(getCurrentDir()) if isEmpty(base) else base
 
-@dispatch
-def __truediv__(base: AbsoluteDir, f: RelativeFile) -> AbsoluteFile:
-    with let:
-        _base = postProcessBase(base)
-    doAssert(not isAbsolute(string(f)), string(f))
-    result = AbsoluteFile(newStringOfCap(len(string(_base)) + len(string(f))))
-    with var:
-        state = 0
-    addNormalizePath(string(_base), string(result), state)
-    addNormalizePath(string(f), string(result), state)
-    return result
+    @dispatch
+    def __truediv__(base: AbsoluteDir, f: RelativeFile) -> AbsoluteFile:
+        with let:
+            _base = postProcessBase(base)
+        doAssert(not isAbsolute(string(f)), string(f))
+        result = AbsoluteFile(newStringOfCap(len(string(_base)) + len(string(f))))
+        with var:
+            state = 0
+        addNormalizePath(string(_base), string(result), state)
+        addNormalizePath(string(f), string(result), state)
+        return result
 
-@dispatch
-def __truediv__(base: AbsoluteDir, f: RelativeDir) -> AbsoluteDir:
-    with let:
-        _base = postProcessBase(base)
-    doAssert(not isAbsolute(string(f)))
-    result = AbsoluteDir(newStringOfCap(len(string(_base)) + len(string(f))))
-    with var:
-        state = 0
-    addNormalizePath(string(_base), string(result), state)
-    addNormalizePath(string(f), string(result), state)
-    return result
+    @dispatch
+    def __truediv__(base: AbsoluteDir, f: RelativeDir) -> AbsoluteDir:
+        with let:
+            _base = postProcessBase(base)
+        doAssert(not isAbsolute(string(f)))
+        result = AbsoluteDir(newStringOfCap(len(string(_base)) + len(string(f))))
+        with var:
+            state = 0
+        addNormalizePath(string(_base), string(result), state)
+        addNormalizePath(string(f), string(result), state)
+        return result
 
-def relativeTo(fullPath: AbsoluteFile, baseFilename: AbsoluteDir, sep: char = DirSep) -> RelativeFile:
-    with var:
-        result = RelativeFile(relativePath(string(fullPath), string(baseFilename), sep))
-    return result
+    def relativeTo(fullPath: AbsoluteFile, baseFilename: AbsoluteDir, sep: char = DirSep) -> RelativeFile:
+        with var:
+            result = RelativeFile(relativePath(string(fullPath), string(baseFilename), sep))
+        return result
 
-def toAbsolute(file: string, base: AbsoluteDir) -> AbsoluteFile:
-    if isAbsolute(file):
-        result = AbsoluteFile(file)
-    else:
-        result = base / RelativeFile(file)
-    return result
+    def toAbsolute(file: string, base: AbsoluteDir) -> AbsoluteFile:
+        if isAbsolute(file):
+            result = AbsoluteFile(file)
+        else:
+            result = base / RelativeFile(file)
+        return result
 
 def skipHomeDir(x: string) -> nint:
     with var:

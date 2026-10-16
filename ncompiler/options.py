@@ -14,6 +14,10 @@ from .prefixmatches import *
 from .pathutils import *
 from .nimpaths import *
 
+if comptime(defined("nimPreviewSlimSystem")):
+    from nimic.std.syncio import *
+    from nimic.std.assertions import *
+
 with const:
     hasTinyCBackend = False # defined(tinyc)
     useEffectSystem = True
@@ -531,6 +535,16 @@ def hasWarn(conf: ConfigRef, note: TNoteKind) -> bool:
 def hcrOn(conf: ConfigRef) -> bool:
     return TGlobalOption.optHotCodeReloading in conf.globalOptions
 
+if comptime(False):
+    @template
+    def depConfigFields(fn: untyped):
+        """{.dirty.}"""
+        # deadcode
+        fn(target)
+        fn(options)
+        fn(globalOptions)
+        fn(selectedGC)
+
 with const:
     oldExperimentalFeatures = Tset[Feature]({Feature.dotOperators, Feature.callOperator, Feature.parallel})
     ChecksOptions = Tset[TOption]({TOption.optObjCheck, TOption.optFieldCheck, TOption.optRangeCheck,
@@ -564,6 +578,13 @@ def newProfileData() -> ProfileData:
 with const:
     foreignPackageNotesDefault = Tset[TNoteKind]({
         TMsgKind.hintProcessing, TMsgKind.warnUnknownMagic, TMsgKind.hintQuitCalled, TMsgKind.hintExecuting, TMsgKind.hintUser, TMsgKind.warnUser})
+
+if comptime(defined("nimDebugUtils")):
+    # this allows inserting debugging utilties in all modules that import `options`
+    # with a single switch, which is useful when debugging compiler.
+    from .debugutils import *
+    with export:
+        debugutils
 
 def initConfigRefCommon(conf: ConfigRef) -> None:
     conf.selectedGC = TGCMode.gcUnselected
@@ -648,12 +669,18 @@ def newConfigRef() -> ConfigRef:
     # enable colors by default on terminals
     if isatty(stderr):
         result.globalOptions.incl(TGlobalOption.optUseColors)
+    if comptime(defined("nimDebugUtils")):
+        onNewConfigRef(result)
     return result
 
 def newPartialConfigRef() -> ConfigRef:
-    result = ConfigRef()
-    result.m = initMsgConfig()
-    initConfigRefCommon(result)
+    """create a new ConfigRef that is only good enough for error reporting."""
+    if comptime(defined("nimDebugUtils")):
+        result = getConfigRef()
+    else:
+        result = ConfigRef()
+        result.m = initMsgConfig()
+        initConfigRefCommon(result)
     return result
 
 def cppDefine(c: ConfigRef, define: string) -> None:
@@ -754,50 +781,12 @@ def absOutFile(conf: ConfigRef) -> AbsoluteFile:
     assert not isEmpty(conf.outDir)
     assert not isEmpty(conf.outFile)
     result = conf.outDir / conf.outFile
-    # mock posix directory check omitted
+    if comptime(defined("posix")):
+        if dirExists(string(result)): result <<= AbsoluteFile(string(result) + string(".out"))
     return result
 
 
-# packagehandling.nim inclusion
-def myParentDirs(p: string) -> string: # iterator
-    with var:
-        current = p
-    while True:
-        current = parentDir(current)
-        if len(current) == 0:
-            break
-        yield current
-
-def getNimbleFile(conf: ConfigRef, path: string) -> string:
-    with var:
-        result = string("")
-        parents = 0
-        found = False
-    for d in myParentDirs(path):
-        if conf.packageCache.hasKey(d):
-            return conf.packageCache[d]
-        parents += 1
-        for file in walkFiles(d / string("*.nimble")):
-            result = file
-            found = True
-            break
-        if found:
-            break
-
-    for d in myParentDirs(path):
-        conf.packageCache[d] = result
-        parents -= 1
-        if parents <= 0:
-            break
-    return result
-
-def getPackageName(conf: ConfigRef, path: string) -> string:
-    with let:
-        nimble_path = getNimbleFile(conf, path)
-    if len(nimble_path) > 0:
-        return splitFile(nimble_path)[1] # name is the 2nd element
-    else:
-        return string("unknown")
+include("packagehandling")
 
 def prepareToWriteOutput(conf: ConfigRef) -> AbsoluteFile:
     result = absOutFile(conf)
@@ -1268,3 +1257,12 @@ if comptime(__name__ == "__main__"):
 
     echo("options.py extensive tests passed!")
 
+    # packagehandling (included): nimble file / package lookup, cached per directory
+    with var:
+        _pconf = newConfigRef()
+    with let:
+        _pkgName = getPackageName(_pconf, string(getCurrentDir()) / string("ncompiler") / string("options.py"))
+    doAssert(len(_pkgName) > 0, string("getPackageName"))
+    doAssert(getPackageName(_pconf, string(getCurrentDir()) / string("ncompiler") / string("options.py")) == _pkgName,
+             string("getPackageName cached"))
+    echo(string("packagehandling tests passed"))

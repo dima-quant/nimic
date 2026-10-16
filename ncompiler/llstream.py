@@ -174,7 +174,7 @@ def continueLine(line: string, inTripleString: bool) -> bool:
         ))
     return result
 
-if comptime(not hasRstdin):
+if comptime(not declared("readLineFromStdin")):
     # fallback implementation:
     def readLineFromStdin(prompt: string, line: mut@string) -> bool:
         stdout.write(prompt)

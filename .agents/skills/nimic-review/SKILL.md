@@ -73,6 +73,10 @@ Compare `compiler/[filename].nim` against `ncompiler/[filename].py` **line by li
    - Chained comparisons like `0 <= x <= 10` (must use `x >= 0 and x <= 10`)
    - Python `unittest` / `pytest` / `assert` with f-strings in tests
    - Any construct that would not survive transpilation to valid Nim
+5. **`if comptime` mirrors `when`** (`nimic_translation_rules.md` §2.1): list every `comptime(...)` in the converted module and every `when` in the original. Apart from the added test guard `if comptime(__name__ == "__main__"):` they must pair up one to one, with the same conditions and all branches converted. Flag as **High** severity:
+   - conditions that run different code in Python and Nim (`defined("c")`, `not defined("c")`, `declared(X)` stand-ins, `not (__name__ == "__main__")`)
+   - `when` branches dropped, merged, or turned into runtime `if`
+   - test code that redefines, rebinds or monkey-patches converted code (`_py_*` copies, `Class.method = ...`, `setattr`, `globals()`), or shadows names the module's imports provide
 
 **Log all observations to the review file.** Do NOT make corrections during this step — only log.
 

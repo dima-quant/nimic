@@ -88,7 +88,10 @@ def _copyHalf[Key, Val](h: Node[Key, Val], result: Node[Key, Val]):
             result.links[j] = h.links[Mhalf + j]
     else:
         for j in range(0, Mhalf):
-            result.vals[j] = move(h.vals[Mhalf + j])
+            if comptime(defined("gcArc") or defined("gcOrc") or defined("gcAtomicArc") or defined("gcYrc")):
+                result.vals[j] = move(h.vals[Mhalf + j])
+            else:
+                shallowCopy(result.vals[j], h.vals[Mhalf + j])
 
 def _split[Key, Val](h: Node[Key, Val]) -> Node[Key, Val]:
     """split node in half"""
@@ -111,7 +114,10 @@ def _insert[Key, Val](h: Node[Key, Val], key: Key, val: Val) -> Node[Key, Val]:
                 break
             j += 1
         for i in countdown(h.entries, j + 1):
-            h.vals[i] = move(h.vals[i - 1])
+            if comptime(defined("gcArc") or defined("gcOrc") or defined("gcAtomicArc") or defined("gcYrc")):
+                h.vals[i] = move(h.vals[i - 1])
+            else:
+                shallowCopy(h.vals[i], h.vals[i - 1])
         h.vals[j] = val
     else:
         with var:

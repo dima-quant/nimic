@@ -138,10 +138,9 @@ def runtimeFormat(frmt: FormatStr, args: openArray[Rope]) -> Rope:
             i += 1
     return result
 
+@ufcs(FormatStr)
 def __mod__(frmt: static[FormatStr], args: openArray[Rope]) -> Rope:
     return runtimeFormat(frmt, args)
-
-FormatStr.__mod__ = __mod__
 
 @ufcs(Rope)
 @template

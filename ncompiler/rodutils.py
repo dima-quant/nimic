@@ -31,12 +31,46 @@ from nimic.std.formatfloat import addFloatRoundtrip
 if comptime(defined("nimPreviewSlimSystem")):
     from nimic.std.assertions import *
 
+# bcc on windows doesn't have C99 functions
+if comptime(defined("windows") and defined("bcc")):
+    emit("""#if defined(_MSC_VER) && _MSC_VER < 1900
+  #include <stdarg.h>
+  static int c99_vsnprintf(char *outBuf, size_t size, const char *format, va_list ap) {
+    int count = -1;
+    if (size != 0) count = _vsnprintf_s(outBuf, size, _TRUNCATE, format, ap);
+    if (count == -1) count = _vscprintf(format, ap);
+    return count;
+  }
+  int snprintf(char *outBuf, size_t size, const char *format, ...) {
+    int count;
+    va_list ap;
+    va_start(ap, format);
+    count = c99_vsnprintf(outBuf, size, format, ap);
+    va_end(ap);
+    return count;
+  }
+  #endif
+  """)
+
+def _c_snprintf(s: cstring, n: uint, frmt: cstring) -> cint:
+    """{.importc: "snprintf", header: "<stdio.h>", nodecl, varargs.}"""
+    pass
+
+
+if comptime(not declared("signbit")):
+    def _c_signbit(x: SomeFloat) -> cint:
+        """{.importc: "signbit", header: "<math.h>".}"""
+        pass
+
+    def signbit(x: SomeFloat) -> bool:
+        """{.inline.}"""
+        result = _c_signbit(x) != 0
+        return result
+
 
 def toStrMaxPrecision(f: BiggestFloat | float32) -> string:
-    with var:
-        literalPostfix = ""
-    if isinstance(f, float32):
-        literalPostfix = "f"
+    with const:
+        literalPostfix = "f" if comptime(isinstance(f, float32)) else ""
     with let:
         c = classify(f)
     if c == fcNan:
@@ -107,125 +141,129 @@ def decodeStr(s: cstring, pos: mut @ nint) -> string:
 
 with const:
     _chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    _vintDelta = 5
+
+with push("overflowChecks: off"):
+    # since negative numbers require a leading '-' they use up 1 byte. Thus we
+    # subtract/add `vintDelta` here to save space for small negative numbers
+    # which are common in ROD files:
+    with const:
+        _vintDelta = 5
 
 
-def _encodeVBiggestIntAux(x: BiggestInt, result: mut @ string):
-    """encode a biggest int as a variable length base 190 int."""
-    with var:
-        d = ch('\0')
-        v = x
-        rem = v % 190
-    if rem < 0:
-        result.add(ch('-'))
-        v = -(v // 190)
-        rem = -rem
-    else:
-        v = v // 190
-    with var:
-        idx = int(rem)
-    if idx < 62:
-        d = _chars[idx]
-    else:
-        d = chr(idx - 62 + 128)
-    if v != 0:
-        _encodeVBiggestIntAux(v, result)
-    result.add(d)
-
-
-def encodeVBiggestInt(x: BiggestInt, result: mut @ string):
-    """encode a biggest int as a variable length base 190 int."""
-    _encodeVBiggestIntAux(plus_percent(x, _vintDelta), result)
-
-
-def _encodeVIntAux(x: nint, result: mut @ string):
-    """encode an int as a variable length base 190 int."""
-    with var:
-        d = ch('\0')
-        v = x
-        rem = v % 190
-    if rem < 0:
-        result.add(ch('-'))
-        v = -(v // 190)
-        rem = -rem
-    else:
-        v = v // 190
-    with var:
-        idx = int(rem)
-    if idx < 62:
-        d = _chars[idx]
-    else:
-        d = chr(idx - 62 + 128)
-    if v != 0:
-        _encodeVIntAux(v, result)
-    result.add(d)
-
-
-def encodeVInt(x: nint, result: mut @ string):
-    """encode an int as a variable length base 190 int."""
-    _encodeVIntAux(plus_percent(x, _vintDelta), result)
-
-
-def decodeVInt(s: cstring, pos: mut @ nint) -> nint:
-    with var:
-        i = nint(pos)
-        sign = -1
-    result = nint(0)
-    with let:
-        c0 = s[i]
-    assert (c0 >= ch('a') and c0 <= ch('z')) or (c0 >= ch('A') and c0 <= ch('Z')) or (c0 >= ch('0') and c0 <= ch('9')) or c0 == ch('-') or (ord(c0) >= 128 and ord(c0) <= 255)
-    if c0 == ch('-'):
-        i += 1
-        sign = 1
-    while True:
-        with let:
-            c = s[i]
-        if c >= ch('0') and c <= ch('9'):
-            result = result * 190 - (ord(c) - ord(ch('0')))
-        elif c >= ch('a') and c <= ch('z'):
-            result = result * 190 - (ord(c) - ord(ch('a')) + 10)
-        elif c >= ch('A') and c <= ch('Z'):
-            result = result * 190 - (ord(c) - ord(ch('A')) + 36)
-        elif ord(c) >= 128 and ord(c) <= 255:
-            result = result * 190 - (ord(c) - 128 + 62)
+    def _encodeVBiggestIntAux(x: BiggestInt, result: mut @ string):
+        """encode a biggest int as a variable length base 190 int."""
+        with var:
+            d = ch('\0')
+            v = x
+            rem = v % 190
+        if rem < 0:
+            result.add(ch('-'))
+            v = -(v // 190)
+            rem = -rem
         else:
-            break
-        i += 1
-    result = minus_percent(result * sign, _vintDelta)
-    pos <<= i
-    return result
-
-
-def decodeVBiggestInt(s: cstring, pos: mut @ nint) -> BiggestInt:
-    with var:
-        i = nint(pos)
-        sign = -1
-    result = BiggestInt(0)
-    with let:
-        c0 = s[i]
-    assert (c0 >= ch('a') and c0 <= ch('z')) or (c0 >= ch('A') and c0 <= ch('Z')) or (c0 >= ch('0') and c0 <= ch('9')) or c0 == ch('-') or (ord(c0) >= 128 and ord(c0) <= 255)
-    if c0 == ch('-'):
-        i += 1
-        sign = 1
-    while True:
-        with let:
-            c = s[i]
-        if c >= ch('0') and c <= ch('9'):
-            result = result * 190 - (ord(c) - ord(ch('0')))
-        elif c >= ch('a') and c <= ch('z'):
-            result = result * 190 - (ord(c) - ord(ch('a')) + 10)
-        elif c >= ch('A') and c <= ch('Z'):
-            result = result * 190 - (ord(c) - ord(ch('A')) + 36)
-        elif ord(c) >= 128 and ord(c) <= 255:
-            result = result * 190 - (ord(c) - 128 + 62)
+            v = v // 190
+        with var:
+            idx = int(rem)
+        if idx < 62:
+            d = _chars[idx]
         else:
-            break
-        i += 1
-    result = minus_percent(result * sign, _vintDelta)
-    pos <<= i
-    return result
+            d = chr(idx - 62 + 128)
+        if v != 0:
+            _encodeVBiggestIntAux(v, result)
+        result.add(d)
 
 
+    def encodeVBiggestInt(x: BiggestInt, result: mut @ string):
+        """encode a biggest int as a variable length base 190 int."""
+        _encodeVBiggestIntAux(plus_percent(x, _vintDelta), result)
+
+
+    def _encodeVIntAux(x: nint, result: mut @ string):
+        """encode an int as a variable length base 190 int."""
+        with var:
+            d = ch('\0')
+            v = x
+            rem = v % 190
+        if rem < 0:
+            result.add(ch('-'))
+            v = -(v // 190)
+            rem = -rem
+        else:
+            v = v // 190
+        with var:
+            idx = int(rem)
+        if idx < 62:
+            d = _chars[idx]
+        else:
+            d = chr(idx - 62 + 128)
+        if v != 0:
+            _encodeVIntAux(v, result)
+        result.add(d)
+
+
+    def encodeVInt(x: nint, result: mut @ string):
+        """encode an int as a variable length base 190 int."""
+        _encodeVIntAux(plus_percent(x, _vintDelta), result)
+
+
+    def decodeVInt(s: cstring, pos: mut @ nint) -> nint:
+        with var:
+            i = nint(pos)
+            sign = -1
+        result = nint(0)
+        with let:
+            c0 = s[i]
+        assert (c0 >= ch('a') and c0 <= ch('z')) or (c0 >= ch('A') and c0 <= ch('Z')) or (c0 >= ch('0') and c0 <= ch('9')) or c0 == ch('-') or (ord(c0) >= 128 and ord(c0) <= 255)
+        if c0 == ch('-'):
+            i += 1
+            sign = 1
+        while True:
+            with let:
+                c = s[i]
+            if c >= ch('0') and c <= ch('9'):
+                result = result * 190 - (ord(c) - ord(ch('0')))
+            elif c >= ch('a') and c <= ch('z'):
+                result = result * 190 - (ord(c) - ord(ch('a')) + 10)
+            elif c >= ch('A') and c <= ch('Z'):
+                result = result * 190 - (ord(c) - ord(ch('A')) + 36)
+            elif ord(c) >= 128 and ord(c) <= 255:
+                result = result * 190 - (ord(c) - 128 + 62)
+            else:
+                break
+            i += 1
+        result = minus_percent(result * sign, _vintDelta)
+        pos <<= i
+        return result
+
+
+    def decodeVBiggestInt(s: cstring, pos: mut @ nint) -> BiggestInt:
+        with var:
+            i = nint(pos)
+            sign = -1
+        result = BiggestInt(0)
+        with let:
+            c0 = s[i]
+        assert (c0 >= ch('a') and c0 <= ch('z')) or (c0 >= ch('A') and c0 <= ch('Z')) or (c0 >= ch('0') and c0 <= ch('9')) or c0 == ch('-') or (ord(c0) >= 128 and ord(c0) <= 255)
+        if c0 == ch('-'):
+            i += 1
+            sign = 1
+        while True:
+            with let:
+                c = s[i]
+            if c >= ch('0') and c <= ch('9'):
+                result = result * 190 - (ord(c) - ord(ch('0')))
+            elif c >= ch('a') and c <= ch('z'):
+                result = result * 190 - (ord(c) - ord(ch('a')) + 10)
+            elif c >= ch('A') and c <= ch('Z'):
+                result = result * 190 - (ord(c) - ord(ch('A')) + 36)
+            elif ord(c) >= 128 and ord(c) <= 255:
+                result = result * 190 - (ord(c) - 128 + 62)
+            else:
+                break
+            i += 1
+        result = minus_percent(result * sign, _vintDelta)
+        pos <<= i
+        return result
 
 
 def decodeVIntArray(s: cstring) -> nint:

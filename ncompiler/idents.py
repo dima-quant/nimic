@@ -7,6 +7,9 @@ from nimic.std.hashes import *
 
 from .wordrecg import *
 
+if comptime(defined("nimPreviewSlimSystem")):
+    from nimic.std.assertions import *
+
 
 class TIdent(Object):
     """{.acyclic.}"""

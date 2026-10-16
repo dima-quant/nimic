@@ -114,10 +114,6 @@ if comptime(__name__ == "__main__"):
             TTypeKind.tyLent,
             TTypeKind.tyOwned,
         })
-    if not comptime(defined("c")):
-        tyObject = TTypeKind.tyObject
-        tyTuple = TTypeKind.tyTuple
-        tfInheritable = TTypeFlag.tfInheritable
 
     class Int128(nint):
         pass
@@ -341,11 +337,11 @@ def genObjectFields(p: PProc, typ: PType, n: PNode) -> Rope:
 
 def objHasTypeField(t: PType) -> bool:
     """{.inline.}"""
-    return tfInheritable in t.flags or t.baseClass is not None
+    return TTypeFlag.tfInheritable in t.flags or t.baseClass is not None
 
 def genObjectInfo(p: PProc, typ: PType, name: Rope) -> None:
     with let:
-        kind = tyObject if objHasTypeField(typ) else tyTuple
+        kind = TTypeKind.tyObject if objHasTypeField(typ) else TTypeKind.tyTuple
     with var:
         s = FormatStr(
             "var $1 = {size: 0, kind: $2, base: null, node: null, finalizer: null};$n"
@@ -353,7 +349,7 @@ def genObjectInfo(p: PProc, typ: PType, name: Rope) -> None:
     prepend(p.g.typeInfo, s)
     p.g.typeInfo.addf(FormatStr("var NNI$1 = $2;$n"), [rope(typ.id), genObjectFields(p, typ, typ.n)])
     p.g.typeInfo.addf(FormatStr("$1.node = NNI$2;$n"), [name, rope(typ.id)])
-    if (typ.kind == tyObject) and (typ.baseClass is not None):
+    if (typ.kind == TTypeKind.tyObject) and (typ.baseClass is not None):
         p.g.typeInfo.addf(
             FormatStr("$1.base = $2;$n"),
             [name, genTypeInfo(p, typ.baseClass.skipTypes(skipPtrs))],
