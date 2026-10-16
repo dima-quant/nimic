@@ -91,6 +91,50 @@ class FieldDefect(Defect):
     discriminator assignment that would change the active branch."""
 
 
+class OverflowDefect(Defect):
+    """Nim: OverflowDefect — a signed integer operation overflowed while overflow checks are on."""
+
+
+class IndexDefect(Defect, IndexError):
+    """Nim: IndexDefect — an index outside the bounds of an array (bound checks on)."""
+
+
+# --- Runtime checks (Nim: overflowChecks, boundChecks, ...) ---
+# Whether a check is on comes from the build profile (nimic.nsystem registers the provider: config
+# options such as `overflow_checks:off`, which `-d:danger` sets) and from `push` regions: code objects
+# of procs defined inside `with push("overflowChecks: off"):` run unchecked, as with Nim's
+# {.push overflowChecks: off.}. The question is asked only when a check actually fails, so checked
+# code pays nothing for it.
+_n_check_provider = None  # callable(name: str) -> bool, set by nimic.nsystem
+_n_unchecked_codes: dict[str, set] = {}  # check name -> code objects of procs defined in push regions
+_n_push_depth: dict[str, int] = {}  # check name -> nesting of push regions currently executing
+_N_THIS_FILE = __file__
+_N_RUNTIME_DIR = __file__.rsplit("/", 1)[0] + "/"  # nimic's runtime modules (skipped when resolving UFCS)
+
+
+def _n_check_enabled(name: str) -> bool:
+    """Whether the runtime check `name` (normalized, e.g. "overflowchecks") applies to the code that
+    triggered it: the first caller frame outside nimic's runtime modules."""
+    if _n_push_depth.get(name):
+        return False
+    codes = _n_unchecked_codes.get(name)
+    if codes:
+        frame = sys._getframe(1)
+        while frame is not None and frame.f_code.co_filename == _N_THIS_FILE:
+            frame = frame.f_back
+        if frame is not None and frame.f_code in codes:
+            return False
+    return _n_check_provider(name) if _n_check_provider is not None else True
+
+
+def _n_check_overflow(target_type: type, value) -> None:
+    """Nim: signed integer arithmetic raises OverflowDefect when the result doesn't fit the type."""
+    if getattr(target_type, "_n_signed", False) and isinstance(value, int):
+        half = 1 << (target_type._n_bits - 1)
+        if not -half <= value < half and _n_check_enabled("overflowchecks"):
+            raise OverflowDefect(f"over- or underflow: {value} does not fit {target_type.__name__}")
+
+
 _N_UNCHECKED_ASSIGN = contextvars.ContextVar("_N_UNCHECKED_ASSIGN", default=0)
 
 
@@ -159,6 +203,13 @@ __dispatch_genericT__ = {}
 __tdefs__ = {}
 
 __arg_names__ = {}
+
+# name -> {signature: {parameter: default}}: defaults per overload (not per last-decorated function)
+__arg_defaults__ = {}
+
+# rule:varargs: name -> [(fixed parameter types, element type, converter name or None, fn)] for procs with
+# a `*args: T` parameter; tried when no overload matches the call's arity (Nim prefers non-varargs)
+__dispatch_varargs__ = {}
 
 # --- Generic Type Classes & Aliases ---
 
@@ -457,6 +508,125 @@ def _n_resolve_type_aliases(ann: str, namespace: dict) -> str:
     return resolved if changed and resolved is not None else ann
 
 
+def _n_has_arity(name: str, n: int) -> bool:
+    return any(len(sig) == n for table in (__resolved__, __dispatch_generic__, __dispatch_genericT__)
+               for sig in table.get(name, ()))
+
+
+def _n_bind_overloads(name: str, args: tuple, kwargs: dict) -> list[tuple]:
+    """Positional argument tuples obtained by binding `args` and `kwargs` to the parameters of each
+    overload of `name` (keywords by name, missing trailing parameters from that overload's defaults),
+    the ones needing fewer defaults first."""
+    found = []
+    defaults_of = __arg_defaults__.get(name, {})
+    for sig, names in __arg_names__.get(name, {}).items():
+        if len(args) > len(names):
+            continue
+        full, used, n_defaults = list(args), set(), 0
+        for pname in names[len(args):]:
+            if pname in kwargs:
+                full.append(kwargs[pname])
+                used.add(pname)
+            elif pname in defaults_of.get(sig, {}):
+                full.append(defaults_of[sig][pname])
+                n_defaults += 1
+            else:
+                break
+        else:
+            if used == set(kwargs) and (kwargs or n_defaults):
+                cand = tuple(full)
+                if all(cand is not f and (len(cand) != len(f) or any(a is not b for a, b in zip(cand, f)))
+                       for f, _ in found):
+                    found.append((cand, n_defaults))
+    return [cand for cand, _ in sorted(found, key=lambda item: item[1])]
+
+
+def _n_union_type_class(ann: str, namespace: dict) -> str:
+    """A union annotation `A | B | C` (Nim `A or B or C`) becomes a type class, like SomeInteger: its
+    canonical name is registered in _n_generic_types with the member types (aliases resolved)."""
+    if not isinstance(ann, str) or "|" not in ann:
+        return ann
+    try:
+        node = ast.parse(ann, mode="eval").body
+    except SyntaxError:
+        return ann
+    members = []
+
+    def collect(n) -> bool:
+        if isinstance(n, ast.BinOp) and isinstance(n.op, ast.BitOr):
+            return collect(n.left) and collect(n.right)
+        name = _n_resolve_type_aliases(ast.unparse(n), namespace)
+        name = _n_aliases.get(name, name)
+        members.extend(_n_generic_types.get(name, (name,)))
+        return True
+
+    collect(node)
+    key = " | ".join(members)
+    _n_generic_types[key] = tuple(dict.fromkeys(members))
+    return key
+
+
+def _n_value_copy(value):
+    """Nim assignment semantics for a field value: value types (string, seq, set, array, non-ref
+    objects) are copied, refs, pointers, procs and scalars are shared."""
+    if value is None or getattr(type(value), "_n_is_ref", False) or callable(value) and not hasattr(value, "copy"):
+        return value
+    if isinstance(value, (string, seq, Tset, array, _Object)) and callable(getattr(value, "copy", None)):
+        return value.copy()
+    return value
+
+
+def _n_dollar(x) -> str:
+    """Nim `$x` as Python text: bools are true/false and nil is nil; nimic types define their own str()."""
+    if isinstance(x, NBool):
+        return str(x)
+    if x is True:
+        return "true"
+    if x is False:
+        return "false"
+    if x is None:
+        return "nil"
+    return str(x)
+
+
+def _n_vararg_type(ann, namespace: dict) -> tuple[str, str | None]:
+    """Element type and converter of a `*args` annotation: `T`, or `varargs[T, conv]`."""
+    text = ann if isinstance(ann, str) else getattr(ann, "__name__", str(ann))
+    conv = None
+    m = re.fullmatch(r"\s*varargs\[\s*(.+?)\s*(?:,\s*(\w+)\s*)?\]\s*", text)
+    if m:
+        text, conv = m.group(1), m.group(2)
+    text = _n_resolve_type_aliases(text, namespace)
+    return _n_aliases.get(text, text), conv
+
+
+def _n_type_matches(arg_type: str, sig_type: str) -> bool:
+    """Whether an argument of type `arg_type` can be passed to a parameter of type `sig_type`."""
+    if arg_type == sig_type or sig_type == "untyped":
+        return True
+    if sig_type in _n_generic_types and arg_type in _n_generic_types[sig_type]:
+        return True
+    return _match_subtype(arg_type, sig_type) or _match_converter(arg_type, sig_type)
+
+
+def _n_varargs_call(name: str, args: tuple):
+    """A callable running the first varargs overload of `name` that matches `args`, or None."""
+    for fixed, elem, conv, fn in __dispatch_varargs__.get(name, ()):
+        if len(args) < len(fixed):
+            continue
+        if not all(_n_type_matches(autorename(a), t) for a, t in zip(args, fixed)):
+            continue
+        extra = args[len(fixed):]
+        if conv is None:
+            if not all(_n_type_matches(autorename(a), elem) for a in extra):
+                continue
+        else:
+            converter = _n_dollar if conv == "str" else (fn.__globals__.get(conv) or getattr(sys.modules["builtins"], conv))
+            extra = tuple(string(converter(a)) if elem == "string" else converter(a) for a in extra)
+        return lambda fn=fn, call_args=tuple(args[:len(fixed)]) + tuple(extra): fn(*call_args)
+    return None
+
+
 class _DispatchedCallable:
     """Callable returned by @dispatch: forwards calls to the dispatcher and looks like
     the decorated function (name, annotations, code, type params, globals), so it can
@@ -533,19 +703,28 @@ def dispatch(fn: callable) -> callable:
                 _annotations[name] = "untyped"
 
     sig_list = [
-        (_annotations[name].removeprefix("mut @ ") if isinstance(_annotations[name], str) else getattr(_annotations[name], '__name__', str(_annotations[name])))
+        (_annotations[name].removeprefix("mut @ ").removeprefix("out @ ") if isinstance(_annotations[name], str) else getattr(_annotations[name], '__name__', str(_annotations[name])))
         for name in raw_arg_names
         if name in _annotations
     ]
-    sig_list = [_n_resolve_type_aliases(v, fn.__globals__) for v in sig_list]
+    fn_globals = getattr(fn, "_n_globals", fn.__globals__)  # block template factories: the template's module
+    sig_list = [_n_resolve_type_aliases(v, fn_globals) for v in sig_list]
     sig_list = [_n_aliases[v] if v in _n_aliases else v for v in sig_list]
+    sig_list = [_n_union_type_class(v, fn_globals) for v in sig_list]
     arg_names = tuple(name for name in raw_arg_names if name in _annotations)
+    arg_defaults = {name: defaults[i - default_offset] for i, name in enumerate(raw_arg_names)
+                    if i >= default_offset and name in _annotations}
 
     if not len(sig_list) == arg_count:
         sig_str = ", ".join(sig_list)
         raise Exception(
             f"type not found for all arguments of {fn.__name__}, only the following: {sig_str}"
         )
+    if fn.__code__.co_flags & ins.CO_VARARGS:
+        vararg_name = fn.__code__.co_varnames[arg_count + fn.__code__.co_kwonlyargcount]
+        elem, conv = _n_vararg_type(fn.__annotations__.get(vararg_name, "untyped"), fn_globals)
+        entries = __dispatch_varargs__.setdefault(fn.__name__, [])
+        entries[:] = [e for e in entries if e[0] != tuple(sig_list)] + [(tuple(sig_list), elem, conv, fn)]
     generic = any((arg in _n_generic_types for arg in sig_list))
     genericT = len(fn.__type_params__) > 0
     # register signature
@@ -567,6 +746,7 @@ def dispatch(fn: callable) -> callable:
             __dispatch_genericT__[fn.__name__] = {sigs: fn}
             __tdefs__[fn.__name__] = {sigs: T_def}
         __arg_names__[fn.__name__][sigs] = arg_names
+        __arg_defaults__.setdefault(fn.__name__, {})[sigs] = arg_defaults
     elif generic:
         # expand generic types
         sigs = tuple(
@@ -578,6 +758,7 @@ def dispatch(fn: callable) -> callable:
         else:
             __dispatch_generic__[fn.__name__] = {sigs: fn}
         __arg_names__[fn.__name__][sigs] = arg_names
+        __arg_defaults__.setdefault(fn.__name__, {})[sigs] = arg_defaults
     else:
         sigs = tuple((arg,) for arg in sig_list)
         if fn.__name__ in __resolved__:
@@ -585,53 +766,28 @@ def dispatch(fn: callable) -> callable:
         else:
             __resolved__[fn.__name__] = {sigs: fn}
         __arg_names__[fn.__name__][sigs] = arg_names
+        __arg_defaults__.setdefault(fn.__name__, {})[sigs] = arg_defaults
 
     def fn_dispatch(*args, **kwargs):
         if kwargs:
-            possible_sigs = __arg_names__.get(fn.__name__, {})
-            candidate_args_list = []
-            for sig_def, p_arg_names in possible_sigs.items():
-                if len(args) + len(kwargs) == len(p_arg_names):
-                    expected_kw_names = p_arg_names[len(args):]
-                    if set(expected_kw_names) == set(kwargs.keys()):
-                        full_args = list(args)
-                        for name in expected_kw_names:
-                            full_args.append(kwargs[name])
-                        test_args = tuple(full_args)
-                        test_fn_sig = tuple((autorename(arg),) for arg in test_args)
-
-                        is_match = False
-                        nm = fn.__name__
-                        if nm in __resolved__ and sig_def in __resolved__[nm] and test_fn_sig == sig_def:
-                            is_match = True
-                        elif nm in __dispatch_generic__ and sig_def in __dispatch_generic__[nm]:
-                            if len(test_fn_sig) == len(sig_def) and all(test_fn_sig[i][0] in sig_def[i] for i in range(len(test_fn_sig))):
-                                is_match = True
-                        elif nm in __dispatch_genericT__ and sig_def in __dispatch_genericT__[nm]:
-                            is_match = True
-
-                        if is_match and test_args not in candidate_args_list:
-                            candidate_args_list.append(test_args)
-            if not candidate_args_list:
+            # bind keywords (and defaults) to each overload's parameters, then dispatch positionally
+            candidates = _n_bind_overloads(fn.__name__, args, kwargs)
+            if not candidates:
                 raise TypeError(f"Invalid keyword arguments for {fn.__name__}")
-
-            for cand in candidate_args_list:
+            for cand in candidates:
                 try:
                     return fn_dispatch(*cand)
                 except NotImplementedError:
                     pass
             raise NotImplementedError(f"Function not defined for keyword signature: {fn.__name__}")
 
-        if len(args) < arg_count and defaults and not kwargs:
-            is_match = (
-                (fn.__name__ in __resolved__ and any(len(s) == len(args) for s in __resolved__[fn.__name__]))
-                or (fn.__name__ in __dispatch_generic__ and any(len(s) == len(args) for s in __dispatch_generic__[fn.__name__]))
-                or (fn.__name__ in __dispatch_genericT__ and any(len(s) == len(args) for s in __dispatch_genericT__[fn.__name__]))
-            )
-            if not is_match:
-                missing_count = arg_count - len(args)
-                if missing_count <= len(defaults):
-                    args = args + defaults[len(defaults) - missing_count :]
+        if not _n_has_arity(fn.__name__, len(args)):
+            # no overload takes exactly this many arguments: fill trailing defaults per overload
+            for cand in _n_bind_overloads(fn.__name__, args, {}):
+                try:
+                    return fn_dispatch(*cand)
+                except NotImplementedError:
+                    pass
 
         sigs = ((autorename(arg),) for arg in args)
         fn_sig = tuple(sigs)
@@ -765,21 +921,32 @@ def dispatch(fn: callable) -> callable:
                             is_resolved = True
                             break
         if not is_resolved:
+            # overloads of this arity didn't match the types: try overloads whose defaults fill the call
+            for cand in _n_bind_overloads(fn.__name__, args, {}):
+                if len(cand) > len(args):
+                    try:
+                        return fn_dispatch(*cand)
+                    except NotImplementedError:
+                        pass
+        if not is_resolved:
             # Check UFCS: if the first argument has a method with this function's name
             if len(args) >= 1 and not fn.__name__.startswith("__") and hasattr(args[0], fn.__name__):
                 method = getattr(args[0], fn.__name__)
-                if callable(method) and getattr(method, "__func__", None) not in (fn, fn_dispatch):
+                if (callable(method) and getattr(method, "__func__", None) not in (fn, fn_dispatch)
+                        and not isinstance(method, functools.partial)):  # not the UFCS lookup of a proc
                     try:
                         return method(*args[1:], **kwargs)
                     except AttributeError:
                         pass
         if is_resolved:
             return __resolved__[fn.__name__][fn_sig](*args)
-        else:
-            sig_str = ", ".join([sig[0] for sig in fn_sig])
-            raise NotImplementedError(
-                f"Function not defined for signature: {fn.__name__}({sig_str})"
-            )
+        varargs_call = _n_varargs_call(fn.__name__, args)
+        if varargs_call is not None:
+            return varargs_call()
+        sig_str = ", ".join([sig[0] for sig in fn_sig])
+        raise NotImplementedError(
+            f"Function not defined for signature: {fn.__name__}({sig_str})"
+        )
 
     # for debugging save in visible debugG
     for nm in __resolved__:
@@ -797,13 +964,15 @@ _n_ufcs_registry: dict = {}
 def ufcs(*classes: type, aliases: tuple = ()) -> callable:
     """Nim method-call syntax for a free proc: after `@ufcs(string)` on `def f(s, ...)`,
     `s.f(...)` calls `f(s, ...)`. The proc is installed under its own name and each of
-    `aliases` (e.g. the camelCase spelling). An attribute the class already has is never
-    shadowed (TypeError); re-registering a name installed by @ufcs (a further @dispatch
+    `aliases` (e.g. the camelCase spelling). An operator (dunder) defined in another module for this
+    class is installed even if the class inherits one (Nim: `proc `%`*(f: FormatStr, ...)` next to the
+    type alias); any other attribute the class already has is never shadowed (TypeError); re-registering a name installed by @ufcs (a further @dispatch
     overload, a module reload) replaces it. Returns the proc unchanged."""
     def install(fn):
         for cls in classes:
             for name in (fn.__name__, *aliases):
-                if hasattr(cls, name) and (cls, name) not in _n_ufcs_registry:
+                operator_override = name.startswith("__") and name.endswith("__") and name not in cls.__dict__
+                if hasattr(cls, name) and (cls, name) not in _n_ufcs_registry and not operator_override:
                     raise TypeError(f"@ufcs: {cls.__name__}.{name} already exists; "
                                     f"refusing to shadow it with the free proc {fn.__name__}")
                 _n_ufcs_registry[(cls, name)] = fn
@@ -1025,6 +1194,24 @@ class NTypeRegistry:
         raise NameError(f"Type '{t_name}' not found")
 
 _n_registry = NTypeRegistry()
+
+# (module, type name) -> [(owner class, field)]: fields typed with a placeholder for a type that is
+# declared later in the same type section
+_n_forward_fields: dict[tuple[str, str], list[tuple[type, str]]] = {}
+
+
+def _n_resolve_forward_fields(cls: type) -> None:
+    """Nim resolves the types of one `type` section together, so a field may name a type declared
+    after its owner. get_or_eval_type returns a placeholder (`_n_forward`) for it; record such fields
+    and, when the type itself registers, replace the placeholder by it, so the field gets the real
+    type's zero value (nil for a ref) and type checks."""
+    if cls.__dict__.get('_n_forward', False):
+        return
+    for key, field_cls in cls._n_field_types.items():
+        if isinstance(field_cls, type) and field_cls.__dict__.get('_n_forward', False):
+            _n_forward_fields.setdefault((cls.__module__, field_cls.__name__), []).append((cls, key))
+    for owner, key in _n_forward_fields.pop((cls.__module__, cls.__name__), ()):
+        owner._n_field_types[key] = cls
 
 # Backward-compatible aliases — these point to the same dict objects
 DICT_OF_TYPES = _n_registry.types
@@ -1424,6 +1611,10 @@ class NBool:
     def __repr__(self):
         return repr(self._value)
 
+    def __str__(self):
+        """Nim `$`: true / false."""
+        return "true" if bool(self._n_get_value()) else "false"
+
     def __eq__(self, other):
         if isinstance(other, NBool):
             return self._value == other._value
@@ -1583,6 +1774,13 @@ class Tset(set):
 
     def contains(self, elem):
         return elem in self
+
+    def __ilshift__(self, other):
+        """Value assignment (Nim `s = other` through a var parameter): replace the members in place."""
+        if other is not self:
+            self.clear()
+            self.update(other)
+        return self
 
     def copy(self):
         return type(self)(self)
@@ -1880,18 +2078,22 @@ class _Object(Ntype):
         if (layout is not None and name in layout.fields and "_n_discs" in self.__dict__
                 and name not in self.__dict__.get("_n_fields", ())):
             raise FieldDefect(self._n_field_defect_msg(name))
+        if not name.startswith("_"):
+            # Nim method-call syntax (UFCS): `obj.f(args)` calls the proc `f(obj, args)` visible in the
+            # caller's scope (e.g. `builder.addArgumentSeparator()`, `b.addCast(t):` for a template)
+            frame = sys._getframe(1)
+            while frame is not None and frame.f_code.co_filename.startswith(_N_RUNTIME_DIR):
+                frame = frame.f_back
+            if frame is not None:
+                proc = frame.f_locals.get(name, frame.f_globals.get(name))
+                if callable(proc) and not isinstance(proc, type):
+                    return functools.partial(proc, self)
         raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
     @property
     def is_nil(self) -> bool:
         """Nim: isNil — check if pointer-type object is nil."""
         return getattr(self, '_n_view', None) is None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        pass
 
     @classmethod
     def _n_ptr_cast(cls, instance: pointer | ByteAddress) -> pointer:
@@ -2261,7 +2463,10 @@ class _Object(Ntype):
 
         # C. Python-side fields (pointers→NilPtr, calltypes→None, seq→already init'd, etc.)
         if other and (hasattr(other, name) if other is not self else name in other.__dict__):
-            super(_Object, self).__setattr__(name, getattr(other, name))
+            value = getattr(other, name)
+            if other is not self:
+                value = _n_value_copy(value)  # Nim assignment copies values (string, seq, objects)
+            super(_Object, self).__setattr__(name, value)
         elif getattr(field_cls, '_n_is_calltype', False):
             super(_Object, self).__setattr__(name, None)
         elif is_class and DICT_OF_TYPES.get('pointer') and issubclass(field_cls, pointer):
@@ -2345,6 +2550,7 @@ class _Object(Ntype):
         # resolve types. Generic types, such as ptr[UncheckedArray[T]], should be specialized first
         cls._n_field_types = {key: _n_registry.get_or_eval_type(_type_name, caller_globals)
             for key, _type_name in _annotations.items()}
+        _n_resolve_forward_fields(cls)
         # Resolve base type classes for issubclass checks (safe if not yet defined)
         _pointer = dict_of_types.get("pointer")
         _seq = dict_of_types.get("seq")
@@ -2434,6 +2640,10 @@ class _Object(Ntype):
 
 class Object(_Object, metaclass=NMetaClass):
     def __init_subclass__(cls) -> None:
+        if "__eq__" in cls.__dict__ and cls.__dict__.get("__hash__", 0) is None:
+            # Python drops __hash__ when a class defines __eq__; in Nim `==` and `hash` are independent
+            # procs, so an overloaded `==` keeps the inherited hashing (e.g. PIdent's `==`)
+            cls.__hash__ = next(b.__hash__ for b in cls.__mro__[1:] if b.__dict__.get("__hash__") is not None)
         # Capture the defining module's globals so that eval() in
         # get_or_eval_type can resolve constants used in type annotations
         # (e.g. array[_MINIMP4_MAX_SPS, pointer]).
@@ -2619,8 +2829,19 @@ class array(Ntype):
     def __len__(self) -> int:
         return self._n_size
 
+    def __iter__(self):
+        """Nim: items(a) — the elements in index order."""
+        for pos in range(self._n_size):
+            yield self[self._n_first + pos]
+
+    def _n_check_index(self, index: int) -> None:
+        """Nim raises IndexDefect for an index outside low(a)..high(a)."""
+        if not 0 <= index - self._n_first < self._n_size and _n_check_enabled("boundchecks"):
+            raise IndexDefect(f"index {index} not in {self._n_first} .. {self._n_first + self._n_size - 1}")
+
     def __getitem__(self, index: int) -> object:
         index = self._n_normalize_index(index)
+        self._n_check_index(index)
         if self._n_view is not None:
             if hasattr(self, '_n_type') and isinstance(self._n_type, type) and issubclass(self._n_type, (char, NScalar, bool)):
                 return self._n_type._n_on_array(self._n_view, index - self._n_first)
@@ -2631,8 +2852,17 @@ class array(Ntype):
 
     def __setitem__(self, index: int, value: object) -> None:
         index = self._n_normalize_index(index)
+        self._n_check_index(index)
         if self._n_view is None:
             self._n_cache[index] = value
+            return
+        cached = self._n_cache.get(index)
+        if cached is not None and cached is value:
+            return  # `a[i] <<= v` has already assigned the element in place
+        if isinstance(value, _Object):
+            # whole-object assignment: copy ctypes-side and python-side fields (string, seq, ...)
+            element = cached if cached is not None else self[index]
+            element._n_set_value(value)
             return
 
         if hasattr(value, '_n_get_value'):
@@ -2688,6 +2918,25 @@ class array(Ntype):
         elif cls._n_type.__name__ == "pointer" or cls._n_type.__name__.startswith("ptr["):
             DICT_OF_C_TYPES[cls.__name__] = ctypes.c_void_p * cls._n_size
         DICT_OF_TYPES[cls.__name__] = cls
+
+    def copy(self):
+        """A copy of the value (Nim arrays are values)."""
+        result = type(self)()
+        result <<= self
+        return result
+
+    def __ilshift__(self, other):
+        """Value assignment (Nim `a = other` through a var parameter): copy all elements in place."""
+        if other is self:
+            return self
+        if hasattr(self, "_n_view") and hasattr(other, "_n_view"):
+            ctypes.memmove(ctypes.addressof(self._n_view), ctypes.addressof(other._n_view),
+                           ctypes.sizeof(self._n_view))
+            self._n_cache = {}
+        else:
+            for i, item in enumerate(other):
+                self[self._n_first + i] = item
+        return self
 
 
 
@@ -2786,7 +3035,10 @@ class seq(Ntype):
             return
         index = int(index)
         if self._n_is_list:
-            self._n_list[index] = value
+            if self._n_list[index] is not value:  # `s[i] <<= v` already assigned in place
+                self._n_list[index] = _n_value_copy(value)
+            return
+        if self._n_cache.get(index) is value:
             return
         if index not in self._n_cache or self._n_cache[index] is None:
             self._n_cache[index] = self._n_type._n_on_array(self._n_view, index, value)
@@ -2808,7 +3060,7 @@ class seq(Ntype):
 
     def add(self, value: object) -> None:
         if self._n_is_list:
-            self._n_list.append(value)
+            self._n_list.append(_n_value_copy(value))  # Nim add copies values, shares refs
             return
         if self.len == self._n_reserved:
             self._n_reserved = self._n_reserved * 2
@@ -2827,6 +3079,25 @@ class seq(Ntype):
     @len.setter
     def len(self, value: int):
         self._n_len = value
+
+    def copy(self):
+        """A copy of the value (Nim seqs are values; `.copy()` is dropped by rule:copy)."""
+        result = type(self)()
+        result <<= self
+        return result
+
+    def __ilshift__(self, other):
+        """Value assignment (Nim `s = other` through a var parameter): replace length and elements
+        in place. Value elements are copied, ref elements are shared, as Nim's seq assignment does."""
+        if other is self:
+            return self
+        items = [other[i] for i in range(len(other))]
+        self.set_len(len(items))
+        for i, item in enumerate(items):
+            if self._n_is_list and not getattr(type(item), "_n_is_ref", False) and callable(getattr(item, "copy", None)):
+                item = item.copy()
+            self[i] = item
+        return self
 
     def set_len(self, new_len: int) -> None:
         """Set logical length, resizing buffer if needed."""
@@ -3526,6 +3797,8 @@ class _SomeMutClass:
         return other
 # reserve keyword for modifiable variables
 mut = _SomeMutClass()
+# Nim `out T` parameter (assigned by the proc before use); in Python the same as mut
+out = _SomeMutClass()
 
 
 def determine_common_type(type_a: type, type_b: type) -> type:
@@ -3700,10 +3973,14 @@ class NScalar:
     #     return result
 
     # Internal dispatch for operations
-    def _n_op(self, other: NScalar | int | float, op_func: callable) -> NScalar:
+    # `checked`: the operation is one of Nim's overflow-checked ones (+, -, *, div, unary -, abs);
+    # +%/-%, shifts and bitwise operations wrap and pass checked=False.
+    def _n_op(self, other: NScalar | int | float, op_func: callable, checked: bool = False) -> NScalar:
         if isinstance(other, NScalar):
             target_type = determine_common_type(self._n_type, other._n_type)
             res_val = op_func(self._n_get_value(), other._n_get_value())
+            if checked:
+                _n_check_overflow(target_type, res_val)
             return target_type(res_val)
         elif hasattr(other, "__float__"):  # numeric literal or other scalar
             # Promote int types to float64 when operating with a float literal
@@ -3712,13 +3989,17 @@ class NScalar:
             else:
                 target_type = self._n_type
             res_val = op_func(self._n_get_value(), other)
+            if checked:
+                _n_check_overflow(target_type, res_val)
             return target_type(res_val)
         return op_func(self._n_get_value(), other)
 
-    def _n_rop(self, other: NScalar | int | float, op_func: callable) -> NScalar:
+    def _n_rop(self, other: NScalar | int | float, op_func: callable, checked: bool = False) -> NScalar:
         if isinstance(other, NScalar):
             target_type = determine_common_type(self._n_type, other._n_type)
             res_val = op_func(other._n_get_value(), self._n_get_value())
+            if checked:
+                _n_check_overflow(target_type, res_val)
             return target_type(res_val)
         elif hasattr(other, "__float__"):  # numeric literal or other scalar
             # Promote int types to float64 when operating with a float literal
@@ -3727,36 +4008,45 @@ class NScalar:
             else:
                 target_type = self._n_type
             res_val = op_func(other, self._n_get_value())
+            if checked:
+                _n_check_overflow(target_type, res_val)
             return target_type(res_val)
         return op_func(other, self._n_get_value())
 
-    def _n_iop(self, other: NScalar | int | float, op_func: callable) -> None:
+    def _n_iop(self, other: NScalar | int | float, op_func: callable, checked: bool = False) -> None:
         if isinstance(other, NScalar):
             res_val = op_func(self._n_get_value(), other._n_get_value())
-            self._n_set_value(self._n_normalize(res_val))
         elif hasattr(other, "__float__"):  # check if numeric literal or other scalar
             res_val = op_func(self._n_get_value(), other)
-            self._n_set_value(self._n_normalize(res_val))
+        else:
+            return
+        if checked:
+            _n_check_overflow(self._n_type, res_val)
+        self._n_set_value(self._n_normalize(res_val))
 
     # --- Unary Operations ---
     def __neg__(self):
-        return self._n_type(-self._n_get_value())
+        res_val = -self._n_get_value()
+        _n_check_overflow(self._n_type, res_val)
+        return self._n_type(res_val)
 
     def __pos__(self):
         return self._n_type(+self._n_get_value())
 
     def __abs__(self):
-        return self._n_type(abs(self._n_get_value()))
+        res_val = abs(self._n_get_value())
+        _n_check_overflow(self._n_type, res_val)
+        return self._n_type(res_val)
 
     # --- Binary Operations ---
     def __add__(self, other):
-        return self._n_op(other, operator.add)
+        return self._n_op(other, operator.add, checked=True)
 
     def __sub__(self, other):
-        return self._n_op(other, operator.sub)
+        return self._n_op(other, operator.sub, checked=True)
 
     def __mul__(self, other):
-        return self._n_op(other, operator.mul)
+        return self._n_op(other, operator.mul, checked=True)
 
     def __truediv__(self, other):
         # Nim: int / int returns float
@@ -3778,16 +4068,16 @@ class NScalar:
 
     # --- Reflected Binary Operations ---
     def __radd__(self, other):
-        return self._n_rop(other, operator.add)
+        return self._n_rop(other, operator.add, checked=True)
 
     def __rsub__(self, other):
-        return self._n_rop(other, operator.sub)
+        return self._n_rop(other, operator.sub, checked=True)
 
     def __rdiv__(self, other):
         return self._n_rop(other, operator.div)
 
     def __rmul__(self, other):
-        return self._n_rop(other, operator.mul)
+        return self._n_rop(other, operator.mul, checked=True)
 
     def __rtruediv__(self, other):
         # Nim: int / int returns float
@@ -3809,15 +4099,15 @@ class NScalar:
 
     # --- In-place Operations
     def __iadd__(self, other):
-        self._n_iop(other, operator.add)
+        self._n_iop(other, operator.add, checked=True)
         return self
 
     def __isub__(self, other):
-        self._n_iop(other, operator.sub)
+        self._n_iop(other, operator.sub, checked=True)
         return self
 
     def __imul__(self, other):
-        self._n_iop(other, operator.mul)
+        self._n_iop(other, operator.mul, checked=True)
         return self
 
     def __idiv__(self, other):
@@ -3986,13 +4276,13 @@ class NInteger(NScalar):
         return cls(val)
 
     def __floordiv__(self, other):
-        return self._n_op(other, _n_trunc_div)
+        return self._n_op(other, _n_trunc_div, checked=True)
 
     def __rfloordiv__(self, other):
-        return self._n_rop(other, _n_trunc_div)
+        return self._n_rop(other, _n_trunc_div, checked=True)
 
     def __ifloordiv__(self, other):
-        self._n_iop(other, _n_trunc_div)
+        self._n_iop(other, _n_trunc_div, checked=True)
         return self
 
     def __mod__(self, other):
@@ -4433,6 +4723,17 @@ class string(collections.UserString):
     utf8(text) to get the UTF-8 bytes of Unicode text (Nim literal semantics).
     """
     
+    def __init_subclass__(cls, **kwargs):
+        """rule:typealias: `class Snippet(string): pass` is `type Snippet* = string`, so for dispatch it is
+        an alias of string, as NScalar subclasses are (@distinct removes the alias)."""
+        super().__init_subclass__(**kwargs)
+        own = [k for k, v in vars(cls).items() if not k.startswith("__") and not k.startswith("_n_")]
+        if own or any(callable(v) for k, v in vars(cls).items() if k not in ("__module__", "__qualname__", "__doc__")):
+            return  # a class with members of its own (e.g. std/paths.Path, distinct in Nim) is no alias
+        base = cls.__bases__[0].__name__
+        _n_aliases[cls.__name__] = _n_aliases.get(base, base)
+        DICT_OF_TYPES[cls.__name__] = cls
+
     @property
     def _n_view(self):
         return self._n_view_ref[0] if hasattr(self, '_n_view_ref') else None
@@ -4491,6 +4792,18 @@ class string(collections.UserString):
     def __ilshift__(self, other):
         self.data = other.data if hasattr(other, 'data') else str(other)
         return self
+
+    @property
+    def len(self) -> int:
+        """Nim `s.len` (as seq.len)."""
+        return len(self)
+
+    def copy(self):
+        """A copy of the value with its own buffer (Nim strings are values; `.copy()` is dropped by
+        rule:copy). Note: string(other) shares other's buffer."""
+        return type(self)(str(self.data))
+
+    __copy__ = copy
 
     def __iadd__(self, other):
         s_other = other.data if hasattr(other, 'data') else str(other)

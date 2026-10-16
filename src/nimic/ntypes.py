@@ -23,7 +23,7 @@ Contents:
   Enum utilities       — NStrEnum with succ/pred/ord/nrange/subset/low/high.
   Cast & memory        — cast[T](x), sizeof(x), addr(x), unsafeAddr(x).
   Iteration helpers    — fields(obj), fields(obj1, obj2), countdown(a, b).
-  Compile-time         — comptime(x), defined(varname), static.
+  Compile-time         — comptime(x), defined("sym"), declared("name"), static.
   Template inlining    — @template, @template_expand (re-exported from inliner).
 """
 
@@ -34,7 +34,7 @@ import ctypes as _ctypes  # underscore: not re-exported by `from nimic.ntypes im
 import functools as _functools
 from enum import auto
 
-from nimic.inliner import template, template_expand
+from nimic.inliner import template, template_expand, do, TemplateBlockError
 
 from nimic.nsystem import (
     alloc_shared0,
@@ -56,6 +56,16 @@ from nimic.nsystem import (
     substr,
     ord,
     quit,
+    defined,
+    declared,
+    echo,
+    shallowCopy,
+    push,
+    assign,
+    include,
+    emit,
+    block,
+    breakBlock,
     _n_setup_stdio,
 )
 _n_setup_stdio()  # stdio is byte-transparent, like Nim's echo/readLine
@@ -94,6 +104,7 @@ from nimic.ntypesystem import (
     ptr,
     ref,
     mut,
+    out,
     seq,
     string,
     subset,
@@ -114,12 +125,18 @@ from nimic.ntypesystem import (
     _n_default_value,
     Defect,
     FieldDefect,
+    OverflowDefect,
+    IndexDefect,
     uncheckedAssign,
 )
 
 
 class untyped:
     pass
+
+
+class typed:
+    """Nim `typed` (template parameter): marks e.g. a code block parameter of a template."""
 
 
 SomeInteger = int
@@ -170,12 +187,10 @@ discard = None
 const = contextlib.nullcontext()
 let = contextlib.nullcontext()
 var = contextlib.nullcontext()
-block = contextlib.nullcontext()
 Type = contextlib.nullcontext()
 template_inline = contextlib.nullcontext()
 export = contextlib.nullcontext()
 alias = contextlib.nullcontext()
-do = contextlib.nullcontext()
 
 static = set
 
@@ -200,20 +215,6 @@ def comptime(x: object) -> object:
     return x
 
 
-def defined(varname: str) -> bool:
-    """
-    Check if a variable with the given name is defined in the global scope.
-
-    Args:
-        varname (str): The name of the variable to check.
-
-    Returns:
-        bool: True if the variable is defined in the global scope, False otherwise.
-    """
-    return varname in globals()
-
-
-echo = print
 
 
 def new_exception(except_cls: type, msg: str):
@@ -281,17 +282,29 @@ from nimic.std.syncio import (
 
 
 def incl(s: set, elem: object) -> None:
-    """Nim: incl — include an element into a set."""
-    s.add(elem)
+    """Nim: incl — include an element into a set (a container's own incl, e.g. IntSet's, wins)."""
+    own = getattr(type(s), "incl", None)
+    if own is not None:
+        own(s, elem)
+    else:
+        s.add(elem)
 
 
 def excl(s: set, elem: object) -> None:
-    """Nim: excl — exclude an element from a set."""
-    s.discard(elem)
+    """Nim: excl — exclude an element from a set (a container's own excl wins)."""
+    own = getattr(type(s), "excl", None)
+    if own is not None:
+        own(s, elem)
+    else:
+        s.discard(elem)
 
 
 def contains_or_incl(s: set, elem: object) -> bool:
-    """Nim: containsOrIncl — returns True if elem was already in s, else adds elem and returns False."""
+    """Nim: containsOrIncl — returns True if elem was already in s, else adds elem and returns False.
+    The overloads of other modules (std/intsets) coexist in Nim: a container's own operation wins."""
+    own = getattr(type(s), "containsOrIncl", None) or getattr(type(s), "contains_or_incl", None)
+    if own is not None:
+        return own(s, elem)
     if elem in s:
         return True
     s.add(elem)
@@ -341,9 +354,6 @@ def move(x):
     return x
 
 
-def shallowCopy(dest, src):
-    """Nim: shallowCopy — shallow copy from src to dest."""
-    return src
 
 
 def cmp(x, y) -> int:

@@ -14,9 +14,10 @@ import textwrap
 import unittest
 
 from nimic.ntypes import *
-from nimic.nsystem import ord as nim_ord
+from nimic.nsystem import ord as nim_ord, _BuildProfile, _n_set_build_profile
 from nimic.ntypesystem import (BUFFER_REGISTRY, BufferRegistry, DICT_OF_C_TYPES, _match_subtype,
-                               _n_aliases, _n_distinct_types, _n_from_text, _n_to_text, char as _char)
+                               _n_aliases, _n_distinct_types, _n_from_text, _n_registry, _n_to_text,
+                               char as _char)
 from nimic.std.endians import big_endian32
 from nimic.std.math import classify, fcNegSubnormal, fcNormal, fcSubnormal
 from nimic.std.options import Option, none, some
@@ -55,14 +56,21 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(list(r2), [2, 3, 4])
 
     def test_integer_overflow_underflow(self):
-        # int8: -128 to 127
+        """Nim: signed overflow raises OverflowDefect (overflow checks on, the default build);
+        unsigned arithmetic wraps; +% and -% always wrap."""
         val = int8(127)
-        val += 1
-        self.assertEqual(int(val), -128)  # Overflow wraps around
-
-        val = int8(-128)
-        val -= 1
-        self.assertEqual(int(val), 127)   # Underflow wraps around
+        with self.assertRaises(OverflowDefect):
+            val += 1
+        with self.assertRaises(OverflowDefect):
+            _ = int8(-128) - 1
+        with self.assertRaises(OverflowDefect):
+            _ = -int8(-128)
+        with self.assertRaises(OverflowDefect):
+            _ = high(nint) * 190
+        with self.assertRaises(OverflowDefect):
+            _ = low(int64) // int64(-1)
+        self.assertEqual(int(int8(127).plus_percent(1)), -128)
+        self.assertEqual(int(int8(1) << 7), -128)  # shifts don't check
 
         # uint8: 0 to 255
         uval = uint8(255)
@@ -1272,6 +1280,54 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(str(classify(int32(1))), "i32")
         self.assertEqual(str(classify(int64(1))), "i64")
 
+    def test_forward_declared_field_types(self):
+        """A field whose type is declared later in the same type section (Nim: one `type` block)
+        resolves to that type once it is defined: a ref field defaults to nil, a value field to
+        its zero value, and the field accepts instances of the real type."""
+        @ref
+        class FwdNode(Object):
+            sym: FwdSym
+            info: FwdInfo
+            n: nint
+
+        @ref
+        class FwdSym(Object):
+            node: FwdNode
+
+        class FwdInfo(Object):
+            line: nint
+
+        x = FwdNode(n=1)
+        self.assertIsNone(x.sym)
+        self.assertIsInstance(x.info, FwdInfo)
+        self.assertEqual(x.info.line, 0)
+        x.sym = FwdSym(node=x)
+        self.assertIs(x.sym.node, x)
+        self.assertIs(FwdNode._n_field_types["sym"], FwdSym)
+
+    def test_dispatch_none_matches_nilable_types(self):
+        """None (Nim nil) dispatches only to nilable parameter types: ref, ptr, pointer, proc."""
+        @ref
+        class _TNilRef(Object):
+            x: nint
+
+        class _TNilValue(Object):
+            x: nint
+
+        @calltype
+        def _t_nil_cb(x: int32) -> int32: ...
+
+        for nilable in (_TNilRef, ptr[int32], pointer, _t_nil_cb):
+            self.assertTrue(_match_subtype("NoneType", nilable.__name__), nilable.__name__)
+        for value in (_TNilValue, int32, nint, float64, bool, char, string, Tset[uint8], array[3, int8]):
+            self.assertFalse(_match_subtype("NoneType", value.__name__), value.__name__)
+
+        @dispatch
+        def _t_nil_take(a: _TNilRef, b: nint) -> string:
+            return string("ref")
+
+        self.assertEqual(str(_t_nil_take(None, nint(1))), "ref")
+
     # --- char from bytes ---
 
     def test_char_from_bytes(self):
@@ -2397,6 +2453,530 @@ class TestNTypes(unittest.TestCase):
                 tail*: int''')
         self.assertEqual(unparse(ast.parse(src))[0].strip(), expected)
 
+    def test_value_assignment_containers(self):
+        """`x <<= y` (Nim `x = y` through a var parameter) works for seq, array and Tset, in place."""
+        def assign_seq(dst: seq[int32], src: seq[int32]) -> None:
+            dst <<= src
+        a = seq[int32]()
+        a.add(int32(1))
+        b = seq[int32]()
+        for v in (4, 5, 6):
+            b.add(int32(v))
+        assign_seq(a, b)
+        self.assertEqual([int(x) for x in a], [4, 5, 6])
+        b[0] = int32(9)
+        self.assertEqual(int(a[0]), 4)  # a copy, not an alias
+        names = seq[string]()
+        other = seq[string]()
+        other.add(string("x"))
+        names <<= other
+        other[0].add(string("y"))
+        self.assertEqual(str(names[0]), "x")  # value elements are copied
+        arr = array[3, int32]([1, 2, 3])
+        arr <<= array[3, int32]([7, 8, 9])
+        self.assertEqual([int(x) for x in arr], [7, 8, 9])
+        st = Tset[uint8]({uint8(1)})
+        st <<= Tset[uint8]({uint8(2), uint8(3)})
+        self.assertEqual(st, Tset[uint8]({uint8(2), uint8(3)}))
+
+    def test_overflow_checks_follow_profile_and_push(self):
+        """Overflow checks are off under -d:danger (overflow_checks:off from the global config) and for
+        procs defined inside `with push("overflowChecks: off"):` (Nim {.push overflowChecks: off.})."""
+        from nimic.nsystem import _n_build_profile
+        profile = _BuildProfile(None, "")
+        profile.checks["overflowchecks"] = False
+        _n_set_build_profile(profile)
+        try:
+            self.assertEqual(int(int8(127) + 1), -128)
+        finally:
+            _n_set_build_profile(None)
+        with push("overflowChecks: off"):
+            def wrap_mul(x: int8) -> int8:
+                return x * 2
+        def checked_mul(x: int8) -> int8:
+            return x * 2
+        self.assertEqual(int(wrap_mul(int8(100))), -56)
+        with self.assertRaises(OverflowDefect):
+            checked_mul(int8(100))
+        with push("checks: off"):
+            self.assertEqual(int(int8(127) + 1), -128)  # module-level code inside the region
+
+    def test_transpile_push_pop(self):
+        """rule:push: `with push("p"):` emits {.push p.}, the body at the same level, then {.pop.}."""
+        src = textwrap.dedent('''\
+            with push("overflowChecks: off"):
+                def f(x: nint) -> nint:
+                    return x * 2
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertRegex(out, r"\{\.push overflowChecks: off\.\}\n+proc f\*\(x: int\): int =\n  return x \* 2\n\{\.pop\.\}")
+
+    def test_string_type_alias_dispatch(self):
+        """rule:typealias: `class Snippet(string): pass` aliases string for dispatch (as numeric aliases do);
+        a string subclass with members of its own (std/paths.Path) is no alias."""
+        class TAliasSnippet(string):
+            pass
+
+        @dispatch
+        def _t_alias_join(a: TAliasSnippet, b: TAliasSnippet) -> TAliasSnippet:
+            return a + b
+
+        self.assertEqual(str(_t_alias_join(string("a"), string("b"))), "ab")
+        self.assertEqual(_n_aliases["TAliasSnippet"], "string")
+        from nimic.std.paths import Path
+        self.assertNotIn("Path", _n_aliases)
+
+    def test_transpile_type_alias_assignment(self):
+        """rule:typealias, assignment form: a module-level `Name = <type>` is a type alias."""
+        src = textwrap.dedent('''\
+            Snippet = string
+            Rows = seq[Snippet]
+            limit = 5
+            def f(a: Snippet) -> Snippet:
+                b = a
+                return b
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("type\n  Snippet* = string\n  Rows* = seq[Snippet]", out)
+        self.assertIn("limit = 5", out)
+        self.assertIn("  b = a", out)
+
+    def test_varargs_dispatch(self):
+        """rule:varargs: `*args: T` takes any number of T (Nim varargs[T]); a varargs[T, conv] parameter
+        converts each argument (str is Nim's `$`); overloads without varargs are preferred."""
+        @dispatch
+        def _t_va_call(callee: string, *args: string) -> string:
+            result = callee + string("(")
+            for i in range(len(args)):
+                if i > 0:
+                    result.add(string(", "))
+                result.add(args[i])
+            result.add(string(")"))
+            return result
+
+        @dispatch
+        def _t_va_call(callee: string, n: nint) -> string:
+            return string("fixed")
+
+        self.assertEqual(str(_t_va_call(string("f"))), "f()")
+        self.assertEqual(str(_t_va_call(string("f"), string("a"), string("b"))), "f(a, b)")
+        self.assertEqual(str(_t_va_call(string("f"), nint(1))), "fixed")
+        with self.assertRaises(NotImplementedError):
+            _t_va_call(string("f"), nint(1), nint(2))
+
+        @dispatch
+        def _t_va_join(*args: varargs[string, str]) -> string:
+            result = string("")
+            for a in args:
+                result.add(a)
+            return result
+
+        self.assertEqual(str(_t_va_join(string("n="), nint(3), True)), "n=3true")
+
+    def test_transpile_varargs(self):
+        """rule:varargs: `*args: T` -> `args: varargs[T]`; starred call arguments pass varargs on."""
+        src = textwrap.dedent('''\
+            def addCallStmt(builder: mut@Builder, callee: Snippet, *args: Snippet) -> None:
+                addCall(builder, callee, *args)
+            def log(*args: varargs[string, str]) -> None:
+                echo(*args)
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("proc addCallStmt*(builder: var Builder, callee: Snippet, args: varargs[Snippet]) =", out)
+        self.assertIn("  addCall(builder, callee, args)", out)
+        self.assertIn("proc log*(args: varargs[string, `$`]) =", out)
+
+    def test_dispatch_keywords_and_defaults_per_overload(self):
+        """Keyword calls may omit defaulted parameters; a defaulted overload stays reachable when another
+        overload has the call's arity (Nim overload resolution)."""
+        class _TOvlKind(NIntEnum):
+            kA = 0
+            kB = auto()
+
+        @dispatch
+        def _t_ovl_var(b: string, kind: _TOvlKind = _TOvlKind.kA, name: string = string(""),
+                       typ: string = string(""), init: string = string("")) -> string:
+            return typ + string(" ") + name
+
+        @dispatch
+        def _t_ovl_var(b: string, m: nint, name: string = string(""), kind: _TOvlKind = _TOvlKind.kB) -> string:
+            return string("module ") + name
+
+        self.assertEqual(str(_t_ovl_var(string("b"), kind=_TOvlKind.kA, name=string("x"), typ=string("int"))), "int x")
+        self.assertEqual(str(_t_ovl_var(string("b"), nint(1), name=string("y"))), "module y")
+        with self.assertRaises(TypeError):
+            _t_ovl_var(string("b"), noSuchParam=1)
+
+        @dispatch
+        def _t_ovl_err(info: nint, msg: _TOvlKind, arg: string = string("")) -> string:
+            return string("kind")
+
+        @dispatch
+        def _t_ovl_err(info: nint, arg: string) -> string:
+            return string("text")
+
+        self.assertEqual(str(_t_ovl_err(nint(1), string("t"))), "text")
+        self.assertEqual(str(_t_ovl_err(nint(1), _TOvlKind.kB)), "kind")
+        self.assertEqual(str(_t_ovl_err(nint(1), _TOvlKind.kB, string("a"))), "kind")
+
+    def test_dispatch_union_type_class(self):
+        """A union annotation `A | B` (Nim `A or B`) is a type class for dispatch."""
+        @dispatch
+        def _t_union(lhs: string, rhs: string) -> string:
+            return string("snippet")
+
+        @dispatch
+        def _t_union(lhs: string, rhs: int64 | uint64) -> string:
+            return string("int")
+
+        self.assertEqual(str(_t_union(string("x"), string("y"))), "snippet")
+        self.assertEqual(str(_t_union(string("x"), uint64(5))), "int")
+        with self.assertRaises(NotImplementedError):
+            _t_union(string("x"), float64(1.0))
+
+    def test_eq_overload_keeps_hash(self):
+        """An overloaded `==` (__eq__) on an Object keeps it hashable, as Nim's `==` and `hash` are
+        independent (idents.PIdent defines `==`)."""
+        @ref
+        class _TEqIdent(Object):
+            id: nint
+
+            def __eq__(a: _TEqIdent, b: _TEqIdent) -> bool:
+                if a is None or b is None:
+                    return a is b
+                return a.id == b.id
+
+        x, y = _TEqIdent(id=1), _TEqIdent(id=1)
+        self.assertTrue(x == y)
+        self.assertEqual(len({x, y}), 2)  # hashing is by identity, as for Nim refs
+
+    def test_assign_and_when_expression(self):
+        """assign(target, value) (rule:assigncall) assigns in place through a var-T result;
+        `a if comptime(c) else b` is a when expression (rule:comptimeexpr)."""
+        class _TAsgBuilder(Object):
+            buf: string
+
+        class _TAsgProc(Object):
+            sections: array[2, _TAsgBuilder]
+
+            def s(self, sec: nint) -> mut @ _TAsgBuilder:
+                return self.sections[sec]
+
+        p = _TAsgProc()
+        old = p.s(1).copy()
+        p.s(1).buf.add(string("loop"))
+        assign(p.s(1), old)
+        self.assertEqual(len(p.s(1).buf), 0)
+        src = textwrap.dedent('''\
+            x = a if comptime(isinstance(f, float32)) else b
+            assign(p.s(cpsStmts), oldCode)
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("x = when f is float32: a else: b", out)
+        self.assertIn("p.s(cpsStmts) = oldCode", out)
+
+    def test_value_semantics_of_object_fields_and_elements(self):
+        """Nim assignment copies values: copy(), `<<=`, a[i] = obj, s.add(str) don't alias strings, seqs
+        or value objects; refs stay shared."""
+        class _TValB(Object):
+            buf: string
+            n: int32
+
+        class _TValP(Object):
+            sections: array[2, _TValB]
+
+        p = _TValP()
+        old = p.sections[1].copy()
+        p.sections[1].buf.add(string("loop"))
+        self.assertEqual(str(old.buf), "")  # copy() didn't alias the string field
+        p.sections[1] <<= old
+        self.assertEqual(str(p.sections[1].buf), "")
+        src = _TValB()
+        src.buf = string("zz")
+        p.sections[0] = src
+        src.buf.add(string("!"))
+        self.assertEqual(str(p.sections[0].buf), "zz")
+        names = seq[string]()
+        item = string("a")
+        names.add(item)
+        item.add(string("b"))
+        self.assertEqual(str(names[0]), "a")
+
+        @ref
+        class _TValRef(Object):
+            n: nint
+
+        refs = seq[_TValRef]()
+        r = _TValRef(n=1)
+        refs.add(r)
+        r.n = 2
+        self.assertEqual(int(refs[0].n), 2)  # refs are shared
+
+    def test_include_runs_in_includer_namespace(self):
+        """include("x") (Nim `include x`): the file runs in the includer's namespace, sees the includer's
+        and earlier includes' symbols, and may define templates and dispatched procs; transpiles to
+        `include x`."""
+        with tempfile.TemporaryDirectory() as d:
+            files = {
+                "host.py": '''# /// nimic
+# ///
+from __future__ import annotations
+from nimic.ntypes import *
+
+class Builder(Object):
+    buf: string
+
+include("first", "second")
+
+if comptime(__name__ == "__main__"):
+    with var:
+        b = Builder()
+    with addParens(b):
+        addWord(b, string("x"))
+    echo(b.buf, " ", kindName(Kind.kB))
+''',
+                "first.py": '''# /// nimic
+# ///
+from __future__ import annotations
+from nimic.ntypes import *
+
+class Kind(NIntEnum):
+    kA = 0
+    kB = auto()
+
+@template
+def addParens(b: mut@Builder, body: typed):
+    b.buf.add(string("("))
+    body
+    b.buf.add(string(")"))
+''',
+                "second.py": '''# /// nimic
+# ///
+from __future__ import annotations
+from nimic.ntypes import *
+
+@dispatch
+def kindName(k: Kind) -> string:
+    return string("kind ") + string(str(ord(k)))
+
+def addWord(b: mut@Builder, w: string) -> None:
+    b.buf.add(w)
+'''}
+            for name, text in files.items():
+                with open(os.path.join(d, name), "w") as f:
+                    f.write(text)
+            env = dict(os.environ, PYTHONPATH=os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+            out = subprocess.run([sys.executable, os.path.join(d, "host.py")], capture_output=True, text=True, env=env)
+            self.assertEqual(out.stdout, "(x) kind 1\n", out.stderr)
+        src = textwrap.dedent('''\
+            include("cbuilderexprs", "cbuilderstmts")
+            ''')
+        self.assertIn("include cbuilderexprs, cbuilderstmts", unparse(ast.parse(src))[0])
+
+    def test_block_template_param_after_defaults(self):
+        """A block template whose Nim signature has defaulted parameters before the block parameters
+        (`kind: VarKind = Local, name: string, initializerBody: typed`) needs Python placeholder defaults;
+        `= None` on a typed/untyped parameter is not written to Nim (rule:blockparam), and the block still
+        binds by position in Python."""
+        @template
+        def _tAddVarInit(b: mut@string, kind: nint = nint(0), name: string = string(""),
+                         initializerBody: typed = None):
+            b.add(name)
+            b.add(string(" = "))
+            initializerBody
+            b.add(string(";"))
+
+        buf = string("")
+        with _tAddVarInit(buf, name=string("x")):
+            buf.add(string("1"))
+        self.assertEqual(str(buf), "x = 1;")
+        src = textwrap.dedent('''\
+            @template
+            def addVarWithInitializer(builder: mut@Builder, kind: VarKind = VarKind.Local, name: string = string(""),
+                                      initializerBody: typed = None, other: untyped = None):
+                initializerBody
+            ''')
+        self.assertIn("name: string=string(\"\"), initializerBody: typed, other: untyped) =", unparse(ast.parse(src))[0])
+
+    def test_method_call_syntax_ufcs(self):
+        """Nim method-call syntax: `obj.f(args)` calls a proc `f(obj, args)` visible in the caller's scope
+        (module or local), including block templates (`with b.t(x):`); real attributes win."""
+        class _TUfcsB(Object):
+            buf: string
+
+        def addWord(b: _TUfcsB, w: string) -> None:
+            b.buf.add(w)
+
+        @template
+        def addParens(b: mut@_TUfcsB, body: typed):
+            b.buf.add(string("("))
+            body
+            b.buf.add(string(")"))
+
+        b = _TUfcsB()
+        with b.addParens():
+            b.addWord(string("x"))
+        self.assertEqual(str(b.buf), "(x)")
+        with self.assertRaises(AttributeError):
+            b.noSuchProc()
+
+    def test_echo_has_no_separator(self):
+        """Nim echo writes $a & $b & ... (no separator), bools as true/false, nil as nil."""
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            echo(string("x = "), 5, True, ch("c"), None)
+        self.assertEqual(buf.getvalue(), "x = 5truecnil\n")
+
+    def test_shallow_copy_assigns_in_place(self):
+        """shallowCopy(dest, src) assigns into dest (Nim); immutable destinations are rejected."""
+        dest = seq[int32]()
+        dest.add(int32(1))
+        src = seq[int32]()
+        src.add(int32(7))
+        src.add(int32(8))
+        shallowCopy(dest, src)
+        self.assertEqual([int(x) for x in dest], [7, 8])
+        text = string("old")
+        shallowCopy(text, string("new"))
+        self.assertEqual(str(text), "new")
+        with self.assertRaises(TypeError):
+            shallowCopy(5, 6)
+
+    def test_os_build_dependent_constants(self):
+        """FileSystemCaseSensitive follows the emulated OS like Nim's osseps; getCurrentCompilerExe is the
+        nim compiler, not the Python interpreter."""
+        from nimic.std.os import FileSystemCaseSensitive, getCurrentCompilerExe
+        self.assertEqual(FileSystemCaseSensitive, not (defined("macosx") or defined("windows")))
+        self.assertNotEqual(str(getCurrentCompilerExe()), sys.executable)
+
+    # --- build profile: defined / declared (Nim conditional symbols) ---
+
+    def test_defined_emulates_nim_build(self):
+        """defined() reflects the emulated Nim build (C backend, host OS/CPU, ORC), never Python vs Nim."""
+        profile = _BuildProfile(None, "")
+        _n_set_build_profile(profile)
+        try:
+            self.assertTrue(defined("c"))
+            self.assertFalse(defined("js"))
+            self.assertTrue(defined(str(hostOS)))
+            self.assertTrue(defined(str(hostCPU)))
+            for sym in ("gcOrc", "gcDestructors", "nimV2"):
+                self.assertTrue(defined(sym), sym)
+            self.assertFalse(defined("gcArc"))
+            self.assertFalse(defined("release"))
+            self.assertFalse(defined("contextlib"))  # a Python global is not a Nim symbol
+            self.assertTrue(defined("nimHasDefault"))  # compiler feature symbol (nim_defines.txt)
+            self.assertTrue(defined("nim_has_default"))  # Nim identifier equality
+            self.assertFalse(defined("NimHasDefault"))  # first character is case sensitive
+        finally:
+            _n_set_build_profile(None)
+
+    def test_defined_extra_symbols_and_mm(self):
+        """NIMIC_DEFINES-style extras define and undefine symbols; `danger` implies `release` through the
+        global Nim config, exactly as `nim c -d:danger`."""
+        profile = _BuildProfile(None, "danger, myFlag -gcOrc")
+        self.assertTrue(profile.is_defined("danger"))
+        self.assertTrue(profile.is_defined("myflag"))
+        self.assertFalse(profile.is_defined("gcOrc"))
+        if profile._config_files(None):  # the global config is found only when `nim` is installed
+            self.assertTrue(profile.is_defined("release"))
+        profile.set_mm("refc")
+        self.assertTrue(profile.is_defined("gcRefc"))
+        self.assertFalse(profile.is_defined("gcDestructors"))
+
+    def test_defined_reads_project_nim_cfg(self):
+        """nim.cfg files from the root down to the main module's directory are read with @if/@elif/@else."""
+        with tempfile.TemporaryDirectory() as d:
+            sub = os.path.join(d, "proj")
+            os.mkdir(sub)
+            with open(os.path.join(d, "nim.cfg"), "w") as f:
+                f.write("define:outerFlag\n")
+            with open(os.path.join(sub, "nim.cfg"), "w") as f:
+                f.write(textwrap.dedent("""\
+                    # comment
+                    --define:fromProject
+                    @if outerFlag and not windows:
+                      d:nestedOk
+                      @if js:
+                        define:neverJs
+                      @elif c:
+                        define:cBranch
+                      @else:
+                        define:neverElse
+                      @end
+                    @end
+                    @if undefinedSym:
+                      define:neverDefined
+                    @else:
+                      define:elseTaken
+                    @end
+                    mm:arc
+                    """))
+            with open(os.path.join(sub, "main.nim.cfg"), "w") as f:
+                f.write("undef:fromProject\n")
+            profile = _BuildProfile(os.path.join(sub, "main.py"), "")
+            for sym in ("outerFlag", "cBranch", "elseTaken", "gcArc"):
+                self.assertTrue(profile.is_defined(sym), sym)
+            self.assertEqual(profile.is_defined("nestedOk"), str(hostOS) != "windows")
+            for sym in ("neverJs", "neverElse", "neverDefined", "fromProject", "gcOrc"):
+                self.assertFalse(profile.is_defined(sym), sym)
+
+    def test_declared_looks_up_caller_scope(self):
+        """declared("x") checks the caller's locals, globals (incl. star-imports) and builtins."""
+        local_name = 1
+        self.assertTrue(declared("local_name"))
+        self.assertTrue(declared("unittest"))           # module global of the caller
+        self.assertTrue(declared("seq"))                # star-imported nimic name
+        self.assertTrue(declared("os.path.join"))       # dotted
+        self.assertFalse(declared("os.path.noSuchProc"))
+        self.assertFalse(declared("noSuchName"))
+
+    def test_transpile_defined_declared(self):
+        """rule:defined / rule:declared strip the quotes."""
+        src = textwrap.dedent('''\
+            if comptime(not declared("signbit") and defined("gcOrc")):
+                pass
+            ''')
+        self.assertIn("when not declared(signbit) and defined(gcOrc):", unparse(ast.parse(src))[0])
+
+    def test_transpile_mut_return_type(self):
+        """rule:funcdefmut: `mut @ T` is `var T` for parameters, return types and calltype signatures."""
+        src = textwrap.dedent('''\
+            def s(self: BProc, sec: nint) -> mut @ Builder:
+                return self.sections[sec]
+            ''')
+        self.assertIn("proc s*(self: BProc, sec: int): var Builder =", unparse(ast.parse(src))[0])
+        cb = textwrap.dedent('''\
+            @calltype
+            def Cb(b: mut @ Builder) -> mut @ Builder: ...
+            ''')
+        self.assertIn("Cb* = proc(b: var Builder): var Builder", unparse(ast.parse(cb))[0])
+
+    def test_transpile_var_init_ref_vs_value(self):
+        """rule:varini: `with var: x = T()` declares `var x: T` for registered value types, but a
+        ref type (registered or @ref in the module) must allocate: `var x = T()`."""
+        @ref
+        class TVarRef(Object):
+            x: nint
+
+        class TVarValue(Object):
+            x: nint
+
+        src = textwrap.dedent('''\
+            @ref
+            class LocalRef(Object):
+                x: nint
+
+            with var:
+                a = TVarRef()
+                b = TVarValue()
+                c = LocalRef()
+            ''')
+        out = unparse(ast.parse(src), _n_registry)[0]
+        self.assertIn("a* = TVarRef()", out)
+        self.assertIn("b*: TVarValue", out)
+        self.assertIn("c* = LocalRef()", out)
+
     def test_transpile_for_loop_targets(self):
         """rule:fortupleunpack: Python item unpacking is Nim `for (a, b) in xs` (bare would mean
         index + item); Nim's magic fields(a, b) / fieldPairs(x) yield separate values: bare names."""
@@ -2478,11 +3058,10 @@ class TestNTypes(unittest.TestCase):
                       unparse(ast.parse(src))[0])
 
     def test_move_and_shallow_copy(self):
-        """move and shallowCopy act as identity operations in Python runtime."""
+        """move is an identity operation in the Python runtime (shallowCopy: see
+        test_shallow_copy_assigns_in_place)."""
         obj = [1, 2, 3]
         self.assertIs(move(obj), obj)
-        dest = []
-        self.assertIs(shallowCopy(dest, obj), obj)
 
     def test_cmp_three_way(self):
         """cmp provides standard three-way comparison (-1, 0, 1)."""
@@ -2502,12 +3081,99 @@ class TestNTypes(unittest.TestCase):
         res = make_btree[int, str]()
         self.assertEqual(res, "ok")
 
-    def test_do_context_manager(self):
-        """do context manager allows with do: block execution in Python."""
-        executed = False
-        with do:
-            executed = True
-        self.assertTrue(executed)
+    def test_block_template_runs_around_block(self):
+        """A template with a code-block parameter (Nim `t(args): block`) runs as `with t(args):`: the code
+        before the block, the with body, then the code after it."""
+        class _TBlkBuilder(Object):
+            buf: string
+
+        @template
+        def _t_add_cast(b: mut@_TBlkBuilder, typ: string, valueBody: typed):
+            b.buf.add(string("(("))
+            b.buf.add(typ)
+            b.buf.add(string(") "))
+            valueBody
+            b.buf.add(string(")"))
+
+        b = _TBlkBuilder()
+        with _t_add_cast(b, string("char*")):
+            b.buf.add(string("p"))
+        self.assertEqual(str(b.buf), "((char*) p)")
+
+    def test_block_template_two_blocks_out_param_and_overload(self):
+        """Two blocks (`t(args): b1 do: b2` as `with t(args):` ... `with do:`), an out parameter assigned
+        with `<<=`, and a template/proc overload set sharing one name."""
+        class _TBlkInfo(Object):
+            state: nint
+
+        class _TBlkB(Object):
+            buf: string
+
+        @template
+        def _t_switch_case(b: mut@_TBlkB, info: mut@_TBlkInfo, caseBody: typed, body: typed):
+            info <<= _TBlkInfo(state=1)
+            caseBody
+            info.state = 2
+            body
+            b.buf.add(string(";"))
+
+        b, info, seen = _TBlkB(), _TBlkInfo(), []
+        with _t_switch_case(b, info):
+            seen.append(int(info.state))
+            with do:
+                seen.append(int(info.state))
+                b.buf.add(string("x"))
+        self.assertEqual(seen, [1, 2])
+        self.assertEqual(str(b.buf), "x;")
+        with self.assertRaises(TemplateBlockError):
+            with _t_switch_case(b, info):
+                pass  # the second block is missing
+        with self.assertRaises(TemplateBlockError):
+            with do:
+                pass  # no block template call
+
+        @template
+        def _t_blk_call(b: mut@_TBlkB, n: nint, body: typed):
+            b.buf.add(string("("))
+            body
+            b.buf.add(string(")"))
+
+        @dispatch
+        def _t_blk_call(b: mut@_TBlkB, callee: string, *args: string) -> None:
+            b.buf.add(callee)
+
+        b2 = _TBlkB()
+        with _t_blk_call(b2, nint(1)):
+            b2.buf.add(string("in"))
+        _t_blk_call(b2, string("f"), string("a"))
+        self.assertEqual(str(b2.buf), "(in)f")
+
+    def test_block_template_exception_and_skip(self):
+        """An exception in the block propagates through the template (its try/finally runs); a template
+        that would skip its block is reported instead of silently running the with body."""
+        log = []
+
+        @template
+        def _t_guarded(body: typed):
+            try:
+                log.append("enter")
+                body
+            finally:
+                log.append("exit")
+
+        with self.assertRaises(ValueError):
+            with _t_guarded():
+                raise ValueError("boom")
+        self.assertEqual(log, ["enter", "exit"])
+
+        @template
+        def _t_maybe(cond: bool, body: typed):
+            if cond:
+                body
+
+        with self.assertRaises(TemplateBlockError):
+            with _t_maybe(False):
+                pass
 
     def test_variant_record_generic_attributes(self):
         """Variant record branches with array fields instantiate and access attributes cleanly."""

@@ -4,12 +4,15 @@ import codecs
 import ctypes
 import io
 import os
+import shutil as _shutil
 import sys
+import types as _types
 from enum import StrEnum, auto
 from typing import Generator, TypeVar
 
 from nimic.system.ansi_c import c_malloc, c_free
-from nimic.ntypesystem import char, cstring, seq, string, NIntEnum
+from nimic import ntypesystem as _ntypesystem
+from nimic.ntypesystem import char, cstring, seq, string, NIntEnum, _n_dollar
 
 class _SomeCastClass:
     def __getitem__(self, other_cls: type) -> callable:
@@ -172,6 +175,320 @@ hostOS = _detect_host_os()
 hostCPU = _detect_host_cpu()
 
 
+# --- Build profile: the conditional symbols of the emulated Nim build (Nim: defined(x)) ---
+#
+# Python mode emulates one Nim build: C backend, host OS/CPU, the default memory manager (ORC) and the
+# defines of the Nim config files that the Nim compiler would read for the same main module. So
+# `defined("c")` is true in Python too: `defined` is never a Python/Nim switch.
+
+_N_DEFINES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nim_defines.txt")
+
+# OS families and CPU properties as Nim's compiler (options.isDefined, platform) defines them
+_N_POSIX_OS = {"linux", "macosx", "freebsd", "openbsd", "netbsd", "dragonfly", "crossos", "solaris",
+               "aix", "haiku", "android", "ios", "irix", "qnx", "morphos", "skyos", "palmos", "atari",
+               "vxworks", "nintendoswitch", "genode", "zephyr", "nuttx"}
+_N_BSD_OS = {"freebsd", "openbsd", "netbsd", "dragonfly", "crossos"}
+_N_CPU_ALIASES = {"i386": ("x86",), "amd64": ("x8664",), "ia64": ("itanium",)}
+_N_CPU_32 = {"i386", "arm", "mips", "mipsel", "powerpc", "sparc", "riscv32", "wasm32", "avr", "msp430", "m68k"}
+_N_CPU_BIG_ENDIAN = {"powerpc", "powerpc64", "sparc", "sparc64", "mips", "mips64", "s390x", "m68k"}
+# Nim check options (normalized) that the Python runtime emulates or records
+_N_CHECK_OPTIONS = ("overflowchecks", "boundchecks", "rangechecks", "objchecks", "fieldchecks",
+                    "assertions", "nilchecks", "infchecks", "nanchecks")
+# memory manager -> symbols it defines
+_N_MM_SYMBOLS = {
+    "orc": ("gcOrc", "gcDestructors", "nimV2", "nimSeqsV2"),
+    "arc": ("gcArc", "gcDestructors", "nimV2", "nimSeqsV2"),
+    "atomicarc": ("gcAtomicArc", "gcDestructors", "nimV2", "nimSeqsV2"),
+    "yrc": ("gcYrc", "gcDestructors", "nimV2", "nimSeqsV2"),
+    "refc": ("gcRefc",),
+    "markandsweep": ("gcMarkAndSweep",),
+    "boehm": ("gcBoehm",),
+    "go": ("gcGo",),
+    "none": ("gcNone",),
+}
+
+
+def _n_ident_normalize(name: str) -> str:
+    """Nim identifier equality: the first character is case sensitive, the rest is case and
+    underscore insensitive."""
+    name = str(name)
+    return name[:1] + name[1:].replace("_", "").lower()
+
+
+class _NimCfgReader:
+    """Reads the define-related options of Nim config files (nim.cfg syntax): `define:x`, `d:x`,
+    `--define:x`, `-d:x`, `undef:x`, `mm:x`/`gc:x`, `cc:x`, `backend:x`, inside `@if/@elif/@else/@end`
+    blocks whose conditions (`and`, `or`, `not`, parentheses, symbols) are evaluated against the symbols
+    defined so far, as the Nim compiler does. Other options are ignored."""
+
+    def __init__(self, profile: "_BuildProfile"):
+        self.profile = profile
+
+    def read(self, path: str) -> None:
+        try:
+            with _builtins.open(path, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except OSError:
+            return
+        # stack of (active, branch_taken) for @if blocks
+        stack: list[list[bool]] = []
+        for raw in lines:
+            line = raw.split("#", 1)[0].strip()
+            if not line:
+                continue
+            if line.startswith("@"):
+                word, _, rest = line[1:].partition(" ")
+                word = word.rstrip(":").lower()
+                cond = rest.strip().rstrip(":")
+                if word == "if":
+                    value = self._enclosing_active(stack + [[True, True]]) and self._eval(cond)
+                    stack.append([value, value])
+                elif word == "elif" and stack:
+                    taken = stack[-1][1]
+                    value = (not taken) and self._enclosing_active(stack) and self._eval(cond)
+                    stack[-1] = [value, taken or value]
+                elif word == "else" and stack:
+                    taken = stack[-1][1]
+                    stack[-1] = [(not taken) and self._enclosing_active(stack), True]
+                elif word == "end" and stack:
+                    stack.pop()
+                continue
+            if all(active for active, _ in stack):
+                self._option(line)
+
+    def _option(self, line: str) -> None:
+        line = line.lstrip("-")
+        for sep in (":", "="):
+            if sep in line:
+                key, _, value = line.partition(sep)
+                break
+        else:
+            return
+        key = _n_ident_normalize(key.strip())
+        value = value.strip().strip('"')
+        if key in ("define", "d"):
+            self.profile.define(value.split(":", 1)[0].split("=", 1)[0])
+        elif key in ("undef", "u"):
+            self.profile.undefine(value)
+        elif key in ("mm", "gc"):
+            self.profile.set_mm(value)
+        elif key == "cc":
+            self.profile.set_cc(value)
+        elif key == "backend":
+            self.profile.set_backend(value)
+        elif key.lower() in _N_CHECK_OPTIONS or key == "checks" or key == "x":
+            on = value.lower() in ("on", "true", "")
+            names = _N_CHECK_OPTIONS if key in ("checks", "x") else (key.lower(),)
+            for name in names:
+                self.profile.checks[name] = on
+
+    def _eval(self, cond: str) -> bool:
+        tokens = cond.replace("(", " ( ").replace(")", " ) ").split()
+        pos = 0
+
+        def expr() -> bool:
+            nonlocal pos
+            value = term()
+            while pos < len(tokens) and tokens[pos] == "or":
+                pos += 1
+                rhs = term()
+                value = value or rhs
+            return value
+
+        def term() -> bool:
+            nonlocal pos
+            value = factor()
+            while pos < len(tokens) and tokens[pos] == "and":
+                pos += 1
+                rhs = factor()
+                value = value and rhs
+            return value
+
+        def factor() -> bool:
+            nonlocal pos
+            tok = tokens[pos] if pos < len(tokens) else ""
+            pos += 1
+            if tok == "not":
+                return not factor()
+            if tok == "(":
+                value = expr()
+                pos += 1  # ")"
+                return value
+            if tok in ("true", "false"):
+                return tok == "true"
+            return self.profile.is_defined(tok)
+
+        return expr() if tokens else False
+
+    @staticmethod
+    def _enclosing_active(stack: list) -> bool:
+        """True if all @if blocks enclosing the innermost one are active."""
+        return all(active for active, _ in stack[:-1])
+
+
+class _BuildProfile:
+    """The set of conditional symbols of the emulated Nim build, assembled like the Nim compiler does:
+    its built-in feature symbols (nim_defines.txt), backend/OS/CPU/memory-manager symbols, the global
+    config ($nim/config/nim.cfg), the user config, every nim.cfg from the filesystem root down to the
+    main module's directory, `<main>.nim.cfg`, and finally NIMIC_DEFINES (comma or space separated,
+    `-name` undefines). NimScript configs (config.nims) are not evaluated."""
+
+    def __init__(self, main_file: str | None = None, extra: str | None = None):
+        self.symbols: set[str] = set()
+        # runtime checks switched by config options (`overflow_checks:off`, `checks:off`, ...), as
+        # `-d:danger` does through the global config
+        self.checks: dict[str, bool] = {name: True for name in _N_CHECK_OPTIONS}
+        self.mm = "orc"
+        self.backend = "c"
+        self.cc = None
+        try:
+            with _builtins.open(_N_DEFINES_FILE, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        self.define(line)
+        except OSError:
+            pass
+        self.define(self.backend)
+        self._define_platform()
+        self.set_mm(self.mm)
+        if extra is None:
+            extra = os.environ.get("NIMIC_DEFINES", "")
+        extra_items = [s for s in extra.replace(",", " ").split() if s]
+        for item in extra_items:  # before the configs: `@if danger:` blocks must see -d:danger
+            if not item.startswith("-"):
+                self.define(item)
+        reader = _NimCfgReader(self)
+        for path in self._config_files(main_file):
+            reader.read(path)
+        for item in extra_items:
+            if item.startswith("-"):
+                self.undefine(item[1:])
+
+    # -- symbol set --
+    def define(self, name: str) -> None:
+        if name:
+            self.symbols.add(_n_ident_normalize(name))
+
+    def undefine(self, name: str) -> None:
+        self.symbols.discard(_n_ident_normalize(name))
+
+    def is_defined(self, name: str) -> bool:
+        return _n_ident_normalize(name) in self.symbols
+
+    def check_enabled(self, name: str) -> bool:
+        """Whether the runtime check `name` (e.g. "overflowChecks") is on in this build."""
+        return self.checks.get(_n_ident_normalize(name).lower(), True)
+
+    def set_mm(self, mm: str) -> None:
+        for syms in _N_MM_SYMBOLS.values():
+            for s in syms:
+                self.undefine(s)
+        self.mm = _n_ident_normalize(mm).lower()
+        for s in _N_MM_SYMBOLS.get(self.mm, ()):
+            self.define(s)
+
+    def set_cc(self, cc: str) -> None:
+        if self.cc:
+            self.undefine(self.cc)
+        self.cc = cc
+        self.define(cc)
+
+    def set_backend(self, backend: str) -> None:
+        self.undefine(self.backend)
+        self.backend = backend
+        self.define(backend)
+
+    def _define_platform(self) -> None:
+        os_name, cpu = str(hostOS), str(hostCPU)
+        self.define(os_name)
+        if os_name in _N_POSIX_OS:
+            self.define("posix")
+            self.define("unix")
+        if os_name in _N_BSD_OS:
+            self.define("bsd")
+        if os_name == "macosx":
+            self.define("osx")
+        self.define(cpu)
+        for alias in _N_CPU_ALIASES.get(cpu, ()):
+            self.define(alias)
+        self.define("cpu32" if cpu in _N_CPU_32 else "cpu64")
+        self.define("bigEndian" if cpu in _N_CPU_BIG_ENDIAN else "littleEndian")
+
+    @staticmethod
+    def _config_files(main_file: str | None) -> list[str]:
+        files = []
+        nim_exe = os.environ.get("NIMIC_NIM") or _shutil.which("nim")
+        if nim_exe:
+            nim_root = os.path.dirname(os.path.dirname(os.path.realpath(nim_exe)))
+            files.append(os.path.join(nim_root, "config", "nim.cfg"))
+        files.append(os.path.join(os.path.expanduser("~"), ".config", "nim", "nim.cfg"))
+        if main_file:
+            project_dir = os.path.dirname(os.path.abspath(main_file))
+            parts = []
+            d = project_dir
+            while True:
+                parts.append(d)
+                parent = os.path.dirname(d)
+                if parent == d:
+                    break
+                d = parent
+            files.extend(os.path.join(p, "nim.cfg") for p in reversed(parts))
+            stem = os.path.splitext(os.path.basename(main_file))[0]
+            files.append(os.path.join(project_dir, stem + ".nim.cfg"))
+        return [f for f in files if os.path.isfile(f)]
+
+
+_n_profile: _BuildProfile | None = None
+
+
+def _n_build_profile() -> _BuildProfile:
+    """The build profile of this run, created on first use from the main module (the Nim project)."""
+    global _n_profile
+    if _n_profile is None:
+        main = sys.modules.get("__main__")
+        main_file = getattr(main, "__file__", None)
+        _n_profile = _BuildProfile(main_file)
+    return _n_profile
+
+
+# runtime checks (overflowChecks, boundChecks, ...) follow the build profile
+_ntypesystem._n_check_provider = lambda name: _n_build_profile().check_enabled(name)
+
+
+def _n_set_build_profile(profile: _BuildProfile | None) -> None:
+    """Replace (or with None: reset to lazy creation) the build profile; for tests and tools."""
+    global _n_profile
+    _n_profile = profile
+
+
+def defined(name: str) -> bool:
+    """Nim: defined(x) — true if the conditional symbol `x` is defined in the emulated Nim build
+    (see _BuildProfile). nimic spelling takes a string: defined("windows") (rule:defined)."""
+    return _n_build_profile().is_defined(name)
+
+
+def declared(name: str) -> bool:
+    """Nim: declared(x) — true if the identifier `x` is declared at this point of the calling module
+    (its locals, its globals including star-imports, or builtins). Dotted names resolve attributes:
+    declared("system.getMaxMem"). nimic spelling takes a string (rule:declared)."""
+    frame = sys._getframe(1)
+    head, *rest = str(name).split(".")
+    if head in frame.f_locals:
+        obj = frame.f_locals[head]
+    elif head in frame.f_globals:
+        obj = frame.f_globals[head]
+    elif hasattr(_builtins, head):
+        obj = getattr(_builtins, head)
+    else:
+        return False
+    for part in rest:
+        if not hasattr(obj, part):
+            return False
+        obj = getattr(obj, part)
+    return True
+
+
 def substr(s, first: int = 0, last: int | None = None):
     """Nim: substr — slice string from `first` to `last` (inclusive)."""
     s_val = str(s)
@@ -232,3 +549,163 @@ def quit(error: int | str = 0) -> None:
     else:
         sys.exit(str(error))
 
+
+
+def echo(*args) -> None:
+    """Nim: echo(a, b, ...) — writes `$a & $b & ...` and a newline to stdout and flushes; unlike
+    Python's print there is no separator between the arguments."""
+    sys.stdout.write("".join(_n_dollar(a) for a in args) + "\n")
+    sys.stdout.flush()
+
+
+def shallowCopy(dest, src) -> None:
+    """Nim: shallowCopy(dest, src) — assigns src to dest (under ORC/ARC the same as `dest = src`).
+    `dest` must be a mutable nimic value (string, seq, array, Object, ...), assigned in place like
+    `dest <<= src`; Python cannot rebind a caller's immutable variable."""
+    if not hasattr(dest, "__ilshift__"):
+        raise TypeError(f"shallowCopy: destination of type {type(dest).__name__} cannot be assigned in place")
+    dest <<= src
+
+
+class push:
+    """Nim: {.push pragma.} ... {.pop.} — `with push("overflowChecks: off"):` around a group of procs
+    (rule:push emits {.push overflowChecks: off.}, the body unindented, then {.pop.}).
+
+    Python emulates the runtime-check pragmas (overflowChecks, boundChecks, rangeChecks, checks): procs
+    defined inside the block run with the check off (their code objects are registered), and so does
+    module-level code executing inside the block. Other pragmas only affect the Nim output."""
+
+    def __init__(self, pragma: str):
+        self.pragma = pragma
+        self.checks: dict[str, bool] = {}
+        for part in pragma.split(","):
+            key, _, value = part.partition(":")
+            key = _n_ident_normalize(key.strip()).lower()
+            on = value.strip().lower() in ("on", "true", "")
+            names = _N_CHECK_OPTIONS if key in ("checks", "x") else (key,) if key in _N_CHECK_OPTIONS else ()
+            for name in names:
+                self.checks[name] = on
+
+    def _off(self) -> list[str]:
+        return [name for name, on in self.checks.items() if not on]
+
+    def __enter__(self):
+        self._frame = sys._getframe(1)  # module or proc scope: names defined in the block land in f_locals
+        self._before = dict(self._frame.f_locals)
+        for name in self._off():
+            _ntypesystem._n_push_depth[name] = _ntypesystem._n_push_depth.get(name, 0) + 1
+        return self
+
+    def __exit__(self, *exc):
+        off = self._off()
+        for name in off:
+            _ntypesystem._n_push_depth[name] -= 1
+        codes = set()
+        for key, value in dict(self._frame.f_locals).items():
+            if self._before.get(key) is not value:
+                _n_collect_codes(value, codes)
+        self._frame = None
+        for name in off:
+            _ntypesystem._n_unchecked_codes.setdefault(name, set()).update(codes)
+        return False
+
+
+def _n_collect_codes(obj, codes: set) -> None:
+    """Code objects of a proc (also behind @dispatch/@template wrappers), a class's methods, and the
+    procs nested in them."""
+    if isinstance(obj, type):
+        for member in vars(obj).values():
+            _n_collect_codes(member, codes)
+        return
+    fn = getattr(obj, "_fn", obj)
+    fn = getattr(fn, "__wrapped__", fn)
+    code = getattr(fn, "__code__", None)
+    stack = [code] if code is not None else []
+    while stack:
+        c = stack.pop()
+        if c in codes:
+            continue
+        codes.add(c)
+        stack.extend(k for k in c.co_consts if hasattr(k, "co_code"))
+
+
+def assign(dest, src) -> None:
+    """Nim `dest = src` where Python can't assign, e.g. through a proc returning `var T`:
+    assign(p.s(cpsStmts), oldCode) (rule:assigncall). `dest` must be a mutable nimic value (Object,
+    string, seq, array, set), assigned in place like `dest <<= src`."""
+    if not hasattr(dest, "__ilshift__"):
+        raise TypeError(f"assign: destination of type {type(dest).__name__} cannot be assigned in place")
+    dest <<= src
+
+
+def include(*names: str) -> None:
+    """Nim: include x, y — textual inclusion: each `<name>.py` next to the including file runs in the
+    including module's namespace (like Nim, the included code sees and defines the includer's symbols).
+    The included file keeps its own path for tracebacks and inspect.getsource; it is registered in
+    sys.modules as `<includer package>.<name>` (not executed again) so tools can find its source.
+    Transpiles to `include x, y` (rule:include)."""
+    frame = sys._getframe(1)
+    namespace = frame.f_globals
+    base_dir = os.path.dirname(os.path.abspath(frame.f_code.co_filename))
+    package = namespace.get("__package__") or ""
+    for name in names:
+        path = os.path.join(base_dir, *str(name).split("/")) + ".py"
+        with _builtins.open(path, encoding="utf-8") as f:
+            # the nimic boilerplate import of the included file must not rebind the includer's names
+            # (e.g. containsOrIncl from std/intsets): an include file sees the includer's scope
+            source = "".join("\n" if line.strip() == "from nimic.ntypes import *" else line for line in f)
+        qualified = f"{package}.{os.path.basename(name)}" if package else os.path.basename(name)
+        if qualified not in sys.modules:
+            stub = _types.ModuleType(qualified)
+            stub.__file__ = path
+            stub._n_included_by = namespace.get("__name__")
+            sys.modules[qualified] = stub
+        exec(compile(source, path, "exec", dont_inherit=True), namespace)
+
+
+def emit(code: str) -> None:
+    """Nim: {.emit: \"\"\"code\"\"\".} — C code for the C backend (rule:emit). Python can't run it, so it
+    raises if executed: write it only in a `when` branch that is inactive in the emulated build
+    (e.g. `if comptime(defined("windows") and defined("bcc")):`)."""
+    raise NotImplementedError("emit: C code can't run in Python mode; it belongs in an inactive `when` branch")
+
+
+class _BlockBreak(Exception):
+    """Raised by breakBlock(label); caught by the `with block(label):` of that label."""
+
+    def __init__(self, label: str):
+        super().__init__(label)
+        self.label = label
+
+
+class _LabeledBlock:
+    def __init__(self, label: str):
+        self.label = label
+
+    def __enter__(self):
+        return None
+
+    def __exit__(self, exc_type, exc, tb):
+        return isinstance(exc, _BlockBreak) and exc.label == self.label
+
+
+class _Block:
+    """Nim `block:` (`with block:`, a scope) and `block name:` (`with block("name"):`, rule:dropwith /
+    rule:labeledblock); `breakBlock("name")` leaves the named block (Nim `break name`)."""
+
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *exc):
+        return False
+
+    def __call__(self, label: str) -> _LabeledBlock:
+        return _LabeledBlock(label)
+
+
+block = _Block()
+
+
+def breakBlock(label: str) -> None:
+    """Nim `break label`: leave the enclosing `with block(label):` (rule:labeledblock)."""
+    raise _BlockBreak(label)
