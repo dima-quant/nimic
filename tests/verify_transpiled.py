@@ -1,9 +1,9 @@
 """
 Execution verification of converted nimic code: Python run vs transpiled + compiled Nim.
 
-    .venv/bin/python tests/verify_transpiled.py [modules] [raytracer] [converters]
+    .venv/bin/python tests/verify_transpiled.py [modules] [fidelity] [tests] [imports] [raytracer] [converters]
 
-(no arguments = all three checks; takes several minutes, the Python raytracer is the slow part)
+(no arguments = all checks; takes several minutes, the Python raytracer is the slow part)
 
   modules     each converted ncompiler/<m>.py is transpiled (as nimic.nimp does: import + unparse
               with the runtime type registry), swapped into a copy of the Nim compiler sources
@@ -15,25 +15,58 @@ Execution verification of converted nimic code: Python run vs transpiled + compi
               and as compiled Nim; outputs must be byte-identical to reference.264 / reference.mp4 in
               tests/nraytracer/ncache/build/rendered_test (local, git-ignored inputs: skipped if absent).
 
+  fidelity    nimic_translation_rules.md §2.1: every `if comptime(X)` of a converted module pairs with a
+              `when X` of the original (only the test guard `__name__ == "__main__"` is unpaired), and no
+              Python/Nim switches or monkey-patching (`defined("c")`, `setattr`, `globals()[...]`, `_py_*`,
+              `Class.attr = proc`).
+  tests       each module's tests run in Python and as compiled Nim (all modules transpiled into one
+              directory with compiler/nim.cfg, so both use the same build profile); stdout must match.
+  imports     each module that is not an include file compiles when imported (`import <m>`), the way its
+              users load it.
+
+Modules marked for rework in ncompiler/conversion_queue.md are reported as XFAIL (expected failure).
 Everything runs in .scratch/verify_transpiled (git-ignored). The tracked transpiled files in
 tests/nraytracer/ncache are never touched (running tests/nraytracer/test_nast.py in place regenerates
 them). Exit code 1 if any check fails.
 """
 from __future__ import annotations
 
+import ast
 import filecmp
 import os
+import re
+from collections import Counter
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path[:0] = [str(ROOT / "src"), str(ROOT)]  # this script runs from tests/: nimic and ncompiler.tools
+from ncompiler.tools.dependencies import dependencies  # noqa: E402
 SCRATCH = ROOT / ".scratch" / "verify_transpiled"
 PY = sys.executable
-MODULES = ("prefixmatches wordrecg idents platform pathutils nimpaths ropes llstream lineinfos options msgs "
-           "bitsets hlo inliner aliasanalysis ccgreset rodutils btrees jstypes saturate nodekinds nversion "
-           "packagehandling ccgthreadvars sinkparameter_inference sourcemap cbuilderexprs").split()
+MODULES = sorted(p.stem for p in (ROOT / "ncompiler").glob("*.py") if p.stem != "__init__")
+HARNESSES = sorted(p.stem for p in (ROOT / "ncompiler" / "tests").glob("test_*.py"))
+# test scaffolding included by the harnesses (e.g. cgen_context)
+TEST_SUPPORT = sorted(p.stem for p in (ROOT / "ncompiler" / "tests").glob("*.py") if not p.stem.startswith("test_"))
+
+
+def _harnessed() -> set[str]:
+    """Include files tested through their includer: a harness in ncompiler/tests (include("../x")) or a
+    converted module that includes them (options includes packagehandling)."""
+    found = set()
+    sources = [ROOT / "ncompiler" / "tests" / f"{h}.py" for h in HARNESSES]
+    sources += [ROOT / "ncompiler" / f"{m}.py" for m in MODULES]
+    for path in sources:
+        text = path.read_text()
+        for names in re.findall(r"^include\(([^)]*)\)", text, flags=re.M):
+            found |= {n.strip(" \"'").split("/")[-1] for n in names.split(",")}
+    return found
+
+
+HARNESSED = _harnessed()
+QUEUE = ROOT / "ncompiler" / "conversion_queue.md"
 CONVERTER_INPUTS = ROOT / "tests/nraytracer/ncache/build/rendered_test"
 
 TRANSPILE_MODULE = """
@@ -43,21 +76,48 @@ from nimic.ntypesystem import _n_registry
 mod = importlib.import_module(sys.argv[1])
 print(transpiler.unparse(transpiler.parse(inspect.getsource(mod)), _n_registry)[0])
 """
+# transpile a source file (include files can't be imported on their own)
+TRANSPILE_SOURCE = """
+import importlib, pathlib, sys
+from nimic import transpiler
+from nimic.ntypesystem import _n_registry
+importlib.import_module(sys.argv[2])  # registers the types, as nimic.nimp does (a harness for include files)
+print(transpiler.unparse(transpiler.parse(pathlib.Path(sys.argv[1]).read_text()), _n_registry)[0])
+"""
 NTRANSPILE = "import importlib, sys; from nimic import ntranspile; ntranspile([importlib.import_module(sys.argv[1])])"
 
 failures: list[str] = []
 
 
-def report(ok: bool, what: str, detail: str = "") -> None:
-    print(f"  {'PASS' if ok else 'FAIL'}  {what}" + (f"  — {detail}" if detail else ""), flush=True)
-    if not ok:
+def _rework_modules() -> set[str]:
+    """Modules marked ⚠️ in the conversion queue: their failures are expected (XFAIL)."""
+    if not QUEUE.exists():
+        return set()
+    return set(re.findall(r"^\| `(\w+)` \|[^\n]*⚠️", QUEUE.read_text(), flags=re.M))
+
+
+REWORK = _rework_modules()
+
+
+def report(ok: bool, what: str, detail: str = "", module: str | None = None) -> None:
+    expected = not ok and module in REWORK
+    tag = "PASS" if ok else ("XFAIL" if expected else "FAIL")
+    print(f"  {tag:5} {what}" + (f"  — {detail}" if detail else ""), flush=True)
+    if not ok and not expected:
         failures.append(what)
 
 
-def run(args, cwd, pythonpath=None, timeout=3600):
+# The raytracer and converters are built with `nim c -d:danger`; their Python runs emulate the same
+# build (nimic's build profile: overflow checks off, `release` and `danger` defined).
+NIM_BUILD_DEFINES = ("danger",)
+
+
+def run(args, cwd, pythonpath=None, timeout=3600, defines=()):
     env = dict(os.environ)
     if pythonpath:
         env["PYTHONPATH"] = os.pathsep.join(str(p) for p in pythonpath)
+    if defines:
+        env["NIMIC_DEFINES"] = ",".join(defines)
     return subprocess.run([str(a) for a in args], cwd=cwd, env=env, capture_output=True, text=True,
                           timeout=timeout)
 
@@ -74,7 +134,8 @@ def copy_tree(src: Path, dst: Path) -> None:
 
 
 def nim_build(ncache: Path, module: str):
-    return run(["nim", "c", "-d:danger", "--hints:off", "--warnings:off", "--outdir:build", f"{module}.nim"], ncache)
+    return run(["nim", "c", *(f"-d:{d}" for d in NIM_BUILD_DEFINES), "--hints:off", "--warnings:off", "--outdir:build",
+                f"{module}.nim"], ncache)
 
 
 def check_modules() -> None:
@@ -83,15 +144,170 @@ def check_modules() -> None:
     shutil.copytree(ROOT / "compiler", work)
     shutil.copytree(ROOT / "src/nimic/ncode", work / "ncode")
     for m in MODULES:
+        if m in HARNESSED:
+            print(f"  SKIP  module {m}  — include file, checked through its harness (tests)", flush=True)
+            continue
         original = (work / f"{m}.nim").read_text()
         tr = run([PY, "-c", TRANSPILE_MODULE, f"ncompiler.{m}"], work, [ROOT / "src", ROOT])
         if tr.returncode != 0:
-            report(False, f"module {m}", "transpile: " + first_error(tr))
+            report(False, f"module {m}", "transpile: " + first_error(tr), m)
             continue
         (work / f"{m}.nim").write_text(tr.stdout)
         chk = run(["nim", "check", "--hints:off", "--warnings:off", "--styleCheck:off", f"{m}.nim"], work)
-        report(chk.returncode == 0, f"module {m}", "" if chk.returncode == 0 else first_error(chk))
+        report(chk.returncode == 0, f"module {m}", "" if chk.returncode == 0 else first_error(chk), m)
         (work / f"{m}.nim").write_text(original)
+
+
+# --- fidelity: `if comptime` mirrors `when` (nimic_translation_rules.md §2.1) ---
+
+def _norm_cond(text: str) -> str:
+    text = re.sub(r"""defined\(['"]?(\w+)['"]?\)""", r"defined(\1)", text)
+    text = re.sub(r"""declared\(['"]?([\w.]+)['"]?\)""", r"declared(\1)", text)
+    text = text.replace("isinstance(", "is(").replace("True", "true").replace("False", "false")
+    return re.sub(r"[\s()]", "", text)
+
+
+def _py_conditions(tree: ast.AST) -> list[str]:
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.If, ast.IfExp)) and "comptime(" in ast.unparse(node.test):
+            cond = ast.unparse(node.test)
+            if "__name__" in cond:
+                continue  # test guard (the exception of §2.1)
+            out.append(_norm_cond(cond.replace("comptime", "")))
+    return out
+
+
+def _nim_conditions(text: str) -> list[str]:
+    out = []
+    for line in text.splitlines():
+        line = line.split("#", 1)[0]
+        m = re.match(r"^\s*when\s+(.+?):\s*(\S.*)?$", line) or re.search(r"=\s*when\s+(.+?):", line)
+        if m and "isMainModule" not in m.group(1):
+            cond = m.group(1)
+            # `x is T` is spelled isinstance(x, T) in nimic
+            cond = re.sub(r"(\w+)\s+is\s+(\w+)", r"is(\1,\2)", cond)
+            out.append(_norm_cond(cond))
+    return out
+
+
+_FORBIDDEN = [
+    (re.compile(r"""defined\(\s*["'](c|js|cpp|objc)["']\s*\)"""), "backend switch defined(\"c\")"),
+    (re.compile(r"\bsetattr\("), "setattr"),
+    (re.compile(r"\bglobals\(\)\s*\["), "globals()[...]"),
+    (re.compile(r"\b_py_\w+"), "_py_* copy"),
+    (re.compile(r"__name__\s*==\s*[\"']__main__[\"']\s*\)\s*\)"), "not (__name__ == '__main__')"),
+]
+
+
+def _monkey_patches(tree: ast.AST) -> list[str]:
+    classes = {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
+    procs = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            t = node.targets[0]
+            if (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id in classes
+                    and isinstance(node.value, (ast.Name, ast.Lambda)) and getattr(node.value, "id", "") in procs | {""}):
+                out.append(f"{t.value.id}.{t.attr} = ... (line {node.lineno})")
+    return out
+
+
+def check_fidelity() -> None:
+    print("== fidelity: `if comptime` mirrors `when`, no Python/Nim switches", flush=True)
+    for m in MODULES:
+        src = (ROOT / "ncompiler" / f"{m}.py").read_text()
+        nim_path = ROOT / "compiler" / f"{m}.nim"
+        tree = ast.parse(src)
+        problems = []
+        py, nim = Counter(_py_conditions(tree)), Counter(_nim_conditions(nim_path.read_text()) if nim_path.exists() else [])
+        for cond, n in (py - nim).items():
+            problems.append(f"comptime without matching when: {cond}" + (f" (x{n})" if n > 1 else ""))
+        for cond, n in (nim - py).items():
+            problems.append(f"when not converted: {cond}" + (f" (x{n})" if n > 1 else ""))
+        for rx, what in _FORBIDDEN:
+            hits = [i for i, line in enumerate(src.splitlines(), 1) if rx.search(line)]
+            if hits:
+                problems.append(f"{what} at line(s) {', '.join(map(str, hits[:5]))}")
+        problems += _monkey_patches(tree)
+        report(not problems, f"fidelity {m}", "; ".join(problems)[:300], m)
+
+
+# --- tests: Python vs compiled Nim, imports ---
+
+def _transpile_all(work: Path) -> dict[str, str]:
+    """Transpile every converted module into `work` (with ncode/ and compiler/nim.cfg); returns errors."""
+    (work / "tests").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "compiler" / "nim.cfg", work / "nim.cfg")  # same build profile as the Python runs
+    errors = {}
+    harness_of = {}
+    includers = [(ROOT / "ncompiler" / "tests" / f"{h}.py", f"ncompiler.tests.{h}") for h in HARNESSES]
+    includers += [(ROOT / "ncompiler" / f"{m}.py", f"ncompiler.{m}") for m in MODULES]
+    for path, module in includers:
+        for names in re.findall(r"^include\(([^)]*)\)", path.read_text(), flags=re.M):
+            for n in names.split(","):
+                harness_of.setdefault(n.strip(" \"'").split("/")[-1], module)
+    for m in MODULES + [f"tests.{h}" for h in HARNESSES + TEST_SUPPORT]:
+        importer = harness_of.get(m.split(".")[-1], f"ncompiler.{m}")
+        tr = run([PY, "-c", TRANSPILE_SOURCE, str(ROOT / "ncompiler" / (m.replace(".", "/") + ".py")), importer],
+                 ROOT, [ROOT / "src", ROOT])
+        if tr.returncode != 0:
+            errors[m] = first_error(tr)
+        else:
+            (work / (m.replace(".", "/") + ".nim")).write_text(tr.stdout)
+    return errors
+
+
+def _nim_c(work: Path, main: str, out: str):
+    """Compile work/<main>.nim (main may be tests/<harness>) from its own directory."""
+    path = work / f"{main}.nim"
+    return run(["nim", "c", "--hints:off", "--warnings:off", "--styleCheck:off", f"--path:{work}",
+                f"--path:{ROOT / 'src/nimic'}", f"--path:{ROOT / 'compiler'}", f"--nimcache:{work / ('cache_' + out)}",
+                f"-o:{work / out}", path.name], path.parent)
+
+
+def check_tests() -> None:
+    print("== module tests: Python vs compiled Nim (same build profile)", flush=True)
+    work = SCRATCH / "tests"
+    errors = _transpile_all(work)
+    for m in [m for m in MODULES if m not in HARNESSED] + [f"tests.{h}" for h in HARNESSES]:
+        if m in errors:
+            report(False, f"tests {m}", "transpile: " + errors[m], m)
+            continue
+        py = run([PY, "-m", f"ncompiler.{m}"], ROOT, [ROOT / "src", ROOT])
+        if py.returncode != 0:
+            report(False, f"tests {m}", "Python: " + first_error(py), m)
+            continue
+        build = _nim_c(work, m.replace(".", "/"), f"bin_{m}")
+        if build.returncode != 0:
+            report(False, f"tests {m}", "nim c: " + first_error(build), m)
+            continue
+        nim = run([work / f"bin_{m}"], ROOT)
+        if nim.returncode != 0:
+            report(False, f"tests {m}", f"Nim run: exit {nim.returncode} " + first_error(nim), m)
+            continue
+        same = py.stdout == nim.stdout
+        detail = "" if same else "stdout differs: " + next(
+            (f"py {a!r} / nim {b!r}" for a, b in zip(py.stdout.splitlines(), nim.stdout.splitlines()) if a != b),
+            "different number of lines")
+        report(same, f"tests {m}", detail[:200], m)
+
+
+def check_imports() -> None:
+    print("== imports: modules compile when imported (include files excluded)", flush=True)
+    _, includer, _ = dependencies()
+    work = SCRATCH / "imports"
+    errors = _transpile_all(work)
+    for m in MODULES:
+        if m in includer:
+            continue
+        if m in errors:
+            report(False, f"import {m}", "transpile: " + errors[m], m)
+            continue
+        (work / f"use_{m}.nim").write_text(f"import {m}\n")
+        chk = run(["nim", "check", "--hints:off", "--warnings:off", "--styleCheck:off", f"--path:{work}",
+                   f"--path:{ROOT / 'src/nimic'}", f"--path:{ROOT / 'compiler'}", f"use_{m}.nim"], work)
+        report(chk.returncode == 0, f"import {m}", "" if chk.returncode == 0 else first_error(chk), m)
 
 
 def compare_trees(a: Path, b: Path, pattern: str) -> tuple[int, list[str]]:
@@ -104,7 +320,7 @@ def check_raytracer() -> None:
     work = SCRATCH / "nraytracer"
     copy_tree(ROOT / "tests/nraytracer", work)
     py = run([PY, "-c", "import runpy; runpy.run_path('trace_of_radiance_animation.py', run_name='__main__')"],
-             work, [ROOT / "src", work])
+             work, [ROOT / "src", work], defines=NIM_BUILD_DEFINES)
     report(py.returncode == 0, "raytracer Python run", "" if py.returncode == 0 else first_error(py))
     tr = run([PY, "-c", NTRANSPILE, "trace_of_radiance_animation"], work, [ROOT / "src", work])
     if tr.returncode != 0:
@@ -138,7 +354,7 @@ def check_converters() -> None:
     steps = (("test_converter_ppm_to_h264", "reference_py.264", "reference.264"),
              ("test_converter_h264_to_mp4", "reference_py.mp4", "reference.mp4"))
     for module, out, ref in steps:
-        py = run([PY, f"tests/nraytracer/{module}.py"], base, [ROOT / "src", work])
+        py = run([PY, f"tests/nraytracer/{module}.py"], base, [ROOT / "src", work], defines=NIM_BUILD_DEFINES)
         ok = py.returncode == 0 and (data / out).exists() and filecmp.cmp(data / out, data / ref, shallow=False)
         report(ok, f"{module} Python == {ref}", "" if py.returncode == 0 else first_error(py))
         (data / out).unlink(missing_ok=True)
@@ -157,7 +373,8 @@ def check_converters() -> None:
 
 
 def main() -> int:
-    checks = {"modules": check_modules, "raytracer": check_raytracer, "converters": check_converters}
+    checks = {"modules": check_modules, "fidelity": check_fidelity, "tests": check_tests, "imports": check_imports,
+              "raytracer": check_raytracer, "converters": check_converters}
     selected = sys.argv[1:] or list(checks)
     unknown = [s for s in selected if s not in checks]
     if unknown:

@@ -23,6 +23,7 @@ Nim variable declarations are mapped to Python context managers to encapsulate s
 | --- | --- | --- |
 | `var x: SomeType` | `with var: x = SomeType()` | Declaration and initializatoin |
 | `var a: array[2, uint8]` | `with var: a = array[2, uint8]()` | Declaration and initializatoin |
+| `var x = RefType()` | `with var: x = RefType()` | For a `ref` type (`@ref` class) the constructor call is kept, since `var x: RefType` would be `nil` (`rule:varini`) |
 | `let x = 5` | `with let: x = 5` | Immutable assignments |
 | `const x = 5` | `with const: x = 5` | Compile-time constants |
 | `var x, y: int` | `with var:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x = nint(0)`<br>&nbsp;&nbsp;&nbsp;&nbsp;`y = nint(0)` | Groups declarations |
@@ -36,8 +37,27 @@ Compile-time metaprogramming relies on function calls or specific decorators. Ge
 | `when x < 5:` | `if comptime(x < 5):` | |
 | `template foo()` | `@template`<br>`def foo()` | Template definition. Note: `@template_expand` is **only** needed on the *calling function* if you need to actually expand *untyped* templates inside it. Typed templates should have a `return` statement. |
 | `template _sph(): untyped {.dirty.} =`<br>&nbsp;&nbsp;&nbsp;&nbsp;`moving_spheres[i]`  (used inline by attributes) | `with template_inline:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`"""{.dirty.}"""`<br>&nbsp;&nbsp;&nbsp;&nbsp;`_sph = moving_spheres[i]` |  For substituting an expression accessed by attributes. |
-| `when defined(windows):` | `if comptime(defined("windows")):` | `defined()` takes a string in Nimic (`rule:defined`); transpiler strips quotes for Nim |
+| `when defined(windows):` | `if comptime(defined("windows")):` | `defined()` takes a string in Nimic (`rule:defined`); transpiler strips quotes for Nim. In Python it tests the *build profile* of the emulated Nim build: `c`, host OS/CPU (`macosx`, `posix`, `arm64`, ...), `gcOrc`, the compiler's feature symbols, the `define:` lines of the Nim configs Nim would read for the same main module (global config, `nim.cfg` files from the root down to the main module's directory, `<main>.nim.cfg`; `ncompiler/nim.cfg` links `compiler/nim.cfg`), and `NIMIC_DEFINES` (e.g. `NIMIC_DEFINES=danger`). So `defined("c")` is true in Python too |
+| `when declared(signbit):` | `if comptime(declared("signbit")):` | `rule:declared`: the name (dotted allowed: `declared("system.getMaxMem")`) is looked up in the calling module's scope |
+| `const x = when c: a else: b` | `with const:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x = a if comptime(c) else b` | `when` expression (`rule:comptimeexpr`) |
+| `{.push overflowChecks: off.}`<br>`...`<br>`{.pop.}` | `with push("overflowChecks: off"):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`...` | `rule:push`: emits the pragma, the body unindented, then `{.pop.}`. Python emulates the runtime checks `overflowChecks`, `boundChecks` and `checks` for procs defined inside the block; other pragmas only affect the Nim output |
 | `when not compileOption("threads"):` | `if comptime(not compileOption("threads")):` | `not comptime(...)` is also handled correctly |
+| `template addCast(b: var Builder, t: Snippet, body: typed) =`<br>&nbsp;&nbsp;&nbsp;&nbsp;`...; body; ...`<br>`b.addCast(t): b.add(x)` | `@template`<br>`def addCast(b: mut@Builder, t: Snippet, body: typed):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`...; body; ...`<br>`with b.addCast(t):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`b.add(x)` | Block template: trailing `typed`/`untyped` parameters used as bare statements are the code blocks of the call. A second block (`... : first do: second`) follows `with do:` *inside* the `with` body. Skipped, extra or missing blocks raise `TemplateBlockError`. A proc overload of the same name needs `@dispatch` |
+| `template t(b: var Builder, kind = Local, name: string, body: typed)` | `def t(b: mut@Builder, kind: VarKind = VarKind.Local, name: string = string(""), body: typed = None)` | Python needs defaults after a defaulted parameter; the `= None` of a block parameter is not written to Nim (`rule:blockparam`) |
+| `include cbuilderexprs, cbuilderstmts` | `include("cbuilderexprs", "cbuilderstmts")` | `rule:include`: the file runs in the includer's namespace. An include file has no imports of its own (only the nimic boilerplate) and no tests: it is tested through a harness in `ncompiler/tests/` that, like its real includer, imports the converted modules, includes stand-ins for the unconverted ones (`cgen_context`, ...) and the include files in the includer's order |
+| `{.emit: """C code""".}` | `emit("""C code""")` | `rule:emit`; raises in Python, so it belongs in a `when` branch that is inactive in the emulated build |
+
+### 2.1 Rule: `if comptime` must mirror a `when` of the original Nim
+
+Every `if comptime(X)` in a converted module, with its `elif comptime(...)` and `else` branches, must correspond one to one to a `when X` (`elif`, `else`) of the original Nim source: same position, same condition in nimic spelling, every branch converted. The only exception is test code that the original source does not contain.
+
+- **Keep every branch.** Convert all branches of the original `when`, including branches that are inactive on your machine or in the default build (`when defined(windows)`, GC- or backend-specific branches) and `when false:` / `when true:` (`if comptime(False):` / `if comptime(True):`). Do not resolve a `when` at conversion time by keeping one branch, and do not turn it into a runtime `if`: `when f is float32` is `if comptime(isinstance(f, float32))`, not `if isinstance(f, float32)`.
+- **Same condition.** Translate the condition as written: `defined(x)` → `defined("x")`, a constant stays a constant (`when FileSystemCaseSensitive:` → `if comptime(FileSystemCaseSensitive):`, not `defined("FileSystemCaseSensitive")`), `isMainModule` → `__name__ == "__main__"`, `declared(x)` → `declared("x")`.
+- **Exception: added tests.** Tests that the original does not contain, and the scaffolding they need (stand-in types and procs for dependencies that are not converted yet), go under `if comptime(__name__ == "__main__"):`, and only under that condition. They must run identically in Python and in the transpiled Nim, must not redefine, rebind or monkey-patch converted code (no `_py_*` copies, no `Class.method = ...`, no `setattr`/`globals()`), and must not shadow names that the module's imports provide. A `when isMainModule:` block of the original is converted like any other code; added tests come after it. Include files are the exception: they have no test section, their tests live in a harness (see `include` above).
+- **Never tell Python and Nim apart.** A condition whose purpose is to run different code in Python and in Nim is forbidden: `defined("c")` / `not defined("c")` (Python mode emulates the C-backend Nim build; `defined` is not a Python/Nim switch), `declared(X)` to supply missing types, `not (__name__ == "__main__")`, or any branch that exists for only one language. Needing such a switch means nimic lacks a feature: mark the spot `# TODO: requires nimic feature <name>`, write a proposal (`nimic-propose-feature` skill) and keep the original Nim structure.
+- **Review check.** List every `comptime(...)` of the converted module and every `when` of the original; apart from the `__name__ == "__main__"` test guard they must pair up one to one. Run the module's tests in Python and as compiled Nim: the outputs must be identical.
+
+Background and the list of nimic features still missing for this rule: `ncompiler/review_core_2026_10_16.md`.
 
 **Template return** (`rule:templatereturn`): Inside a typed template, `return expr` is transpiled as just `expr` (no `return` keyword), matching Nim's template result semantics. In Nimic, write `return result` normally — the transpiler handles the transformation.
 
@@ -88,6 +108,8 @@ translates to
     sort3 = auto()
 ```
 
+**Types of one type section.** Consecutive classes are one Nim `type` section (methods are written after it), so a field may name a type declared later in the section (`PType.sym: PSym` before `class PSym`): the field resolves when the later type is defined, with that type's zero value (`nil` for a `@ref`).
+
 ## 4. Functions and Arguments
 Functions use standard Python `def` definitions but might employ specific decorators to mimic Nim semantics.
 
@@ -96,10 +118,18 @@ Functions use standard Python `def` definitions but might employ specific decora
 | **Implicit `result` Variable** | `def foo() -> nint:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`result = nint(5)`<br>&nbsp;&nbsp;&nbsp;&nbsp;`return result` | Nim's `result` variable is implicitly declared and returned. In Nimic, you must explicitly assign `result = ...` and write `return result` at the end. Note: There is no need to declare a default instantiation `result = Type()` if the value is defined or overwritten immediately on the next line! |
 | `discard foo()` | `_ = foo()` | Discarding a function call result |
 | `proc foo(x: var SomeType)` | `def foo(x: mut@SomeType):` | Assigning new value requires `<<=`, e.g., `x <<= y` (not needed for attributes and array elements). |
+| `proc s(p: BProc): var Builder` | `def s(p: BProc) -> mut@Builder:` | Mutable (`var`) return type, also in `@calltype` signatures (`rule:funcdefmut`). |
+| `proc init(x: out T)` | `def init(x: out@T):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x <<= T(...)` | `out` parameter (`rule:funcdefout`) |
+| `proc f(x: int): int` (forward declaration) | `def f(x: nint) -> nint:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`pass` | A body of only `pass` (after an optional pragma docstring) is a forward declaration; the later definition replaces it in Python. Overloaded procs: both with `@dispatch` |
+| `obj.f(a)` (method call syntax) | `obj.f(a)` | For an `Object`, `obj.f(a)` calls the proc `f(obj, a)` visible in the caller's scope, also a block template (`with b.addCast(t):`). For other types (`string`, ...) declare the proc with `@ufcs(string)`. A call without parentheses (`typ.elementType`) needs a `@property` in the class (transpiled as a proc) or the call form `elementType(typ)` |
+| `foo(nil)` for `x: SomeRef` | `foo(None)` | `None` dispatches only to nilable parameter types: `@ref` classes, `ptr[T]`, `pointer`, `@calltype` procs. |
 | `iterator myIter(x: int): int`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | `def myIter(x: nint) -> nint:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | |
 | `proc foo(x:int)`<br>`proc foo(x:float)` | `@dispatch`<br>`def foo(...)` | "Static" dispatch. |
 | `foo(x = 1)` | `foo(x = 1)` | Call and dispatch with keyword arguments. |
-| `proc foo(x: int, y = 5)` | `@dispatch`<br>`def foo(x: nint, y = 5):` | Default parameter values are supported in `@dispatch`/`@template`; types are inferred and missing trailing arguments populated automatically. |
+| `proc foo(x: int, y = 5)` | `@dispatch`<br>`def foo(x: nint, y = 5):` | Default parameter values are supported in `@dispatch`/`@template`; types are inferred and missing trailing arguments populated automatically. Arguments are bound per overload, so keyword calls may omit defaulted parameters (`addVar(b, kind=Local, name=n, typ=t)`), and an overload with defaults stays reachable when another overload has the call's arity. |
+| `proc f(a: T, args: varargs[T])` | `def f(a: T, *args: T)` | `rule:varargs`; pass varargs or a seq on with `f(a, *args)` (Nim `f(a, args)`). A conversion, `varargs[string, $]`, is written `*args: varargs[string, str]` and needs `@dispatch` (it applies `$` to each argument) |
+| `proc f(x: int \| int64 \| uint64)` | `def f(x: nint \| int64 \| uint64)` | A union is a type class for `@dispatch` (Nim `int or int64 or uint64`) |
+| `p.s(cpsStmts) = oldCode` (a proc returning `var T`) | `assign(p.s(cpsStmts), oldCode)` | `rule:assigncall`: Python can't assign to a call; `assign` assigns in place like `<<=` |
 | `proc foo(...)` | `def foo(...)` | Methods of classes inheriting from `Object` are dispatched automatically. |
 | `0 ..< a` | `range(a)` | Range syntax. |
 | `a .. b` | `inrange(a, b)` | Inclusive range syntax, frequently used for sets (e.g. `Tset[TNoteKind](inrange(low, high))`). |
@@ -165,7 +195,7 @@ Because the transpiler is sensitive to Python's internal logic versus Nim's syst
 | `readFile(f)` | `read_file(f)` / `readFile(f)` | Reads binary-safe byte buffer into Nimic `string`. |
 | `Path(str)` | `Path(str)` | `from nimic.std.paths import Path`. Supports `/` (`__truediv__`) and `os.PathLike` (`__fspath__`). |
 | `s.skipWhitespace(i)` (UFCS on a std proc) | `s.skipWhitespace(i)` | Works when the Python std shim declares the proc with `@ufcs(string, aliases=("skipWhitespace",))`; std shims must not `setattr` methods onto core types. Python's own `str` methods (`find`, `rfind`, `strip`, …) are never shadowed — call the strutils proc as a function (`rfind(s, c)`) when Nim semantics differ |
-| `type Snippet = string` | `Snippet = string` | A plain module-level alias; `@dispatch` resolves it (also in `varargs[Snippet]`) through the defining module's globals |
+| `type Snippet = string` | `Snippet = string` | `rule:typealias` (assignment form): a module-level `Name = <type>` is emitted in a `type` section (`type Snippet* = string`); `@dispatch` resolves it through the defining module's globals. `class Snippet(string): pass` is an alias too (a `string` subclass without members) |
 | `== nil` / `!= nil` | `is None` / `is not None` | Python identity checks transpile as Nim nil comparisons (`rule:nilident`) |
 
 ### 6.1 Strings are bytes (`rule:latin1literal`, `rule:utf8literal`)
@@ -188,7 +218,10 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
 | `and`, `or`, etc (binary) | `&`, `\|`, etc | Nim binary operators map to Python bitwise |
-| `x = y` (value type) | `x = y.copy()` | Explicit copy of value types in Python, e.g. to create a mutable copy. |
+| `x = y` (value type) | `x = y.copy()` | Explicit copy of value types in Python, e.g. to create a mutable copy. `string`, `seq`, `array`, `Tset` and `Object` have `.copy()`; assigning an object, `a[i] = obj` and `s.add(v)` copy value fields/elements (strings, seqs, non-ref objects) and share refs, as Nim does |
+| `x = y` through a `var` parameter | `x <<= y` | Works for objects, `string`, `seq`, `array` and `Tset` (in place) |
+| `echo a, b` | `echo(a, b)` | Nim semantics: `$` of each argument, no separator (`echo("n=", 3, true)` prints `n=3true`) |
+| signed integer overflow | `a + b`, `a * b`, ... | Raises `OverflowDefect` like Nim with overflow checks on (the default build); off with `-d:danger` (`NIMIC_DEFINES=danger`) or inside `with push("overflowChecks: off"):`. Unsigned types, `+%`/`-%`, shifts and bitwise operations wrap. Array indexes out of bounds raise `IndexDefect` |
 | `isnot`, `notin` | `is not`, `not in` | |
 | `(width + 15) shr 4 - 1` | `((width + 15) >> 4) - 1` | In Python bitwise operators have lower precedance than arithmetic operators | 
 | `for item in arr.mitems:` | `for item in arr.mitems:` | In-place mutation loops translate directly, do not replace with `enumerate`. |
@@ -202,7 +235,7 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | `cmp(a, b)` | `cmp(a, b)` | Standard three-way comparison `(a > b) - (a < b)` |
 | `FormatStr(s)` | `FormatStr(s)` | Wraps format string for `%` operator; unwraps to string literal in Nim (`rule:formatstr`) |
 | `move x` | `move(x)` | Nim ownership transfer; identity operation in Python runtime |
-| `shallowCopy(d, s)` | `shallowCopy(d, s)` | Nim shallow copy; returns source in Python runtime |
+| `shallowCopy(d, s)` | `shallowCopy(d, s)` | Assigns `s` to `d` in place (`d` must be a mutable nimic value) |
 
 ## 8. Exporting and Scope (`rule:writeexport`, `rule:localname`, `rule:modulepath`)
 | Nim | Python (Nimic) | Notes |
@@ -210,6 +243,7 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | `export` | `with export:` | |
 | Local variables | `_` or `local_` prefix | Identifiers defined **without** `*` in Nim should be prefixed in Nimic to prevent transpiling as public with `*`. |
 | `import std/tables` | `from nimic.std.tables import *` | Module paths are translated: `nimic.x.y` → `x/y`, with module renaming (`rule:modulepath`) |
+| `import ../options` | `from ..options import *` | Relative imports keep their level: one `../` per extra dot |
 
 
 ## 9. Callable type (`rule:calltype`)
@@ -223,6 +257,7 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | `block:` (statement) | `with block:` | Prevent variable leaking |
 | `block:` (value return) | `def _block():`<br>&nbsp;&nbsp;&nbsp;&nbsp;`return val`<br>`result = _block()` | Emulate value-returning blocks with immediately invoked localized functions. |
 | `do:` | `with do:` | Nim `do:` block statement (`rule:doblock`) |
+| `block search:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`... break search` | `with block("search"):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`... breakBlock("search")` | Labeled block (`rule:labeledblock`) |
 
 
 ## 11. Variant type and `case` statements (`rule:matchcase`, `rule:uncheckedassign`)

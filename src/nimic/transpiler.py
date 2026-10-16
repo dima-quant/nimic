@@ -28,6 +28,7 @@ Type system:
   rule:classdefseq -> combine consecutive class definitions into one type def.
     Move method definitions outside type definitions
   rule:typealias -> type alias (also register as alias for dispatch): class Time(float64) -> type Time* = float64
+    and the assignment form: a module-level `Snippet = string` (value is a type) -> type Snippet* = string
   rule:typedistinct -> distinct type (decorated with "distinct"): class Time(float64) -> type Time* = distinct float64
   rule:annotateself -> if self is not annotated, it will be derived from the class name (as immutable)
   rule:instantiation -> call with capitalized name and named arguments is interpreted as instantiation ("=" -> ":").
@@ -47,6 +48,7 @@ Function definitions:
   rule:funcdefyield -> definitions with yield or decorated with "iterator" are converted to iterators
   rule:funcdefmut -> arguments and return types denoted as "mut@" are mutable in function definition -> "var "
     (also in calltype signatures): def s(self: BProc) -> mut @ Builder -> proc s*(self: BProc): var Builder
+  rule:funcdefout -> parameters annotated `out @ T` are Nim `out T` (in Python the same as mut @ T)
   rule:funcdefbody -> no body is written for function definition with "borrow" in pragma or only "pass"
   rule:funcdefinplace -> remove return ... from dunder defs for binary in-place operators __i...__, first argument is
     annotated as mutable if not done already
@@ -66,7 +68,12 @@ Control flow:
   rule:comptime -> the expression "if comptime(x)" is written as "when x" ("if" directly followed by "comptime"
     should be resolvable at comptime (is interpreted as "when")
   rule:main -> replace __name__ == "__main__" by isMainModule
-  rule:defined -> defined("identifier") transpiles as defined(identifier) without quotes
+  rule:comptimeexpr -> the expression `a if comptime(c) else b` is written as `when c: a else: b`
+  rule:assigncall -> the statement assign(target, value) is written as `target = value`; used where Python
+    can't assign, e.g. through a call returning var T: assign(p.s(cpsStmts), oldCode)
+  rule:defined -> defined("identifier") transpiles as defined(identifier) without quotes; in Python it tests
+    the build profile of the emulated Nim build (nsystem._BuildProfile), never "Python vs Nim"
+  rule:declared -> declared("identifier") transpiles as declared(identifier) without quotes (dotted names allowed)
   rule:fortupleunpack -> tuple unpacking in for-loops emits parenthesized (a, b) syntax, except for Nim's
     multi-value magic iterators fields(a, b) / fieldPairs(x), which need bare `for a, b in`
   rule:templatereturn -> in templates, a "return expr" in tail position (end of every path: last statement, both
@@ -98,11 +105,22 @@ Operators & renaming:
   rule:isinstance -> isinstance(x, T) transpiles as x is T (type query)
   rule:formatstr -> FormatStr(s) unwraps to string literal s in Nim (where string is FormatStr)
   rule:doblock -> with do: block translates as do: block in Nim
+  rule:push -> with push("overflowChecks: off"): body  translates as {.push overflowChecks: off.} body {.pop.},
+    the body at the level of the with statement (in Python, procs defined inside run with the check off)
   rule:tupletype -> tuple[T1, T2] slice translates as (T1, T2) tuple type in Nim
+  rule:blockparam -> a typed/untyped (block) parameter's placeholder default `= None`, needed in Python after
+    defaulted parameters, is not written: `kind: VarKind = Local, name = "", body: typed = None` is
+    `kind: VarKind=Local, name="", body: typed`
+  rule:varargs -> a parameter `*args: T` is `args: varargs[T]` (`*args: varargs[string, str]` is
+    varargs[string, `$`]); a starred call argument f(a, *args) passes a varargs or seq on: f(a, args)
 
 Imports:
   rule:import -> write import from as import, drop from __future__ import ...
   rule:nodoubleimport -> do not write import module if already imported
+  rule:labeledblock -> with block("name"): ... is `block name:`; breakBlock("name") is `break name`
+  rule:emit -> emit("C code") transpiles as an emit pragma {.emit: <triple-quoted C code>.} (raises if run in Python)
+  rule:include -> include("x", "y") transpiles as `include x, y`; in Python the files run in the includer's
+    namespace
   rule:modulepath -> nimic.x.y import paths transpile as x/y, with module renaming (e.g. syncio -> io)
 
 Memory & variables:
@@ -996,8 +1014,30 @@ class _Unparser(NodeVisitor):
         if comment is not None:
             return f" # type: {comment}"
 
+    # rule:typealias (assignment form): type constructors and nimic builtin type names
+    _type_constructors = {"seq", "array", "Tset", "ptr", "ref", "openArray", "Trange", "UncheckedArray",
+                          "varargs", "tuple", "set"}
+    _builtin_type_names = {"string", "cstring", "char", "bool", "byte", "nint", "int8", "int16", "int32", "int64",
+                           "uint", "uint8", "uint16", "uint32", "uint64", "float16", "float32", "float64",
+                           "pointer", "BiggestInt", "BiggestUInt", "BiggestFloat", "Hash"}
+
+    def _is_type_expr(self, node) -> bool:
+        if isinstance(node, Name):
+            if node.id in self._declared_classes or node.id in self._builtin_type_names:
+                return True
+            types = getattr(self._type_registry, "types", None) if self._type_registry is not None else None
+            return isinstance(types, dict) and isinstance(types.get(node.id), type)
+        if isinstance(node, Subscript) and isinstance(node.value, Name):
+            return node.value.id in self._type_constructors or node.value.id in self._declared_classes
+        return False
+
+    def _is_type_alias(self, item) -> bool:
+        """rule:typealias: a module-level `Name = T` whose value is a type is a type alias."""
+        return (isinstance(item, Assign) and len(item.targets) == 1 and isinstance(item.targets[0], Name)
+                and self._scope_depth == 0 and not self._context_stack and self._is_type_expr(item.value))
+
     def _is_type_def(self, item):
-        if isinstance(item, ClassDef):
+        if isinstance(item, ClassDef) or self._is_type_alias(item):
             return True
         if isinstance(item, (FunctionDef, AsyncFunctionDef)):
             for d in item.decorator_list:
@@ -1069,6 +1109,32 @@ class _Unparser(NodeVisitor):
         self.traverse(node.returns)
 
     def visit_Expr(self, node):
+        value = node.value
+        if (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id == "breakBlock"
+                and len(value.args) == 1 and isinstance(value.args[0], Constant)):
+            # rule:labeledblock -> breakBlock("name") is `break name`
+            self.fill(f"break {value.args[0].value}")
+            return
+        if (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id == "emit" and len(value.args) == 1
+                and isinstance(value.args[0], Constant) and isinstance(value.args[0].value, str)):
+            # rule:emit -> emit("code") is {.emit: """code""".}
+            self.fill('{.emit: """' + value.args[0].value + '""".}')
+            return
+        if (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id == "include" and value.args
+                and all(isinstance(a, Constant) and isinstance(a.value, str) for a in value.args)):
+            # rule:include -> include("x", "y") is `include x, y` (textual inclusion)
+            names = [a.value for a in value.args]
+            self.fill("include " + ", ".join(names))
+            self.module_names += [n.split("/")[-1] for n in names]
+            return
+        if (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id == "assign"
+                and len(value.args) == 2 and not value.keywords):
+            # rule:assigncall -> assign(p.s(sec), x) is `p.s(sec) = x` (assignment through a var T result)
+            self.fill()
+            self.traverse(value.args[0])
+            self.write(" = ")
+            self.traverse(value.args[1])
+            return
         self.fill()
         # rule:writeexport
         if self._context_stack and self._context_stack[-1] in self._set_low_precedence:
@@ -1110,7 +1176,8 @@ class _Unparser(NodeVisitor):
                 self.write("/".join(module_name_split[1:]))
             else:
                 self.module_names.append(module_name)
-                self.write(node.module)
+                # a relative import keeps its directory: `from ..options import *` is `import ../options`
+                self.write("../" * max((node.level or 0) - 1, 0) + node.module.replace(".", "/"))
         # self.write("import ")
         # self.interleave(lambda: self.write(", "), self.traverse, node.names)
 
@@ -1130,6 +1197,16 @@ class _Unparser(NodeVisitor):
                         self.traverse(body[-1].value)
 
     def visit_Assign(self, node):
+        if self._is_type_alias(node):
+            # rule:typealias -> module-level `Snippet = string` is `type Snippet* = string`
+            target = node.targets[0]
+            target._is_definition = True
+            self.fill()
+            self.traverse(target)
+            target._is_definition = False
+            self.write(" = ")
+            self.traverse(node.value)
+            return
         if (
             len(node.targets) == 1
             and isinstance(node.targets[0], Attribute)
@@ -1351,11 +1428,13 @@ class _Unparser(NodeVisitor):
 
     def visit_Try(self, node):
         prev_in_try_star = self._in_try_star
+        self._scope_depth += 1  # try/except bodies are scopes in Nim
         try:
             self._in_try_star = False
             self.do_visit_try(node)
         finally:
             self._in_try_star = prev_in_try_star
+            self._scope_depth -= 1
 
     def visit_TryStar(self, node):
         prev_in_try_star = self._in_try_star
@@ -1771,7 +1850,9 @@ class _Unparser(NodeVisitor):
         self.traverse(node.iter)
 
         with self.block(extra=self.get_type_comment(node)):
+            self._scope_depth += 1  # a loop body is a scope in Nim: its variables are not exported
             self.traverse(node.body)
+            self._scope_depth -= 1
         if node.orelse:
             self.fill("else")
             with self.block():
@@ -1795,10 +1876,12 @@ class _Unparser(NodeVisitor):
         else:
             self.fill("if ")
             self.traverse(test_expr)
+        # a `when` is no scope: at module level its symbols are module-level (exported with `*`)
+        depth = 0 if comptime else 1
         with self.block():
-            self._scope_depth += 1
+            self._scope_depth += depth
             self.traverse(node.body)
-            self._scope_depth -= 1
+            self._scope_depth -= depth
         # collapse nested ifs into equivalent elifs.
         while node.orelse and len(node.orelse) == 1 and isinstance(node.orelse[0], If):
             next_comptime, next_test = self._check_comptime(node.orelse[0].test)
@@ -1808,22 +1891,24 @@ class _Unparser(NodeVisitor):
             self.fill("elif ")
             self.traverse(next_test)
             with self.block():
-                self._scope_depth += 1
+                self._scope_depth += depth
                 self.traverse(node.body)
-                self._scope_depth -= 1
+                self._scope_depth -= depth
         # final else
         if node.orelse:
             self.fill("else")
             with self.block():
-                self._scope_depth += 1
+                self._scope_depth += depth
                 self.traverse(node.orelse)
-                self._scope_depth -= 1
+                self._scope_depth -= depth
 
     def visit_While(self, node):
         self.fill("while ")
         self.traverse(node.test)
         with self.block():
+            self._scope_depth += 1  # a loop body is a scope in Nim
             self.traverse(node.body)
+            self._scope_depth -= 1
         if node.orelse:
             self.fill("else")
             with self.block():
@@ -1845,6 +1930,21 @@ class _Unparser(NodeVisitor):
             self.traverse(assign.value)
 
     def visit_With(self, node):
+        ctx = node.items[0].context_expr
+        if (isinstance(ctx, Call) and isinstance(ctx.func, Name) and ctx.func.id == "block" and len(ctx.args) == 1
+                and isinstance(ctx.args[0], Constant) and isinstance(ctx.args[0].value, str)):
+            # rule:labeledblock -> with block("name"): body  is  block name: body
+            self.fill(f"block {ctx.args[0].value}")
+            with self.block():
+                self.traverse(node.body)
+            return
+        if (isinstance(ctx, Call) and isinstance(ctx.func, Name) and ctx.func.id == "push"
+                and len(ctx.args) == 1 and isinstance(ctx.args[0], Constant) and isinstance(ctx.args[0].value, str)):
+            # rule:push -> with push("p"): body  is  {.push p.} body {.pop.} (Nim's push is not a block)
+            self.fill(f"{{.push {ctx.args[0].value}.}}")
+            self.traverse(node.body)
+            self.fill("{.pop.}")
+            return
         # rule:dropwith
         name = None
         cont_pop = False
@@ -2144,9 +2244,10 @@ class _Unparser(NodeVisitor):
     def visit_IfExp(self, node):
         with self.require_parens(_Precedence.TEST, node):
             self.set_precedence(_Precedence.TEST.next(), node.body, node.test)
-            # rule:inlineif
-            self.write("if ")
-            self.traverse(node.test)
+            # rule:inlineif; rule:comptimeexpr -> `a if comptime(c) else b` is `when c: a else: b`
+            comptime, test_expr = self._check_comptime(node.test)
+            self.write("when " if comptime else "if ")
+            self.traverse(test_expr)
             self.write(": ")
             self.traverse(node.body)
             self.write(" else: ")
@@ -2475,9 +2576,10 @@ class _Unparser(NodeVisitor):
             # rule:deref and rule:copy
             self.traverse(node.func.value)
             self.write(self._attribute_replace[node.func.attr])
-        elif isinstance(node.func, Name) and node.func.id == "defined" and len(node.args) == 1 and isinstance(node.args[0], Constant) and isinstance(node.args[0].value, str):
+        elif isinstance(node.func, Name) and node.func.id in ("defined", "declared") and len(node.args) == 1 and isinstance(node.args[0], Constant) and isinstance(node.args[0].value, str):
             # rule:defined -> defined("identifier") translates to defined(identifier) in Nim
-            self.write(f"defined({node.args[0].value})")
+            # rule:declared -> declared("identifier") translates to declared(identifier) in Nim
+            self.write(f"{node.func.id}({node.args[0].value})")
         elif isinstance(node.func, Name) and node.func.id == "isinstance" and len(node.args) == 2:
             # rule:isinstance -> isinstance(x, T) translates to x is T in Nim
             self.traverse(node.args[0])
@@ -2551,6 +2653,19 @@ class _Unparser(NodeVisitor):
                 # rule:funcrename
                 if isinstance(node.func, Name) and _name in self._func_rename:
                     node.func.id = self._func_rename[_name]
+            # rule:array (indexed form): array[I, T]({k: v, ...}) is the Nim array constructor [k: v, ...]
+            if (isinstance(node.func, Subscript) and isinstance(node.func.value, Name) and node.func.value.id == "array"
+                    and len(node.args) == 1 and isinstance(node.args[0], Dict) and not node.keywords):
+                with self.delimit("[", "]"):
+                    def write_item(item):
+                        k, v = item
+                        self.traverse(k)
+                        self.write(": ")
+                        self.traverse(v)
+                    self.interleave(lambda: self.write(", "), write_item, zip(node.args[0].keys, node.args[0].values))
+                if pop:
+                    self._context_stack.pop()
+                return
             # independent of the call-context branch above (array[N, T] calls also set func_name)
             if (
                 isinstance(node.func, Subscript)
@@ -2633,7 +2748,7 @@ class _Unparser(NodeVisitor):
                     self.traverse(node.slice)
 
     def visit_Starred(self, node):
-        self.write("*")
+        # rule:varargs -> a starred call argument f(a, *args) passes a varargs/seq on: f(a, args)
         self.set_precedence(_Precedence.EXPR, node.value)
         self.traverse(node.value)
 
@@ -2675,11 +2790,19 @@ class _Unparser(NodeVisitor):
         """Parameter or return type annotation; `mut @ T` is written as `var T`."""
         # rule:funcdefmut, check if annotated as mutable "mut @"
         if isinstance(ann, BinOp) and isinstance(ann.op, MatMult) and \
-            isinstance(ann.left, Name) and ann.left.id == "mut":
-            self.write("var ")
+            isinstance(ann.left, Name) and ann.left.id in ("mut", "out"):
+            self.write("var " if ann.left.id == "mut" else "out ")  # rule:funcdefmut, rule:funcdefout
             self.traverse(ann.right)
         else:
             self.traverse(ann)
+
+    @staticmethod
+    def _is_block_param_placeholder(arg, default) -> bool:
+        """rule:blockparam -> `body: typed = None`: a block (typed/untyped) parameter after defaulted
+        parameters needs a default in Python only; Nim block parameters have none."""
+        ann = arg.annotation
+        return (isinstance(ann, Name) and ann.id in ("typed", "untyped")
+                and isinstance(default, Constant) and default.value is None)
 
     def visit_arguments(self, node):
         first = True
@@ -2693,7 +2816,7 @@ class _Unparser(NodeVisitor):
             else:
                 self.write(", ")
             self.traverse(a)
-            if d:
+            if d and not self._is_block_param_placeholder(a, d):
                 self.write("=")
                 self.traverse(d)
             if index == len(node.posonlyargs):
@@ -2705,12 +2828,30 @@ class _Unparser(NodeVisitor):
                 first = False
             else:
                 self.write(", ")
-            self.write("*")
             if node.vararg:
-                self.write(node.vararg.arg)
-                if node.vararg.annotation:
-                    self.write(": ")
-                    self.traverse(node.vararg.annotation)
+                # rule:varargs -> `*args: T` is `args: varargs[T]`; `*args: varargs[string, str]` keeps the
+                # conversion: `args: varargs[string, `$`]`
+                self.write(node.vararg.arg + ": ")
+                ann = node.vararg.annotation
+                if ann is None:
+                    raise ValueError(f"varargs parameter '*{node.vararg.arg}' needs an element type annotation")
+                if isinstance(ann, Subscript) and isinstance(ann.value, Name) and ann.value.id == "varargs":
+                    elts = ann.slice.elts if isinstance(ann.slice, Tuple) else [ann.slice]
+                    self.write("varargs[")
+                    self.traverse(elts[0])
+                    for conv in elts[1:]:
+                        self.write(", ")
+                        if isinstance(conv, Name) and conv.id in self._func_rename:
+                            self.write(f"`{self._func_rename[conv.id]}`")
+                        else:
+                            self.traverse(conv)
+                    self.write("]")
+                else:
+                    self.write("varargs[")
+                    self.traverse(ann)
+                    self.write("]")
+            else:
+                self.write("*")
 
         # keyword-only arguments
         if node.kwonlyargs:

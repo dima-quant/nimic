@@ -14,4 +14,5 @@ For example, the specific translation rules:
 - There is no need to declare `result = Type()` if the result is defined by the very next line. Initialize it directly with its value.
 - To express inclusive ranges like `{low(TNoteKind)..high(TNoteKind)}`, use the `inrange` function: `Tset[TNoteKind](inrange(low(TNoteKind), high(TNoteKind)))`.
 - Convert Nim loops as Python loops, do not use Python expressions or idioms.
+- `if comptime(X)` must mirror a `when X` of the original Nim one to one, with every branch converted (§2.1 of nimic_translation_rules.md). The only exception is the added test block `if comptime(__name__ == "__main__"):`. Never write code that runs differently in Python and in Nim (e.g. `defined("c")` switches): if a construct can't be converted otherwise, mark it with a TODO and write a feature proposal.
 - Object variants (`case kind: K` in an object): declare `kind: K` without a dummy default, followed by `match kind:` (see §11 of nimic_translation_rules.md). Construct variants explicitly (`T(kind=..., field=...)`); there is no implicit conversion from a branch payload to the variant.

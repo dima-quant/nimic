@@ -4,11 +4,12 @@ import glob as _glob
 import os as _os
 import pathlib as _pathlib
 import shlex as _shlex
+import shutil as _shutil
 from sys import stdout, stderr
 import sys
 from io import TextIOWrapper
 from enum import Enum
-from nimic.ntypes import char, string, dispatch
+from nimic.ntypes import char, string, dispatch, defined
 from nimic.ntypesystem import _n_os_arg, _n_os_result
 
 from nimic.std.syncio import read_file, read_file_bytes, write_buffer, set_file_pos, open
@@ -243,10 +244,17 @@ def walkFiles(pattern: string | str):
 walk_files = walkFiles
 
 def getCurrentCompilerExe() -> string:
-    # mock
-    return _n_os_result(sys.executable)
+    """Nim: getCurrentCompilerExe() — the path of the Nim compiler. In a compiled program this is the
+    compiler that built it ({.compileTime.}), so Python returns the `nim` of the emulated build:
+    NIMIC_NIM if set, else `nim` on PATH (symlinks resolved, as Nim reports it)."""
+    exe = _os.environ.get("NIMIC_NIM") or _shutil.which("nim") or ""
+    return _n_os_result(_os.path.realpath(exe) if exe else "")
 
 get_current_compiler_exe = getCurrentCompilerExe
+
+# Nim (std/private/osseps): true if the file system is case sensitive; used by cmpPaths
+FileSystemCaseSensitive = not (defined("macos") or defined("macosx") or defined("windows") or defined("OS2")
+                               or defined("DOS") or defined("vxworks") or defined("PalmOS") or defined("MorphOS"))
 
 @dispatch
 def isRelativeTo(path: string, base: string) -> bool:
