@@ -97,10 +97,14 @@ For modifications in `src/nimic/ntypesystem.py` and `src/nimic/ntypes.py`:
    .venv/bin/python -m unittest tests/nimic/test_ntypes.py
    .venv/bin/python -m unittest tests.nimic.test_nvariants tests.nimic.test_inliner
    ```
-3. Run compiler module verification loop across all converted modules (Python execution of their `__main__` tests):
+3. Run compiler module verification loop across all converted modules and the include-file harnesses in
+   `ncompiler/tests/` (Python execution of their `__main__` tests):
    ```bash
-   for m in prefixmatches wordrecg idents platform pathutils nimpaths ropes llstream lineinfos options msgs bitsets hlo inliner aliasanalysis ccgreset rodutils btrees jstypes saturate nodekinds nversion packagehandling ccgthreadvars sinkparameter_inference sourcemap cbuilderexprs; do
-     .venv/bin/python -m ncompiler.$m || echo "FAIL: $m"
+   for f in ncompiler/*.py ncompiler/tests/test_*.py; do
+     m=${f#ncompiler/}; m=${m%.py}; m=${m//\//.}
+     # include files (include("...") in a module or harness) run through their includer
+     grep -qE "^include\(.*[\"'/]${m##*.}[\"']" ncompiler/*.py ncompiler/tests/*.py && continue
+     .venv/bin/python -m ncompiler.$m > /dev/null || echo "FAIL: $m"
    done
    ```
 4. **Execution tests in Python and transpiled Nim** (required for every core review; unit tests alone

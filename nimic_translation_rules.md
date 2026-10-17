@@ -36,6 +36,9 @@ Compile-time metaprogramming relies on function calls or specific decorators. Ge
 | --- | --- | --- |
 | `when x < 5:` | `if comptime(x < 5):` | |
 | `template foo()` | `@template`<br>`def foo()` | Template definition. Note: `@template_expand` is **only** needed on the *calling function* if you need to actually expand *untyped* templates inside it. Typed templates should have a `return` statement. |
+| `template eatWord(word) =`<br>&nbsp;&nbsp;&nbsp;&nbsp;`while x[idx] == sep: idx.dec`<br>&nbsp;&nbsp;&nbsp;&nbsp;`result = ...`<br>&nbsp;&nbsp;&nbsp;&nbsp;`if not result: return` | `@template`<br>`def eatWord(word: untyped):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`while x[idx] == sep: idx -= 1`<br>&nbsp;&nbsp;&nbsp;&nbsp;`result = ...`<br>&nbsp;&nbsp;&nbsp;&nbsp;`if not result: return` | A statement template using the caller's variables (names that are not its parameters, its own `with var/let` locals or globals of its module) is expanded in callers decorated with `@template_expand`: no `{.dirty.}` (unless the original has it) and no `nonlocal`. Its bare `return` returns `result` from the caller |
+| `template fun(op) =`<br>&nbsp;&nbsp;&nbsp;&nbsp;`conf.notes.op note`<br>`fun(incl)` | `@template`<br>`def fun(op: untyped):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`conf.notes.op(note)`<br>`fun(incl)` | A template parameter used as a routine, in call (`self(v, result)`) or method-call position, is substituted on expansion: `incl(conf.notes, note)` |
+| `template impl() = result = 0; ...` shared by procs returning `int` and `BiggestInt` | `result <<= 0` in the template; each proc starts with `result = nint(0)` / `result = BiggestInt(0)` | `<<=` assigns in place and keeps the caller's result type (Nim `result = 0`) |
 | `template _sph(): untyped {.dirty.} =`<br>&nbsp;&nbsp;&nbsp;&nbsp;`moving_spheres[i]`  (used inline by attributes) | `with template_inline:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`"""{.dirty.}"""`<br>&nbsp;&nbsp;&nbsp;&nbsp;`_sph = moving_spheres[i]` |  For substituting an expression accessed by attributes. |
 | `when defined(windows):` | `if comptime(defined("windows")):` | `defined()` takes a string in Nimic (`rule:defined`); transpiler strips quotes for Nim. In Python it tests the *build profile* of the emulated Nim build: `c`, host OS/CPU (`macosx`, `posix`, `arm64`, ...), `gcOrc`, the compiler's feature symbols, the `define:` lines of the Nim configs Nim would read for the same main module (global config, `nim.cfg` files from the root down to the main module's directory, `<main>.nim.cfg`; `ncompiler/nim.cfg` links `compiler/nim.cfg`), and `NIMIC_DEFINES` (e.g. `NIMIC_DEFINES=danger`). So `defined("c")` is true in Python too |
 | `when declared(signbit):` | `if comptime(declared("signbit")):` | `rule:declared`: the name (dotted allowed: `declared("system.getMaxMem")`) is looked up in the calling module's scope |
@@ -45,6 +48,7 @@ Compile-time metaprogramming relies on function calls or specific decorators. Ge
 | `template addCast(b: var Builder, t: Snippet, body: typed) =`<br>&nbsp;&nbsp;&nbsp;&nbsp;`...; body; ...`<br>`b.addCast(t): b.add(x)` | `@template`<br>`def addCast(b: mut@Builder, t: Snippet, body: typed):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`...; body; ...`<br>`with b.addCast(t):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`b.add(x)` | Block template: trailing `typed`/`untyped` parameters used as bare statements are the code blocks of the call. A second block (`... : first do: second`) follows `with do:` *inside* the `with` body. Skipped, extra or missing blocks raise `TemplateBlockError`. A proc overload of the same name needs `@dispatch` |
 | `template t(b: var Builder, kind = Local, name: string, body: typed)` | `def t(b: mut@Builder, kind: VarKind = VarKind.Local, name: string = string(""), body: typed = None)` | Python needs defaults after a defaulted parameter; the `= None` of a block parameter is not written to Nim (`rule:blockparam`) |
 | `include cbuilderexprs, cbuilderstmts` | `include("cbuilderexprs", "cbuilderstmts")` | `rule:include`: the file runs in the includer's namespace. An include file has no imports of its own (only the nimic boilerplate) and no tests: it is tested through a harness in `ncompiler/tests/` that, like its real includer, imports the converted modules, includes stand-ins for the unconverted ones (`cgen_context`, ...) and the include files in the includer's order |
+| `{.gcsafe.}:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`body` | `with pragma("gcsafe"):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`body` | Pragma block (`rule:pragmablock`), also `pragma("cast(gcsafe)")`; no effect in Python |
 | `{.emit: """C code""".}` | `emit("""C code""")` | `rule:emit`; raises in Python, so it belongs in a `when` branch that is inactive in the emulated build |
 
 ### 2.1 Rule: `if comptime` must mirror a `when` of the original Nim
@@ -107,6 +111,7 @@ translates to
     sort2 = auto()
     sort3 = auto()
 ```
+An enum with string values (`warnUser = "User"`) is a `NStrEnum`: `$` of an `auto()` member is its name, and members with equal texts (`warnUser = "User", hintUser = "User"`) are distinct members, ordered by declaration.
 
 **Types of one type section.** Consecutive classes are one Nim `type` section (methods are written after it), so a field may name a type declared later in the section (`PType.sym: PSym` before `class PSym`): the field resolves when the later type is defined, with that type's zero value (`nil` for a `@ref`).
 
@@ -120,6 +125,8 @@ Functions use standard Python `def` definitions but might employ specific decora
 | `proc foo(x: var SomeType)` | `def foo(x: mut@SomeType):` | Assigning new value requires `<<=`, e.g., `x <<= y` (not needed for attributes and array elements). |
 | `proc s(p: BProc): var Builder` | `def s(p: BProc) -> mut@Builder:` | Mutable (`var`) return type, also in `@calltype` signatures (`rule:funcdefmut`). |
 | `proc init(x: out T)` | `def init(x: out@T):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x <<= T(...)` | `out` parameter (`rule:funcdefout`) |
+| `type InstantiationInfo* = typeof(instantiationInfo())` | `InstantiationInfo = typeof(instantiationInfo())` | `typeof(x)` as a type alias (`rule:typealias`); `instantiationInfo(-2, fullPaths = true)` gives the call site in Python too |
+| `proc canonicalCase(path: var string)` (not exported) | `def _canonicalCase(path: mut@string)` | A private proc or template has a leading `_` (transpiled `local_name`), so star imports don't re-export it |
 | `proc f(x: int): int` (forward declaration) | `def f(x: nint) -> nint:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`pass` | A body of only `pass` (after an optional pragma docstring) is a forward declaration; the later definition replaces it in Python. Overloaded procs: both with `@dispatch` |
 | `obj.f(a)` (method call syntax) | `obj.f(a)` | For an `Object`, `obj.f(a)` calls the proc `f(obj, a)` visible in the caller's scope, also a block template (`with b.addCast(t):`). For other types (`string`, ...) declare the proc with `@ufcs(string)`. A call without parentheses (`typ.elementType`) needs a `@property` in the class (transpiled as a proc) or the call form `elementType(typ)` |
 | `foo(nil)` for `x: SomeRef` | `foo(None)` | `None` dispatches only to nilable parameter types: `@ref` classes, `ptr[T]`, `pointer`, `@calltype` procs. |
@@ -218,7 +225,21 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
 | `and`, `or`, etc (binary) | `&`, `\|`, etc | Nim binary operators map to Python bitwise |
-| `x = y` (value type) | `x = y.copy()` | Explicit copy of value types in Python, e.g. to create a mutable copy. `string`, `seq`, `array`, `Tset` and `Object` have `.copy()`; assigning an object, `a[i] = obj` and `s.add(v)` copy value fields/elements (strings, seqs, non-ref objects) and share refs, as Nim does |
+| `s[i] = c` | `s[i] = c` | Writes the char in place (`IndexDefect` past the end) |
+| `for c in mitems(s): c = x` | `for c in mitems(s):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`c <<= x` | `mitems` of a string yields chars bound to their slots; `<<=` writes back (transpiled `c = x`) |
+| `"$1 [$#] ${name}" % [a, b]`, `format(f, a, b)`, `s.addf(f, a)` | the same | strutils `%`, `format`, `addf` with Nim semantics (`$1`, `$#`, `$-1`, `${n}`, `$name` key/value pairs, `$$`; `ValueError` if invalid) |
+| `a <% b`, `a <=% b`, `a >% b`, `a >=% b` | `lt_percent(a, b)`, `le_percent`, `gt_percent`, `ge_percent` | Unsigned comparisons (`rule:percentops`) |
+| `x.isNil`, `quit(1)`, `quit("msg")` | `isNil(x)`, `quit(1)`, `quit(string("msg"))` | system procs |
+| `for i, x in s:` (implicit pairs) | `for i, x in pairs(s):` | `(index, item)` of a seq, array or string; `(key, value)` of a table |
+| `proc p(): tuple[dir: AbsoluteDir, name: string]` ... `result = (a, b)` | `class _SplitT(NTuple)` ..., `def p() -> _SplitT:` ... `return (a, b)` | A tuple literal returned from a proc declared to return a named tuple type becomes that type (`@dispatch`) |
+| `$e`, `echo e` (enum member) | `str(e)`, `echo(e)` | The member's name (string-valued enums: the text) |
+| `del t, key` | `t.del_(key)` | Python keyword: trailing `_` (`rule:keywordescape`) |
+| `s.add((info, detail))` (seq of a named tuple) | `s.add((info, detail))` | A tuple literal becomes the seq's element tuple type |
+| `MsgFlags* = set[MsgFlag]`, `flags: MsgFlags = {}` | `MsgFlags = Tset[MsgFlag]`, `flags: MsgFlags = MsgFlags()` | Calls of a set alias are set literals (`rule:setlit`) |
+| `s[s.len]` | `s[s.len]` | A string is `'\0'`-terminated: with bound checks off (`-d:danger`, `push boundChecks: off`) it reads `'\0'`, otherwise `IndexDefect`. Don't add Python-only bounds guards |
+| `toFloat(i)`, `toInt(f)` | `toFloat(i)`, `toInt(f)` | system procs |
+| `a == b` (objects, tuples) | `a == b` | Field-wise, as Nim's default `==`; refs compare as references. Object constructors copy value arguments |
+| `x = y` (value type) | `x = y.copy()` | Explicit copy of value types in Python, e.g. to create a mutable copy. `string`, `seq`, `array`, `Tset`, `Object` and the integer types (`nint`, `int64`, `uint8`, ...) have `.copy()`. Integers need it when the new variable is changed in place (`b = a.copy()` before `b -= 1`, `inc(b)` or passing `b` as `var`), since in-place operators mutate the shared object; assigning an object, `a[i] = obj` and `s.add(v)` copy value fields/elements (strings, seqs, non-ref objects) and share refs, as Nim does |
 | `x = y` through a `var` parameter | `x <<= y` | Works for objects, `string`, `seq`, `array` and `Tset` (in place) |
 | `echo a, b` | `echo(a, b)` | Nim semantics: `$` of each argument, no separator (`echo("n=", 3, true)` prints `n=3true`) |
 | signed integer overflow | `a + b`, `a * b`, ... | Raises `OverflowDefect` like Nim with overflow checks on (the default build); off with `-d:danger` (`NIMIC_DEFINES=danger`) or inside `with push("overflowChecks: off"):`. Unsigned types, `+%`/`-%`, shifts and bitwise operations wrap. Array indexes out of bounds raise `IndexDefect` |
@@ -244,6 +265,9 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | Local variables | `_` or `local_` prefix | Identifiers defined **without** `*` in Nim should be prefixed in Nimic to prevent transpiling as public with `*`. |
 | `import std/tables` | `from nimic.std.tables import *` | Module paths are translated: `nimic.x.y` → `x/y`, with module renaming (`rule:modulepath`) |
 | `import ../options` | `from ..options import *` | Relative imports keep their level: one `../` per extra dot |
+| `import std/times` | `from nimic.std.times import *` (or `import a, b` of it) | A Python `from m import ...` is a full Nim `import m`: a class comes with its methods, which are procs in Nim |
+| `from std/times import utc, fromUnix` | `importFrom("nimic.std.times", "utc", "fromUnix")` | `rule:importfrom`: Nim's selective import; binds only those names |
+| `import ropes except `%`` | `importExcept(".ropes", "%")` | `rule:importexcept`: the module's public names except the given ones (operators have no Python name) |
 
 
 ## 9. Callable type (`rule:calltype`)
@@ -262,6 +286,13 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 
 ## 11. Variant type and `case` statements (`rule:matchcase`, `rule:uncheckedassign`)
 - **`case` statements** ➔ `match` statements
+
+| Nim | Python (Nimic) | Notes |
+| --- | --- | --- |
+| `case c`<br>`of 'a'..'z', 'A'..'Z', '_':` | `match c:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`case _ if c in inrange(ch('a'), ch('z')) or c in inrange(ch('A'), ch('Z')) or c == ch('_'):` | Ranges, values and set constants (`c in routineDefs`) of one `of` branch: a guard on the subject joined with `or`. A char value needs a guard (`c == ch('_')`) since `case "_"` is a string |
+| `of nkEmpty..pred(nkSym), succ(nkSym)..nkNilLit:` | `case _ if n.kind in inrange(TNodeKind.nkEmpty, pred(TNodeKind.nkSym)) or n.kind in inrange(succ(TNodeKind.nkSym), TNodeKind.nkNilLit):` | Enum ranges likewise |
+| `elif cond:` (branch of a `case`) | `case _ if cond:` | Any other guard is an `elif` branch |
+| `proc p(s: string): Cmd =`<br>&nbsp;&nbsp;`case s`<br>&nbsp;&nbsp;`of "sug": ideSug`<br>&nbsp;&nbsp;`else: ideNone` | `def p(s: string) -> Cmd:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`match s:`<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`case "sug": return Cmd.ideSug`<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`case _: return Cmd.ideNone` | `case` expression as the proc's result (`rule:casereturn`): a body ending with a `match` whose every branch is `return <value>` |
 - **variant types (case objects)** ➔ `Object` with a `match` on the field declared immediately before it
 ```nim
   NodeObj* = object

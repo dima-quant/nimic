@@ -4,6 +4,7 @@ import ast
 import builtins
 import contextlib
 import ctypes
+import inspect
 import io
 import math
 import os
@@ -24,7 +25,7 @@ from nimic.std.options import Option, none, some
 from nimic.std.os import fileExists, getCurrentDir, getEnv, walkDir
 from nimic.std.parseutils import parse_hex, parse_ident
 from nimic.std.strscans import scanf
-from nimic.std.strutils import find, nimIdentNormalize, repeat, rfind, strip, toLowerAscii
+from nimic.std.strutils import isUpperAscii, find, nimIdentNormalize, repeat, rfind, strip, toLowerAscii
 from nimic.std.syncio import lines, read_file
 from nimic.system.ansi_c import c_free, c_malloc, csize_t
 from nimic.transpiler import unparse
@@ -1886,6 +1887,20 @@ class TestNTypes(unittest.TestCase):
         plus_percent(a, 1)
         self.assertEqual(int(a), 127)
 
+    def test_unsigned_compare_percent_ops(self):
+        """Nim <%, <=%, >%, >=% compare as unsigned in the operand type's width: -1 >=% 3 for int."""
+        self.assertTrue(ge_percent(nint(-1), nint(3)))
+        self.assertFalse(lt_percent(nint(-1), nint(3)))
+        self.assertTrue(le_percent(nint(3), 3))
+        self.assertTrue(gt_percent(int8(-1), int8(127)))
+        self.assertTrue(nint(5).lt_percent(nint(-5)))
+        def nim(src):
+            return unparse(ast.parse(src))[0].strip()
+        self.assertEqual(nim("x = ge_percent(i, n)"), "x = i >=% n")
+        self.assertEqual(nim("x = a.lt_percent(b + 1)"), "x = a <% b + 1")
+        self.assertEqual(nim("x = not le_percent(a, b)"), "x = not (a <=% b)")
+        self.assertEqual(nim("x = gt_percent(a, b)"), "x = a >% b")
+
     def test_transpile_percent_ops(self):
         """rule:percentops emits Nim +% / -% with additive precedence, for call and method forms."""
 
@@ -2501,6 +2516,434 @@ class TestNTypes(unittest.TestCase):
         with push("checks: off"):
             self.assertEqual(int(int8(127) + 1), -128)  # module-level code inside the region
 
+    def test_string_index_at_len_reads_terminator(self):
+        """A Nim string is '\\0'-terminated: s[s.len] raises IndexDefect with bound checks on and reads
+        '\\0' with them off (-d:danger, push boundChecks: off)."""
+        s = string("ab")
+        with self.assertRaises(IndexDefect):
+            _ = s[2]
+        with push("boundChecks: off"):
+            self.assertEqual(str(s[2]), "\0")
+        self.assertEqual(str(s[-1]), "b")  # Python negative indexes are left alone
+
+    def test_string_setitem_and_mitems(self):
+        """Nim `s[i] = c` writes the char in place (IndexDefect past the end); `for c in mitems(s):
+        c = x` is `c <<= x` in nimic (transpiled `c = x`) and writes back into the string."""
+        s = string("aBc")
+        alias = s
+        s[0] = ch("X")
+        self.assertEqual(str(s), "XBc")
+        self.assertEqual(str(alias), "XBc")
+        with self.assertRaises(IndexDefect):
+            s[3] = ch("z")
+        for c in mitems(s):
+            if isUpperAscii(c):
+                c <<= char(uint8(ord(c)) ^ uint8(0b0010_0000))
+        self.assertEqual(str(s), "xbc")
+        self.assertEqual([str(c) for c in items(s)], ["x", "b", "c"])
+        src = textwrap.dedent('''\
+            for c in mitems(a):
+                c <<= ch("x")
+            ''')
+        self.assertIn("for c in mitems(a):\n  c = 'x'", unparse(ast.parse(src))[0])
+
+    def test_instantiation_info_and_typeof(self):
+        """instantiationInfo(index, fullPaths) gives (filename, line, column) of a caller; `T =
+        typeof(expr)` at module level is a type alias (rule:typealias)."""
+        def here():
+            return instantiationInfo(-1, fullPaths=True)
+        line = sys._getframe().f_lineno + 1
+        info = here()
+        self.assertEqual(int(info.line), line)
+        self.assertEqual(str(info.filename), os.path.abspath(__file__))
+        self.assertIsInstance(info, typeof(instantiationInfo()))
+        def short():
+            return instantiationInfo()
+        self.assertEqual(str(short().filename), os.path.basename(__file__))
+        out = unparse(ast.parse("InstantiationInfo = typeof(instantiationInfo())\n"))[0]
+        self.assertIn("type\n  InstantiationInfo* = typeof(instantiationInfo())", out)
+
+    def test_strutils_percent_and_format(self):
+        """strutils `%`/format/addf follow Nim: $1..$n, $# (sequential), ${n}, $name/${name} (key/value
+        pairs, style-insensitive), $$; ValueError for an invalid format string."""
+        from nimic.std import strutils as su
+        self.assertEqual(str(string("$1-$#-${2}-$x$$") % [string("a"), string("b"), string("x"), string("y")]),
+                         "a-a-b-y$")
+        self.assertEqual(str(string("$1 $10") % [string(str(i)) for i in range(1, 11)]), "1 10")
+        self.assertEqual(str(string("$-1") % [string("a"), string("b")]), "b")
+        self.assertEqual(str(string(" [$1]") % string("User")), " [User]")  # `%` with a single string
+        self.assertEqual(str(string("$build/${Loc}") % [string("build"), string("B"), string("loc"), string("L")]), "B/L")
+        self.assertEqual(str(su.format(string("$1 and $2"), nint(1), string("b"))), "1 and b")
+        s = string("x")
+        su.addf(s, string("[$1]"), string("y"))
+        self.assertEqual(str(s), "x[y]")
+        with self.assertRaises(ValueError):
+            _ = string("$3") % [string("a")]
+
+    def test_strutils_format_float_and_size(self):
+        """formatBiggestFloat/formatFloat (C printf semantics), trimZeros and formatSize, as Nim's
+        runnableExamples."""
+        from nimic.std import strutils as su
+        self.assertEqual(str(su.formatFloat(123.456)), "123.4560000000000")
+        self.assertEqual(str(su.formatFloat(123.456, su.ffDecimal, 4)), "123.4560")
+        self.assertEqual(str(su.formatFloat(123.456, su.ffScientific, 2)), "1.23e+02")
+        self.assertEqual(str(su.formatFloat(1.23456, su.ffDecimal, 3)), "1.235")
+        x = string("123.456000000")
+        su.trimZeros(x)
+        self.assertEqual(str(x), "123.456")
+        self.assertEqual(str(su.formatSize((1 << 31) + (300 << 20))), "2.293GiB")
+        self.assertEqual(str(su.formatSize(int(2.234 * 1024 * 1024))), "2.234MiB")
+        self.assertEqual(str(su.formatSize(4096, includeSpace=True)), "4 KiB")
+        self.assertEqual(str(su.formatSize(4096, prefix=su.bpColloquial, includeSpace=True)), "4 kB")
+        self.assertEqual(str(su.formatSize(4096)), "4KiB")
+        self.assertEqual(str(su.formatSize(5_378_934, prefix=su.bpColloquial, decimalSep=ch(","))), "5,13MB")
+        self.assertEqual(str(su.formatSize(0)), "0B")
+
+    def test_format_overloads_merge(self):
+        """strutils.format and times.format are overloads of one proc: either binding resolves both
+        (Python star imports re-export, Nim imports don't)."""
+        from nimic.std import strutils as su, times as tm
+        for fmt in (su.format, tm.format):
+            self.assertEqual(str(fmt(string("$1!"), string("a"))), "a!")
+            self.assertEqual(str(fmt(tm.fromUnix(0), string("yyyy"))), "1970")
+        self.assertAlmostEqual(tm.epochTime(), __import__("time").time(), delta=5)
+
+    def test_system_stacktrace_and_memory(self):
+        """stackTraceAvailable follows the build (stacktrace:off under -d:danger/release);
+        getMaxMem/getTotalMem/getOccupiedMem give the process memory (Nim: its allocator's)."""
+        self.assertTrue(stackTraceAvailable())
+        profile = _BuildProfile(None, "")
+        profile.checks["stacktrace"] = False
+        _n_set_build_profile(profile)
+        try:
+            self.assertFalse(stackTraceAvailable())
+        finally:
+            _n_set_build_profile(None)
+        self.assertGreater(int(getMaxMem()), 0)
+        self.assertGreater(int(getTotalMem()), 0)
+        self.assertGreater(int(getOccupiedMem()), 0)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            writeStackTrace()
+        self.assertIn("Traceback (most recent call last)", err.getvalue())
+        from nimic.std.os import getTempDir, getHomeDir
+        from nimic.std.os import expandFilename
+        self.assertEqual(str(expandFilename(string("."))), os.path.realpath("."))
+        with self.assertRaises(OSError):  # POSIX realpath: the file must exist
+            expandFilename(string("/no/such/dir/file.nim"))
+        self.assertTrue(str(getTempDir()).endswith("/"))
+        self.assertEqual(str(getHomeDir()), os.environ.get("HOME", "") + "/")
+
+    def test_terminal_styled_write_line(self):
+        """styledWriteLine writes ANSI codes for styles and colors (POSIX), resets after styled
+        output and ends the line."""
+        from nimic.std import terminal as tl
+        out = io.StringIO()
+        tl.styledWriteLine(out, tl.styleBright, string("loc "), tl.resetStyle, tl.fgRed, string("Error: "),
+                           tl.resetStyle, string("msg"))
+        self.assertEqual(out.getvalue(), "\x1b[1mloc \x1b[0m\x1b[31mError: \x1b[0mmsg\x1b[0m\n")
+        plain = io.StringIO()
+        tl.styledWriteLine(plain, string("a"), string("b"))
+        self.assertEqual(plain.getvalue(), "ab\n")
+        self.assertEqual(int(tl.fgCyan), 36)
+
+    def test_misc_dollars_to_location(self):
+        """std/private/miscdollars toLocation: file(line, col), the column only when > 0."""
+        from nimic.std.private.miscdollars import toLocation
+        r = string("")
+        toLocation(r, string("a.nim"), nint(3), nint(5))
+        self.assertEqual(str(r), "a.nim(3, 5)")
+        r2 = string("")
+        toLocation(r2, string("a.nim"), nint(3), nint(0))
+        self.assertEqual(str(r2), "a.nim(3)")
+        r3 = string("")
+        toLocation(r3, string("a.nim"), nint(0), nint(4))
+        self.assertEqual(str(r3), "a.nim")
+
+    def test_import_except(self):
+        """importExcept("m", "a", "%") is Nim `import m except a, `%``: the module's public names
+        without the excluded ones (rule:importexcept)."""
+        ns = {"importExcept": importExcept, "__name__": "probe", "__package__": ""}
+        exec("importExcept('nimic.std.terminal', 'styledWriteLine', '%')", ns)
+        self.assertIn("styledWrite", ns)
+        self.assertNotIn("styledWriteLine", ns)
+        self.assertNotIn("_write", ns)
+        out = unparse(ast.parse("importExcept('..ropes', '%', 'rope')\nimportExcept('.ropes', '%')\n"
+                                "importExcept('nimic.std.strutils', 'format')\n"))[0]
+        self.assertIn("import ../ropes except `%`, rope", out)
+        self.assertIn("import ropes except `%`", out)
+        self.assertIn("import std/strutils except format", out)
+
+    def test_pragma_block(self):
+        """`with pragma("gcsafe"):` is a Nim pragma block `{.gcsafe.}:` (rule:pragmablock); the body runs
+        as is in Python."""
+        ran = []
+        with pragma("gcsafe"):
+            ran.append(1)
+        self.assertEqual(ran, [1])
+        out = unparse(ast.parse("with pragma('cast(gcsafe)'):\n    f()\n"))[0]
+        self.assertIn("{.cast(gcsafe).}:\n  f()", out)
+
+    def test_quit_overloads(self):
+        """Nim quit(errorcode: int) exits with the code (any nimic integer), quit(errormsg: string)
+        writes the message to stderr and exits with QuitFailure (1)."""
+        for arg, code in ((int8(3), 3), (nint(0), 0), (2, 2)):
+            with self.assertRaises(SystemExit) as cm:
+                quit(arg)
+            self.assertEqual(cm.exception.code, code)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
+            quit(string("bye"))
+        self.assertEqual((cm.exception.code, err.getvalue()), (1, "bye\n"))
+
+    def test_instantiation_info_skips_runtime_frames(self):
+        """instantiationInfo counts the user's frames: @dispatch / @template wrappers don't shift it."""
+        @dispatch
+        def where() -> object:
+            return instantiationInfo(-1)
+        line = sys._getframe().f_lineno + 1
+        info = where()
+        self.assertEqual(int(info.line), line)
+
+    def test_seq_growth_keeps_string_fields(self):
+        """Growing a ctypes-backed seq of objects keeps the string fields of the elements already in it
+        (their buffers stay owned while the seq refers to them)."""
+        class _TGrowObj(Object):
+            n: nint
+            name: string
+
+        t = seq[_TGrowObj]()
+        for i in range(9):
+            t.add(_TGrowObj(n=nint(i), name=string(f"s{i}")))
+        self.assertEqual([str(t[i].name) for i in range(9)], [f"s{i}" for i in range(9)])
+        t[0] = _TGrowObj(n=nint(0), name=string("z"))
+        t.add(_TGrowObj(n=nint(9), name=string("s9")))
+        self.assertEqual((str(t[0].name), str(t[9].name)), ("z", "s9"))
+        a = array[2, _TGrowObj]()
+        a[0] = _TGrowObj(n=nint(1), name=string("a0"))
+        b = array[2, _TGrowObj]()
+        b <<= a
+        self.assertEqual(str(b[0].name), "a0")
+        u = seq[_TGrowObj]()
+        for i in range(3):
+            u.add(_TGrowObj(n=nint(i), name=string("u")))
+        u[0:2] = a
+        self.assertEqual((str(u[0].name), int(u[0].n)), ("a0", 1))
+
+    def test_seq_of_named_tuples_accepts_tuple_literals(self):
+        """`s.add((a, b))` / `s[i] = (a, b)` for a seq of a named tuple type converts the literal
+        positionally, as Nim does for tuple constructors."""
+        class _TPair(NTuple):
+            n: nint
+            name: string
+
+        s = seq[_TPair]()
+        s.add((nint(1), string("a")))
+        s.add((nint(2), string("b")))
+        self.assertEqual((int(s[0].n), str(s[0].name)), (1, "a"))
+        s[1] = (nint(3), string("c"))
+        self.assertEqual((int(s[1].n), str(s[1].name)), (3, "c"))
+
+    def test_is_nil(self):
+        """Nim isNil for refs, procs and pointers: None (and a nil pointer) is nil."""
+        @ref
+        class _TNilRef(Object):
+            n: nint
+        self.assertTrue(isNil(None))
+        self.assertFalse(isNil(_TNilRef()))
+        self.assertFalse(isNil(lambda: 0))
+
+    def test_str_enum_distinct_members_and_auto_names(self):
+        """NStrEnum (Nim enum with string values): members with equal texts stay distinct (Nim
+        `warnUser = "User", hintUser = "User"`), `$` of an auto() member is its name."""
+        class _TKind(NStrEnum):
+            errA = auto()
+            warnUser = "User"
+            hintUser = "User"
+            hintB = auto()
+
+        self.assertEqual(len(list(_TKind)), 4)
+        self.assertIsNot(_TKind.hintUser, _TKind.warnUser)
+        self.assertNotEqual(_TKind.hintUser, _TKind.warnUser)
+        self.assertEqual((str(_TKind.hintUser), str(_TKind.errA)), ("User", "errA"))
+        self.assertEqual((int(_TKind.warnUser), int(_TKind.hintUser)), (1, 2))
+        self.assertIn(_TKind.hintUser, inrange(_TKind.hintUser, _TKind.hintB))
+        self.assertNotIn(_TKind.hintUser, inrange(_TKind.errA, _TKind.warnUser))
+        self.assertIs(_TKind("User"), _TKind.warnUser)
+        self.assertIs(_TKind(nint(2)), _TKind.hintUser)  # by ordinal, any integer type
+        self.assertEqual(len({_TKind.warnUser, _TKind.hintUser}), 2)
+        self.assertTrue(_TKind.hintB > _TKind.hintUser)
+
+    def test_constructor_copies_value_fields(self):
+        """Object(field=v) copies a value-type v (Nim object constructors copy values); refs are shared."""
+        class _TPoint(Object):
+            x: nint
+
+        @ref
+        class _TNode(Object):
+            x: nint
+
+        class _THolder(Object):
+            p: _TPoint
+            r: _TNode
+            name: string
+
+        origin = _TPoint(x=nint(0))
+        node = _TNode(x=nint(1))
+        nm = string("a")
+        h = _THolder(p=origin, r=node, name=nm)
+        h.p = _TPoint(x=nint(5))
+        h.p.x = nint(7)
+        self.assertEqual(int(origin.x), 0)
+        self.assertIs(h.r, node)
+        h.name.add("b")
+        self.assertEqual(str(nm), "a")
+
+    def test_set_alias_constructor_is_set_literal(self):
+        """A module-level alias `Flags = Tset[F]` constructs sets like Tset: `Flags()` is `{}`,
+        `Flags({F.a})` is `{F.a}` (rule:typealias, rule:setlit)."""
+        out = unparse(ast.parse("MsgFlags = Tset[MsgFlag]\n"
+                                "def f(flags: MsgFlags = MsgFlags()) -> None:\n"
+                                "    y = MsgFlags({MsgFlag.a})\n"))[0]
+        self.assertIn("proc f*(flags: MsgFlags={}) =", out)
+        self.assertIn("y = {MsgFlag.a}", out)
+
+    def test_object_equality_is_field_wise(self):
+        """Nim `==` for objects and tuples compares the fields; for refs, the references. A
+        user-defined `==` replaces it."""
+        class _TEqPoint(Object):
+            x: nint
+            name: string
+
+        @ref
+        class _TEqRef(Object):
+            x: nint
+
+        self.assertEqual(_TEqPoint(x=nint(1), name=string("a")), _TEqPoint(x=nint(1), name=string("a")))
+        self.assertNotEqual(_TEqPoint(x=nint(1), name=string("a")), _TEqPoint(x=nint(2), name=string("a")))
+        self.assertNotEqual(_TEqRef(x=nint(1)), _TEqRef(x=nint(1)))
+        r = _TEqRef(x=nint(1))
+        self.assertEqual(r, r)
+        self.assertEqual(len({_TEqPoint(x=nint(1)), _TEqPoint(x=nint(1))}), 2)  # identity hash
+
+    def test_table_ref(self):
+        """std/tables TableRef / newTable[K, V](): a table with reference semantics."""
+        from nimic.std.tables import TableRef, newTable
+
+        class _THolderT(Object):
+            t: TableRef[string, nint]
+
+        t = newTable[string, nint]()
+        t[string("a")] = nint(1)
+        h = _THolderT(t=t)
+        h.t[string("b")] = nint(2)
+        self.assertEqual(len(t), 2)  # shared, not copied
+        self.assertTrue(t.hasKey(string("b")))
+        self.assertIsInstance(newTable[string, nint](), TableRef)
+
+    def test_selective_import(self):
+        """A Python `from m import a` (a class comes with its methods) is a full `import m`; Nim's selective
+        `from m import a, b` is importFrom("m", "a", "b") (rule:importfrom), which binds only those names."""
+        out = unparse(ast.parse("from nimic.std.times import utc, fromUnix\n"
+                                "importFrom('nimic.std.times', 'utc', 'fromUnix')\n"
+                                "importFrom('..options', 'TGCMode', '%')\n"
+                                "from .lineinfos import *\n"))[0]
+        self.assertIn("import std/times\n", out)
+        self.assertIn("from std/times import utc, fromUnix", out)
+        self.assertIn("from ../options import TGCMode, `%`", out)
+        self.assertIn("import lineinfos", out)
+        ns = {"importFrom": importFrom, "__name__": "probe", "__package__": ""}
+        exec("importFrom('nimic.std.terminal', 'styledWrite')", ns)
+        self.assertIn("styledWrite", ns)
+        self.assertNotIn("styledWriteLine", ns)
+
+    def test_strtabs_modes(self):
+        """std/strtabs: keys compare by the table's mode (case / style insensitive)."""
+        from nimic.std.strtabs import newStringTable, StringTableMode, modeStyleInsensitive
+        t = newStringTable(modeStyleInsensitive)
+        t[string("foo_Bar")] = string("1")
+        self.assertTrue(t.hasKey(string("FooBar")))
+        self.assertEqual(str(t[string("foobar")]), "1")
+        t[string("FOOBAR")] = string("2")
+        self.assertEqual(len(t), 1)
+        self.assertEqual(str(t.getOrDefault(string("foo_bar"))), "2")
+        self.assertEqual(str(t.getOrDefault(string("x"), string("d"))), "d")
+        cs = newStringTable(StringTableMode.modeCaseSensitive)
+        cs[string("A")] = string("a")
+        self.assertFalse(cs.hasKey(string("a")))
+        ci = newStringTable(string("k1"), string("v1"), string("K2"), string("v2"), StringTableMode.modeCaseInsensitive)
+        self.assertEqual(str(ci[string("k2")]), "v2")
+        self.assertEqual([(str(k), str(v)) for k, v in ci.pairs()], [("k1", "v1"), ("K2", "v2")])
+        self.assertEqual(str(ci.mode), "modeCaseInsensitive")
+        ci.del_(string("K1"))
+        self.assertEqual(len(ci), 1)
+        self.assertEqual(str(newStringTable(modeStyleInsensitive)), "{:}")
+        with self.assertRaises(KeyError):
+            _ = ci[string("missing")]
+
+    def test_int_enum_dollar_is_name(self):
+        """Nim `$` of an enum member is its name: str(), echo and f-strings of an NIntEnum."""
+        class _TColor(NIntEnum):
+            red = 0
+            green = auto()
+
+        self.assertEqual(str(_TColor.green), "green")
+        self.assertEqual(f"{_TColor.green}", "green")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            echo(_TColor.red, string(" "), nint(int(_TColor.green)))
+        self.assertEqual(out.getvalue(), "red 1\n")
+
+    def test_tuple_literal_result_is_named_tuple(self):
+        """A proc declared to return a named tuple type gives that type for a returned tuple literal;
+        os.splitPath gives (head, tail)."""
+        class _TSplit(NTuple):
+            head: string
+            n: nint
+
+        @dispatch
+        def split2(s: string) -> _TSplit:
+            return (s, nint(1))
+
+        r = split2(string("a"))
+        self.assertIsInstance(r, _TSplit)
+        self.assertEqual((str(r.head), int(r.n)), ("a", 1))
+        from nimic.std.os import splitPath
+        sp = splitPath(string("/usr/local/bin"))
+        from nimic.std.os import getAppDir, getAppFilename
+        self.assertEqual(str(getAppDir()), os.path.dirname(os.path.abspath(sys.argv[0])))
+        self.assertEqual((str(sp.head), str(sp.tail)), ("/usr/local", "bin"))
+
+    def test_pairs(self):
+        """Nim pairs: (index, item) of a seq, array or string; a table's own pairs."""
+        sq = seq[nint]([nint(5), nint(6)])
+        self.assertEqual([(int(i), int(x)) for i, x in pairs(sq)], [(0, 5), (1, 6)])
+        self.assertIsInstance(next(iter(pairs(sq)))[0], nint)
+        self.assertEqual([(int(i), str(c)) for i, c in pairs(string("ab"))], [(0, "a"), (1, "b")])
+        from nimic.std.strtabs import newStringTable, modeCaseSensitive
+        t = newStringTable(string("k"), string("v"), modeCaseSensitive)
+        self.assertEqual([(str(k), str(v)) for k, v in pairs(t)], [("k", "v")])
+
+    def test_ref_object_int_fields_hold_declared_type(self):
+        """A plain int assigned to an integer field of a ref object becomes the declared type, so the
+        field can be passed as a `var int` (and keeps its width)."""
+        @ref
+        class _TCounter(Object):
+            n: nint
+            small: int8
+
+        def bump(x: mut@nint) -> None:
+            x <<= x + 1
+
+        c = _TCounter()
+        c.n = 41
+        self.assertIsInstance(c.n, nint)
+        bump(c.n)
+        self.assertEqual(int(c.n), 42)
+        c.small = 5
+        self.assertIsInstance(c.small, int8)
+        self.assertIsInstance(_TCounter(n=3).n, nint)
+
     def test_transpile_push_pop(self):
         """rule:push: `with push("p"):` emits {.push p.}, the body at the same level, then {.pop.}."""
         src = textwrap.dedent('''\
@@ -2820,6 +3263,13 @@ def addWord(b: mut@Builder, w: string) -> None:
         with self.assertRaises(AttributeError):
             b.noSuchProc()
 
+    def test_to_float_to_int(self):
+        """Nim toFloat(int): float and toInt(float): int (rounds half away from zero)."""
+        self.assertEqual(toFloat(nint(3)), 3.0)
+        self.assertIsInstance(toFloat(nint(3)), float)
+        self.assertIsInstance(toInt(2.5), nint)
+        self.assertEqual([int(toInt(x)) for x in (2.5, -2.5, 2.4, -0.6)], [3, -3, 2, -1])
+
     def test_echo_has_no_separator(self):
         """Nim echo writes $a & $b & ... (no separator), bools as true/false, nil as nil."""
         buf = io.StringIO()
@@ -2930,6 +3380,8 @@ def addWord(b: mut@Builder, w: string) -> None:
         self.assertTrue(declared("os.path.join"))       # dotted
         self.assertFalse(declared("os.path.noSuchProc"))
         self.assertFalse(declared("noSuchName"))
+        self.assertTrue(declared("system.getMaxMem"))   # Nim's system module: nimic's system procs
+        self.assertFalse(declared("system.noSuchProc"))
 
     def test_transpile_defined_declared(self):
         """rule:defined / rule:declared strip the quotes."""
@@ -3081,6 +3533,121 @@ def addWord(b: mut@Builder, w: string) -> None:
         res = make_btree[int, str]()
         self.assertEqual(res, "ok")
 
+    def test_strutils_find_returns_int(self):
+        """strutils find/rfind return Nim `int` (nint), so the index can be passed on as a `var int`."""
+        def back(i: mut@nint) -> None:
+            i -= 2
+
+        idx = rfind(string("a b c"), ch(" "))
+        self.assertIsInstance(idx, nint)
+        back(idx)
+        self.assertEqual(int(idx), 1)
+        self.assertIsInstance(find(string("abc"), string("c")), nint)
+        self.assertIsInstance(find(string("abc"), Tset[char]({ch("x")})), nint)
+        self.assertEqual(int(find(string("abc"), Tset[char]({ch("x")}))), -1)
+
+    def test_template_uses_caller_variables(self):
+        """A statement template whose body uses names that are neither its parameters nor its own
+        locals nor globals (Nim: open symbols, bound at the call site) is expanded in callers decorated
+        with @template_expand, without {.dirty.} or nonlocal: it reads and assigns the caller's variables
+        (`m`, `result`, an enclosing proc's `idx`) and `return` returns from the caller."""
+        self.assertEqual(int(_tStrVersion(_TCfg(gc=2))), 2)
+        self.assertEqual(int(_tStrVersion(_TCfg(gc=0))), 1)
+        self.assertTrue(_tEndsWithWords(string("a b"), ch(" ")))
+        self.assertTrue(_tEndsWithWords(string("a  b"), ch(" ")))
+        self.assertIs(_tEndsWithWords(string("x b"), ch(" ")), False)  # bare `return` returns result
+        self.assertIs(_tEndsWithWords(string("a c"), ch(" ")), False)  # bare `return` returns result
+        out = unparse(ast.parse(textwrap.dedent(inspect.getsource(_tDetectVersion))))[0]
+        self.assertIn("template local_tDetectVersion(field: untyped) =", out)
+        self.assertNotIn("dirty", out)
+
+    def test_template_routine_params_and_expanded_procs(self):
+        """Template parameters used as routines are substituted in call and method-call position
+        (`n.a.op(note)` with `fun(incl)` is `n.a.incl(note)`; `self(v, result)` with the proc itself).
+        An expanded proc sees module globals defined after it, and `push` applies to it."""
+        n = _TNotes()
+        _tSetNote(n, uint8(3), True)
+        self.assertIn(uint8(3), n.a)
+        self.assertIn(uint8(3), n.b)
+        _tSetNote(n, uint8(3), False)
+        self.assertNotIn(uint8(3), n.a)
+        out = string("")
+        _tCountDown(nint(2), out)
+        self.assertEqual(str(out), "012")
+        self.assertEqual(int(_tWrappingAdd(int64(2**63 - 1), int64(1))), -2**63)
+
+    def test_inrange_chars(self):
+        """inrange of chars (Nim 'a'..'z') yields chars: membership and iteration."""
+        self.assertIn(ch("b"), inrange(ch("a"), ch("z")))
+        self.assertNotIn(ch("B"), inrange(ch("a"), ch("z")))
+        self.assertEqual([str(c) for c in inrange(ch("a"), ch("c"))], ["a", "b", "c"])
+        self.assertIn(ch("\x90"), inrange(ch("\x80"), ch("\xff")))
+
+    def test_case_ranges_and_elif_branches(self):
+        """`case _ if <subject> in inrange(a, b):` is `of a..b:`; ranges and `== v` joined with `or` are one
+        `of` list; any other guard is an `elif` branch of the case (rule:matchcase)."""
+        def kind(c: char, n: nint) -> nint:
+            match c:
+                case _ if c in inrange(ch("0"), ch("9")):
+                    return nint(1)
+                case _ if c in inrange(ch("a"), ch("z")) or c in inrange(ch("A"), ch("Z")) or c == ch("_"):
+                    return nint(2)
+                case "-":
+                    return nint(3)
+                case _ if n > 0:
+                    return nint(4)
+                case _:
+                    return nint(0)
+
+        self.assertEqual([int(kind(ch(x), nint(0))) for x in "5qZ_-+"], [1, 2, 2, 2, 3, 0])
+        self.assertEqual(int(kind(ch("+"), nint(1))), 4)
+        src = textwrap.dedent('''\
+            match s[i]:
+                case _ if s[i] in inrange(ch("0"), ch("9")):
+                    a = 1
+                case _ if s[i] in inrange(ch("a"), ch("z")) or s[i] in inrange(ch("A"), ch("Z")) or s[i] == ch("_"):
+                    a = 2
+                case _ if s[i] in inrange(TMsgKind.warnMin, TMsgKind.warnMax):
+                    a = 3
+                case _ if n > 0:
+                    a = 4
+                case _:
+                    a = 0
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("case s[i]:\n  of '0' .. '9':", out)
+        self.assertIn("of 'a' .. 'z', 'A' .. 'Z', '_':", out)
+        self.assertIn("of TMsgKind.warnMin .. TMsgKind.warnMax:", out)
+        self.assertIn("elif n > 0:", out)
+        self.assertIn("else:", out)
+
+    def test_case_expression_as_proc_result(self):
+        """A proc whose body ends with a match in which every branch is `return <value>` is a Nim case
+        expression as the proc's result (rule:casereturn); other returns keep `return`."""
+        src = textwrap.dedent('''\
+            def parseCmd(s: string) -> Cmd:
+                match s:
+                    case "sug":
+                        return Cmd.ideSug
+                    case "con" | "c":
+                        return Cmd.ideCon
+                    case _:
+                        return Cmd.ideNone
+
+            def f(s: string) -> nint:
+                match s:
+                    case "a":
+                        x = 1
+                        return x
+                    case _:
+                        return 0
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("proc parseCmd*(s: string): Cmd =\n  case s:\n    of \"sug\":\n      Cmd.ideSug\n", out)
+        self.assertIn("of \"con\", \"c\":\n      Cmd.ideCon\n    else:\n      Cmd.ideNone", out)
+        self.assertIn("return x", out)
+        self.assertIn("return 0", out)
+
     def test_block_template_runs_around_block(self):
         """A template with a code-block parameter (Nim `t(args): block`) runs as `with t(args):`: the code
         before the block, the with body, then the code after it."""
@@ -3222,6 +3789,90 @@ def addWord(b: mut@Builder, w: string) -> None:
         # Reflected
         self.assertEqual(int(-7 // b), -2)
         self.assertEqual(int(-7 % b), -1)
+
+
+# --- templates that use the caller's variables (Nim: open symbols bind at the call site) ---
+class _TCfg(Object):
+    gc: nint
+
+
+@template
+def _tDetectVersion(field: untyped):
+    if m.gc > 1:
+        result = 2
+    else:
+        result = 1
+
+
+@template_expand
+def _tStrVersion(m: _TCfg) -> nint:
+    _tDetectVersion(strVersion)
+    return result
+
+
+@template_expand
+def _tEndsWithWords(x: string, sep: char) -> bool:
+    with var:
+        idx = len(x) - 1
+        result = False
+
+    @template
+    def eatWord(word: untyped):
+        while x[idx] == sep:
+            idx -= 1
+        result = x[idx] == word
+        if not result:
+            return
+        idx -= 1
+
+    eatWord(ch("b"))
+    eatWord(ch("a"))
+    result = True
+    return result
+
+
+class _TNotes(Object):
+    a: Tset[uint8]
+    b: Tset[uint8]
+
+
+@template_expand
+def _tSetNote(n: _TNotes, note: uint8, enabled: bool) -> None:
+    @template
+    def fun(op: untyped):
+        n.a.op(note)
+        n.b.op(note)
+    if enabled:
+        fun(incl)
+    else:
+        fun(excl)
+
+
+@template
+def _tWrapImpl(self: untyped):
+    if x > 0:
+        self(x - 1, result)
+    result.add(_tLater(x))
+
+
+@template_expand
+def _tCountDown(x: nint, result: mut@string) -> None:
+    _tWrapImpl(_tCountDown)
+
+
+def _tLater(x: nint) -> string:
+    return string(str(x))
+
+
+with push("overflowChecks: off"):
+    @template
+    def _tAddImpl():
+        result = a + b
+
+    @template_expand
+    def _tWrappingAdd(a: int64, b: int64) -> int64:
+        _tAddImpl()
+        return result
 
 
 if __name__ == '__main__':

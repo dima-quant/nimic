@@ -59,10 +59,23 @@ from nimic.nsystem import (
     defined,
     declared,
     echo,
+    isNil,
+    stackTraceAvailable,
+    writeStackTrace,
+    getMaxMem,
+    getTotalMem,
+    getOccupiedMem,
+    instantiationInfo,
+    typeof,
+    toFloat,
+    toInt,
     shallowCopy,
     push,
     assign,
     include,
+    importExcept,
+    importFrom,
+    pragma,
     emit,
     block,
     breakBlock,
@@ -251,14 +264,21 @@ def equalMem(a, b, size: int) -> bool:
     return buf_a == buf_b
 
 
+NimVersion = "2.2.4"
+
+
 class _SystemNamespace:
-    NimVersion = "2.2.4"
-    hostOS = hostOS
-    hostCPU = hostCPU
+    """Nim's `system` module, always in scope: `system.x` is nimic's system name x (this module's
+    globals), e.g. system.NimVersion, system.getMaxMem; declared("system.x") checks it."""
+
+    def __getattr__(self, name: str) -> object:
+        try:
+            return globals()[name]
+        except KeyError:
+            raise AttributeError(f"system has no '{name}'") from None
 
 
 system = _SystemNamespace()
-NimVersion = system.NimVersion
 
 from nimic.std.syncio import (
     FileMode,
@@ -319,6 +339,20 @@ def items(coll):
     return iter(coll)
 
 
+def pairs(coll):
+    """Nim: pairs — (index, item) of a seq, array or string; a collection's own pairs (tables:
+    (key, value))."""
+    own = getattr(coll, "pairs", None)
+    if callable(own):
+        return own()
+    return ((nint(i), x) for i, x in enumerate(coll))
+
+
+def mitems(coll):
+    """Nim: mitems — elements that can be assigned in place (`x <<= v`; objects: `x.field = v`)."""
+    return coll.mitems
+
+
 from nimic.system.ansi_c import copy_mem
 copyMem = copy_mem
 
@@ -347,6 +381,26 @@ def minus_percent(a, b):
     """Nim: a -% b — wrapping subtraction. Delegates to NInteger.minus_percent;
     a plain int operand adopts the type of its NInteger peer (else Nim int)."""
     return NInteger._n_lift(a, b).minus_percent(b)
+
+
+def lt_percent(a, b) -> bool:
+    """Nim: a <% b — unsigned comparison in the operand type's width (NInteger.lt_percent)."""
+    return NInteger._n_lift(a, b).lt_percent(b)
+
+
+def le_percent(a, b) -> bool:
+    """Nim: a <=% b — unsigned comparison (NInteger.le_percent)."""
+    return NInteger._n_lift(a, b).le_percent(b)
+
+
+def gt_percent(a, b) -> bool:
+    """Nim: a >% b — unsigned comparison (NInteger.gt_percent)."""
+    return NInteger._n_lift(a, b).gt_percent(b)
+
+
+def ge_percent(a, b) -> bool:
+    """Nim: a >=% b — unsigned comparison (NInteger.ge_percent)."""
+    return NInteger._n_lift(a, b).ge_percent(b)
 
 
 def move(x):

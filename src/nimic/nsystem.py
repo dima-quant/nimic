@@ -4,6 +4,10 @@ import codecs
 import ctypes
 import io
 import os
+import importlib as _importlib
+import math as _math
+import resource as _resource
+import traceback as _traceback
 import shutil as _shutil
 import sys
 import types as _types
@@ -194,6 +198,8 @@ _N_CPU_BIG_ENDIAN = {"powerpc", "powerpc64", "sparc", "sparc64", "mips", "mips64
 # Nim check options (normalized) that the Python runtime emulates or records
 _N_CHECK_OPTIONS = ("overflowchecks", "boundchecks", "rangechecks", "objchecks", "fieldchecks",
                     "assertions", "nilchecks", "infchecks", "nanchecks")
+# on/off switches that are not checks (not part of `checks:off`), on by default
+_N_TRACE_OPTIONS = ("stacktrace", "linetrace", "excessivestacktrace")
 # memory manager -> symbols it defines
 _N_MM_SYMBOLS = {
     "orc": ("gcOrc", "gcDestructors", "nimV2", "nimSeqsV2"),
@@ -276,7 +282,7 @@ class _NimCfgReader:
             self.profile.set_cc(value)
         elif key == "backend":
             self.profile.set_backend(value)
-        elif key.lower() in _N_CHECK_OPTIONS or key == "checks" or key == "x":
+        elif key.lower() in _N_CHECK_OPTIONS + _N_TRACE_OPTIONS or key == "checks" or key == "x":
             on = value.lower() in ("on", "true", "")
             names = _N_CHECK_OPTIONS if key in ("checks", "x") else (key.lower(),)
             for name in names:
@@ -489,6 +495,45 @@ def declared(name: str) -> bool:
     return True
 
 
+class pragma:
+    """Nim pragma block `{.p.}: body` (e.g. `with pragma("gcsafe"):`, rule:pragmablock): the body runs
+    as is; the pragma only affects the Nim output."""
+
+    def __init__(self, p: str):
+        self.pragma = p
+
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *exc):
+        return False
+
+
+def importExcept(module: str, *names: str) -> None:
+    """Nim: import m except a, b — binds the public names of `module` (relative to the calling
+    module's package for a leading dot) in the caller's namespace, except `names`; operator names
+    such as "%" have no Python binding. Transpiles to `import m except a, b` (rule:importexcept)."""
+    frame = sys._getframe(1)
+    namespace = frame.f_globals
+    mod = _importlib.import_module(module, namespace.get("__package__") or None)
+    public = getattr(mod, "__all__", None) or [n for n in vars(mod) if not n.startswith("_")]
+    excluded = set(names)
+    for n in public:
+        if n not in excluded:
+            namespace[n] = getattr(mod, n)
+
+
+def importFrom(module: str, *names: str) -> None:
+    """Nim: from m import a, b — binds only `names` of `module` (relative to the calling module's package
+    for a leading dot) in the caller's namespace; operator names have no Python binding. Transpiles to
+    `from m import a, b` (rule:importfrom)."""
+    namespace = sys._getframe(1).f_globals
+    mod = _importlib.import_module(module, namespace.get("__package__") or None)
+    for n in names:
+        if n.isidentifier():
+            namespace[n] = getattr(mod, n)
+
+
 def substr(s, first: int = 0, last: int | None = None):
     """Nim: substr — slice string from `first` to `last` (inclusive)."""
     s_val = str(s)
@@ -543,12 +588,92 @@ def _n_setup_stdio() -> None:
 
 
 def quit(error: int | str = 0) -> None:
-    """Nim: quit — exit process with exit code or message."""
-    if isinstance(error, int):
-        sys.exit(error)
-    else:
-        sys.exit(str(error))
+    """Nim: quit(errorcode: int = QuitSuccess) exits with the code; quit(errormsg: string) writes the
+    message and a newline to stderr and exits with QuitFailure."""
+    if isinstance(error, (str, _ntypesystem.string)):
+        sys.stderr.write(str(error) + "\n")
+        sys.stderr.flush()
+        sys.exit(1)
+    sys.exit(int(error))
 
+
+
+class _InstantiationInfo(_ntypesystem.NTuple):
+    filename: _ntypesystem.string
+    line: _ntypesystem.nint
+    column: _ntypesystem.nint
+
+
+def instantiationInfo(index: int = -1, fullPaths: bool = False) -> _InstantiationInfo:
+    """Nim: instantiationInfo — (filename, line, column) of a call site: index -1 is the caller of the
+    proc (template in Nim) that calls instantiationInfo, -2 its caller, and so on."""
+    frame = sys._getframe(1)
+    for _ in range(-int(index)):  # up `-index` user frames; nimic's runtime frames (wrappers) don't count
+        frame = frame.f_back
+        while frame is not None and frame.f_code.co_filename.startswith(_ntypesystem._N_RUNTIME_DIR):
+            frame = frame.f_back
+    filename = os.path.abspath(frame.f_code.co_filename) if fullPaths else os.path.basename(frame.f_code.co_filename)
+    positions = list(frame.f_code.co_positions())
+    column = positions[frame.f_lasti // 2][2] if frame.f_lasti // 2 < len(positions) else 0
+    return _InstantiationInfo(filename=_ntypesystem.string(filename), line=_ntypesystem.nint(frame.f_lineno),
+                              column=_ntypesystem.nint(column or 0))
+
+
+def typeof(x: object) -> type:
+    """Nim: typeof(x) — the type of an expression; `T = typeof(expr)` is a type alias."""
+    return type(x)
+
+
+def isNil(x: object) -> bool:
+    """Nim: isNil — whether a ref, ptr, pointer, proc or cstring is nil (None or a nil pointer)."""
+    return x is None or isinstance(x, _ntypesystem.NilPtr)
+
+
+def stackTraceAvailable() -> bool:
+    """Nim: stackTraceAvailable — whether the build has stack traces (`stacktrace:off` under
+    -d:release / -d:danger)."""
+    return _n_build_profile().check_enabled("stacktrace")
+
+
+def writeStackTrace() -> None:
+    """Nim: writeStackTrace — writes the current stack trace to stderr (Python frames here)."""
+    frames = _traceback.extract_stack()[:-1]
+    sys.stderr.write("Traceback (most recent call last)\n")
+    for fr in frames:
+        sys.stderr.write(f"{fr.filename}({fr.lineno}) {fr.name}\n")
+    sys.stderr.flush()
+
+
+def _n_process_memory() -> int:
+    """Peak resident memory of the process in bytes (ru_maxrss: bytes on macOS, KiB on Linux)."""
+    rss = _resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss
+    return rss if sys.platform == "darwin" else rss * 1024
+
+
+def getMaxMem() -> int:
+    """Nim: getMaxMem — the peak memory; Python: the process's peak memory (Nim: its allocator's)."""
+    return _ntypesystem.nint(_n_process_memory())
+
+
+def getTotalMem() -> int:
+    """Nim: getTotalMem — the memory owned by the process (approximated by the peak)."""
+    return _ntypesystem.nint(_n_process_memory())
+
+
+def getOccupiedMem() -> int:
+    """Nim: getOccupiedMem — the memory in use (approximated by the peak)."""
+    return _ntypesystem.nint(_n_process_memory())
+
+
+def toFloat(i: int) -> float:
+    """Nim: toFloat — the int as a float."""
+    return float(int(i))
+
+
+def toInt(f: float) -> int:
+    """Nim: toInt — the float rounded to the nearest int, halves away from zero."""
+    r = _math.floor(abs(f) + 0.5)
+    return _ntypesystem.nint(r if f >= 0 else -r)
 
 
 def echo(*args) -> None:
@@ -618,9 +743,12 @@ def _n_collect_codes(obj, codes: set) -> None:
             _n_collect_codes(member, codes)
         return
     fn = getattr(obj, "_fn", obj)
-    fn = getattr(fn, "__wrapped__", fn)
-    code = getattr(fn, "__code__", None)
-    stack = [code] if code is not None else []
+    stack = []
+    while fn is not None:  # the function and each function it wraps (@template_expand runs its own code)
+        code = getattr(fn, "__code__", None)
+        if code is not None:
+            stack.append(code)
+        fn = getattr(fn, "__wrapped__", None)
     while stack:
         c = stack.pop()
         if c in codes:

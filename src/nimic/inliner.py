@@ -28,6 +28,7 @@ Internal machinery:
 from __future__ import annotations
 
 import ast
+import builtins
 import contextvars
 import copy
 import inspect
@@ -223,6 +224,41 @@ def _n_make_block_template(template_func, func_def: ast.FunctionDef, blocks: lis
     return factory
 
 
+def _n_declared_locals(func_def: ast.FunctionDef) -> set[str]:
+    """Names a template body declares itself (`with var:`/`with let:`/`with const:` blocks, `for` loop
+    variables): Nim gensyms them, they are not the caller's."""
+    names = set()
+    for node in ast.walk(func_def):
+        if isinstance(node, ast.For):
+            names |= {n.id for n in ast.walk(node.target) if isinstance(n, ast.Name)}
+        if isinstance(node, ast.With) and any(isinstance(i.context_expr, ast.Name)
+                                              and i.context_expr.id in ("var", "let", "const") for i in node.items):
+            for stmt in node.body:
+                targets = stmt.targets if isinstance(stmt, ast.Assign) else [getattr(stmt, "target", None)]
+                names |= {t.id for t in targets if isinstance(t, ast.Name)}
+    return names
+
+
+def _n_uses_caller_scope(func_def: ast.FunctionDef, module_globals: dict) -> bool:
+    """A statement template (no return type) whose body assigns a name that is not its own, or reads a
+    name that is neither a parameter, its own local, a global of its module nor a builtin. Nim binds
+    such open symbols at the call site, so the template is expanded in the caller (@template_expand)
+    like a {.dirty.} one; this also covers the locals of an enclosing proc."""
+    if func_def.returns is not None:
+        return False
+    a = func_def.args
+    own = {arg.arg for arg in a.posonlyargs + a.args + a.kwonlyargs} | _n_declared_locals(func_def)
+    for stmt in func_def.body:
+        for node in ast.walk(stmt):
+            if not isinstance(node, ast.Name) or node.id in own:
+                continue
+            if isinstance(node.ctx, ast.Store):
+                return True
+            if node.id not in module_globals and not hasattr(builtins, node.id):
+                return True
+    return False
+
+
 def template(template_func):
     try:
         func_def = ast.parse(textwrap.dedent(inspect.getsource(template_func))).body[0]
@@ -240,6 +276,9 @@ def template(template_func):
     # Also check for Nim-style {.dirty.} templates (always untyped)
     if not is_untyped and template_func.__doc__ and "{.dirty.}" in template_func.__doc__:
         is_untyped = True
+    # and for templates that use the caller's variables
+    if not is_untyped and isinstance(func_def, ast.FunctionDef):
+        is_untyped = _n_uses_caller_scope(func_def, template_func.__globals__)
     if is_untyped:
         # if the function is an untyped template
         try:
@@ -287,6 +326,33 @@ class _ParameterReplacer(ast.NodeTransformer):
             return copy.deepcopy(self.arg_map[node.id])
         return node
 
+    def visit_Call(self, node):
+        """A parameter used as a routine in method-call position: with `fun(incl)`, `conf.notes.op(note)`
+        is `incl(conf.notes, note)` (Nim method call syntax). Call position (`self(v, result)`) is a
+        plain Name and handled by visit_Name."""
+        self.generic_visit(node)
+        func = node.func
+        if isinstance(func, ast.Attribute) and isinstance(self.arg_map.get(func.attr), ast.Name):
+            routine = ast.Name(id=self.arg_map[func.attr].id, ctx=ast.Load())
+            return ast.copy_location(ast.Call(func=routine, args=[func.value, *node.args],
+                                              keywords=node.keywords), node)
+        return node
+
+
+class _ReturnResult(ast.NodeTransformer):
+    """`return` without a value in an expanded template body is `return result` (Nim: a proc's
+    `return` returns `result`); nested functions keep their own returns."""
+
+    def visit_Return(self, node):
+        if node.value is None:
+            return ast.copy_location(ast.Return(value=ast.Name(id="result", ctx=ast.Load())), node)
+        return node
+
+    def visit_FunctionDef(self, node):
+        return node
+
+    visit_AsyncFunctionDef = visit_Lambda = visit_FunctionDef
+
 
 class _TemplateInliner(ast.NodeTransformer):
     """
@@ -295,8 +361,11 @@ class _TemplateInliner(ast.NodeTransformer):
     its parameters with the call arguments.
     """
 
-    def __init__(self, dict_with_templates):
+    def __init__(self, dict_with_templates, module_globals: dict | None = None, caller_has_result: bool = False):
         self.dict_with_templates = dict_with_templates
+        self.module_globals = module_globals or {}
+        # a bare `return` of an expanded template returns from the caller: with Nim's `result`
+        self.caller_has_result = caller_has_result
 
     def _inline_call(self, call_node, targets=None):
         if (
@@ -323,6 +392,8 @@ class _TemplateInliner(ast.NodeTransformer):
 
         for i, body_node in enumerate(original_body_nodes):
             transformed_node = parameter_replacer.visit(body_node)
+            if self.caller_has_result:
+                transformed_node = _ReturnResult().visit(transformed_node)
             if targets is not None and i == len(original_body_nodes) - 1:
                 # Convert final Expr/Return to Assign using original targets
                 if isinstance(transformed_node, ast.Expr):
@@ -365,7 +436,7 @@ class _TemplateInliner(ast.NodeTransformer):
                     returns
                     and isinstance(returns, ast.Name)
                     and returns.id == "untyped"
-                ):
+                ) or _n_uses_caller_scope(node, self.module_globals):
                     untyped_template = True
         if not untyped_template:
             return self.generic_visit(node)
@@ -396,7 +467,9 @@ def template_expand(target_func):
         func_def_node.decorator_list = []
 
     # Transform the target AST by inlining the template.
-    inliner = _TemplateInliner(_n_templates)
+    has_result = isinstance(func_def_node, ast.FunctionDef) and any(
+        isinstance(n, ast.Name) and n.id == "result" and isinstance(n.ctx, ast.Store) for n in ast.walk(func_def_node))
+    inliner = _TemplateInliner(_n_templates, target_func.__globals__, has_result)
     transformed_ast = inliner.visit(target_ast)
 
     ast.fix_missing_locations(transformed_ast)
@@ -416,7 +489,11 @@ def template_expand(target_func):
     exec(new_source_code, exec_namespace)
 
     new_func = exec_namespace[target_func.__name__]
-
+    if not new_func.__code__.co_freevars:
+        # run in the module's own globals (not the copy), so it sees names defined after it
+        new_func = types.FunctionType(new_func.__code__, target_func.__globals__, new_func.__name__,
+                                      new_func.__defaults__)
+        new_func.__kwdefaults__ = exec_namespace[target_func.__name__].__kwdefaults__
     return wraps(target_func)(new_func)
 
 

@@ -29,6 +29,10 @@ template str*(x: untyped): untyped =
   $ x
 template `+`*(x: string, y: string): string =
   x & y
+template `+`*(x: string, y: char): string =
+  x & y
+template `+`*(x: char, y: string): string =
+  x & y
 template `~`*(x: untyped): untyped =
   not x
 template isinstance*(x, t: untyped): untyped =

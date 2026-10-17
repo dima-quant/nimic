@@ -2,7 +2,7 @@
 from __future__ import annotations
 import time as _time
 from datetime import datetime as _pydatetime, timezone as _timezone
-from nimic.ntypes import string
+from nimic.ntypes import string, dispatch
 
 
 class Duration:
@@ -71,7 +71,8 @@ def local(dt: DateTime | None = None) -> DateTime:
     return dt
 
 
-def format_time(dt: DateTime, fmt: str | string) -> string:
+@dispatch
+def format(dt: DateTime, fmt: string) -> string:
     """Format a DateTime using a format string (Nim: format)."""
     py_fmt = str(fmt)
     py_fmt = py_fmt.replace("yyyy", "%Y")
@@ -83,7 +84,12 @@ def format_time(dt: DateTime, fmt: str | string) -> string:
     t = _pydatetime.fromtimestamp(dt._unix, tz=_timezone.utc)
     return string(t.strftime(py_fmt))
 
-format = format_time
+format_time = format
+
+
+def epochTime() -> float:
+    """Nim: epochTime — seconds since the Unix epoch as a float."""
+    return _time.time()
 
 
 

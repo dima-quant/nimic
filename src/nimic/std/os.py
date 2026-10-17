@@ -80,7 +80,9 @@ def extract_filename(path: str | string) -> string:
     return string(_os.path.basename(str(path)))
 
 def expandFilename(path: string) -> string:
-    return _n_os_result(_os.path.abspath(_n_os_arg(path)))
+    """Nim: expandFilename — the full path of an existing file (POSIX realpath); OSError if it doesn't
+    exist."""
+    return _n_os_result(_os.path.realpath(_n_os_arg(path), strict=True))
 
 
 
@@ -101,14 +103,41 @@ else:
     DirSep = char('/')
     AltSep = char('\\')
 
+def getTempDir() -> string:
+    """Nim: getTempDir — $TMPDIR, $TEMP, $TMP or $TEMPDIR (POSIX order), else /tmp; with a trailing
+    separator."""
+    result = ""
+    for name in ("TMPDIR", "TEMP", "TMP", "TEMPDIR"):
+        result = _os.environ.get(name, "")
+        if result:
+            break
+    if not result:
+        result = "/tmp"
+    return _n_os_result(result.rstrip("/") + "/")
+
+
+def getHomeDir() -> string:
+    """Nim: getHomeDir — the home directory of the current user, with a trailing separator
+    (POSIX: $HOME & "/")."""
+    return _n_os_result(_os.environ.get("HOME", "") + "/")
+
+
 def getCurrentDir() -> string:
     """Get the current directory (Nim: os.getCurrentDir)."""
     return _n_os_result(_os.getcwd())
 
 
 def get_app_filename() -> string:
-    """Get the application filename (Nim: os.getAppFilename)."""
-    return _n_os_result(sys.argv[0])
+    """Nim: getAppFilename — the absolute path of the running program (Python: the main script)."""
+    return _n_os_result(os.path.abspath(sys.argv[0]))
+
+
+getAppFilename = get_app_filename
+
+
+def getAppDir() -> string:
+    """Nim: getAppDir — the directory of the running program."""
+    return splitFile(getAppFilename()).dir
 
 
 
@@ -130,6 +159,29 @@ class _SplitFileTuple(tuple):
     @property
     def ext(self) -> string:
         return self[2]
+
+class _SplitPathTuple(tuple):
+    @property
+    def head(self) -> string:
+        return self[0]
+
+    @property
+    def tail(self) -> string:
+        return self[1]
+
+
+def splitPath(path: string) -> _SplitPathTuple:
+    """Nim: splitPath — (head, tail) at the last separator (POSIX); head of "/x" is "/"."""
+    p = str(path)
+    sepPos = -1
+    for i in range(len(p) - 1, -1, -1):
+        if p[i] in ("/", str(AltSep)):
+            sepPos = i
+            break
+    if sepPos >= 0:
+        return _SplitPathTuple((string(p[:max(sepPos - 1, 0) + 1]), string(p[sepPos + 1:])))
+    return _SplitPathTuple((string(""), string(p)))
+
 
 @dispatch
 def splitFile(path: string) -> _SplitFileTuple:

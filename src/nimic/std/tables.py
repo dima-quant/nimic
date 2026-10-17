@@ -72,5 +72,25 @@ class _GenTable:
 initTable = _GenTable()
 init_table = initTable
 
+
+class TableRef(Table):
+    """Nim: TableRef[K, V] — a table with reference semantics (assignment shares it)."""
+    _n_is_ref = True
+
+    def __class_getitem__(cls, tp):
+        return type(f"TableRef[{tp}]", (TableRef,), {"_n_is_ref": True})
+
+
+class _GenNewTable:
+    def __getitem__(self, tp):
+        return TableRef[tp]
+
+    def __call__(self, *args, **kwargs):
+        return TableRef(*args, **kwargs)
+
+
+newTable = _GenNewTable()
+
 DICT_OF_TYPES["Table"] = Table
+DICT_OF_TYPES["TableRef"] = TableRef
 DICT_OF_TYPES["CountTable"] = CountTable

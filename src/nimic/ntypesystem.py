@@ -657,6 +657,27 @@ class _DispatchedCallable:
         return self
 
 
+def _n_named_tuple_result(fn: callable) -> callable:
+    """A proc declared to return a named tuple type converts a returned tuple literal to it (Nim
+    `result = (a, b)` for `tuple[x, y: T]`). Wrapped only when the annotation names an NTuple class
+    already defined, so other procs pay nothing."""
+    ann = getattr(fn, "__annotations__", {}).get("return")
+    rtype = ann
+    if isinstance(ann, str):  # the module's name, or a local one of the scope defining fn
+        rtype = fn.__globals__.get(ann) or sys._getframe(2).f_locals.get(ann)
+    if not (isinstance(rtype, type) and issubclass(rtype, NTuple)):
+        return fn
+    fields = rtype._n_fields
+
+    @functools.wraps(fn)
+    def named_tuple_result(*args, **kwargs):
+        r = fn(*args, **kwargs)
+        if type(r) is tuple and len(r) == len(fields):
+            return rtype(**dict(zip(fields, r)))
+        return r
+    return named_tuple_result
+
+
 def dispatch(fn: callable) -> callable:
     """Decorator implementing Nim-style multi-dispatch based on argument type annotations.
 
@@ -676,6 +697,7 @@ def dispatch(fn: callable) -> callable:
         # re-dispatch (e.g. DispDict overloading an explicit @dispatch method): register the
         # original function; registering the wrapper would make it dispatch to itself forever
         fn = fn._fn
+    fn = _n_named_tuple_result(fn)
     # No kwargs in dispatched functions. Types should match. TODO: Python types should be treated as literals
     # TODO properly remove prefix
     _annotations = {}
@@ -928,6 +950,11 @@ def dispatch(fn: callable) -> callable:
                         return fn_dispatch(*cand)
                     except NotImplementedError:
                         pass
+        if not is_resolved:
+            # a registered varargs overload wins over a method of the first argument (e.g. str.format)
+            varargs_call = _n_varargs_call(fn.__name__, args)
+            if varargs_call is not None:
+                return varargs_call()
         if not is_resolved:
             # Check UFCS: if the first argument has a method with this function's name
             if len(args) >= 1 and not fn.__name__.startswith("__") and hasattr(args[0], fn.__name__):
@@ -1354,6 +1381,13 @@ class Ntype:
 
 
 class NIntEnum(IntEnum):
+    def __str__(self) -> str:
+        """Nim `$` of an enum member: its name."""
+        return self.name
+
+    def __format__(self, spec: str) -> str:
+        return format(self.name, spec)
+
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
         cls._n_register_type()
@@ -1387,12 +1421,53 @@ class NIntEnum(IntEnum):
         DICT_OF_C_TYPES[cls.__name__] = ctypes.c_uint64
 
 
+class _NEnumText(str):
+    """The value of an NStrEnum member: its text, made unique by the member's ordinal, so members with
+    equal texts (Nim `warnUser = "User", hintUser = "User"`) are distinct members, not aliases. It
+    still equals the plain text."""
+
+    def __new__(cls, text: str, ordinal: int):
+        obj = super().__new__(cls, text)
+        obj._n_ord = ordinal
+        return obj
+
+    def __eq__(self, other):
+        if isinstance(other, _NEnumText):
+            return str.__eq__(self, other) and self._n_ord == other._n_ord
+        return str.__eq__(self, other)
+
+    __hash__ = str.__hash__
+
+
 class NStrEnum(StrEnum):
+    """Nim enum whose members have string values: an ordinal enum whose `$` is the text (the member
+    name for auto()). Members are distinct even when their texts are equal."""
     __n_members_tuple__ = None
     __n_indices__ = None
 
+    @staticmethod
+    def _generate_next_value_(name, start, count, last_values):
+        return name  # Nim: `$` of a member without a string value is its name
+
+    def __new__(cls, value):
+        member = str.__new__(cls, value)
+        member._value_ = _NEnumText(value, len(cls._member_names_))
+        return member
+
+    def __eq__(self, other):
+        if isinstance(other, Enum):
+            return self is other
+        return str.__eq__(self, other)
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    __hash__ = Enum.__hash__
+
     @classmethod
     def _missing_(cls, value):
+        if not isinstance(value, (str, bytes)) and hasattr(value, "__index__"):
+            value = value.__index__()  # E(ordinal) of any integer type (nint, int32, ...)
         if isinstance(value, int):
             if cls.__n_members_tuple__ is None:
                 cls._n_set_indices()
@@ -1544,6 +1619,9 @@ def inrange(first, last):
         idx_a = members.index(first)
         idx_b = members.index(last)
         return members[idx_a : idx_b + 1]
+    if isinstance(first, str):  # char: 'a'..'z' is a range of chars
+        cls = type(first)
+        return tuple(cls(c) for c in range(ord(first), ord(last) + 1))
     else:
         return range(int(first), int(last) + 1)
 
@@ -1980,9 +2058,38 @@ def _n_build_c_fields(items: tuple, field_types: dict, python_fields: set, prefi
     return fields, anonymous
 
 
+def _n_coerce_int_field(cls: type, name: str, value: object) -> object:
+    """A plain int stored in a Python-side integer field becomes the field's declared type (a
+    mutable NInteger, so the field can be passed as `var int`)."""
+    if type(value) is int and name in getattr(cls, "_n_python_fields", ()):
+        ft = getattr(cls, "_n_field_types", {}).get(name)
+        if isinstance(ft, type) and issubclass(ft, NInteger):
+            return ft(value)
+    return value
+
+
 class _Object(Ntype):
     # Cache for specialized generic classes
     _n_specializations = {}
+
+    def __eq__(self, other) -> bool:
+        """Nim `==` of objects and tuples: the same type and equal fields (the active ones of a
+        variant); refs compare as references. A user-defined `==` (__eq__) replaces this."""
+        if self is other:
+            return True
+        if not isinstance(other, _Object):
+            return NotImplemented
+        if type(other) is not type(self) or getattr(type(self), "_n_is_ref", False):
+            return False
+        names = type(self).__dict__.get("_n_fields") or getattr(type(self), "_n_fields", [])
+        if getattr(type(self), "_n_variant_layout", None) is not None:
+            active = set(self.__dict__.get("_n_fields", names))
+            if active != set(other.__dict__.get("_n_fields", names)):
+                return False
+            names = [n for n in names if n in active]
+        return all(getattr(self, n) == getattr(other, n) for n in names)
+
+    __hash__ = object.__hash__  # Nim's `hash` is independent of `==`
 
     def __class_getitem__(cls, params) -> type:
         """Create a specialized subclass with resolved type annotations.
@@ -2169,7 +2276,8 @@ class _Object(Ntype):
         _has_c_type = type(self).__name__ in DICT_OF_C_TYPES
         if kwargs:
             for attribute in kwargs:
-                setattr(self, attribute, kwargs[attribute])
+                # Nim object constructors copy values (strings, seqs, objects) and share refs
+                setattr(self, attribute, _n_value_copy(kwargs[attribute]))
             attributes = list(kwargs.keys())
             self._n_fields = attributes
             value = self
@@ -2230,7 +2338,7 @@ class _Object(Ntype):
         source = _n_value if _n_value is not None and not kwargs else None
         for name in active:
             if name in kwargs:
-                setattr(self, name, kwargs[name])
+                setattr(self, name, _n_value_copy(kwargs[name]))
             elif source is not None and name not in layout.discriminators:
                 setattr(self, name, getattr(source, name))
 
@@ -2355,7 +2463,7 @@ class _Object(Ntype):
         if attr_exists:
             python_fields = getattr(self.__class__, '_n_python_fields', set())
             if (python_fields and name in python_fields) or not hasattr(self, '_n_view') or self._n_view is None:
-                super().__setattr__(name, value)
+                super().__setattr__(name, _n_coerce_int_field(type(self), name, value))
                 return
 
             attr = getattr(self, name)
@@ -2387,9 +2495,9 @@ class _Object(Ntype):
                 else:
                     super().__setattr__(name, value)
             else:
-                super().__setattr__(name, value)
+                super().__setattr__(name, _n_coerce_int_field(type(self), name, value))
         else:
-            super().__setattr__(name, value)
+            super().__setattr__(name, _n_coerce_int_field(type(self), name, value))
 
     def __getitem__(self, name: str) -> object:
         if name not in self._n_fields:
@@ -2933,6 +3041,7 @@ class array(Ntype):
             ctypes.memmove(ctypes.addressof(self._n_view), ctypes.addressof(other._n_view),
                            ctypes.sizeof(self._n_view))
             self._n_cache = {}
+            _n_carry_held_fields(self, dict(getattr(other, "_n_cache", {})))
         else:
             for i, item in enumerate(other):
                 self[self._n_first + i] = item
@@ -2973,6 +3082,9 @@ class seq(Ntype):
                 self._n_is_list = True
                 self._n_list = list(c_base) if isinstance(c_base, (list, tuple)) else []
                 return
+            items = None
+            if isinstance(c_base, (list, tuple)):  # seq literal `seq[T]([a, b])` (Nim @[a, b])
+                items, c_base = c_base, None
             if c_base:
                 self._n_backing = c_base
             else:
@@ -2981,6 +3093,8 @@ class seq(Ntype):
             self._n_view = (self._n_backing._type_ * self._n_reserved).from_address(
                 ctypes.addressof(self._n_backing)
             )
+            for item in items or ():
+                self.add(item)
         else:
             raise Exception("Seq type not specified")
 
@@ -3005,8 +3119,11 @@ class seq(Ntype):
         self._n_view = (self._n_view._type_ * self._n_reserved).from_address(
             ctypes.addressof(self._n_backing)
         )
-        # invalidate cache
+        # rebuild the cached elements on the new memory: ctypes-backed fields are read from it, fields
+        # held on the Python side (strings, refs: their pointer slots are not written) are carried over
+        old_cache = self._n_cache
         self._n_cache = {}
+        _n_carry_held_fields(self, {i: e for i, e in old_cache.items() if i < self.len})
 
     def __getitem__(self, index: int) -> object:
         index = int(index)
@@ -3032,8 +3149,12 @@ class seq(Ntype):
                 # Invalidate cache for affected indices
                 for i in range(start, stop, step):
                     self._n_cache.pop(i, None)
+                source_cache = getattr(value, "_n_cache", {})
+                _n_carry_held_fields(self, {j: source_cache.get(j) for j in range(stop - start)
+                                            if source_cache.get(j) is not None}, offset=start)
             return
         index = int(index)
+        value = self._n_coerce(value)
         if self._n_is_list:
             if self._n_list[index] is not value:  # `s[i] <<= v` already assigned in place
                 self._n_list[index] = _n_value_copy(value)
@@ -3058,7 +3179,16 @@ class seq(Ntype):
         _seq._n_register_type()
         return _seq
 
+    def _n_coerce(self, value: object) -> object:
+        """A tuple literal for a seq of a named tuple type is that tuple (fields in order)."""
+        elem = getattr(self, "_n_type", None)
+        if (type(value) is tuple and isinstance(elem, type) and issubclass(elem, NTuple)
+                and len(value) == len(elem._n_fields)):
+            return elem(**dict(zip(elem._n_fields, value)))
+        return value
+
     def add(self, value: object) -> None:
+        value = self._n_coerce(value)
         if self._n_is_list:
             self._n_list.append(_n_value_copy(value))  # Nim add copies values, shares refs
             return
@@ -4307,6 +4437,31 @@ class NInteger(NScalar):
         """Nim: self -% other — wrapping subtraction in this type's width."""
         return self._n_op(other, operator.sub)
 
+    # --- Unsigned comparisons (Nim: <%, <=%, >%, >=%) in this type's width ---
+    def _n_unsigned_pair(self, other) -> tuple[int, int]:
+        mask = (1 << self._n_bits) - 1
+        return int(self) & mask, int(other) & mask
+
+    def lt_percent(self, other) -> bool:
+        """Nim: self <% other — unsigned less than."""
+        a, b = self._n_unsigned_pair(other)
+        return a < b
+
+    def le_percent(self, other) -> bool:
+        """Nim: self <=% other — unsigned less than or equal."""
+        a, b = self._n_unsigned_pair(other)
+        return a <= b
+
+    def gt_percent(self, other) -> bool:
+        """Nim: self >% other — unsigned greater than."""
+        a, b = self._n_unsigned_pair(other)
+        return a > b
+
+    def ge_percent(self, other) -> bool:
+        """Nim: self >=% other — unsigned greater than or equal."""
+        a, b = self._n_unsigned_pair(other)
+        return a >= b
+
     @staticmethod
     def _n_lift(value, peer=None) -> NInteger:
         """Return `value` as an NInteger: kept as is if it already is one, otherwise
@@ -4667,6 +4822,8 @@ class char(str):
         char('A', addr) — from string indexing with backing address
     """
     def __new__(cls, value=0, addr: int = 0):
+        if not isinstance(value, (str, bytes, bytearray)) and hasattr(value, "__index__"):
+            value = value.__index__()  # char(x) of any ordinal (uint8, nint, ...)
         if isinstance(value, int):
             # chr(65) → char from ordinal
             byte_val = value & 0xFF
@@ -4683,6 +4840,15 @@ class char(str):
             obj._n_byte = _n_encode_str(ch)[0]  # raises NimicEncodingError above 0xFF
         obj._n_slot_addr = addr
         return obj
+
+    def __ilshift__(self, other):
+        """`c <<= x` (Nim `c = x` for a var char, e.g. from mitems(s)): writes x into the string slot
+        the char came from; a char without a slot just becomes x."""
+        owner = getattr(self, "_n_owner", None)
+        if owner is not None:
+            owner[self._n_index] = other
+            return owner._n_slot_char(self._n_index)
+        return char(other)
 
     def __int__(self):
         return self._n_byte
@@ -4793,6 +4959,29 @@ class string(collections.UserString):
         self.data = other.data if hasattr(other, 'data') else str(other)
         return self
 
+    def __setitem__(self, index, value) -> None:
+        """Nim `s[i] = c`: writes the char in place (other references to the string see it)."""
+        idx = int(index)
+        n = len(self)
+        if not 0 <= idx < n:
+            if _n_check_enabled("boundchecks"):
+                raise IndexDefect(f"index {idx} not in 0 .. {n - 1}")
+            return  # without bound checks: the terminator or memory past it, not modelled
+        self._n_view_ref[0][idx] = bytes([int(char(value))])
+
+    def _n_slot_char(self, index: int) -> 'char':
+        """The char at index, bound to its slot: `c <<= x` writes back (Nim var iteration)."""
+        c = char(self.data[index])
+        c._n_owner = self
+        c._n_index = index
+        return c
+
+    @property
+    def mitems(self):
+        """Nim mitems: chars bound to their slots, assigned with `c <<= x`."""
+        for i in range(len(self)):
+            yield self._n_slot_char(i)
+
     @property
     def len(self) -> int:
         """Nim `s.len` (as seq.len)."""
@@ -4873,23 +5062,14 @@ class string(collections.UserString):
         return string(Template(self.data).substitute(**kwargs))
 
     def __mod__(self, itr):
+        """Nim strutils `%` (formatstr % [a, b] or % a) for a format string with `$`; otherwise
+        Python's % formatting."""
+        if '$' in self.data:
+            single = isinstance(itr, (str, bytes, string)) or not hasattr(itr, '__iter__')
+            items = [itr] if single else list(itr)
+            return string(_n_addf(self.data, items))
         if hasattr(itr, '__iter__') and not isinstance(itr, (str, bytes)):
-            items = list(itr)
-            if '$' in self.data:
-                res = self.data
-                if len(items) >= 2 and len(items) % 2 == 0:
-                    for i in range(0, len(items), 2):
-                        k = items[i].data if hasattr(items[i], 'data') else str(items[i])
-                        v = items[i+1].data if hasattr(items[i+1], 'data') else str(items[i+1])
-                        res = res.replace(f"${k}", v)
-                for i, arg in enumerate(items, 1):
-                    val = arg.data if hasattr(arg, 'data') else str(arg)
-                    res = res.replace(f"${i}", val)
-                return string(res)
-            return string(self.data % tuple(items))
-        if '$1' in self.data:
-            val = itr.data if hasattr(itr, 'data') else str(itr)
-            return string(self.data.replace('$1', val))
+            return string(self.data % tuple(itr))
         return string(self.data % itr)
 
     def is_empty(self) -> bool:
@@ -4939,7 +5119,136 @@ class string(collections.UserString):
                 return char(self._n_view[idx], addr=ctypes.addressof(self._n_view) + idx)
             elif idx < len(self.data):
                 return char(self.data[idx], addr=ctypes.addressof(self._n_view) + idx)
+        if not isinstance(index, slice) and int(index) >= len(self.data):
+            # Nim strings end with '\0': s[s.len] reads it when bound checks are off
+            if _n_check_enabled("boundchecks"):
+                raise IndexDefect(f"index {int(index)} not in 0 .. {len(self.data) - 1}")
+            if int(index) == len(self.data):
+                return char("\0")
         return char(self.data[index])
+
+
+def _n_carry_held_fields(target, source_cache: dict, offset: int = 0) -> None:
+    """After element memory of `target` (seq/array) was written by a raw copy, rebuild its cached
+    elements at index + offset from `source_cache` ({index: element}): ctypes fields come from the
+    target memory, Python-held fields (strings, refs) from the source elements."""
+    elem_type = getattr(target, "_n_type", None)
+    held = _n_python_held_fields(elem_type)
+    if not held:
+        return
+    for i, src in source_cache.items():
+        if src is None:
+            continue
+        elem = elem_type._n_on_array(target._n_view, i + offset)
+        for name in held:
+            if name in src.__dict__:
+                elem.__dict__[name] = src.__dict__[name]
+        target._n_cache[i + offset] = elem
+
+
+def _n_python_held_fields(cls: type) -> tuple:
+    """Fields of an Object type whose values live on the Python side of an element: declared
+    python-side fields and pointer slots (c_char_p strings, c_void_p refs) that hold no data."""
+    c_type = getattr(cls, "_n_c_type", None)
+    if not isinstance(cls, type) or c_type is None:
+        return ()
+    try:
+        fields = c_type()._fields_
+    except (TypeError, AttributeError):
+        return ()
+    names = {name for name, ct, *_ in fields if ct in (ctypes.c_char_p, ctypes.c_void_p)}
+    return tuple(names | set(getattr(cls, "_n_python_fields", ())))
+
+
+def _n_addf(formatstr: str, a: list) -> str:
+    """Nim strutils.addf/`%`: $1..$n, $-n, $#, ${n}, ${name}/$name (key/value pairs of `a`, compared
+    style-insensitively), $$; ValueError for an invalid format string. Returns the formatted text."""
+    args = [x.data if hasattr(x, "data") else str(x) for x in a]
+
+    def invalid():
+        raise ValueError("invalid format string: " + formatstr)
+
+    def find_normalized(x: str) -> int:
+        norm = x.replace("_", "").lower()
+        i = 0
+        while i < len(args) - 1:
+            if args[i].replace("_", "").lower() == norm:
+                return i
+            i += 2
+        return -1
+
+    pattern = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_") | {chr(c) for c in range(128, 256)}
+    out = []
+    i = num = 0
+    n = len(formatstr)
+    while i < n:
+        if formatstr[i] == "$" and i + 1 < n:
+            c = formatstr[i + 1]
+            if c == "#":
+                if num > len(args) - 1:
+                    invalid()
+                out.append(args[num])
+                i += 2
+                num += 1
+            elif c == "$":
+                out.append("$")
+                i += 2
+            elif "1" <= c <= "9" or c == "-":
+                j = 0
+                i += 1
+                negative = formatstr[i] == "-"
+                if negative:
+                    i += 1
+                while i < n and formatstr[i].isdigit():
+                    j = j * 10 + ord(formatstr[i]) - ord("0")
+                    i += 1
+                idx = j - 1 if not negative else len(args) - j
+                if idx < 0 or idx > len(args) - 1:
+                    invalid()
+                out.append(args[idx])
+            elif c == "{":
+                j = i + 2
+                k = 0
+                negative = j < n and formatstr[j] == "-"
+                if negative:
+                    j += 1
+                is_number = 0
+                while j < n and formatstr[j] not in ("\0", "}"):
+                    if formatstr[j].isdigit():
+                        k = k * 10 + ord(formatstr[j]) - ord("0")
+                        if is_number == 0:
+                            is_number = 1
+                    else:
+                        is_number = -1
+                    j += 1
+                if is_number == 1:
+                    idx = k - 1 if not negative else len(args) - k
+                    if idx < 0 or idx > len(args) - 1:
+                        invalid()
+                    out.append(args[idx])
+                else:
+                    x = find_normalized(formatstr[i + 2:j])
+                    if 0 <= x < len(args) - 1:
+                        out.append(args[x + 1])
+                    else:
+                        invalid()
+                i = j + 1
+            elif c in pattern and not c.isdigit():
+                j = i + 1
+                while j < n and formatstr[j] in pattern:
+                    j += 1
+                x = find_normalized(formatstr[i + 1:j])
+                if 0 <= x < len(args) - 1:
+                    out.append(args[x + 1])
+                else:
+                    invalid()
+                i = j
+            else:
+                invalid()
+        else:
+            out.append(formatstr[i])
+            i += 1
+    return "".join(out)
 
 
 # remove when in Nim

@@ -180,13 +180,16 @@ For each change to the core files:
 2. Run the test suite:
    ```bash
    cd /Users/dima/Documents/Scripts/Ndsl
-   .venv/bin/python -m pytest tests/nimic/test_ntypes.py -v
+   .venv/bin/python -m unittest tests/nimic/test_ntypes.py
    ```
 3. If a change lacks test coverage, **add tests** following the existing patterns in `test_ntypes.py`
-4. Verify all 11+ converted compiler modules still work:
+4. Verify all converted compiler modules and the include-file harnesses still work:
    ```bash
-   for m in prefixmatches wordrecg idents platform pathutils nimpaths ropes llstream lineinfos options msgs; do
-     .venv/bin/python -m ncompiler.$m || echo "FAIL: $m"
+   for f in ncompiler/*.py ncompiler/tests/test_*.py; do
+     m=${f#ncompiler/}; m=${m%.py}; m=${m//\//.}
+     # include files (include("...") in a module or harness) run through their includer
+     grep -qE "^include\(.*[\"'/]${m##*.}[\"']" ncompiler/*.py ncompiler/tests/*.py && continue
+     .venv/bin/python -m ncompiler.$m > /dev/null || echo "FAIL: $m"
    done
    ```
 

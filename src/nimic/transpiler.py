@@ -60,10 +60,16 @@ Function definitions:
   rule:calltype -> def decorated with "calltype" emit as type alias: Name* = proc(...): T {.pragma.}
 
 Control flow:
+  rule:casereturn -> a proc body that ends with a match whose every branch is `return <value>` is a Nim
+    case expression (the branch values without `return`)
   rule:matchcase -> adjust match case according to Nim syntax, also for variant types: in a class body,
     `field: T` followed by `match field:` is a record case `case field*: T` (discriminator default dropped),
     `case _` -> else, `A | B` -> of A, B; branch bodies are records, so cases nest
+    In statements, `case _ if c in inrange(a, b) or c in S or c == v:` (c: the match subject, S a set) ->
+    `of a .. b, S, v:`, and
+    `case _ if cond:` with any other condition -> `elif cond:`
   rule:uncheckedassign -> with uncheckedAssign: block transpiles as {.cast(uncheckedAssign).}: block
+  rule:pragmablock -> with pragma("p"): block transpiles as a pragma block {.p.}: block
   rule:inlineif -> write inline if according to Nim syntax
   rule:comptime -> the expression "if comptime(x)" is written as "when x" ("if" directly followed by "comptime"
     should be resolvable at comptime (is interpreted as "when")
@@ -101,7 +107,8 @@ Operators & renaming:
   rule:strformat -> Python % on string operands transpiles as Nim % (format) instead of mod
   rule:nilident -> "is None" / "is not None" transpile as == nil / != nil
   rule:keywordescape -> trailing _ stripped from Python keyword clashes (None_ -> None, type_ -> type)
-  rule:percentops -> plus_percent(a, b) / a.plus_percent(b) and minus_percent(a, b) / a.minus_percent(b) transpile as a +% b and a -% b
+  rule:percentops -> plus_percent(a, b) / a.plus_percent(b) and minus_percent(a, b) / a.minus_percent(b) transpile as a +% b and a -% b; lt_percent, le_percent,
+    gt_percent, ge_percent as a <% b, a <=% b, a >% b, a >=% b (comparison precedence)
   rule:isinstance -> isinstance(x, T) transpiles as x is T (type query)
   rule:formatstr -> FormatStr(s) unwraps to string literal s in Nim (where string is FormatStr)
   rule:doblock -> with do: block translates as do: block in Nim
@@ -119,6 +126,10 @@ Imports:
   rule:nodoubleimport -> do not write import module if already imported
   rule:labeledblock -> with block("name"): ... is `block name:`; breakBlock("name") is `break name`
   rule:emit -> emit("C code") transpiles as an emit pragma {.emit: <triple-quoted C code>.} (raises if run in Python)
+  rule:importexcept -> importExcept("..m", "a", "%") transpiles as `import ../m except a, `%``; in Python it
+    binds the module's public names except those
+  rule:importfrom -> importFrom("..m", "a", "%") transpiles as Nim's selective `from ../m import a, `%``; in
+    Python it binds only those names (a Python `from m import a` is a full `import m`)
   rule:include -> include("x", "y") transpiles as `include x, y`; in Python the files run in the includer's
     namespace
   rule:modulepath -> nimic.x.y import paths transpile as x/y, with module renaming (e.g. syncio -> io)
@@ -893,6 +904,7 @@ class _Unparser(NodeVisitor):
         self._keywords_rename = {}
         self._keywords_no_with_colon = ["block"]  # rule:dropwith
         self._context_stack = []
+        self._match_subjects = []  # rule:matchcase: subjects of the enclosing match statements
         self._block_nodes = []
         self._attribute_replace = {"copy": "", "contents": "[]"}
         self._set_low_precedence = ["export"]
@@ -1029,6 +1041,8 @@ class _Unparser(NodeVisitor):
             return isinstance(types, dict) and isinstance(types.get(node.id), type)
         if isinstance(node, Subscript) and isinstance(node.value, Name):
             return node.value.id in self._type_constructors or node.value.id in self._declared_classes
+        if isinstance(node, Call) and isinstance(node.func, Name) and node.func.id == "typeof":
+            return True  # `T = typeof(expr)`
         return False
 
     def _is_type_alias(self, item) -> bool:
@@ -1127,6 +1141,16 @@ class _Unparser(NodeVisitor):
             self.fill("include " + ", ".join(names))
             self.module_names += [n.split("/")[-1] for n in names]
             return
+        if (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id in ("importExcept", "importFrom")
+                and value.args and all(isinstance(a, Constant) and isinstance(a.value, str) for a in value.args)):
+            # rule:importexcept -> importExcept("..m", "a", "%") is `import ../m except a, `%``
+            # rule:importfrom -> importFrom("..m", "a", "%") is `from ../m import a, `%``
+            module = value.args[0].value
+            level = len(module) - len(module.lstrip("."))
+            names = ", ".join(n if n.isidentifier() else f"`{n}`" for n in (a.value for a in value.args[1:]))
+            path = self._import_path(module.lstrip("."), level)
+            self.fill(f"import {path} except {names}" if value.func.id == "importExcept" else f"from {path} import {names}")
+            return
         if (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id == "assign"
                 and len(value.args) == 2 and not value.keywords):
             # rule:assigncall -> assign(p.s(sec), x) is `p.s(sec) = x` (assignment through a var T result)
@@ -1158,26 +1182,24 @@ class _Unparser(NodeVisitor):
             self.interleave(lambda: self.write(", "), self.traverse, refined_list)
             self.module_names += [n.name for n in refined_list]
 
+    def _import_path(self, module_name: str, level: int) -> str:
+        """rule:import -> the Nim path of an imported module: nimic.x.y is x/y (with module renaming), a
+        relative import keeps its directory: `from ..options import *` is `import ../options`."""
+        module_name_split = module_name.split(".")
+        if module_name in self._module_std:
+            return "ncode/pystd/" + module_name
+        if module_name_split[0] == "nimic":
+            if module_name_split[1] in self._module_rename:
+                module_name_split[1] = self._module_rename[module_name_split[1]]
+            return "/".join(module_name_split[1:])
+        self.module_names.append(module_name)
+        return "../" * max(level - 1, 0) + module_name.replace(".", "/")
+
     def visit_ImportFrom(self, node):
-        # rule:import
-        # self.fill("from ")
-        # self.write("." * (node.level or 0))
+        # rule:import -> `from m import ...` is `import m` (a class comes with its methods, which are procs
+        # in Nim); Nim's selective `from m import a` is importFrom("m", "a") (rule:importfrom)
         if node.module and not node.module in ["__future__"]:
-            self.fill("import ")
-            module_name = node.module
-            module_name_split = module_name.split(".")
-            # if module_name in self._module_rename:
-            #     self.write(self._module_rename[module_name])
-            if module_name in self._module_std:
-                self.write("ncode/pystd/" + module_name)
-            elif module_name_split[0] == "nimic":
-                if module_name_split[1] in self._module_rename:
-                   module_name_split[1] = self._module_rename[module_name_split[1]]
-                self.write("/".join(module_name_split[1:]))
-            else:
-                self.module_names.append(module_name)
-                # a relative import keeps its directory: `from ..options import *` is `import ../options`
-                self.write("../" * max((node.level or 0) - 1, 0) + node.module.replace(".", "/"))
+            self.fill("import " + self._import_path(node.module, node.level or 0))
         # self.write("import ")
         # self.interleave(lambda: self.write(", "), self.traverse, node.names)
 
@@ -1200,6 +1222,8 @@ class _Unparser(NodeVisitor):
         if self._is_type_alias(node):
             # rule:typealias -> module-level `Snippet = string` is `type Snippet* = string`
             target = node.targets[0]
+            if isinstance(node.value, Subscript) and isinstance(node.value.value, Name) and node.value.value.id == "Tset":
+                self._set_types.add(target.id)  # rule:setlit applies to `MsgFlags()` / `MsgFlags({a})`
             target._is_definition = True
             self.fill()
             self.traverse(target)
@@ -1746,6 +1770,9 @@ class _Unparser(NodeVisitor):
             if decl_str == "template":
                 self._context_stack.append("template")
                 self._template_tail_returns.append(self._tail_returns(body if isinstance(body, list) else [body]))
+            case_expr = decl_str != "template" and self._case_expression_returns(body)
+            if case_expr:
+                self._template_tail_returns.append(case_expr)
             with self.block(extra=self.get_type_comment(node), start=" ="):
                 if isinstance(body, list) and isinstance(body[-1], Return):
                     if body[:-1]:
@@ -1762,6 +1789,20 @@ class _Unparser(NodeVisitor):
             if decl_str == "template":
                 self._context_stack.pop()
                 self._template_tail_returns.pop()
+            if case_expr:
+                self._template_tail_returns.pop()
+
+    @staticmethod
+    def _case_expression_returns(body) -> set:
+        """rule:casereturn -> a proc body ending with a match whose every branch is `return <value>` is a
+        Nim case expression as the proc's result: the ids of those returns (written as values), or an
+        empty set."""
+        last = body[-1] if isinstance(body, list) and body else None
+        if not isinstance(last, Match) or not all(
+                len(c.body) == 1 and isinstance(c.body[0], Return) and c.body[0].value is not None
+                for c in last.cases):
+            return set()
+        return {id(c.body[0]) for c in last.cases}
 
     def _tail_returns(self, stmts) -> set:
         """ids of the `return` statements in tail position of a template body: the template's
@@ -1944,6 +1985,13 @@ class _Unparser(NodeVisitor):
             self.fill(f"{{.push {ctx.args[0].value}.}}")
             self.traverse(node.body)
             self.fill("{.pop.}")
+            return
+        if (isinstance(ctx, Call) and isinstance(ctx.func, Name) and ctx.func.id == "pragma"
+                and len(ctx.args) == 1 and isinstance(ctx.args[0], Constant) and isinstance(ctx.args[0].value, str)):
+            # rule:pragmablock -> with pragma("p"): body  is  {.p.}: body
+            self.fill(f"{{.{ctx.args[0].value}.}}")
+            with self.block(start=":"):
+                self.traverse(node.body)
             return
         # rule:dropwith
         name = None
@@ -2447,6 +2495,10 @@ class _Unparser(NodeVisitor):
     percent_ops = {
         "plus_percent": ("+%", _Precedence.ARITH),
         "minus_percent": ("-%", _Precedence.ARITH),
+        "lt_percent": ("<%", _Precedence.CMP),
+        "le_percent": ("<=%", _Precedence.CMP),
+        "gt_percent": (">%", _Precedence.CMP),
+        "ge_percent": (">=%", _Precedence.CMP),
     }
 
     def _write_infix(self, operator, precedence, node, left, right):
@@ -2775,9 +2827,30 @@ class _Unparser(NodeVisitor):
         # rule:matchcase
         self.fill("case ")
         self.traverse(node.subject)
+        self._match_subjects.append(node.subject)
         with self.block():
             for case in node.cases:
                 self.traverse(case)
+        self._match_subjects.pop()
+
+    @staticmethod
+    def _case_labels(guard, subject):
+        """rule:matchcase -> the `of` labels of a guard `subject in inrange(a, b) or subject == v ...`,
+        or None if the guard is another condition (an `elif` branch of the case)."""
+        terms = guard.values if isinstance(guard, BoolOp) and isinstance(guard.op, Or) else [guard]
+        labels = []
+        for term in terms:
+            if not (isinstance(term, Compare) and len(term.ops) == 1
+                    and ast.dump(term.left) == ast.dump(subject)):
+                return None
+            op, value = term.ops[0], term.comparators[0]
+            if isinstance(op, In):  # a range `inrange(a, b)` or a set constant (`routineDefs`, `{a, b}`)
+                labels.append(value)
+            elif isinstance(op, Eq):
+                labels.append(value)
+            else:
+                return None
+        return labels
 
     def visit_arg(self, node):
         _name = self._adjust_name(node.arg, definition=False) # rule:localname
@@ -2916,7 +2989,20 @@ class _Unparser(NodeVisitor):
 
     def visit_match_case(self, node):
         # rule:matchcase
-        if isinstance(node.pattern, MatchAs) and node.pattern.name is None and node.pattern.pattern is None:
+        wildcard = isinstance(node.pattern, MatchAs) and node.pattern.name is None and node.pattern.pattern is None
+        if wildcard and node.guard is not None and self._match_subjects:
+            # `case _ if c in inrange(a, b) or c == v:` -> `of a .. b, v:`; another guard -> `elif cond:`
+            labels = self._case_labels(node.guard, self._match_subjects[-1])
+            if labels is not None:
+                self.fill("of ")
+                self.interleave(lambda: self.write(", "), self.traverse, labels)
+            else:
+                self.fill("elif ")
+                self.traverse(node.guard)
+            with self.block():
+                self.traverse(node.body)
+            return
+        if wildcard:
             self.fill("else")
         else:
             self.fill("of ")
