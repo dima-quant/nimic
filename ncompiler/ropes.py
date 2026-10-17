@@ -13,8 +13,7 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from .pathutils import AbsoluteFile
-from nimic.std.syncio import readBuffer, close, open, fmWrite, fmRead
+importFrom(".pathutils", "AbsoluteFile")
 
 if comptime(defined("nimPreviewSlimSystem")):
     from nimic.std.assertions import *
@@ -83,56 +82,55 @@ def runtimeFormat(frmt: FormatStr, args: openArray[Rope]) -> Rope:
     result = newRopeAppender()
     with var:
         num = 0
-    while i < len(frmt):
+    while i < frmt.len:
         if frmt[i] == ch('$'):
-            i += 1
-            if i >= len(frmt):
-                raiseAssert(string("invalid format string: ") + frmt)
-            if frmt[i] == ch('$'):
-                result.add(string("$"))
-                i += 1
-            elif frmt[i] == ch('#'):
-                i += 1
-                result.add(args[num])
-                num += 1
-            elif frmt[i] >= ch('0') and frmt[i] <= ch('9'):
-                with var:
-                    j = 0
-                while True:
-                    j = j * 10 + ord(frmt[i]) - ord(ch('0'))
+            i += 1  # skip '$'
+            match frmt[i]:
+                case _ if frmt[i] == ch('$'):
+                    result.add(string("$"))
                     i += 1
-                    if i >= len(frmt) or not (frmt[i] >= ch('0') and frmt[i] <= ch('9')):
-                        break
-                num = j
-                if j > high(args) + 1:
-                    raiseAssert(string("invalid format string: ") + frmt)
-                else:
-                    result.add(args[j - 1])
-            elif frmt[i] == ch('{'):
-                i += 1
-                with var:
-                    j = 0
-                while i < len(frmt) and frmt[i] >= ch('0') and frmt[i] <= ch('9'):
-                    j = j * 10 + ord(frmt[i]) - ord(ch('0'))
+                case _ if frmt[i] == ch('#'):
                     i += 1
-                num = j
-                if i < len(frmt) and frmt[i] == ch('}'):
+                    result.add(args[num])
+                    num += 1
+                case _ if frmt[i] in inrange(ch('0'), ch('9')):
+                    with var:
+                        j = 0
+                    while True:
+                        j = j * 10 + ord(frmt[i]) - ord(ch('0'))
+                        i += 1
+                        if i >= frmt.len or frmt[i] not in Tset[char](inrange(ch('0'), ch('9'))):
+                            break
+                    num = j
+                    if j > high(args) + 1:
+                        raiseAssert(string("invalid format string: ") + frmt)
+                    else:
+                        result.add(args[j - 1])
+                case _ if frmt[i] == ch('{'):
                     i += 1
-                else:
-                    raiseAssert(string("invalid format string: ") + frmt)
+                    with var:
+                        j = 0
+                    while frmt[i] in Tset[char](inrange(ch('0'), ch('9'))):
+                        j = j * 10 + ord(frmt[i]) - ord(ch('0'))
+                        i += 1
+                    num = j
+                    if frmt[i] == ch('}'):
+                        i += 1
+                    else:
+                        raiseAssert(string("invalid format string: ") + frmt)
 
-                if j > high(args) + 1:
+                    if j > high(args) + 1:
+                        raiseAssert(string("invalid format string: ") + frmt)
+                    else:
+                        result.add(args[j - 1])
+                case _ if frmt[i] == ch('n'):
+                    result.add(string("\n"))
+                    i += 1
+                case _ if frmt[i] == ch('N'):
+                    result.add(string("\n"))
+                    i += 1
+                case _:
                     raiseAssert(string("invalid format string: ") + frmt)
-                else:
-                    result.add(args[j - 1])
-            elif frmt[i] == ch('n'):
-                result.add(string("\n"))
-                i += 1
-            elif frmt[i] == ch('N'):
-                result.add(string("\n"))
-                i += 1
-            else:
-                raiseAssert(string("invalid format string: ") + frmt)
         else:
             result.add(frmt[i])
             i += 1
@@ -194,7 +192,7 @@ def equalsFile(r: Rope, filename: AbsoluteFile) -> bool:
 
 if comptime(__name__ == "__main__"):
     from nimic.std.os import removeFile, fileExists
-    from nimic.std.strutils import repeat
+    from nimic.std.strutils import *
 
     # 1. newRopeAppender, freeze, resetRopeCache
     with var:

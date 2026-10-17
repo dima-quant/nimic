@@ -139,6 +139,34 @@ class TCallingConvention(NIntEnum):
     ccMember = auto()
 
 
+class TSymKind(NIntEnum):
+    skUnknown = 0
+    skConditional = auto()
+    skDynLib = auto()
+    skParam = auto()
+    skGenericParam = auto()
+    skTemp = auto()
+    skModule = auto()
+    skType = auto()
+    skVar = auto()
+    skLet = auto()
+    skConst = auto()
+    skResult = auto()
+    skProc = auto()
+    skFunc = auto()
+    skMethod = auto()
+    skIterator = auto()
+    skConverter = auto()
+    skMacro = auto()
+    skTemplate = auto()
+    skField = auto()
+    skEnumField = auto()
+    skForVar = auto()
+    skLabel = auto()
+    skStub = auto()
+    skPackage = auto()
+
+
 class TSymFlag(NIntEnum):
     sfUsed = 0
     sfExported = auto()
@@ -276,6 +304,7 @@ class PNode(Object):
     intVal: BiggestInt
     strVal: string
     sym: PSym
+    typ: PType
     sons: seq[PNode]
 
     # ast.nim accessors
@@ -285,6 +314,13 @@ class PNode(Object):
 
     def __getitem__(self, i: nint) -> PNode:
         return self.sons[i]
+
+    def __setitem__(self, i: nint, son: PNode) -> None:
+        self.sons[i] = son
+
+    def add(self, son: PNode) -> None:
+        assert son is not None
+        self.sons.add(son)
 
 
 @ref
@@ -298,6 +334,7 @@ class PType(Object):
     sym: PSym
     sizeImpl: BiggestInt
     flags: Tset[TTypeFlag]
+    owner: PSym
 
     # ast.nim accessors
     @property
@@ -346,9 +383,177 @@ class TLoc(Object):
 @ref
 class PSym(Object):
     id: nint
+    kind: TSymKind
+    name: string  # stand-in for the PIdent
     typ: PType
     flags: Tset[TSymFlag]
     loc: TLoc
+    owner: PSym
+    info: TLineInfo
+    ast: PNode
+    position: nint
+
+
+@ref
+class IdGenerator(Object):
+    module: int32
+    symId: int32
+    typeId: int32
+    sealed: bool
+
+
+with const:
+    paramsPos = 3
+    bodyPos = 6  # position of body; use rodread.getBody() instead!
+    resultPos = 7
+    declarativeDefs = Tset[TNodeKind]({TNodeKind.nkProcDef, TNodeKind.nkFuncDef, TNodeKind.nkMethodDef,
+                                       TNodeKind.nkIteratorDef, TNodeKind.nkConverterDef})
+    routineDefs = declarativeDefs + Tset[TNodeKind]({TNodeKind.nkMacroDef, TNodeKind.nkTemplateDef})
+    nkEffectList = TNodeKind.nkArgList
+
+
+# --- ast.nim (subset: the procs the include files use; simplified for the stand-in fields) ---
+def nextSymId(x: IdGenerator) -> nint:
+    # simplified: a number instead of an ItemId
+    x.symId += 1
+    return nint(x.symId)
+
+
+def nextTypeId(x: IdGenerator) -> nint:
+    # simplified: a number instead of an ItemId
+    x.typeId += 1
+    return nint(x.typeId)
+
+
+@dispatch
+def setOwner(s: PSym, owner: PSym) -> None:
+    """{.inline.}"""
+    s.owner = owner
+
+
+@dispatch
+def setOwner(s: PType, owner: PSym) -> None:
+    """{.inline.}"""
+    s.owner = owner
+
+
+def newSym(symKind: TSymKind, name: string, idgen: IdGenerator, owner: PSym, info: TLineInfo) -> PSym:
+    # simplified: no options, offsets or disambiguation
+    result = PSym(name=name, kind=symKind, info=info, id=nextSymId(idgen), owner=owner)
+    return result
+
+
+def copySym(s: PSym, idgen: IdGenerator) -> PSym:
+    # simplified: the fields of the stand-in PSym
+    result = newSym(s.kind, s.name, idgen, s.owner, s.info)
+    result.typ = s.typ
+    result.flags = s.flags
+    result.position = s.position
+    result.loc = s.loc
+    return result
+
+
+def newType(kind: TTypeKind, idgen: IdGenerator, owner: PSym) -> PType:
+    # simplified: no size, alignment or unique id
+    result = PType(kind=kind, owner=owner, id=nextTypeId(idgen))
+    return result
+
+
+def _assignType(dest: PType, src: PType) -> None:
+    # simplified: the fields of the stand-in PType
+    dest.kind = src.kind
+    dest.flags = src.flags
+    dest.callConvImpl = src.callConvImpl
+    dest.n = src.n
+    dest.sizeImpl = src.sizeImpl
+    dest.sonsImpl = src.sonsImpl
+
+
+def copyType(t: PType, idgen: IdGenerator, owner: PSym) -> PType:
+    result = newType(t.kind, idgen, owner)
+    _assignType(result, t)
+    result.sym = t.sym  # backend-info should not be copied
+    return result
+
+
+def rawAddSon(father: PType, son: PType) -> None:
+    # simplified: no propagation of type flags to the owner
+    if father.kind != TTypeKind.tyProc or father.sonsImpl.len == 0:
+        father.sonsImpl.add(son)
+
+
+def newNode(kind: TNodeKind) -> PNode:
+    ## new node with unknown line info, no type, and no children
+    return PNode(kind=kind, info=unknownLineInfo)
+
+
+def newNodeI(kind: TNodeKind, info: TLineInfo) -> PNode:
+    ## new node with line info, no type, and no children
+    return PNode(kind=kind, info=info)
+
+
+@dispatch
+def newSymNode(sym: PSym, info: TLineInfo) -> PNode:
+    result = newNode(TNodeKind.nkSym)
+    result.sym = sym
+    result.typ = sym.typ
+    result.info = info
+    return result
+
+
+@dispatch
+def newSymNode(sym: PSym) -> PNode:
+    result = newNode(TNodeKind.nkSym)
+    result.sym = sym
+    result.typ = sym.typ
+    result.info = sym.info
+    return result
+
+
+def copyNode(src: PNode) -> PNode:
+    # does not copy its sons!
+    # simplified: no flags, comments or floats
+    if src is None:
+        return None
+    result = newNode(src.kind)
+    result.info = src.info
+    result.typ = src.typ
+    match src.kind:
+        case _ if src.kind in inrange(TNodeKind.nkCharLit, TNodeKind.nkUInt64Lit):
+            result.intVal = src.intVal
+        case TNodeKind.nkSym:
+            result.sym = src.sym
+        case _ if src.kind in inrange(TNodeKind.nkStrLit, TNodeKind.nkTripleStrLit):
+            result.strVal = src.strVal
+        case _:
+            discard
+    return result
+
+
+@dispatch
+def shallowCopy(src: PNode) -> PNode:
+    # does not copy its sons, but provides space for them:
+    result = copyNode(src)
+    result.sons = newSeq[PNode](src.len)
+    return result
+
+
+def copyTree(src: PNode) -> PNode:
+    # copy a whole syntax tree; performs deep copying
+    if src is None:
+        return None
+    result = copyNode(src)
+    result.sons = newSeq[PNode](src.len)
+    for i in range(src.len):
+        result[i] = copyTree(src[i])
+    return result
+
+
+@dispatch
+def addParam(procType: PType, param: PSym) -> None:
+    param.position = procType.n.len - 1
+    procType.n.add(newSymNode(param))
+    rawAddSon(procType, param.typ)
 
 
 def skipModifier(n: PType) -> PType:

@@ -1,6 +1,6 @@
 # Nim Compiler → Nimic: Conversion Queue
 
-> **Generated** by `python -m ncompiler.tools.dependencies` | **Total modules**: 163 | **Converted**: 28 | **Needs rework**: 3 | **Remaining**: 135
+> **Generated** by `python -m ncompiler.tools.dependencies` | **Total modules**: 163 | **Converted**: 29 | **Needs rework**: 2 | **Remaining**: 134
 
 ## Conversion Rules
 
@@ -16,7 +16,9 @@ Pending modules whose dependencies are all converted, smallest first:
 
 | Module | Tier | Size | Included from |
 |---|---|---|---|
+| `debugutils` | 4 | 2,192 bytes |  |
 | `nimlexbase` | 2 | 5,417 bytes |  |
+| `condsyms` | 4 | 6,460 bytes |  |
 | `int128` | 0 | 16,767 bytes |  |
 
 ## Needs Rework
@@ -26,8 +28,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | Module | Tier | Status | Missing dependencies |
 |---|---|---|---|
 | `aliasanalysis` | 8 | ⚠️ Needs reconversion | ast |
-| `msgs` | 4 | ⚠️ Needs re-review | options |
-| `options` | 3 | ⚠️ Needs re-review |  |
+| `msgs` | 4 | ⚠️ Needs re-review |  |
 
 ## Progress by Tier
 
@@ -36,7 +37,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | 0 | 14 | 13 | 1 |
 | 1 | 4 | 4 | 0 |
 | 2 | 3 | 1 | 2 |
-| 3 | 1 | 0 | 1 |
+| 3 | 1 | 1 | 0 |
 | 4 | 4 | 0 | 4 |
 | 5 | 6 | 0 | 6 |
 | 6 | 1 | 0 | 1 |
@@ -108,11 +109,11 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `lineinfos` | 16,909 bytes | pathutils, ropes |  | ✅ Converted + Reviewed |
 | `nimlexbase` | 5,417 bytes | llstream |  | 🔲 Pending |
 
-### Tier 3 (0/1 converted)
+### Tier 3 (1/1 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
-| `options` | 42,863 bytes | lineinfos, nimpaths, packagehandling, pathutils, platform +1 more |  | ⚠️ Needs re-review |
+| `options` | 42,863 bytes | lineinfos, nimpaths, packagehandling, pathutils, platform +1 more |  | ✅ Converted |
 
 ### Tier 4 (0/4 converted)
 

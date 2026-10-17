@@ -14,7 +14,7 @@ from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std.strutils import *
 
-from .pathutils import AbsoluteFile
+from .pathutils import *
 
 
 if comptime(defined("nimPreviewSlimSystem")):
@@ -25,7 +25,7 @@ with const:
     hasRstdin = (defined("nimUseLinenoise") or defined("useLinenoise") or defined("useGnuReadline")) and not defined("windows")
 
 if comptime(hasRstdin):
-    from nimic.std.rdstdin import readLineFromStdin
+    from nimic.std.rdstdin import *
 
 @calltype
 def TLLRepl(s: PLLStream, buf: pointer, bufLen: nint) -> nint: pass
@@ -133,14 +133,12 @@ def containsObjectOf(x: string) -> bool:
     with const:
         sep = ch(' ')
     with var:
-        idx = x.rfind(sep)
+        idx = rfind(x, sep)
         result = False
     if idx == -1: return result
 
     @template
     def eatWord(word: untyped):
-        """{.dirty.}"""
-        nonlocal idx, result
         while x[idx] == sep: idx -= 1
         result = endsWithIdent(x, word, idx)
         if not result: return
@@ -238,26 +236,23 @@ def llStreamRead(s: PLLStream, buf: pointer, bufLen: nint) -> nint:
 
 def llStreamReadLine(s: PLLStream, line: mut@string) -> bool:
     setLen(line, 0)
-    with var:
-        result = False
-        c: char
     match s.kind:
         case TLLStreamKind.llsNone:
             result = True
         case TLLStreamKind.llsString:
-            while s.rd < len(s.s):
-                c = s.s[s.rd]
-                if c == ch('\r'):
-                    s.rd += 1
-                    if s.rd < len(s.s) and s.s[s.rd] == ch('\n'): s.rd += 1
-                    break
-                elif c == ch('\n'):
-                    s.rd += 1
-                    break
-                else:
-                    line.add(c)
-                    s.rd += 1
-            result = len(line) > 0 or s.rd < len(s.s)
+            while s.rd < s.s.len:
+                match s.s[s.rd]:
+                    case _ if s.s[s.rd] == ch('\r'):
+                        s.rd += 1
+                        if s.s[s.rd] == ch('\n'): s.rd += 1
+                        break
+                    case _ if s.s[s.rd] == ch('\n'):
+                        s.rd += 1
+                        break
+                    case _:
+                        line.add(s.s[s.rd])
+                        s.rd += 1
+            result = line.len > 0 or s.rd < s.s.len
         case TLLStreamKind.llsFile:
             result = readLine(s.f, line)
         case TLLStreamKind.llsStdIn:
@@ -335,6 +330,14 @@ def llStreamReadAll(s: PLLStream) -> string:
 if comptime(__name__ == "__main__"):
     from nimic.std.os import removeFile, fileExists
 
+    # 0. containsObjectOf: a line ending in `object of` (the template eatWord walks back over words)
+    assert containsObjectOf(string("T = object of ")) == True
+    assert containsObjectOf(string("T = object  of  ")) == True
+    assert containsObjectOf(string("T = obj of ")) == False
+    assert containsObjectOf(string("T = object in ")) == False
+    assert containsObjectOf(string("x")) == False
+    assert endsWithLineContinuationToken(string("type T = object of ")) == True
+
     # 1. Null stream
     with var:
         s = llStreamOpen()
@@ -360,6 +363,11 @@ if comptime(__name__ == "__main__"):
     assert llStreamReadLine(s2, line) == True
     assert line == string("third")
     assert llStreamReadLine(s2, line) == False
+    with var:
+        s2r = llStreamOpen(string("a\rb\n"))
+    assert llStreamReadLine(s2r, line) == True and line == string("a")
+    assert llStreamReadLine(s2r, line) == True and line == string("b")
+    assert llStreamReadLine(s2r, line) == False
 
     # 3. String stream writing
     with var:

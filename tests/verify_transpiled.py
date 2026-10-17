@@ -182,7 +182,8 @@ def _nim_conditions(text: str) -> list[str]:
     out = []
     for line in text.splitlines():
         line = line.split("#", 1)[0]
-        m = re.match(r"^\s*when\s+(.+?):\s*(\S.*)?$", line) or re.search(r"=\s*when\s+(.+?):", line)
+        # a `when` statement, or a `when` expression (after `=`, or as a call argument after `(` / `,`)
+        m = re.match(r"^\s*when\s+(.+?):\s*(\S.*)?$", line) or re.search(r"[=(,]\s*when\s+(.+?):", line)
         if m and "isMainModule" not in m.group(1):
             cond = m.group(1)
             # `x is T` is spelled isinstance(x, T) in nimic

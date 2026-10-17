@@ -351,8 +351,8 @@ with const:
   nonPragmaWordsLow = TSpecialWord.wAuto
   nonPragmaWordsHigh = TSpecialWord.wOneWay
 
-from nimic.std.enumutils import genEnumCaseStmt
-from nimic.std.strutils import normalize
+importFrom("nimic.std.enumutils", "genEnumCaseStmt")
+importFrom("nimic.std.strutils", "normalize")
 
 def findStr[T: enum](a: static[T], b: static[T], s: string, default: T) -> T:
   return genEnumCaseStmt(T, s, default, ord(a), ord(b), normalize)

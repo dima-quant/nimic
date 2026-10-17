@@ -324,6 +324,7 @@ def finishProcParamBuilder(builder: mut@Builder, params: ProcParamBuilder) -> No
         builder.add(string("void)"))
 
 
+@dispatch
 def addParam(builder: mut@Builder, params: mut@ProcParamBuilder, name: string, typ: Snippet) -> None:
     if params.needsComma:
         builder.add(string(", "))

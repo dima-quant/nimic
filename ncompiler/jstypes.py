@@ -4,8 +4,8 @@
 from __future__ import annotations
 from nimic.ntypes import *
 from .nodekinds import *
-from .ropes import Rope, FormatStr, rope, prepend, addf
-from nimic.std.intsets import IntSet, containsOrIncl
+from .ropes import *
+from nimic.std.intsets import *
 
 #
 #

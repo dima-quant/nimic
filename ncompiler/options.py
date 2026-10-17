@@ -1,30 +1,32 @@
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.os import getEnv, walkDir, pcFile, lastPathPart
-from nimic.std.terminal import isatty
-from nimic.std.syncio import stderr
-from nimic.std.times import utc, fromUnix, local, getTime, format, DateTime
-from nimic.std.strutils import cmpIgnoreStyle, find, parseInt, normalize
-from nimic.std.strtabs import StringTableRef, newStringTable
-from nimic.std.sets import HashSet, initHashSet
-from nimic.std.private.globs import nativeToUnixPath
 from .lineinfos import *
 from .platform import *
 from .prefixmatches import *
 from .pathutils import *
 from .nimpaths import *
 
+from nimic.std.tables import *
+from nimic.std.os import *
+from nimic.std.strutils import *
+from nimic.std.strtabs import *
+from nimic.std.sets import *
+importFrom("nimic.std.terminal", "isatty")
+importFrom("nimic.std.times", "utc", "fromUnix", "local", "getTime", "format", "DateTime")
+importFrom("nimic.std.private.globs", "nativeToUnixPath")
+
 if comptime(defined("nimPreviewSlimSystem")):
     from nimic.std.syncio import *
     from nimic.std.assertions import *
 
 with const:
-    hasTinyCBackend = False # defined(tinyc)
+    hasTinyCBackend = defined("tinyc")
     useEffectSystem = True
     useWriteTracking = False
-    hasFFI = False # defined(nimHasLibFFI)
+    hasFFI = defined("nimHasLibFFI")
     copyrightYear = string("2026")
-    nimEnableCovariance = False
+
+    nimEnableCovariance = defined("nimEnableCovariance")
 
 
 class TOption(NIntEnum):
@@ -352,7 +354,9 @@ class ProfileInfo(Object):
     count: nint
 
 @ref
-class ProfileData(Object): pass # TableRef[TLineInfo, ProfileInfo]
+@ref
+class ProfileData(Object):
+    data: TableRef[TLineInfo, ProfileInfo]
 
 class StdOrrKind(NIntEnum):
     stdOrrStdout = 0
@@ -496,25 +500,32 @@ class ConfigRef(Object):
     currentConfigDir: string
     clientProcessId: nint
 
-def assignIfDefault(result: mut @ nint, val: nint, def_: nint = 0) -> None:
+# TODO: requires nimic feature generic default parameters (`def = default(T)`): proc assignIfDefault*[T]
+def assignIfDefault(result: mut@nint, val: nint, def_: nint = nint(0)) -> None:
+    ## if `result` was already assigned to a value (that wasn't `def`), this is a noop.
     if result == def_:
-        result = val
+        result <<= val
 
-def setErrorMaxHighMaybe(conf: ConfigRef) -> None:
-    if conf.errorMax == 0: # default
-        conf.errorMax = high(nint)
 
+@template
+def setErrorMaxHighMaybe(conf: ConfigRef):
+    ## do not stop after first error (but honor --errorMax if provided)
+    assignIfDefault(conf.errorMax, high(nint))
+
+@template_expand
 def setNoteDefaults(conf: ConfigRef, note: TNoteKind, enabled: bool = True) -> None:
+    @template
+    def fun(op: untyped):
+        conf.notes.op(note)
+        conf.mainPackageNotes.op(note)
+        conf.foreignPackageNotes.op(note)
     if enabled:
-        conf.notes.incl(note)
-        conf.mainPackageNotes.incl(note)
-        conf.foreignPackageNotes.incl(note)
+        fun(incl)
     else:
-        conf.notes.excl(note)
-        conf.mainPackageNotes.excl(note)
-        conf.foreignPackageNotes.excl(note)
+        fun(excl)
 
 def setNote(conf: ConfigRef, note: TNoteKind, enabled: bool = True) -> None:
+    # see also `prepareConfigNotes` which sets notes
     if note not in conf.cmdlineNotes:
         if enabled:
             conf.notes.incl(note)
@@ -522,14 +533,19 @@ def setNote(conf: ConfigRef, note: TNoteKind, enabled: bool = True) -> None:
             conf.notes.excl(note)
 
 def hasHint(conf: ConfigRef, note: TNoteKind) -> bool:
+    # ternary states instead of binary states would simplify logic
     if TOption.optHints not in conf.options:
         return False
     elif note in {TMsgKind.hintConf, TMsgKind.hintProcessing}:
+        # could add here other special notes like hintSource
+        # these notes apply globally.
         return note in conf.mainPackageNotes
     else:
         return note in conf.notes
 
+
 def hasWarn(conf: ConfigRef, note: TNoteKind) -> bool:
+    """{.inline.}"""
     return TOption.optWarns in conf.options and note in conf.notes
 
 def hcrOn(conf: ConfigRef) -> bool:
@@ -557,27 +573,43 @@ with const:
     DefaultGlobalOptions = Tset[TGlobalOption]({TGlobalOption.optThreadAnalysis, TGlobalOption.optExcessiveStackTrace,
         TGlobalOption.optJsBigInt64, TGlobalOption.optItaniumMangle})
 
-def getSrcTimestamp() -> DateTime:
+def _getSrcTimestamp() -> DateTime:
     try:
-        return utc(fromUnix(parseInt(getEnv(string("SOURCE_DATE_EPOCH"), string("not a number")))))
+        result = utc(fromUnix(parseInt(getEnv(string("SOURCE_DATE_EPOCH"),
+                                              string("not a number")))))
     except ValueError:
-        return utc(getTime())
+        # Environment variable malformed.
+        # https://reproducible-builds.org/specs/source-date-epoch/: "If the
+        # value is malformed, the build process SHOULD exit with a non-zero
+        # error code", which this doesn't do. This uses local time, because
+        # that maintains compatibility with existing usage.
+        result = utc(getTime())
+    return result
 
 def getDateStr() -> string:
-    return format(getSrcTimestamp(), string("yyyy-MM-dd"))
+    return format(_getSrcTimestamp(), string("yyyy-MM-dd"))
 
 def getClockStr() -> string:
-    return format(getSrcTimestamp(), string("HH:mm:ss"))
+    return format(_getSrcTimestamp(), string("HH:mm:ss"))
 
-def newPackageCache() -> StringTableRef:
-    return newStringTable()
+@template
+def newPackageCache() -> untyped:
+    return newStringTable(StringTableMode.modeCaseInsensitive if comptime(FileSystemCaseSensitive)
+                          else StringTableMode.modeCaseSensitive)
 
-def newProfileData() -> ProfileData:
-    return ProfileData() # mock
+
+def _newProfileData() -> ProfileData:
+    return ProfileData(data=newTable[TLineInfo, ProfileInfo]())
+
 
 with const:
     foreignPackageNotesDefault = Tset[TNoteKind]({
         TMsgKind.hintProcessing, TMsgKind.warnUnknownMagic, TMsgKind.hintQuitCalled, TMsgKind.hintExecuting, TMsgKind.hintUser, TMsgKind.warnUser})
+
+
+def isDefined(conf: ConfigRef, symbol: string) -> bool:
+    pass
+
 
 if comptime(defined("nimDebugUtils")):
     # this allows inserting debugging utilties in all modules that import `options`
@@ -586,7 +618,8 @@ if comptime(defined("nimDebugUtils")):
     with export:
         debugutils
 
-def initConfigRefCommon(conf: ConfigRef) -> None:
+
+def _initConfigRefCommon(conf: ConfigRef) -> None:
     conf.selectedGC = TGCMode.gcUnselected
     conf.verbosity = 1
     conf.hintProcessingDots = True
@@ -596,267 +629,315 @@ def initConfigRefCommon(conf: ConfigRef) -> None:
     conf.foreignPackageNotes = foreignPackageNotesDefault.copy()
     conf.notes = NotesVerbosity[1].copy()
     conf.mainPackageNotes = NotesVerbosity[1].copy()
-    conf.cmd = Command.cmdNone
-    conf.unitSep = string("")
 
 
 def newConfigRef() -> ConfigRef:
-    result = ConfigRef()
-    result.cCompiler = TSystemCC.ccGcc
-    result.macrosToExpand = newStringTable()
-    result.arcToExpand = newStringTable()
-    result.m = initMsgConfig()
-    result.cppDefines = initHashSet[string]()
-    result.headerFile = string("")
-    result.features = Tset[Feature]({})
-    result.legacyFeatures = Tset[LegacyFeature]({})
-    result.configVars = newStringTable()
-    result.symbols = newStringTable()
-    result.packageCache = newPackageCache()
-    result.searchPaths = seq[AbsoluteDir]()
-    result.lazyPaths = seq[AbsoluteDir]()
-    result.outFile = RelativeFile(string(""))
-    result.outDir = AbsoluteDir(string(""))
-    result.prefixDir = AbsoluteDir(string(""))
-    result.libpath = AbsoluteDir(string(""))
-    result.nimcacheDir = AbsoluteDir(string(""))
-    result.dllOverrides = newStringTable()
-    result.moduleOverrides = newStringTable()
-    result.cfileSpecificOptions = newStringTable()
-    result.projectName = string("")
-    result.projectPath = AbsoluteDir(string(""))
-    result.projectFull = AbsoluteFile(string(""))
-    result.projectIsStdin = False
-    result.stdinFile = AbsoluteFile(string("stdinfile"))
-    result.projectMainIdx = FileIndex(0)
-    result.cmd = Command.cmdNone
-    result.cmdInput = string("")
-    result.ideCmd = IdeCmd.ideNone
-    result.errorCounter = 0
-    result.warnCounter = 0
-    result.hintCounter = 0
-    result.errorMax = 0
-    result.exitcode = 0
-    result.lastMsgWasDot = Tset[StdOrrKind]()
-    result.unitSep = string("")
-    result.command = string("")
-    result.commandArgs = seq[string]()
-    result.commandLine = string("")
-    result.implicitImports = seq[string]()
-    result.implicitIncludes = seq[string]()
-    result.docSeeSrcUrl = string("")
-    result.cIncludes = seq[AbsoluteDir]()
-    result.cLibs = seq[AbsoluteDir]()
-    result.cLinkedLibs = seq[string]()
-    result.backend = TBackend.backendInvalid
-    result.externalToLink = seq[string]()
-    result.linkOptionsCmd = string("")
-    result.compileOptionsCmd = seq[string]()
-    result.linkOptions = string("")
-    result.compileOptions = string("")
-    result.cCompilerPath = string("")
-    result.toCompile = CfileList()
-    result.arguments = string("")
-    result.suggestMaxResults = 10_000
-    result.maxLoopIterationsVM = 10_000_000
-    result.maxCallDepthVM = 2_000
-    result.vmProfileData = newProfileData()
-    result.spellSuggestMax = spellSuggestSecretSauce
-    result.currentConfigDir = string("")
-
-    initConfigRefCommon(result)
+    result = ConfigRef(
+        cCompiler=TSystemCC.ccGcc,
+        macrosToExpand=newStringTable(StringTableMode.modeStyleInsensitive),
+        arcToExpand=newStringTable(StringTableMode.modeStyleInsensitive),
+        m=initMsgConfig(),
+        cppDefines=initHashSet[string](),
+        headerFile=string(""), features=Tset[Feature](), legacyFeatures=Tset[LegacyFeature](),
+        configVars=newStringTable(StringTableMode.modeStyleInsensitive),
+        symbols=newStringTable(StringTableMode.modeStyleInsensitive),
+        packageCache=newPackageCache(),
+        searchPaths=seq[AbsoluteDir](),
+        lazyPaths=seq[AbsoluteDir](),
+        outFile=RelativeFile(string("")),
+        outDir=AbsoluteDir(string("")),
+        prefixDir=AbsoluteDir(string("")),
+        libpath=AbsoluteDir(string("")), nimcacheDir=AbsoluteDir(string("")),
+        dllOverrides=newStringTable(StringTableMode.modeCaseInsensitive),
+        moduleOverrides=newStringTable(StringTableMode.modeStyleInsensitive),
+        cfileSpecificOptions=newStringTable(StringTableMode.modeCaseSensitive),
+        projectName=string(""),  # holds a name like 'nim'
+        projectPath=AbsoluteDir(string("")),  # holds a path like /home/alice/projects/nim/compiler/
+        projectFull=AbsoluteFile(string("")),  # projectPath/projectName
+        projectIsStdin=False,  # whether we're compiling from stdin
+        stdinFile=AbsoluteFile(string("stdinfile")),
+        projectMainIdx=FileIndex(int32(0)),  # the canonical path id of the main module
+        command=string(""),  # the main command (e.g. cc, check, scan, etc)
+        commandArgs=seq[string](),  # any arguments after the main command
+        commandLine=string(""),
+        implicitImports=seq[string](),  # modules that are to be implicitly imported
+        implicitIncludes=seq[string](),  # modules that are to be implicitly included
+        docSeeSrcUrl=string(""),
+        cIncludes=seq[AbsoluteDir](),  # directories to search for included files
+        cLibs=seq[AbsoluteDir](),  # directories to search for lib files
+        cLinkedLibs=seq[string](),  # libraries to link
+        backend=TBackend.backendInvalid,
+        externalToLink=seq[string](),
+        linkOptionsCmd=string(""),
+        compileOptionsCmd=seq[string](),
+        linkOptions=string(""),
+        compileOptions=string(""),
+        cCompilerPath=string(""),
+        toCompile=CfileList(),
+        arguments=string(""),
+        suggestMaxResults=10_000,
+        maxLoopIterationsVM=10_000_000,
+        maxCallDepthVM=2_000,
+        vmProfileData=_newProfileData(),
+        spellSuggestMax=spellSuggestSecretSauce,
+        currentConfigDir=string("")
+    )
+    _initConfigRefCommon(result)
     setTargetFromSystem(result.target)
     # enable colors by default on terminals
     if isatty(stderr):
-        result.globalOptions.incl(TGlobalOption.optUseColors)
+        incl(result.globalOptions, TGlobalOption.optUseColors)
     if comptime(defined("nimDebugUtils")):
         onNewConfigRef(result)
     return result
 
+
 def newPartialConfigRef() -> ConfigRef:
-    """create a new ConfigRef that is only good enough for error reporting."""
+    ## create a new ConfigRef that is only good enough for error reporting.
     if comptime(defined("nimDebugUtils")):
         result = getConfigRef()
     else:
         result = ConfigRef()
-        result.m = initMsgConfig()
-        initConfigRefCommon(result)
+        _initConfigRefCommon(result)
     return result
+
 
 def cppDefine(c: ConfigRef, define: string) -> None:
     c.cppDefines.incl(define)
 
 def isDefined(conf: ConfigRef, symbol: string) -> bool:
     if conf.symbols.hasKey(symbol):
-        return True
+        result = True
     elif cmpIgnoreStyle(symbol, CPU[conf.target.targetCPU].name) == 0:
-        return True
+        result = True
     elif cmpIgnoreStyle(symbol, OS[conf.target.targetOS].name) == 0:
-        return True
+        result = True
     else:
-        with let:
-            norm = normalize(symbol)
-        if norm == "x86": return conf.target.targetCPU == TSystemCPU.cpuI386
-        elif norm == "itanium": return conf.target.targetCPU == TSystemCPU.cpuIa64
-        elif norm == "x8664": return conf.target.targetCPU == TSystemCPU.cpuAmd64
-        elif norm in ("posix", "unix"):
-            return conf.target.targetOS in {TSystemOS.osLinux, TSystemOS.osMorphos, TSystemOS.osSkyos, TSystemOS.osIrix, TSystemOS.osPalmos,
-                                TSystemOS.osQnx, TSystemOS.osAtari, TSystemOS.osAix,
-                                TSystemOS.osHaiku, TSystemOS.osVxWorks, TSystemOS.osSolaris, TSystemOS.osNetbsd,
-                                TSystemOS.osFreebsd, TSystemOS.osOpenbsd, TSystemOS.osDragonfly, TSystemOS.osMacosx, TSystemOS.osIos,
-                                TSystemOS.osAndroid, TSystemOS.osNintendoSwitch, TSystemOS.osFreeRTOS, TSystemOS.osCrossos, TSystemOS.osZephyr, TSystemOS.osNuttX}
-        elif norm == "linux":
-            return conf.target.targetOS in {TSystemOS.osLinux, TSystemOS.osAndroid}
-        elif norm == "bsd":
-            return conf.target.targetOS in {TSystemOS.osNetbsd, TSystemOS.osFreebsd, TSystemOS.osOpenbsd, TSystemOS.osDragonfly, TSystemOS.osCrossos}
-        elif norm == "freebsd":
-            return conf.target.targetOS in {TSystemOS.osFreebsd, TSystemOS.osCrossos}
-        elif norm == "emulatedthreadvars":
-            return TInfoOSProp.ospLacksThreadVars in OS[conf.target.targetOS].props
-        elif norm == "msdos": return conf.target.targetOS == TSystemOS.osDos
-        elif norm in ("mswindows", "win32"): return conf.target.targetOS == TSystemOS.osWindows
-        elif norm == "macintosh":
-            return conf.target.targetOS in {TSystemOS.osMacos, TSystemOS.osMacosx, TSystemOS.osIos}
-        elif norm in ("osx", "macosx"):
-            return conf.target.targetOS in {TSystemOS.osMacosx, TSystemOS.osIos}
-        elif norm == "sunos": return conf.target.targetOS == TSystemOS.osSolaris
-        elif norm == "nintendoswitch":
-            return conf.target.targetOS == TSystemOS.osNintendoSwitch
-        elif norm in ("freertos", "lwip"):
-            return conf.target.targetOS == TSystemOS.osFreeRTOS
-        elif norm == "zephyr":
-            return conf.target.targetOS == TSystemOS.osZephyr
-        elif norm == "nuttx":
-            return conf.target.targetOS == TSystemOS.osNuttX
-        elif norm == "littleendian": return CPU[conf.target.targetCPU].endian == Endianness.littleEndian
-        elif norm == "bigendian": return CPU[conf.target.targetCPU].endian == Endianness.bigEndian
-        elif norm == "cpu8": return CPU[conf.target.targetCPU].bit == 8
-        elif norm == "cpu16": return CPU[conf.target.targetCPU].bit == 16
-        elif norm == "cpu32": return CPU[conf.target.targetCPU].bit == 32
-        elif norm == "cpu64": return CPU[conf.target.targetCPU].bit == 64
-        elif norm == "nimrawsetjmp":
-            return conf.target.targetOS in {TSystemOS.osSolaris, TSystemOS.osNetbsd, TSystemOS.osFreebsd, TSystemOS.osOpenbsd,
-                                TSystemOS.osDragonfly, TSystemOS.osMacosx}
-        else: return False
+        match normalize(symbol):
+            case "x86": result = conf.target.targetCPU == TSystemCPU.cpuI386
+            case "itanium": result = conf.target.targetCPU == TSystemCPU.cpuIa64
+            case "x8664": result = conf.target.targetCPU == TSystemCPU.cpuAmd64
+            case "posix" | "unix":
+                result = conf.target.targetOS in {TSystemOS.osLinux, TSystemOS.osMorphos, TSystemOS.osSkyos, TSystemOS.osIrix, TSystemOS.osPalmos,
+                                    TSystemOS.osQnx, TSystemOS.osAtari, TSystemOS.osAix,
+                                    TSystemOS.osHaiku, TSystemOS.osVxWorks, TSystemOS.osSolaris, TSystemOS.osNetbsd,
+                                    TSystemOS.osFreebsd, TSystemOS.osOpenbsd, TSystemOS.osDragonfly, TSystemOS.osMacosx, TSystemOS.osIos,
+                                    TSystemOS.osAndroid, TSystemOS.osNintendoSwitch, TSystemOS.osFreeRTOS, TSystemOS.osCrossos, TSystemOS.osZephyr, TSystemOS.osNuttX}
+            case "linux":
+                result = conf.target.targetOS in {TSystemOS.osLinux, TSystemOS.osAndroid}
+            case "bsd":
+                result = conf.target.targetOS in {TSystemOS.osNetbsd, TSystemOS.osFreebsd, TSystemOS.osOpenbsd, TSystemOS.osDragonfly, TSystemOS.osCrossos}
+            case "freebsd":
+                result = conf.target.targetOS in {TSystemOS.osFreebsd, TSystemOS.osCrossos}
+            case "emulatedthreadvars":
+                result = OS[conf.target.targetOS].props.contains(TInfoOSProp.ospLacksThreadVars)
+            case "msdos": result = conf.target.targetOS == TSystemOS.osDos
+            case "mswindows" | "win32": result = conf.target.targetOS == TSystemOS.osWindows
+            case "macintosh":
+                result = conf.target.targetOS in {TSystemOS.osMacos, TSystemOS.osMacosx, TSystemOS.osIos}
+            case "osx" | "macosx":
+                result = conf.target.targetOS in {TSystemOS.osMacosx, TSystemOS.osIos}
+            case "sunos": result = conf.target.targetOS == TSystemOS.osSolaris
+            case "nintendoswitch":
+                result = conf.target.targetOS == TSystemOS.osNintendoSwitch
+            case "freertos" | "lwip":
+                result = conf.target.targetOS == TSystemOS.osFreeRTOS
+            case "zephyr":
+                result = conf.target.targetOS == TSystemOS.osZephyr
+            case "nuttx":
+                result = conf.target.targetOS == TSystemOS.osNuttX
+            case "littleendian": result = CPU[conf.target.targetCPU].endian == Endianness.littleEndian
+            case "bigendian": result = CPU[conf.target.targetCPU].endian == Endianness.bigEndian
+            case "cpu8": result = CPU[conf.target.targetCPU].bit == 8
+            case "cpu16": result = CPU[conf.target.targetCPU].bit == 16
+            case "cpu32": result = CPU[conf.target.targetCPU].bit == 32
+            case "cpu64": result = CPU[conf.target.targetCPU].bit == 64
+            case "nimrawsetjmp":
+                result = conf.target.targetOS in {TSystemOS.osSolaris, TSystemOS.osNetbsd, TSystemOS.osFreebsd, TSystemOS.osOpenbsd,
+                                    TSystemOS.osDragonfly, TSystemOS.osMacosx}
+            case _: result = False
+    return result
 
-def quitOrRaise(conf: ConfigRef, msg: string = string("")) -> None:
+@template
+def quitOrRaise(conf: ConfigRef, msg: string = string("")):
+    # xxx in future work, consider whether to also intercept `msgQuit` calls
     if isDefined(conf, string("nimDebug")):
-        raise newException(ValueError, msg)
+        raiseAssert(msg)
     else:
-        quit(msg)
+        quit(msg)  # quits with QuitFailure
+
 
 def importantComments(conf: ConfigRef) -> bool:
-    return conf.cmd in (cmdDocLike + {Command.cmdIdeTools})
+    """{.inline.}"""
+    return conf.cmd in cmdDocLike + Tset[Command]({Command.cmdIdeTools})
+
 
 def usesWriteBarrier(conf: ConfigRef) -> bool:
+    """{.inline.}"""
     return conf.selectedGC >= TGCMode.gcRefc
 
+
 def usesSso(conf: ConfigRef) -> bool:
+    """{.inline.}"""
     return conf.selectedStrings == StringsMode.stringSso
 
-def optPreserveOrigSource(conf: ConfigRef) -> bool:
+
+@template
+def compilationCachePresent(conf: ConfigRef) -> untyped:
+    return False
+    #  conf.symbolFiles in {v2Sf, writeOnlySf}
+
+
+@template
+def optPreserveOrigSource(conf: ConfigRef) -> untyped:
     return TGlobalOption.optEmbedOrigSrc in conf.globalOptions
 
+
 def mainCommandArg(conf: ConfigRef) -> string:
-    if len(conf.commandArgs) > 0:
-        return conf.commandArgs[0]
+    ## This is intended for commands like check or parse
+    ## which will work on the main project file unless
+    ## explicitly given a specific file argument
+    if conf.commandArgs.len > 0:
+        result = conf.commandArgs[0]
     else:
-        return conf.projectName
+        result = conf.projectName
+    return result
+
 
 def existsConfigVar(conf: ConfigRef, key: string) -> bool:
-    return conf.configVars.hasKey(key)
+    result = hasKey(conf.configVars, key)
+    return result
+
 
 def getConfigVar(conf: ConfigRef, key: string, default: string = string("")) -> string:
-    return conf.configVars.getOrDefault(key, default)
+    result = conf.configVars.getOrDefault(key, default)
+    return result
+
 
 def setConfigVar(conf: ConfigRef, key: string, val: string) -> None:
     conf.configVars[key] = val
 
 
 def getOutFile(conf: ConfigRef, filename: RelativeFile, ext: string) -> AbsoluteFile:
-    assert len(str(conf.outDir)) > 0
-    return conf.outDir / filename.changeFileExt(ext)
+    # explains regression https://github.com/nim-lang/Nim/issues/6583#issuecomment-625711125
+    # Yet another reason why "" should not mean ".";  `""/something` should raise
+    # instead of implying "" == "." as it's bug prone.
+    doAssert(string(conf.outDir).len > 0)
+    result = conf.outDir / changeFileExt(filename, ext)
+    return result
+
 
 def absOutFile(conf: ConfigRef) -> AbsoluteFile:
-    assert not isEmpty(conf.outDir)
-    assert not isEmpty(conf.outFile)
+    doAssert(not isEmpty(conf.outDir))
+    doAssert(not isEmpty(conf.outFile))
     result = conf.outDir / conf.outFile
     if comptime(defined("posix")):
-        if dirExists(string(result)): result <<= AbsoluteFile(string(result) + string(".out"))
+        if dirExists(string(result)):
+            string(result).add(string(".out"))
     return result
 
-
-include("packagehandling")
 
 def prepareToWriteOutput(conf: ConfigRef) -> AbsoluteFile:
+    ## Create the output directory and returns a full path to the output file
     result = absOutFile(conf)
-    createDir(string(result).parentDir()) # wait, parentDir is a function in os, not a method
+    createDir(parentDir(string(result)))
     return result
 
+
 def getPrefixDir(conf: ConfigRef) -> AbsoluteDir:
+    ## Gets the prefix dir, usually the parent directory where the binary resides.
+    ##
+    ## This is overridden by some tools (namely nimsuggest) via the ``conf.prefixDir``
+    ## field.
+    ## This should resolve to root of nim sources, whether running nim from a local
+    ##  clone or using installed nim, so that these exist: `result/doc/advopt.txt`
+    ## and `result/lib/system.nim`
     if not isEmpty(conf.prefixDir):
-        return conf.prefixDir
+        result = conf.prefixDir
     else:
         with let:
-            binParent = AbsoluteDir(splitPath(getAppDir())[0]) # head
+            binParent = AbsoluteDir(splitPath(getAppDir()).head)
         if comptime(defined("posix")):
             if binParent == AbsoluteDir(string("/usr")):
-                return AbsoluteDir(string("/usr/lib/nim"))
+                result = AbsoluteDir(string("/usr/lib/nim"))
             elif binParent == AbsoluteDir(string("/usr/local")):
-                return AbsoluteDir(string("/usr/local/lib/nim"))
+                result = AbsoluteDir(string("/usr/local/lib/nim"))
             else:
-                return binParent
+                result = binParent
         else:
-            return binParent
+            result = binParent
+    return result
+
 
 def setDefaultLibpath(conf: ConfigRef) -> None:
+    # set default value (can be overwritten):
     if isEmpty(conf.libpath):
-        with let:
+        # choose default libpath:
+        with var:
             prefix = getPrefixDir(conf)
-            realNimPath = findExe(string("nim"))
-            parentNimLibPath = parentDir(parentDir(realNimPath)) / string("lib")
         conf.libpath = prefix / RelativeDir(string("lib"))
-        if not fileExists(string(conf.libpath) / string("system.nim")) and fileExists(parentNimLibPath / string("system.nim")):
+
+        # Special rule to support other tools (nimble) which import the compiler
+        # modules and make use of them.
+        with let:
+            realNimPath = findExe(string("nim"))
+        # Find out if $nim/../../lib/system.nim exists.
+        with let:
+            parentNimLibPath = parentDir(parentDir(realNimPath)) / string("lib")
+        if not fileExists(string(conf.libpath) / string("system.nim")) and \
+                fileExists(parentNimLibPath / string("system.nim")):
             conf.libpath = AbsoluteDir(parentNimLibPath)
 
+
 def canonicalizePath(conf: ConfigRef, path: AbsoluteFile) -> AbsoluteFile:
-    return AbsoluteFile(expandFilename(string(path)))
+    result = AbsoluteFile(expandFilename(string(path)))
+    return result
+
 
 def setFromProjectName(conf: ConfigRef, projectName: string) -> None:
     try:
         conf.projectFull = canonicalizePath(conf, AbsoluteFile(projectName))
     except OSError:
         conf.projectFull = AbsoluteFile(projectName)
-
     with let:
         p = splitFile(conf.projectFull)
-        dir_val = AbsoluteDir(getCurrentDir()) if isEmpty(p[0]) else p[0]
+        dir = AbsoluteDir(getCurrentDir()) if isEmpty(p.dir) else p.dir
     try:
-        conf.projectPath = AbsoluteDir(canonicalizePath(conf, AbsoluteFile(string(dir_val))))
+        conf.projectPath = AbsoluteDir(canonicalizePath(conf, AbsoluteFile(dir)))
     except OSError:
-        conf.projectPath = dir_val
-    conf.projectName = p[1]
+        conf.projectPath = dir
+    conf.projectName = p.name
+
 
 def removeTrailingDirSep(path: string) -> string:
-    if len(path) > 0 and path[-1] == DirSep:
-        return substr(path, 0, len(path) - 2)
+    if (path.len > 0) and (path[path.len - 1] == DirSep):
+        result = substr(path, 0, path.len - 2)
     else:
-        return path
+        result = path
+    return result
+
 
 def disableNimblePath(conf: ConfigRef) -> None:
-    conf.globalOptions.incl(TGlobalOption.optNoNimblePath)
+    incl(conf.globalOptions, TGlobalOption.optNoNimblePath)
     conf.lazyPaths.setLen(0)
     conf.nimblePaths.setLen(0)
+
 
 def clearNimblePath(conf: ConfigRef) -> None:
     conf.lazyPaths.setLen(0)
     conf.nimblePaths.setLen(0)
 
-def getOsCacheDir() -> string:
+
+include("packagehandling")
+
+
+def _getOsCacheDir() -> string:
     if comptime(defined("posix")):
-        return getEnv(string("XDG_CACHE_HOME"), getHomeDir() / string(".cache")) / string("nim")
+        result = getEnv(string("XDG_CACHE_HOME"), getHomeDir() / string(".cache")) / string("nim")
     else:
-        return getHomeDir() / string(genSubDir) # genSubDir is from nimpaths
+        result = getHomeDir() / string(genSubDir)
+    return result
+
 
 def getNimcacheDir(conf: ConfigRef) -> AbsoluteDir:
     def nimcacheSuffix(conf: ConfigRef) -> string:
@@ -867,46 +948,51 @@ def getNimcacheDir(conf: ConfigRef) -> AbsoluteDir:
         else:
             return string("_d")
 
-    if not isEmpty(conf.nimcacheDir):
-        return conf.nimcacheDir
-    elif conf.backend == TBackend.backendJs:
-        if isEmpty(conf.outDir):
-            return conf.projectPath / RelativeDir(string(genSubDir))
-        else:
-            return conf.outDir / RelativeDir(string(genSubDir))
-    else:
-        return AbsoluteDir(getOsCacheDir() / splitFile(AbsoluteFile(conf.projectName))[1] + nimcacheSuffix(conf))
+    # XXX projectName should always be without a file extension!
+    result = (conf.nimcacheDir if not isEmpty(conf.nimcacheDir)
+              else (conf.projectPath / genSubDir if isEmpty(conf.outDir) else conf.outDir / genSubDir)
+              if conf.backend == TBackend.backendJs
+              else AbsoluteDir(_getOsCacheDir() / splitFile(conf.projectName).name +
+                               nimcacheSuffix(conf)))
+    return result
+
 
 def pathSubs(conf: ConfigRef, p: string, config: string) -> string:
     with let:
         home = removeTrailingDirSep(getHomeDir())
-    with var:
-        res = p.replace("$nim", string(getPrefixDir(conf)))
-    res = res.replace("$lib", string(conf.libpath))
-    res = res.replace("$home", home)
-    res = res.replace("$config", config)
-    res = res.replace("$projectname", conf.projectName)
-    res = res.replace("$projectpath", string(conf.projectPath))
-    res = res.replace("$projectdir", string(conf.projectPath))
-    res = res.replace("$nimcache", string(getNimcacheDir(conf)))
-    return expandTilde(unixToNativePath(res))
+    result = expandTilde(unixToNativePath(p % [
+        string("nim"), string(getPrefixDir(conf)),
+        string("lib"), string(conf.libpath),
+        string("home"), home,
+        string("config"), config,
+        string("projectname"), conf.projectName,
+        string("projectpath"), string(conf.projectPath),
+        string("projectdir"), string(conf.projectPath),
+        string("nimcache"), string(getNimcacheDir(conf))]))
+    return result
 
-def nimbleSubs(conf: ConfigRef, p: string) -> string: # iterator
+
+def nimbleSubs(conf: ConfigRef, p: string) -> string:
     with let:
         pl = toLowerAscii(p)
     if string("$nimblepath") in pl or string("$nimbledir") in pl:
-        for i in range(len(conf.nimblePaths) - 1, -1, -1):
+        for i in range(conf.nimblePaths.len - 1, -1, -1):
             with let:
                 nimblePath = removeTrailingDirSep(string(conf.nimblePaths[i]))
-                res = p.replace("$nimblepath", nimblePath).replace("$nimbledir", nimblePath)
-            yield res
+            yield p % [string("nimblepath"), nimblePath, string("nimbledir"), nimblePath]
     else:
         yield p
 
+
 def toGeneratedFile(conf: ConfigRef, path: AbsoluteFile, ext: string) -> AbsoluteFile:
-    return getNimcacheDir(conf) / changeFileExt(RelativeFile(splitPath(string(path))[1]), ext)
+    ## converts "/home/a/mymodule.nim", "rod" to "/home/a/nimcache/mymodule.rod"
+    result = getNimcacheDir(conf) / RelativeFile(changeFileExt(splitPath(string(path)).tail, ext))
+    return result
+
 
 def completeGeneratedFilePath(conf: ConfigRef, f: AbsoluteFile, createSubDir: bool = True) -> AbsoluteFile:
+    ## Return an absolute path of a generated intermediary file.
+    ## Optionally creates the cache directory if `createSubDir` is `true`.
     with let:
         subdir = getNimcacheDir(conf)
     if createSubDir:
@@ -914,40 +1000,45 @@ def completeGeneratedFilePath(conf: ConfigRef, f: AbsoluteFile, createSubDir: bo
             createDir(string(subdir))
         except OSError:
             quitOrRaise(conf, string("cannot create directory: ") + string(subdir))
-    return subdir / RelativeFile(splitPath(string(f))[1])
-
-def patchModule(conf: ConfigRef, res: AbsoluteFile) -> AbsoluteFile:
-    result = res
-    if not isEmpty(result) and len(conf.moduleOverrides) > 0:
-        with let:
-            key = getPackageName(conf, string(result)) + string("_") + splitFile(result)[1]
-        if conf.moduleOverrides.hasKey(key):
-            with let:
-                ov = conf.moduleOverrides[key]
-            if len(ov) > 0:
-                result = AbsoluteFile(ov)
+    result = subdir / RelativeFile(splitPath(string(f)).tail)
     return result
 
 
-def rawFindFile(conf: ConfigRef, f: RelativeFile, suppressStdlib: bool) -> AbsoluteFile:
+def _rawFindFile(conf: ConfigRef, f: RelativeFile, suppressStdlib: bool) -> AbsoluteFile:
     for it in conf.searchPaths:
-        if suppressStdlib and string(it).startswith(string(conf.libpath)):
+        if suppressStdlib and startsWith(string(it), string(conf.libpath)):
             continue
         result = it / f
-        if fileExists(string(result)):
+        if fileExists(result):
             return canonicalizePath(conf, result)
-    return AbsoluteFile(string(""))
+    result = AbsoluteFile(string(""))
+    return result
 
-def rawFindFile2(conf: ConfigRef, f: RelativeFile) -> AbsoluteFile:
-    for i in range(len(conf.lazyPaths)):
-        with let:
-            it = conf.lazyPaths[i]
+
+def _rawFindFile2(conf: ConfigRef, f: RelativeFile) -> AbsoluteFile:
+    for i, it in pairs(conf.lazyPaths):
         result = it / f
-        if fileExists(string(result)):
+        if fileExists(result):
+            # bring to front
             for j in range(i, 0, -1):
-                conf.lazyPaths[j], conf.lazyPaths[j-1] = conf.lazyPaths[j-1], conf.lazyPaths[j]
+                (conf.lazyPaths[j], conf.lazyPaths[j - 1]) = (conf.lazyPaths[j - 1], conf.lazyPaths[j])
+
             return canonicalizePath(conf, result)
-    return AbsoluteFile(string(""))
+    result = AbsoluteFile(string(""))
+    return result
+
+
+@template
+def _patchModule(conf: ConfigRef):
+    """{.dirty.}"""
+    if not isEmpty(result) and conf.moduleOverrides.len > 0:
+        with let:
+            key = getPackageName(conf, string(result)) + string("_") + splitFile(result).name
+        if conf.moduleOverrides.hasKey(key):
+            with let:
+                ov = conf.moduleOverrides[key]
+            if ov.len > 0:
+                result = AbsoluteFile(ov)
 
 
 with const:
@@ -958,11 +1049,14 @@ with const:
         string("pure/unidecode"), string("impure"),
         string("wrappers"), string("wrappers/linenoise"),
         string("windows"), string("posix"), string("js"),
-        string("deprecated/pure")
-    ]
-    pkgPrefix = string("pkg/")
+        string("deprecated/pure")]
+
+with const:
+    _pkgPrefix = string("pkg/")
     stdPrefix = string("std/")
 
+
+@template_expand
 def getRelativePathFromConfigPath(conf: ConfigRef, f: AbsoluteFile, isTitle: bool = False) -> RelativeFile:
     result = RelativeFile(string(""))
     with let:
@@ -974,191 +1068,234 @@ def getRelativePathFromConfigPath(conf: ConfigRef, f: AbsoluteFile, isTitle: boo
             if cmpPaths(path, f_str) == 0:
                 return RelativeFile(stdPrefix + splitFile(f_str)[1])
 
-    for it in conf.searchPaths:
-        with let:
-            it_str = string(it)
-        if isRelativeTo(f_str, it_str):
-            return RelativeFile(relativePath(f_str, it_str))
-    for it in conf.lazyPaths:
-        with let:
-            it_str = string(it)
-        if isRelativeTo(f_str, it_str):
-            return RelativeFile(relativePath(f_str, it_str))
+    @template
+    def search(paths: untyped):
+        for it in paths:
+            with let:
+                it_str = string(it)
+            if isRelativeTo(f_str, it_str):
+                return RelativeFile(relativePath(f_str, it_str))
+    search(conf.searchPaths)
+    search(conf.lazyPaths)
     return result
 
 
+@template_expand
 def findFile(conf: ConfigRef, f: string, suppressStdlib: bool = False) -> AbsoluteFile:
     if isAbsolute(f):
         result = AbsoluteFile(f) if fileExists(f) else AbsoluteFile(string(""))
     else:
-        result = rawFindFile(conf, RelativeFile(f), suppressStdlib)
+        result = _rawFindFile(conf, RelativeFile(f), suppressStdlib)
         if isEmpty(result):
-            result = rawFindFile(conf, RelativeFile(toLowerAscii(f)), suppressStdlib)
+            result = _rawFindFile(conf, RelativeFile(toLowerAscii(f)), suppressStdlib)
             if isEmpty(result):
-                result = rawFindFile2(conf, RelativeFile(f))
+                result = _rawFindFile2(conf, RelativeFile(f))
                 if isEmpty(result):
-                    result = rawFindFile2(conf, RelativeFile(toLowerAscii(f)))
-    return patchModule(conf, result)
+                    result = _rawFindFile2(conf, RelativeFile(toLowerAscii(f)))
+    _patchModule(conf)
+    return result
 
+
+@template_expand
 def findModule(conf: ConfigRef, modulename: string, currentModule: string) -> AbsoluteFile:
+    # returns path to module
     with var:
-        m = addFileExt(modulename, string(NimExt))
+        m = addFileExt(modulename, NimExt)
         hasRelativeDot = False
-    if m.startswith(pkgPrefix):
-        result = findFile(conf, substr(m, len(pkgPrefix)), suppressStdlib=True)
+    if startsWith(m, _pkgPrefix):
+        result = findFile(conf, substr(m, _pkgPrefix.len), suppressStdlib=True)
     else:
-        if m.startswith(stdPrefix):
+        if startsWith(m, stdPrefix):
             result = AbsoluteFile(string(""))
             with let:
-                stripped = substr(m, len(stdPrefix))
+                stripped = substr(m, stdPrefix.len)
             for candidate in stdlibDirs:
                 with let:
-                    path = string(conf.libpath) / candidate / stripped
+                    path = (string(conf.libpath) / candidate / stripped)
                 if fileExists(path):
                     result = AbsoluteFile(path)
                     break
-        else:
+        else:  # If prefixed with std/ why would we add the current module path!
             with let:
-                currentPath = splitFile(AbsoluteFile(currentModule))[0]
-            result = currentPath / RelativeFile(m)
-            if m.startswith(string(".")) and not fileExists(string(result)):
+                currentPath = splitFile(currentModule).dir
+            result = AbsoluteFile(currentPath / m)
+            if startsWith(m, ch('.')) and not fileExists(result):
                 result = AbsoluteFile(string(""))
                 hasRelativeDot = True
 
-        if not fileExists(string(result)) and not hasRelativeDot:
+        if not fileExists(result) and not hasRelativeDot:
             result = findFile(conf, m)
-    return patchModule(conf, result)
+    _patchModule(conf)
+    return result
+
 
 def findProjectNimFile(conf: ConfigRef, pkg: string) -> string:
-    with let:
+    with const:
         extensions = [string(".nims"), string(".cfg"), string(".nimcfg"), string(".nimble")]
     with var:
-        candidates = seq[string]()
-        dir = pkg
-        prev = dir
+        candidates: seq[string] = seq[string]()
+        dir = pkg.copy()
+        prev = dir.copy()
         nimblepkg = string("")
-        pkgname = extractFilename(pkg)
+    with let:
+        pkgname = lastPathPart(pkg)
     while True:
-        # mock walkDir
         for k, f in walkDir(dir, relative=True):
             if k == pcFile and f != string("config.nims"):
                 with let:
-                    p = splitFile(AbsoluteFile(f))
-                if p[2] in extensions:
+                    (_, name, ext) = splitFile(f)
+                if ext in extensions:
                     with let:
-                        x = changeFileExt(dir / p[1], string(".nim"))
+                        x = changeFileExt(dir / name, string(".nim"))
                     if fileExists(x):
                         candidates.add(x)
-                    if p[2] == string(".nimble"):
-                        if len(nimblepkg) == 0:
-                            nimblepkg = changeFileExt(dir / p[1], string(".nim"))
-        if len(candidates) > 0:
+                    if ext == string(".nimble"):
+                        if nimblepkg.len == 0:
+                            nimblepkg = name
+                            # Since nimble packages can have their source in a subfolder,
+                            # check the last folder we were in for a possible match.
+                            if dir != prev:
+                                with let:
+                                    x = prev / extractFilename(x)
+                                if fileExists(x):
+                                    candidates.add(x)
+                        else:
+                            # If we found more than one nimble file, chances are that we
+                            # missed the real project file, or this is an invalid nimble
+                            # package. Either way, bailing is the better choice.
+                            return string("")
+        with let:
+            pkgname = nimblepkg if nimblepkg.len > 0 else pkgname
+        for c in candidates:
+            if pkgname in extractFilename(c):
+                return c
+        if candidates.len > 0:
             return candidates[0]
-        if len(nimblepkg) > 0:
-            return nimblepkg
         prev = dir
         dir = parentDir(dir)
-        if prev == dir:
+        if dir == string(""):
             break
     return string("")
 
 
 def canonicalImportAux(conf: ConfigRef, file: AbsoluteFile) -> string:
+    ##[
+    ## Shows the canonical module import, e.g.:
+    ## system, std/tables, fusion/pointers, system/assertions, std/private/asciitables
+    ##]##
     with var:
         ret = getRelativePathFromConfigPath(conf, file, isTitle=True)
     with let:
-        dir_val = AbsoluteDir(parentDir(getNimbleFile(conf, string(file))))
-    if not isEmpty(dir_val):
+        dir = AbsoluteDir(parentDir(getNimbleFile(conf, string(str(file)))))
+    if not isEmpty(dir):
         with let:
-            relPath = relativeTo(file, dir_val)
-        if not isEmpty(relPath) and (isEmpty(ret) or len(string(relPath)) < len(string(ret))):
+            relPath = relativeTo(file, dir)
+        if not isEmpty(relPath) and (isEmpty(ret) or string(relPath).len < string(ret).len):
             ret = relPath
     if isEmpty(ret):
         ret = relativeTo(file, conf.projectPath)
-    return string(ret)
+    result = string(ret)
+    return result
+
 
 def canonicalImport(conf: ConfigRef, file: AbsoluteFile) -> string:
     with let:
         ret = canonicalImportAux(conf, file)
-    return changeFileExt(nativeToUnixPath(ret), string(""))
+    result = changeFileExt(nativeToUnixPath(ret), string(""))
+    return result
 
-def canonDynlibName(s: string) -> string:
+
+def _canonDynlibName(s: string) -> string:
     with let:
-        start = 3 if s.startswith(string("lib")) else 0
-        ende = find(s, {ch('('), ch(')'), ch('.')})
+        start = 3 if startsWith(s, string("lib")) else 0
+        ende = find(s, Tset[char]({ch('('), ch(')'), ch('.')}))
     if ende >= 0:
-        return substr(s, start, ende - 1)
+        result = substr(s, start, ende - 1)
     else:
-        return substr(s, start)
+        result = substr(s, start)
+    return result
+
 
 def inclDynlibOverride(conf: ConfigRef, lib: string) -> None:
-    # mock dllOverrides map access
-    conf.dllOverrides[canonDynlibName(lib)] = string("true")
+    conf.dllOverrides[_canonDynlibName(lib)] = string("true")
+
 
 def isDynlibOverride(conf: ConfigRef, lib: string) -> bool:
-    if TGlobalOption.optDynlibOverrideAll in conf.globalOptions:
-        return True
-    return conf.dllOverrides.hasKey(canonDynlibName(lib))
+    result = (TGlobalOption.optDynlibOverrideAll in conf.globalOptions or
+              conf.dllOverrides.hasKey(_canonDynlibName(lib)))
+    return result
+
 
 def showNonExportedFields(conf: ConfigRef) -> None:
-    conf.globalOptions.incl(TGlobalOption.optShowNonExportedFields)
+    incl(conf.globalOptions, TGlobalOption.optShowNonExportedFields)
+
 
 def docRawOutput(conf: ConfigRef) -> None:
-    conf.globalOptions.incl(TGlobalOption.optDocRaw)
+    incl(conf.globalOptions, TGlobalOption.optDocRaw)
+
 
 def expandDone(conf: ConfigRef) -> bool:
-    return conf.ideCmd == IdeCmd.ideExpand and conf.expandLevels == 0 and conf.expandProgress
+    result = conf.ideCmd == IdeCmd.ideExpand and conf.expandLevels == 0 and conf.expandProgress
+    return result
+
 
 def parseIdeCmd(s: string) -> IdeCmd:
-    if s == string("sug"): return IdeCmd.ideSug
-    elif s == string("con"): return IdeCmd.ideCon
-    elif s == string("def"): return IdeCmd.ideDef
-    elif s == string("use"): return IdeCmd.ideUse
-    elif s == string("dus"): return IdeCmd.ideDus
-    elif s == string("chk"): return IdeCmd.ideChk
-    elif s == string("chkFile"): return IdeCmd.ideChkFile
-    elif s == string("mod"): return IdeCmd.ideMod
-    elif s == string("highlight"): return IdeCmd.ideHighlight
-    elif s == string("outline"): return IdeCmd.ideOutline
-    elif s == string("known"): return IdeCmd.ideKnown
-    elif s == string("msg"): return IdeCmd.ideMsg
-    elif s == string("project"): return IdeCmd.ideProject
-    elif s == string("globalSymbols"): return IdeCmd.ideGlobalSymbols
-    elif s == string("recompile"): return IdeCmd.ideRecompile
-    elif s == string("changed"): return IdeCmd.ideChanged
-    elif s == string("type"): return IdeCmd.ideType
-    else: return IdeCmd.ideNone
+    match s:
+        case "sug": return IdeCmd.ideSug
+        case "con": return IdeCmd.ideCon
+        case "def": return IdeCmd.ideDef
+        case "use": return IdeCmd.ideUse
+        case "dus": return IdeCmd.ideDus
+        case "chk": return IdeCmd.ideChk
+        case "chkFile": return IdeCmd.ideChkFile
+        case "mod": return IdeCmd.ideMod
+        case "highlight": return IdeCmd.ideHighlight
+        case "outline": return IdeCmd.ideOutline
+        case "known": return IdeCmd.ideKnown
+        case "msg": return IdeCmd.ideMsg
+        case "project": return IdeCmd.ideProject
+        case "globalSymbols": return IdeCmd.ideGlobalSymbols
+        case "recompile": return IdeCmd.ideRecompile
+        case "changed": return IdeCmd.ideChanged
+        case "type": return IdeCmd.ideType
+        case _: return IdeCmd.ideNone
 
-# since `__str__` inside IdeCmd class is already defined or handled by default python enum if we don't override, we'll just implement ideCmdToStr to act as `$c`
-def ideCmdToStr(c: IdeCmd) -> string:
-    if c == IdeCmd.ideSug: return string("sug")
-    elif c == IdeCmd.ideCon: return string("con")
-    elif c == IdeCmd.ideDef: return string("def")
-    elif c == IdeCmd.ideUse: return string("use")
-    elif c == IdeCmd.ideDus: return string("dus")
-    elif c == IdeCmd.ideChk: return string("chk")
-    elif c == IdeCmd.ideChkFile: return string("chkFile")
-    elif c == IdeCmd.ideMod: return string("mod")
-    elif c == IdeCmd.ideNone: return string("none")
-    elif c == IdeCmd.ideHighlight: return string("highlight")
-    elif c == IdeCmd.ideOutline: return string("outline")
-    elif c == IdeCmd.ideKnown: return string("known")
-    elif c == IdeCmd.ideMsg: return string("msg")
-    elif c == IdeCmd.ideProject: return string("project")
-    elif c == IdeCmd.ideGlobalSymbols: return string("globalSymbols")
-    elif c == IdeCmd.ideDeclaration: return string("declaration")
-    elif c == IdeCmd.ideExpand: return string("expand")
-    elif c == IdeCmd.ideRecompile: return string("recompile")
-    elif c == IdeCmd.ideChanged: return string("changed")
-    elif c == IdeCmd.ideType: return string("type")
-    elif c == IdeCmd.ideInlayHints: return string("inlayHints")
-    return string("")
 
-def floatInt64Align(conf: ConfigRef) -> nint:
+@ufcs(IdeCmd)
+def __str__(c: IdeCmd) -> string:
+    match c:
+        case IdeCmd.ideSug: return "sug"
+        case IdeCmd.ideCon: return "con"
+        case IdeCmd.ideDef: return "def"
+        case IdeCmd.ideUse: return "use"
+        case IdeCmd.ideDus: return "dus"
+        case IdeCmd.ideChk: return "chk"
+        case IdeCmd.ideChkFile: return "chkFile"
+        case IdeCmd.ideMod: return "mod"
+        case IdeCmd.ideNone: return "none"
+        case IdeCmd.ideHighlight: return "highlight"
+        case IdeCmd.ideOutline: return "outline"
+        case IdeCmd.ideKnown: return "known"
+        case IdeCmd.ideMsg: return "msg"
+        case IdeCmd.ideProject: return "project"
+        case IdeCmd.ideGlobalSymbols: return "globalSymbols"
+        case IdeCmd.ideDeclaration: return "declaration"
+        case IdeCmd.ideExpand: return "expand"
+        case IdeCmd.ideRecompile: return "recompile"
+        case IdeCmd.ideChanged: return "changed"
+        case IdeCmd.ideType: return "type"
+        case IdeCmd.ideInlayHints: return "inlayHints"
+
+
+def floatInt64Align(conf: ConfigRef) -> int16:
+    ## Returns either 4 or 8 depending on reasons.
     if conf is not None and conf.target.targetCPU == TSystemCPU.cpuI386:
+        #on Linux/BSD i386, double are aligned to 4bytes (except with -malign-double)
         if conf.target.targetOS != TSystemOS.osWindows:
-            return 4
-    return 8
+            # on i386 for all known POSIX systems, 64bits ints are aligned
+            # to 4bytes (except with -malign-double)
+            return int16(4)
+    return int16(8)
 
 if comptime(__name__ == "__main__"):
     echo("Running options.py tests...")
@@ -1179,12 +1316,17 @@ if comptime(__name__ == "__main__"):
 
     # 2. newPartialConfigRef
     assert pconf.verbosity == 1
-    assert len(pconf.m.errorOutputs) > 0
+    assert len(pconf.m.errorOutputs) == 0  # only good enough for error reporting: no initMsgConfig
+    assert pconf.filenameOption == FilenameOption.foAbs
 
 
     # 3. Notes manipulation
     setNoteDefaults(conf, TMsgKind.hintProcessing, True)
     assert hasHint(conf, TMsgKind.hintProcessing)
+    assert TMsgKind.hintProcessing in conf.mainPackageNotes and TMsgKind.hintProcessing in conf.foreignPackageNotes
+    setNoteDefaults(conf, TMsgKind.hintProcessing, False)
+    assert TMsgKind.hintProcessing not in conf.notes and TMsgKind.hintProcessing not in conf.foreignPackageNotes
+    setNoteDefaults(conf, TMsgKind.hintProcessing, True)
     setNote(conf, TMsgKind.warnUser, True)
     assert hasWarn(conf, TMsgKind.warnUser)
     setNote(conf, TMsgKind.warnUser, False)
@@ -1194,6 +1336,9 @@ if comptime(__name__ == "__main__"):
     conf.errorMax = 0
     setErrorMaxHighMaybe(conf)
     assert conf.errorMax == high(nint)
+    conf.errorMax = 3
+    setErrorMaxHighMaybe(conf)  # honors --errorMax
+    assert conf.errorMax == 3
 
     # 5. IDE commands parsing & formatting
     for name, expected in [
@@ -1209,7 +1354,7 @@ if comptime(__name__ == "__main__"):
         with var:
             cmd = parseIdeCmd(name)
         assert cmd == expected
-        assert ideCmdToStr(cmd) == name
+        assert str(cmd) == name
 
     # 6. Alignments
     assert floatInt64Align(conf) == 8
@@ -1227,9 +1372,9 @@ if comptime(__name__ == "__main__"):
     assert isDefined(conf, string("posix"))
 
     # 8. Dynlib overrides
-    assert canonDynlibName(string("libssl.so.1.1")) == string("ssl")
-    assert canonDynlibName(string("libcrypto(3)")) == string("crypto")
-    assert canonDynlibName(string("zlib.dll")) == string("zlib")
+    assert _canonDynlibName(string("libssl.so.1.1")) == string("ssl")
+    assert _canonDynlibName(string("libcrypto(3)")) == string("crypto")
+    assert _canonDynlibName(string("zlib.dll")) == string("zlib")
 
     # 9. Path operations
     conf.projectFull = AbsoluteFile(string("/path/to/project.nim"))
@@ -1239,6 +1384,9 @@ if comptime(__name__ == "__main__"):
 
     rel = getRelativePathFromConfigPath(conf, AbsoluteFile(string("/path/to/foo.nim")))
     assert string(rel) == string("foo.nim")
+    conf.lazyPaths.add(AbsoluteDir(string("/lazy")))
+    assert string(getRelativePathFromConfigPath(conf, AbsoluteFile(string("/lazy/a/b.nim")))) == string("a/b.nim")
+    assert string(getRelativePathFromConfigPath(conf, AbsoluteFile(string("/other/c.nim")))) == string("")
 
     # 10. Global options flags
     assert not hcrOn(conf)

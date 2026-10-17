@@ -11,6 +11,7 @@ from ..msgs import *
 from ..nodekinds import *
 from ..ropes import *
 from ..platform import *
+from nimic.std.tables import *
 
 # Test harness of the ccg* include files of cgen.nim. Like cgen.nim it provides their context
 # (cgen_context, cbuilderdecls_subset, cgen_procs, cgen_stmts: stand-ins for modules not converted yet;
@@ -23,6 +24,25 @@ include("../ccgtrav")
 include("../ccgreset")
 include("../ccgthreadvars")
 include("cgen_stmts")
+include("../inliner")
+
+
+def inlSym(id: nint, kind: TSymKind, name: string) -> PSym:
+    return PSym(id=id, kind=kind, name=name, info=unknownLineInfo)
+
+
+def inlTree(kind: TNodeKind, sons: seq[PNode]) -> PNode:
+    return PNode(kind=kind, info=unknownLineInfo, sons=sons)
+
+
+def inlProcType() -> PType:
+    ## a proc type (ast.newProcType): son 0 is the return type; n[0] the effects, then the parameters
+    with var:
+        noReturn = seq[PType]()
+        n = newNode(TNodeKind.nkFormalParams)
+    noReturn.add(None)
+    n.add(newNode(nkEffectList))
+    return PType(kind=TTypeKind.tyProc, n=n, sonsImpl=noReturn)
 
 
 def resetCode(p: BProc, t: PType) -> string:
@@ -267,6 +287,116 @@ if comptime(__name__ == "__main__"):
              string("static N_NIMCALL(void, TM__1_0)(void) {\n\tnimGCvisit(((void*) gx), 0);\n}\n\n"),
              string("global proc"))
     echo(string("All ccgtrav tests passed successfully!"))
+
+    echo(string("Testing inliner..."))
+    with var:
+        inlIdgen = IdGenerator(symId=int32(100))
+        caller = inlSym(1, TSymKind.skProc, string("caller"))
+
+    # 1. copySymdef: atoms unchanged; a symbol is cloned, owned by the new owner and recorded
+    with var:
+        locals1 = initTable[nint, PSym]()
+        identNode = newNode(TNodeKind.nkIdent)
+        intLitNode = newNode(TNodeKind.nkIntLit)
+    doAssert(copySymdef(identNode, locals1, inlIdgen, caller) == identNode)
+    doAssert(copySymdef(intLitNode, locals1, inlIdgen, caller) == intLitNode)
+    with var:
+        varSym = inlSym(10, TSymKind.skVar, string("myLocal"))
+        symNode = newSymNode(varSym)
+    with let:
+        cloned = copySymdef(symNode, locals1, inlIdgen, caller)
+    doAssert(cloned.kind == TNodeKind.nkSym and cloned.sym.id == 101 and cloned.sym.name == string("myLocal"))
+    doAssert(cloned.sym.owner == caller and locals1[nint(10)] == cloned.sym)
+    with var:
+        callNode = inlTree(TNodeKind.nkCall, seq[PNode]([newSymNode(inlSym(110, TSymKind.skVar, string("c1"))),
+                                                          intLitNode]))
+    with let:
+        copiedCall = copySymdef(callNode, locals1, inlIdgen, caller)
+    doAssert(copiedCall.len == 2 and copiedCall[0].sym.id != 110 and copiedCall[1] == intLitNode)
+
+    # 2. copyInlineProcBody: symbols of locals are replaced, others kept
+    with var:
+        locals2 = initTable[nint, PSym]()
+        clonedVar = inlSym(201, TSymKind.skVar, string("clonedVar"))
+    locals2[nint(10)] = clonedVar
+    doAssert(copyInlineProcBody(symNode, locals2, inlIdgen, caller).sym == clonedVar)
+    with var:
+        globalNode = newSymNode(inlSym(99, TSymKind.skVar, string("globalVar")))
+    doAssert(copyInlineProcBody(globalNode, locals2, inlIdgen, caller) == globalNode)
+
+    # 3. var/let sections: identDefs, constDef, varTuple clone their symbols; comments are kept
+    with var:
+        locals3 = initTable[nint, PSym]()
+        identDefs = inlTree(TNodeKind.nkIdentDefs, seq[PNode]([newSymNode(inlSym(20, TSymKind.skVar, string("x"))),
+                            newNode(TNodeKind.nkEmpty), newNode(TNodeKind.nkIntLit)]))
+        commentNode = newNode(TNodeKind.nkCommentStmt)
+        varTuple = inlTree(TNodeKind.nkVarTuple, seq[PNode]([newSymNode(inlSym(82, TSymKind.skLet, string("t1"))),
+                           newSymNode(inlSym(83, TSymKind.skLet, string("t2"))), newNode(TNodeKind.nkEmpty),
+                           newNode(TNodeKind.nkCall)]))
+    with let:
+        varSection = copyInlineProcBody(inlTree(TNodeKind.nkVarSection, seq[PNode]([identDefs])), locals3, inlIdgen, caller)
+        letSection = copyInlineProcBody(inlTree(TNodeKind.nkLetSection, seq[PNode]([commentNode, varTuple])),
+                                        locals3, inlIdgen, caller)
+    doAssert(varSection[0].kind == TNodeKind.nkIdentDefs and varSection[0][0].sym.id != 20)
+    doAssert(locals3[nint(20)] == varSection[0][0].sym)
+    doAssert(letSection[0] == commentNode and letSection[1][0].sym.owner == caller)
+    doAssert(locals3.hasKey(nint(82)) and locals3.hasKey(nint(83)))
+
+    # 4. for loops clone their variables; routines and type sections are not copied
+    with var:
+        locals4 = initTable[nint, PSym]()
+        forStmt = inlTree(TNodeKind.nkForStmt, seq[PNode]([newSymNode(inlSym(30, TSymKind.skForVar, string("i"))),
+                          newNode(TNodeKind.nkCall), newNode(TNodeKind.nkStmtList)]))
+    with let:
+        copiedFor = copyInlineProcBody(forStmt, locals4, inlIdgen, caller)
+    doAssert(copiedFor[0].sym.id != 30 and locals4[nint(30)] == copiedFor[0].sym)
+    for k in [TNodeKind.nkProcDef, TNodeKind.nkTemplateDef, TNodeKind.nkTypeSection, TNodeKind.nkConstSection,
+              TNodeKind.nkMixinStmt]:
+        with let:
+            n = newNode(k)
+        doAssert(copyInlineProcBody(n, locals4, inlIdgen, caller) == n)
+
+    # 5. copyParams: parameters are cloned and added to the owner's proc type
+    with var:
+        locals5 = initTable[nint, PSym]()
+        owner5 = inlSym(120, TSymKind.skProc, string("multiParamProc"))
+    owner5.typ = inlProcType()
+    with var:
+        multiDefs = inlTree(TNodeKind.nkIdentDefs, seq[PNode]([newSymNode(inlSym(121, TSymKind.skParam, string("p1"))),
+                            newSymNode(inlSym(122, TSymKind.skParam, string("p2"))), newNode(TNodeKind.nkIdent),
+                            newNode(TNodeKind.nkEmpty)]))
+        retNode = newNode(TNodeKind.nkEmpty)
+    with let:
+        params = copyParams(inlTree(TNodeKind.nkFormalParams, seq[PNode]([retNode, multiDefs])), locals5, inlIdgen, owner5)
+    doAssert(params[0] == retNode and params[1][0].sym.id != 121 and params[1][1].sym.id != 122)
+    doAssert(locals5[nint(121)].owner == owner5 and locals5[nint(122)].owner == owner5)
+    doAssert(owner5.typ.n.len == 3 and owner5.typ.len == 1)  # proc types keep parameters in n
+    doAssert(params[1][1].sym.position == 1)
+
+    # 6. copyInlineProc: a new proc whose result and parameters are its own
+    with var:
+        origProc = inlSym(70, TSymKind.skProc, string("inlineCandidate"))
+        origParam = inlSym(71, TSymKind.skParam, string("x"))
+        resultSym = inlSym(72, TSymKind.skResult, string("result"))
+        astSons = seq[PNode]()
+    origProc.typ = inlProcType()
+    origProc.typ.n.add(newSymNode(origParam))
+    for k in range(8):
+        astSons.add(newNode(TNodeKind.nkEmpty))
+    astSons[paramsPos] = newNode(TNodeKind.nkFormalParams)
+    astSons[resultPos] = newSymNode(resultSym)
+    astSons[bodyPos] = inlTree(TNodeKind.nkStmtList, seq[PNode]([inlTree(TNodeKind.nkAsgn, seq[PNode]([
+        newSymNode(resultSym), newSymNode(origParam)]))]))
+    origProc.ast = inlTree(TNodeKind.nkProcDef, astSons)
+    with let:
+        clonedProc = copyInlineProc(origProc, inlIdgen)
+        asgn = clonedProc.ast[bodyPos][0]
+    doAssert(clonedProc.id != origProc.id and clonedProc.ast.len == 8)
+    doAssert(clonedProc.ast[resultPos].sym.id != 72 and clonedProc.ast[resultPos].sym.owner == clonedProc)
+    doAssert(asgn[0].sym == clonedProc.ast[resultPos].sym)
+    doAssert(asgn[1].sym.id != 71 and asgn[1].sym.owner == clonedProc)
+    doAssert(clonedProc.typ.n.len == 2 and clonedProc.typ.n[1].sym == asgn[1].sym)
+    echo(string("All inliner tests passed successfully!"))
 
     echo(string("Testing ccgthreadvars..."))
     with var:

@@ -132,6 +132,15 @@ def hash(x: PIdent) -> Hash:
     """{.inline.}"""
     return x.h
 
+@ufcs(PIdent)
+def __eq__(a: PIdent, b: PIdent) -> bool:
+    """{.inline.}"""
+    if isNil(a) or isNil(b):
+        result = isNil(a) and isNil(b)  # system.`==`(a, b): references, one of them nil
+    else:
+        result = a.id == b.id
+    return result
+
 if comptime(__name__ == "__main__"):
     with var:
         ic = newIdentCache()
@@ -139,6 +148,13 @@ if comptime(__name__ == "__main__"):
         id2 = getIdent(ic, string("fOo"))
     assert id1.id == id2.id
     assert id1.s != id2.s
+    assert id1 == id2  # the same identifier, compared by id
+    with var:
+        detached = PIdent(id=id1.id, s=string("FOO"))
+    assert detached == id1 and not (detached != id1)
+    with var:
+        nilIdent: PIdent = None
+    assert not (id1 == nilIdent) and nilIdent == nilIdent
 
     with var:
         keyword = getIdent(ic, string("yield"))

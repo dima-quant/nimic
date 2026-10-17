@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.strutils import cmpIgnoreStyle
+from nimic.std.strutils import *
 
 if comptime(defined("nimPreviewSlimSystem")):
     from nimic.std.assertions import *

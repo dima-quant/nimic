@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.strutils import toLowerAscii
+importFrom("nimic.std.strutils", "toLowerAscii")
 
 class PrefixMatch(NIntEnum):
     """{.pure.}"""

@@ -27,7 +27,8 @@ QUEUE = NCOMPILER / "conversion_queue.md"
 
 # modules whose conversion must be redone or re-reviewed (ncompiler/review_core_2026_10_16.md)
 NEEDS_RECONVERSION = {"aliasanalysis"}
-NEEDS_REREVIEW = {"msgs", "options"}
+# msgs: re-reviewed; its styled output waits for macros (G17)
+NEEDS_REREVIEW = {"msgs"}
 
 
 def _strip_comments(text: str) -> str:

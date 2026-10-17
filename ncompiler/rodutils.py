@@ -3,19 +3,9 @@
 # ///
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.strutils import toHex
-from nimic.std.math import (
-    classify,
-    signbit,
-    fcNan,
-    fcNegZero,
-    fcZero,
-    fcInf,
-    fcNegInf,
-    Inf,
-    NaN,
-)
-from nimic.std.formatfloat import addFloatRoundtrip
+from nimic.std.strutils import *
+from nimic.std.math import *
+from nimic.std.formatfloat import *
 
 #
 #
@@ -118,7 +108,7 @@ def _hexChar(c: char, xi: mut @ nint):
 
 def decodeStr(s: cstring, pos: mut @ nint) -> string:
     with var:
-        i = nint(pos)
+        i = pos.copy()
     result = string("")
     while True:
         with let:
@@ -150,8 +140,8 @@ with push("overflowChecks: off"):
         _vintDelta = 5
 
 
-    def _encodeVBiggestIntAux(x: BiggestInt, result: mut @ string):
-        """encode a biggest int as a variable length base 190 int."""
+    @template
+    def _encodeIntImpl(self: untyped):
         with var:
             d = ch('\0')
             v = x
@@ -169,36 +159,26 @@ with push("overflowChecks: off"):
         else:
             d = chr(idx - 62 + 128)
         if v != 0:
-            _encodeVBiggestIntAux(v, result)
+            self(v, result)
         result.add(d)
+
+
+    @template_expand
+    def _encodeVBiggestIntAux(x: BiggestInt, result: mut @ string):
+        """encode a biggest int as a variable length base 190 int."""
+        _encodeIntImpl(_encodeVBiggestIntAux)
 
 
     def encodeVBiggestInt(x: BiggestInt, result: mut @ string):
         """encode a biggest int as a variable length base 190 int."""
         _encodeVBiggestIntAux(plus_percent(x, _vintDelta), result)
+        #  encodeIntImpl(encodeVBiggestInt)
 
 
+    @template_expand
     def _encodeVIntAux(x: nint, result: mut @ string):
         """encode an int as a variable length base 190 int."""
-        with var:
-            d = ch('\0')
-            v = x
-            rem = v % 190
-        if rem < 0:
-            result.add(ch('-'))
-            v = -(v // 190)
-            rem = -rem
-        else:
-            v = v // 190
-        with var:
-            idx = int(rem)
-        if idx < 62:
-            d = _chars[idx]
-        else:
-            d = chr(idx - 62 + 128)
-        if v != 0:
-            _encodeVIntAux(v, result)
-        result.add(d)
+        _encodeIntImpl(_encodeVIntAux)
 
 
     def encodeVInt(x: nint, result: mut @ string):
@@ -206,65 +186,47 @@ with push("overflowChecks: off"):
         _encodeVIntAux(plus_percent(x, _vintDelta), result)
 
 
+    @template
+    def _decodeIntImpl():
+        with var:
+            i = pos.copy()
+            sign = -1
+        with let:
+            c0 = s[i]
+        assert (c0 >= ch('a') and c0 <= ch('z')) or (c0 >= ch('A') and c0 <= ch('Z')) or (c0 >= ch('0') and c0 <= ch('9')) or c0 == ch('-') or (ord(c0) >= 128 and ord(c0) <= 255)
+        if c0 == ch('-'):
+            i += 1
+            sign = 1
+        result <<= 0
+        while True:
+            match s[i]:
+                case _ if s[i] in inrange(ch('0'), ch('9')):
+                    result = result * 190 - (ord(s[i]) - ord(ch('0')))
+                case _ if s[i] in inrange(ch('a'), ch('z')):
+                    result = result * 190 - (ord(s[i]) - ord(ch('a')) + 10)
+                case _ if s[i] in inrange(ch('A'), ch('Z')):
+                    result = result * 190 - (ord(s[i]) - ord(ch('A')) + 36)
+                case _ if s[i] in inrange(ch('\x80'), ch('\xFF')):
+                    result = result * 190 - (ord(s[i]) - 128 + 62)
+                case _:
+                    break
+            i += 1
+        result = minus_percent(result * sign, _vintDelta)
+        pos <<= i
+
+
+    @template_expand
     def decodeVInt(s: cstring, pos: mut @ nint) -> nint:
-        with var:
-            i = nint(pos)
-            sign = -1
         result = nint(0)
-        with let:
-            c0 = s[i]
-        assert (c0 >= ch('a') and c0 <= ch('z')) or (c0 >= ch('A') and c0 <= ch('Z')) or (c0 >= ch('0') and c0 <= ch('9')) or c0 == ch('-') or (ord(c0) >= 128 and ord(c0) <= 255)
-        if c0 == ch('-'):
-            i += 1
-            sign = 1
-        while True:
-            with let:
-                c = s[i]
-            if c >= ch('0') and c <= ch('9'):
-                result = result * 190 - (ord(c) - ord(ch('0')))
-            elif c >= ch('a') and c <= ch('z'):
-                result = result * 190 - (ord(c) - ord(ch('a')) + 10)
-            elif c >= ch('A') and c <= ch('Z'):
-                result = result * 190 - (ord(c) - ord(ch('A')) + 36)
-            elif ord(c) >= 128 and ord(c) <= 255:
-                result = result * 190 - (ord(c) - 128 + 62)
-            else:
-                break
-            i += 1
-        result = minus_percent(result * sign, _vintDelta)
-        pos <<= i
+        _decodeIntImpl()
         return result
 
 
+    @template_expand
     def decodeVBiggestInt(s: cstring, pos: mut @ nint) -> BiggestInt:
-        with var:
-            i = nint(pos)
-            sign = -1
         result = BiggestInt(0)
-        with let:
-            c0 = s[i]
-        assert (c0 >= ch('a') and c0 <= ch('z')) or (c0 >= ch('A') and c0 <= ch('Z')) or (c0 >= ch('0') and c0 <= ch('9')) or c0 == ch('-') or (ord(c0) >= 128 and ord(c0) <= 255)
-        if c0 == ch('-'):
-            i += 1
-            sign = 1
-        while True:
-            with let:
-                c = s[i]
-            if c >= ch('0') and c <= ch('9'):
-                result = result * 190 - (ord(c) - ord(ch('0')))
-            elif c >= ch('a') and c <= ch('z'):
-                result = result * 190 - (ord(c) - ord(ch('a')) + 10)
-            elif c >= ch('A') and c <= ch('Z'):
-                result = result * 190 - (ord(c) - ord(ch('A')) + 36)
-            elif ord(c) >= 128 and ord(c) <= 255:
-                result = result * 190 - (ord(c) - 128 + 62)
-            else:
-                break
-            i += 1
-        result = minus_percent(result * sign, _vintDelta)
-        pos <<= i
+        _decodeIntImpl()
         return result
-
 
 def decodeVIntArray(s: cstring) -> nint:
     with var:

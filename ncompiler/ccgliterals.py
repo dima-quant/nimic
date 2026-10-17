@@ -23,7 +23,6 @@ from nimic.ntypes import *
 
 @template
 def detectVersion(field: untyped, corename: untyped):
-    """{.dirty.}"""
     if m.g.config.selectedGC in {TGCMode.gcArc, TGCMode.gcOrc, TGCMode.gcYrc, TGCMode.gcAtomicArc, TGCMode.gcHooks}:
         result = 2
     else:
