@@ -48,6 +48,7 @@ from nimic.nsystem import (
     new_seq,
     new_string_of_cap,
     newStringOfCap,
+    newString,
     new_cstring_of_cap,
     newCStringOfCap,
     Endianness,
@@ -60,6 +61,10 @@ from nimic.nsystem import (
     declared,
     echo,
     isNil,
+    addInt,
+    likely,
+    unlikely,
+    importc,
     stackTraceAvailable,
     writeStackTrace,
     getMaxMem,
@@ -110,6 +115,12 @@ from nimic.ntypesystem import (
     NInteger,
     low,
     nint,
+    uint,
+    SomeInteger,
+    SomeSignedInt,
+    SomeUnsignedInt,
+    SomeFloat,
+    SomeNumber,
     nord,
     openArray,
     pointer,
@@ -152,8 +163,6 @@ class typed:
     """Nim `typed` (template parameter): marks e.g. a code block parameter of a template."""
 
 
-SomeInteger = int
-SomeFloat = float
 
 BiggestInt = int64
 BiggestUInt = uint64
@@ -353,8 +362,9 @@ def mitems(coll):
     return coll.mitems
 
 
-from nimic.system.ansi_c import copy_mem
+from nimic.system.ansi_c import copy_mem, move_mem, cint, cuint
 copyMem = copy_mem
+moveMem = move_mem
 
 
 def setLen(s, new_len: int) -> None:

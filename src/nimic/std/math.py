@@ -33,6 +33,11 @@ def signbit(x: float) -> bool:
     return _math.copysign(1.0, float(x)) < 0.0
 
 
+def trunc(x: float) -> float:
+    """Nim: trunc — x rounded toward zero, as a float (Python's math.trunc returns an int)."""
+    return float(_math.trunc(float(x)))
+
+
 def classify(x: float) -> FloatClass:
     """Nim: classify — classifies a float into FloatClass enum."""
     fx = float(x)

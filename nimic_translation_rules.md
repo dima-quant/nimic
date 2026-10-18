@@ -81,6 +81,7 @@ Classes and objects use standard Python `class` definitions but employ specific 
 | `(x: 1, y: 2)` | `SomeTuple(x=1, y=2)` | NTuple constructor transpiles to Nim tuple literal (`rule:tuplelit`) |
 | `{}` | `Tset[T]()` or `Tset()` | Empty set literal (`rule:setlit`) |
 | `{a, b, c}` | `Tset[T](a, b, c)` or `Tset(a, b, c)` | Set literal with elements (`rule:setlit`) |
+| `{'-', '0'..'9'}` | `Tset[char](ch('-'), inrange(ch('0'), ch('9')))` or `Tset[char]({ch('-'), inrange(...)})` | Ranges in a set literal |
 | `@[a, b, c]` | `seq[T]([a, b, c])` or `seq([a, b, c])` | Sequence literal (`rule:seqlit`) |
 | `@[]` | `seq()` or `seq[T]()` | Empty sequence literal (`rule:seqlit`) |
 | `[byte 1, 5]` | `array[2, byte]([1, 5])` | Arrays |
@@ -137,11 +138,19 @@ Functions use standard Python `def` definitions but might employ specific decora
 | `proc f(a: T, args: varargs[T])` | `def f(a: T, *args: T)` | `rule:varargs`; pass varargs or a seq on with `f(a, *args)` (Nim `f(a, args)`). A conversion, `varargs[string, $]`, is written `*args: varargs[string, str]` and needs `@dispatch` (it applies `$` to each argument) |
 | `proc f(x: int \| int64 \| uint64)` | `def f(x: nint \| int64 \| uint64)` | A union is a type class for `@dispatch` (Nim `int or int64 or uint64`) |
 | `p.s(cpsStmts) = oldCode` (a proc returning `var T`) | `assign(p.s(cpsStmts), oldCode)` | `rule:assigncall`: Python can't assign to a call; `assign` assigns in place like `<<=` |
+| `proc cmp*(a, b: Int128): int`, `proc abs*(a: Int128)` (a new overload of a system/imported proc) | `@dispatch`<br>`def cmp(a: Int128, b: Int128) -> nint:` | The overload set extends the proc of that name the module imported (system, std, another module) or the builtins `abs`/`len`/`min`/`max`: calls no overload matches go to it, as in Nim |
+| `template low*(t: typedesc[Int128]): Int128 = Min` | `@template`<br>`def low(t: typedesc[Int128]) -> Int128:` | A `typedesc[T]` parameter matches the type T itself (`low(Int128)`); other types still reach system `low` |
+| `proc `<`*(a: BiggestInt, b: Int128): bool`, `proc `+`*(a: BiggestInt, b: Int128)` | `@ufcs(Int128)`<br>`@dispatch`<br>`def __lt__(a: BiggestInt, b: Int128) -> bool:` | Operators keep Nim's parameter order. `int64(3) < x` reaches the overload through Python's reflected call, and `x > y` / `x >= y` are `y < x` / `y <= x` (Nim's system templates). Operators that the methods rule keeps at module level are `@ufcs(T)`; a `$` (`__str__`) may return a nimic `string` |
+| `when T is bool`, `when T is SomeUnsignedInt` (T a type parameter) | `if comptime(issubclass(T, bool)):` | `rule:isinstance` writes `T is X`; type classes `SomeInteger`, `SomeSignedInt`, `SomeUnsignedInt`, `SomeFloat`, `SomeNumber` work in `isinstance`/`issubclass` and dispatch. A union constraint `[T: SomeInteger \| bool]` is a type class |
+| `proc ldexp(x: float64, exp: cint): float64 {.importc: "ldexp", header: "<math.h>".}` | `@importc`<br>`def _ldexp(x: float64, exp: cint) -> float64:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`"""{.importc: "ldexp", header: "<math.h>".}"""`<br>&nbsp;&nbsp;&nbsp;&nbsp;`pass` | In Python `@importc` calls that C function of the process (libc, libm) through ctypes, with the annotated scalar types; the transpiler drops the decorator |
+| `f(5)` with `x: BiggestInt` | `f(5)` | A number literal takes the type of the parameter it is passed to (int64 here; for a generic `T` its binding) |
+| `arg.sdata(3)` (a private proc or template) | `arg._sdata(3)` | Method-call syntax also finds private (`_`) procs of the caller's scope |
 | `proc foo(...)` | `def foo(...)` | Methods of classes inheriting from `Object` are dispatched automatically. |
 | `0 ..< a` | `range(a)` | Range syntax. |
 | `a .. b` | `inrange(a, b)` | Inclusive range syntax, frequently used for sets (e.g. `Tset[TNoteKind](inrange(low, high))`). |
 | `[a ..< b]`,  `[a ..^1]` | `[a:b]`, `[a:]` | Slicing syntax. Upper bound can not be negative. |
 | `proc `+`(a: SomeType, b:int):` | `class SomeType(Object):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`def __add__(self: static[SomeType], b: nint):` | Operator overloading via dunder methods. To avoid monkey-patching in Python, function definitions acting as operators or methods for a specific type should be included as methods within the class definition. The transpiler natively unpacks them to freestanding `proc`s. |
+| `type T = object` ... `proc f*(x: T, k: int)`, `proc `==`*(a, b: T)` (procs of a type of the same module) | `class T(Object):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`...`<br>&nbsp;&nbsp;&nbsp;&nbsp;`def f(x: T, k: nint):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`def __eq__(a: T, b: T) -> bool:` | **Methods rule.** A proc, template or operator whose first parameter has a type defined in the same module is written as a method of that class, unless its body uses a module-level definition that comes after the type (a constant of the type, a later proc or template, an import placed later). The transpiler emits the methods as procs right after the type section, so they may use only what precedes the type, the type's fields and the methods before them in the class. Keep the original order among the methods. Both call forms work in Python as in Nim (`f(x, 1)` and `x.f(1)`); several methods of the same name are an overload set. A proc that uses later definitions stays a module-level `def` at its original place; an operator or `$` there is `@ufcs(T)` (`@ufcs(T)` `@dispatch` adds overloads to an operator the class defines). Enum classes take their `$` (`__str__`) as a method too |
 | `func foo(x:uint):` | `def foo(x:uint):` `"""{.noSideEffect.}"""` | function is proc without side effect |
 | `proc `+`=(a: uint, b:uint):` | `def __iadd__(a: uint, b:uint):` | In-place operators in Python should return the modified object. |
 | `proc `+`=(a: uint, b:uint):` | `def __radd__(a: uint, b:uint):` | Right-hand side binary operators swap arguments. |
@@ -218,6 +227,9 @@ A Nim `string` is a sequence of bytes. A nimic `string`/`cstring`/`char` holds t
 | `readFile`, `writeFile`, `lines`, `File` | same names | Binary I/O, no decoding |
 | OS paths, env vars, `paramStr`, `getCurrentDir`, `walkDir` | `nimic.std.os` | Paths are bytes on disk: `utf8("café.txt")` names the same file Nim's `"café.txt"` does |
 | `std/unicode` (runes) | — | Not yet available: Unicode handling is explicit on UTF-8 byte views |
+| `newString(n)` | `newString(n)` | `n` NUL chars, to be written in place |
+| `L.buf = s.cstring`, `cstring(s)` | the same | Points into `s`'s buffer: `c[i] = x`, `copyMem`/`moveMem(addr c[i], ...)` change `s`, and changes to `s` are seen through `c`. After `s.setLen` the buffer may move: take the cstring again, as in Nim. A cstring of anything else is a copy. Reads stop at the first NUL; past the buffer `c[i]` is `'\0'` |
+| `moveMem(dst, src, n)` | `moveMem(dst, src, n)` | Overlapping regions allowed |
 
 Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_text` (Unicode text → byte view), `_n_to_text` (byte view → text), `_n_os_arg`, `_n_os_result`.
 
@@ -230,6 +242,7 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | `"$1 [$#] ${name}" % [a, b]`, `format(f, a, b)`, `s.addf(f, a)` | the same | strutils `%`, `format`, `addf` with Nim semantics (`$1`, `$#`, `$-1`, `${n}`, `$name` key/value pairs, `$$`; `ValueError` if invalid) |
 | `a <% b`, `a <=% b`, `a >% b`, `a >=% b` | `lt_percent(a, b)`, `le_percent`, `gt_percent`, `ge_percent` | Unsigned comparisons (`rule:percentops`) |
 | `x.isNil`, `quit(1)`, `quit("msg")` | `isNil(x)`, `quit(1)`, `quit(string("msg"))` | system procs |
+| `s.addInt(x)`, `s.addFloat(f)`, `likely(c)`, `unlikely(c)`, `uint`, `cint`, `cuint` | the same | system (`addFloat` from `std/formatfloat`, shortest round trip as `$`); `fastLog2` from `std/bitops`; `trunc` from `std/math` returns a float as in Nim |
 | `for i, x in s:` (implicit pairs) | `for i, x in pairs(s):` | `(index, item)` of a seq, array or string; `(key, value)` of a table |
 | `proc p(): tuple[dir: AbsoluteDir, name: string]` ... `result = (a, b)` | `class _SplitT(NTuple)` ..., `def p() -> _SplitT:` ... `return (a, b)` | A tuple literal returned from a proc declared to return a named tuple type becomes that type (`@dispatch`) |
 | `$e`, `echo e` (enum member) | `str(e)`, `echo(e)` | The member's name (string-valued enums: the text) |
@@ -239,7 +252,7 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | `s[s.len]` | `s[s.len]` | A string is `'\0'`-terminated: with bound checks off (`-d:danger`, `push boundChecks: off`) it reads `'\0'`, otherwise `IndexDefect`. Don't add Python-only bounds guards |
 | `toFloat(i)`, `toInt(f)` | `toFloat(i)`, `toInt(f)` | system procs |
 | `a == b` (objects, tuples) | `a == b` | Field-wise, as Nim's default `==`; refs compare as references. Object constructors copy value arguments |
-| `x = y` (value type) | `x = y.copy()` | Explicit copy of value types in Python, e.g. to create a mutable copy. `string`, `seq`, `array`, `Tset`, `Object` and the integer types (`nint`, `int64`, `uint8`, ...) have `.copy()`. Integers need it when the new variable is changed in place (`b = a.copy()` before `b -= 1`, `inc(b)` or passing `b` as `var`), since in-place operators mutate the shared object; assigning an object, `a[i] = obj` and `s.add(v)` copy value fields/elements (strings, seqs, non-ref objects) and share refs, as Nim does |
+| `x = y` (value type) | `x = y.copy()` | Explicit copy of value types in Python, e.g. to create a mutable copy. `string`, `seq`, `array`, `Tset`, `Object` and the integer types (`nint`, `int64`, `uint8`, ...) have `.copy()`. Integers need it when the new variable is changed in place (`b = a.copy()` before `b -= 1` or passing `b` as `var`; Nim's `inc(b)` is `b += 1`). A parameter whose default is a Python literal has no `.copy()`: write `pos = nint(pos)`. A proc may return its argument itself (`abs(x)` of a non-negative `Int128`), so `var d = abs(d)` changed in place is `d = abs(d).copy()`, since in-place operators mutate the shared object; assigning an object, `a[i] = obj` and `s.add(v)` copy value fields/elements (strings, seqs, non-ref objects) and share refs, as Nim does |
 | `x = y` through a `var` parameter | `x <<= y` | Works for objects, `string`, `seq`, `array` and `Tset` (in place) |
 | `echo a, b` | `echo(a, b)` | Nim semantics: `$` of each argument, no separator (`echo("n=", 3, true)` prints `n=3true`) |
 | signed integer overflow | `a + b`, `a * b`, ... | Raises `OverflowDefect` like Nim with overflow checks on (the default build); off with `-d:danger` (`NIMIC_DEFINES=danger`) or inside `with push("overflowChecks: off"):`. Unsigned types, `+%`/`-%`, shifts and bitwise operations wrap. Array indexes out of bounds raise `IndexDefect` |

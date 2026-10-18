@@ -2,9 +2,12 @@ from __future__ import annotations
 import builtins as _builtins
 import codecs
 import ctypes
+import ctypes.util as _ctypes_util
+import functools as _functools
 import io
 import os
 import importlib as _importlib
+import re as _re
 import math as _math
 import resource as _resource
 import traceback as _traceback
@@ -16,7 +19,7 @@ from typing import Generator, TypeVar
 
 from nimic.system.ansi_c import c_malloc, c_free
 from nimic import ntypesystem as _ntypesystem
-from nimic.ntypesystem import char, cstring, seq, string, NIntEnum, _n_dollar
+from nimic.ntypesystem import char, cstring, seq, string, NIntEnum, _n_dollar, ufcs
 
 class _SomeCastClass:
     def __getitem__(self, other_cls: type) -> callable:
@@ -107,6 +110,11 @@ def new_string_of_cap(cap: int):
     return string(cap)
 
 newStringOfCap = new_string_of_cap
+
+
+def newString(length: int) -> string:
+    """Nim: newString(len) — a string of len NUL chars (written in place, e.g. through its cstring)."""
+    return string("\0" * int(length))
 
 
 def new_cstring_of_cap(cap: int):
@@ -622,6 +630,84 @@ def instantiationInfo(index: int = -1, fullPaths: bool = False) -> _Instantiatio
 def typeof(x: object) -> type:
     """Nim: typeof(x) — the type of an expression; `T = typeof(expr)` is a type alias."""
     return type(x)
+
+
+@ufcs(string)
+def addInt(result: string, x) -> None:
+    """Nim: addInt — appends the decimal representation of the integer x (int, int64, uint64, ...)."""
+    result.add(str(int(x)))
+
+
+def likely(val: bool) -> bool:
+    """Nim: likely — a branch prediction hint; the value itself."""
+    return val
+
+
+def unlikely(val: bool) -> bool:
+    """Nim: unlikely — a branch prediction hint; the value itself."""
+    return val
+
+
+_N_IMPORTC_PRAGMA = _re.compile(r'\bimportc\b(?:\s*:\s*"([^"]+)")?')
+_N_C_INT_TYPES = {(8, True): ctypes.c_int8, (16, True): ctypes.c_int16, (32, True): ctypes.c_int32,
+                  (64, True): ctypes.c_int64, (8, False): ctypes.c_uint8, (16, False): ctypes.c_uint16,
+                  (32, False): ctypes.c_uint32, (64, False): ctypes.c_uint64}
+_N_C_FLOAT_TYPES = {"f": ctypes.c_float, "d": ctypes.c_double}
+
+
+@_functools.cache
+def _n_c_libraries() -> tuple:
+    """The C libraries importc procs are looked up in: the process itself, then libc and libm."""
+    libs = [ctypes.CDLL(None)]
+    for name in ("c", "m"):
+        path = _ctypes_util.find_library(name)
+        if path:
+            libs.append(ctypes.CDLL(path))
+    return tuple(libs)
+
+
+def _n_c_type(cls: type) -> type:
+    """The ctypes type of a nimic scalar type (for an importc call)."""
+    c_type = _ntypesystem.DICT_OF_C_TYPES.get(cls.__name__)
+    if c_type is not None:
+        return c_type
+    if issubclass(cls, _ntypesystem.NInteger):
+        return _N_C_INT_TYPES[(cls._n_bits, cls._n_signed)]
+    if issubclass(cls, _ntypesystem.NFloat):
+        return _N_C_FLOAT_TYPES[cls._n_format]
+    raise TypeError(f"importc: no C type for {cls.__name__} (scalar types only)")
+
+
+def importc(fn):
+    """Nim: a proc with `{.importc.}` / `{.importc: "cname".}` in its pragma docstring and no body
+    (rule:importc). In Python it calls that C function of the running process (libc, libm) through
+    ctypes; arguments and the result are converted to the annotated nimic scalar types."""
+    match = _N_IMPORTC_PRAGMA.search(fn.__doc__ or "")
+    if match is None:
+        raise TypeError(f"@importc {fn.__name__}: no {{.importc.}} pragma in its docstring")
+    c_name = match.group(1) or fn.__name__
+    c_fn = next((getattr(lib, c_name) for lib in _n_c_libraries() if hasattr(lib, c_name)), None)
+    if c_fn is None:
+        raise NameError(f"@importc {fn.__name__}: C function {c_name} not found")
+
+    def resolve(annotation):
+        if isinstance(annotation, str):
+            return fn.__globals__.get(annotation) or _ntypesystem.DICT_OF_TYPES[annotation]
+        return annotation
+
+    names = fn.__code__.co_varnames[:fn.__code__.co_argcount]
+    arg_types = [resolve(fn.__annotations__[name]) for name in names]
+    ret = fn.__annotations__.get("return")
+    ret_type = None if ret in (None, "None") else resolve(ret)
+    c_fn.argtypes = [_n_c_type(t) for t in arg_types]
+    c_fn.restype = None if ret_type is None else _n_c_type(ret_type)
+
+    @_functools.wraps(fn)
+    def call(*args):
+        c_args = [float(a) if issubclass(t, _ntypesystem.NFloat) else int(a) for a, t in zip(args, arg_types)]
+        res = c_fn(*c_args)
+        return None if ret_type is None else ret_type(res)
+    return call
 
 
 def isNil(x: object) -> bool:

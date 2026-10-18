@@ -42,7 +42,8 @@ Type system:
 Function definitions:
   rule:funcdef -> adjust function definition according to Nim syntax as "proc" (or "func")
   rule:funcdefdecorated -> interpret decorators as definitions for "template", "iterator", "converter", "method".
-    Other decorators are skipped
+    Other decorators are skipped (@dispatch, @ufcs, @importc: an importc proc's pragma docstring carries
+    {.importc.}, and its `pass` body makes it body-less)
   rule:block -> function definition named "_block" is inserted as "block:" where called
   rule:templateinline -> "with template_inline" is replaced by template definition
   rule:funcdefyield -> definitions with yield or decorated with "iterator" are converted to iterators
@@ -109,7 +110,7 @@ Operators & renaming:
   rule:keywordescape -> trailing _ stripped from Python keyword clashes (None_ -> None, type_ -> type)
   rule:percentops -> plus_percent(a, b) / a.plus_percent(b) and minus_percent(a, b) / a.minus_percent(b) transpile as a +% b and a -% b; lt_percent, le_percent,
     gt_percent, ge_percent as a <% b, a <=% b, a >% b, a >=% b (comparison precedence)
-  rule:isinstance -> isinstance(x, T) transpiles as x is T (type query)
+  rule:isinstance -> isinstance(x, T) transpiles as x is T (type query), issubclass(T, X) as T is X
   rule:formatstr -> FormatStr(s) unwraps to string literal s in Nim (where string is FormatStr)
   rule:doblock -> with do: block translates as do: block in Nim
   rule:push -> with push("overflowChecks: off"): body  translates as {.push overflowChecks: off.} body {.pop.},
@@ -2632,8 +2633,9 @@ class _Unparser(NodeVisitor):
             # rule:defined -> defined("identifier") translates to defined(identifier) in Nim
             # rule:declared -> declared("identifier") translates to declared(identifier) in Nim
             self.write(f"{node.func.id}({node.args[0].value})")
-        elif isinstance(node.func, Name) and node.func.id == "isinstance" and len(node.args) == 2:
-            # rule:isinstance -> isinstance(x, T) translates to x is T in Nim
+        elif isinstance(node.func, Name) and node.func.id in ("isinstance", "issubclass") and len(node.args) == 2:
+            # rule:isinstance -> isinstance(x, T) translates to x is T in Nim, issubclass(T, X) (a type
+            # parameter, `when T is bool`) to T is X
             self.traverse(node.args[0])
             self.write(" is ")
             self.traverse(node.args[1])

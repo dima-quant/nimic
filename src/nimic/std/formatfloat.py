@@ -12,3 +12,12 @@ def add_float_roundtrip(result: string, f: float) -> None:
 
 addFloatRoundtrip = add_float_roundtrip
 
+
+
+@ufcs(string, aliases=("addFloat",))
+def add_float(result: string, x: float) -> None:
+    """Nim: addFloat — appends the string representation of x (the shortest round trip, as `$x`)."""
+    add_float_roundtrip(result, x)
+
+
+addFloat = add_float

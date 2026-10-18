@@ -19,8 +19,10 @@ from nimic.nsystem import ord as nim_ord, _BuildProfile, _n_set_build_profile
 from nimic.ntypesystem import (BUFFER_REGISTRY, BufferRegistry, DICT_OF_C_TYPES, _match_subtype,
                                _n_aliases, _n_distinct_types, _n_from_text, _n_registry, _n_to_text,
                                char as _char)
+from nimic.std.bitops import fastLog2
 from nimic.std.endians import big_endian32
-from nimic.std.math import classify, fcNegSubnormal, fcNormal, fcSubnormal
+from nimic.std.formatfloat import addFloat
+from nimic.std.math import classify, fcNegSubnormal, fcNormal, fcSubnormal, trunc
 from nimic.std.options import Option, none, some
 from nimic.std.os import fileExists, getCurrentDir, getEnv, walkDir
 from nimic.std.parseutils import parse_hex, parse_ident
@@ -29,6 +31,41 @@ from nimic.std.strutils import isUpperAscii, find, nimIdentNormalize, repeat, rf
 from nimic.std.syncio import lines, read_file
 from nimic.system.ansi_c import c_free, c_malloc, csize_t
 from nimic.transpiler import unparse
+
+def _n_fwd_proc(a, b):
+    """A forward declaration in this module (overloads below)."""
+    pass
+
+
+@dispatch
+def _n_fwd_proc(a: nint, b: nint) -> nint:
+    return a + b
+
+
+class _NMethodHost(Object):
+    """Procs of a type defined in the class (translation rules: methods) are also callable as free procs."""
+    n: nint
+
+    def grow(h: mut @ _NMethodHost, k: nint):
+        h.n += k
+
+    def grow(h: mut @ _NMethodHost, s: string):
+        h.n += len(s)
+
+    def total(h: _NMethodHost) -> nint:
+        return h.n
+
+    def __str__(h: _NMethodHost) -> string:
+        return string("host ") + str(h.n)
+
+
+class _NEnumWithDollar(NIntEnum):
+    first = 0
+    second = auto()
+
+    def __str__(e: _NEnumWithDollar) -> string:
+        return string("1st") if e == _NEnumWithDollar.first else string("2nd")
+
 
 class TestNTypes(unittest.TestCase):
 
@@ -1768,6 +1805,54 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(string(b"\xc3\xa9").data, "\xc3\xa9")
         self.assertEqual(cstring(b"\xc3\xa9")._value, b"\xc3\xa9")
 
+    def test_cstring_of_string_is_a_view(self):
+        """Nim `s.cstring` / `cstring(s)` points into the string's buffer: writes through the cstring
+        change the string and the other way round; reads stop at the first NUL (strlen)."""
+        s = string("abcd")
+        c = cstring(s)
+        c[0] = ch("x")
+        self.assertEqual(s, "xbcd")
+        s[1] = ch("y")
+        self.assertEqual(c[1], "y")
+        self.assertEqual(str(s.cstring), "xycd")
+        self.assertEqual(c[4], "\0")  # past the end: the terminator
+        c2 = c  # a cstring copy is the same pointer
+        c2[3] = ch("\0")
+        self.assertEqual(len(c), 3)
+        self.assertEqual(str(c), "xyc")
+        self.assertEqual(len(s), 4)  # the string keeps its length
+        self.assertEqual(cstring(c)[0], "x")
+        self.assertIsInstance(c[0], _char)
+
+    def test_new_string_and_mem_through_cstring(self):
+        """newString(n) is n NUL chars; copyMem/moveMem through addr(c[i]) write into the string
+        (nimlexbase fills its buffer this way)."""
+        s = newString(8)
+        self.assertEqual(len(s), 8)
+        self.assertEqual(s, "\0" * 8)
+        c = s.cstring
+        self.assertEqual(len(c), 0)
+        src = string("hello")
+        copyMem(addr(c[2]), addr(src[0]), 5)
+        self.assertEqual(s, "\0\0hello\0")
+        moveMem(addr(c[0]), addr(c[2]), 5)  # overlapping regions
+        self.assertEqual(s, "hellolo\0")
+        self.assertEqual(str(c), "hellolo")
+        with self.assertRaises(IndexError):
+            c[8] = ch("!")  # no slot past the buffer
+
+        class _Lexer(Object):
+            buf: cstring
+            bufStorage: string
+
+        lx = _Lexer()
+        lx.bufStorage = newString(4)
+        lx.buf = lx.bufStorage.cstring  # a cstring field aliases the string field too
+        lx.buf[1] = ch("x")
+        lx.bufStorage[0] = ch("a")
+        self.assertEqual(lx.bufStorage, "ax\0\0")
+        self.assertEqual(str(lx.buf), "ax")
+
     def test_string_rejects_chars_above_latin1(self):
         """A char > 0xFF cannot be a Nim byte; string/cstring/char raise NimicEncodingError."""
         with self.assertRaises(NimicEncodingError) as cm:
@@ -2683,6 +2768,349 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(ran, [1])
         out = unparse(ast.parse("with pragma('cast(gcsafe)'):\n    f()\n"))[0]
         self.assertIn("{.cast(gcsafe).}:\n  f()", out)
+
+    def test_class_methods_are_free_procs(self):
+        """A method of an Object class is a Nim proc: `grow(h, 2)` and `h.grow(2)` both call it (overloads
+        too); a module-level name of another kind keeps working through the first argument's methods. A
+        `$` (`__str__`) defined in the class may return a nimic string, also in enums."""
+        h = _NMethodHost(n=1)
+        grow(h, 2)
+        h.grow(string("abc"))
+        grow(h, string("x"))
+        self.assertEqual(total(h), 7)
+        self.assertEqual(h.total(), 7)
+        self.assertEqual(str(h), "host 7")
+        s = seq[nint]()
+        s.add(nint(1))
+        self.assertEqual(total.__name__, "total")
+        self.assertEqual(str(_NEnumWithDollar.first), "1st")
+        self.assertEqual(f"{_NEnumWithDollar.second}", "2nd")
+
+    def test_ufcs_overload_extends_class_method(self):
+        """An operator defined in the class (it uses nothing defined later) and later `@ufcs @dispatch`
+        overloads of it (they do) form one overload set."""
+        class _Cents(Object):
+            v: nint
+
+            def __add__(a: _Cents, b: _Cents) -> _Cents:
+                return _Cents(v=a.v + b.v)
+
+        @ufcs(_Cents)
+        @dispatch
+        def __add__(a: _Cents, b: nint) -> _Cents:
+            return _Cents(v=a.v + b)
+
+        self.assertEqual((_Cents(v=1) + _Cents(v=2)).v, 3)
+        self.assertEqual((_Cents(v=1) + nint(5)).v, 6)
+        class _Euros(Object):
+            v: nint
+
+            def __add__(a: _Euros, b: _Euros) -> _Euros:
+                return _Euros(v=a.v + b.v)
+
+        with self.assertRaises(TypeError):
+            @ufcs(_Euros)
+            def __add__(a: _Euros, b: string) -> _Euros:  # not an overload set: never shadows the method
+                return a
+
+    def test_add_int_and_add_float(self):
+        """system addInt (decimal of any integer) and addFloat (shortest round trip, as Nim's $)."""
+        s = string("x")
+        s.addInt(int64(-9223372036854775807) - 1)
+        addInt(s, u64(18446744073709551615))
+        s.addInt(nint(7))
+        self.assertEqual(s, "x-922337203685477580818446744073709551615" + "7")
+        f = string("")
+        f.addFloat(45.67)
+        f.add(ch(" "))
+        addFloat(f, float32(0.5))
+        f.add(ch(" "))
+        f.addFloat(1e20)
+        self.assertEqual(f, "45.67 0.5 1e+20")
+
+    def test_method_call_syntax_private_proc(self):
+        """`arg.sdata(3)` with a private proc/template (`_sdata`, Nim without `*`) is method-call syntax too."""
+        class _Pair(Object):
+            a: nint
+            b: nint
+
+        def _second(p: _Pair, add: nint) -> nint:
+            return p.b + add
+
+        self.assertEqual(_Pair(a=1, b=2)._second(10), 12)
+        with self.assertRaises(AttributeError):
+            _Pair()._n_missing_internal  # nimic internals are never procs
+
+    def test_set_literal_with_ranges(self):
+        """Nim `{'-', '0'..'9'}`: Tset[T] takes elements and inrange(...) ranges, as arguments or in a
+        Python set literal; a single iterable (another set, a range) gives its members."""
+        digits = inrange(ch('0'), ch('9'))
+        for s in (Tset[char](ch('-'), digits), Tset[char]({ch('-'), digits})):
+            self.assertIn(ch('5'), s)
+            self.assertIn(ch('-'), s)
+            self.assertNotIn(ch('a'), s)
+            self.assertEqual(len(s), 11)
+        self.assertEqual(len(Tset[char](digits)), 10)
+        self.assertEqual(Tset[char](ch('x')), Tset[char]({ch('x')}))
+        self.assertEqual(Tset[uint8](1, inrange(3, 5)), {1, 3, 4, 5})
+        self.assertEqual(Tset[uint8](Tset[uint8](2, 4)), {2, 4})
+        self.assertEqual(unparse(ast.parse("x = Tset[char](ch('-'), inrange(ch('0'), ch('9')))"))[0].strip(),
+                         "x = {'-', '0' .. '9'}")
+
+    def test_dispatch_overload_extends_imported_proc(self):
+        """A @dispatch proc named like an imported (system, std) or Python builtin proc is a new overload
+        of it, as in Nim: arguments no overload matches go to the imported proc."""
+        class _Thing(Object):
+            v: nint
+
+        @dispatch
+        def cmp(a: _Thing, b: _Thing) -> nint:
+            return a.v - b.v
+
+        @dispatch
+        def abs(a: _Thing) -> _Thing:
+            return _Thing(v=-a.v if a.v < 0 else a.v)
+
+        self.assertEqual(cmp(_Thing(v=5), _Thing(v=3)), 2)
+        self.assertEqual(cmp(int32(1), int32(2)), -1)  # system cmp
+        self.assertEqual(abs(_Thing(v=-4)).v, 4)
+        self.assertEqual(abs(int64(-7)), 7)  # Python builtin abs
+        self.assertEqual(_n_fwd_proc(nint(1), nint(2)), 3)
+        with self.assertRaises(NotImplementedError):
+            _n_fwd_proc(string("x"), nint(2))  # the forward declaration is no imported proc
+
+    def test_dispatch_keywords_bind_per_overload_without_shifting(self):
+        """A keyword call binds to each overload by its parameter names; a binding whose types fit no
+        overload is dropped, not re-filled with another overload's defaults (cbuilderdecls.addProcVar)."""
+        @dispatch
+        def _n_pv(cc: uint8, name: string, isStatic: bool = False, isVolatile: bool = False) -> string:
+            return string("cc static=") + str(isStatic) + " volatile=" + str(isVolatile)
+
+        @dispatch
+        def _n_pv(name: string, isStatic: bool = False, isVolatile: bool = False) -> string:
+            return string("plain static=") + str(isStatic) + " volatile=" + str(isVolatile)
+
+        self.assertEqual(_n_pv(u8(1), string("x"), isVolatile=True), "cc static=False volatile=True")
+        self.assertEqual(_n_pv(string("x"), isVolatile=True), "plain static=False volatile=True")
+        self.assertEqual(_n_pv(u8(1), string("x"), isStatic=True), "cc static=True volatile=False")
+
+    def test_dispatch_registered_alias_parameter(self):
+        """A parameter typed with a registered alias (`BiggestInt` = int64, `byte` = uint8) matches the
+        aliased type, and an integer literal converts to it (Nim `5` for a BiggestInt)."""
+        @dispatch
+        def _n_big(x: BiggestInt) -> string:
+            return string("big")
+
+        @dispatch
+        def _n_big(x: string) -> string:
+            return string("str")
+
+        self.assertEqual(_n_big(int64(1)), "big")
+        self.assertEqual(_n_big(5), "big")
+        self.assertEqual(_n_big(string("x")), "str")
+
+        @dispatch
+        def _n_big2(x: BiggestInt, y: string) -> nint:
+            return 2
+
+        @dispatch
+        def _n_big2(x: string, y: string) -> nint:
+            return 3
+
+        self.assertEqual(_n_big2(5, string("y")), 2)
+        self.assertEqual(_n_big2(int32(5), string("y")), 2)
+
+    def test_dispatch_literal_takes_parameter_type(self):
+        """A Python number literal passed to a typed parameter has that type in the body (Nim types the
+        literal by the parameter): `f(5)` with `x: BiggestInt` sees an int64, a generic `T` its binding."""
+        @dispatch
+        def _n_lit(x: BiggestInt, y: string) -> string:
+            return string(type(x).__name__)
+
+        @dispatch
+        def _n_lit(x: string, y: string) -> string:
+            return y
+
+        self.assertEqual(_n_lit(5, string("y")), "int64")
+
+        @dispatch
+        def _n_glit[T: SomeInteger](x: T) -> nint:
+            return sizeof(x)
+
+        self.assertEqual(_n_glit(5), 4)  # the literal binds T to int32 (nimic's integer literal type)
+        self.assertEqual(_n_glit(u64(5)), 8)
+
+        @dispatch
+        def _n_byte(x: byte) -> nint:
+            return 1
+
+        self.assertEqual(_n_byte(uint8(3)), 1)
+
+    def test_when_type_parameter_is(self):
+        """Nim `when T is bool` / `when T is SomeUnsignedInt` is `if comptime(issubclass(T, X))` (rule:isinstance):
+        true in the specialization for T, transpiled as `T is X`."""
+        @dispatch
+        def _n_kind_of[T: SomeInteger | bool](arg: T) -> string:
+            if comptime(issubclass(T, bool)):
+                return string("bool")
+            elif comptime(issubclass(T, SomeUnsignedInt)):
+                return string("unsigned")
+            else:
+                return string("signed")
+
+        self.assertEqual(_n_kind_of(True), "bool")
+        self.assertEqual(_n_kind_of(u16(1)), "unsigned")
+        self.assertEqual(_n_kind_of(int8(1)), "signed")
+        out = unparse(ast.parse("if comptime(issubclass(T, SomeUnsignedInt)):\n    pass\n"))[0]
+        self.assertIn("when T is SomeUnsignedInt:", out)
+
+    def test_type_classes_and_uint(self):
+        """Nim type classes work in `when x is SomeUnsignedInt` (`isinstance`) and in dispatch; `uint` is
+        Nim's unsigned word (64 bits)."""
+        self.assertTrue(isinstance(u64(1), SomeUnsignedInt))
+        self.assertTrue(isinstance(uint(1), SomeUnsignedInt))
+        self.assertFalse(isinstance(int8(1), SomeUnsignedInt))
+        self.assertTrue(isinstance(int8(1), SomeSignedInt))
+        self.assertTrue(isinstance(nint(1), SomeInteger))
+        self.assertTrue(isinstance(5, SomeInteger))  # an integer literal
+        self.assertFalse(isinstance(True, SomeInteger))
+        self.assertTrue(isinstance(float32(1), SomeFloat))
+        self.assertTrue(isinstance(1.5, SomeNumber) and isinstance(uint16(1), SomeNumber))
+        self.assertFalse(isinstance(string("1"), SomeNumber))
+        self.assertEqual(uint(high(uint64)), high(uint64))
+        self.assertEqual(sizeof(uint(0)), 8)
+        self.assertEqual(uint(5) - uint(2), 3)
+
+        @dispatch
+        def _n_kind(x: SomeUnsignedInt) -> string:
+            return string("unsigned")
+
+        @dispatch
+        def _n_kind(x: SomeSignedInt) -> string:
+            return string("signed")
+
+        self.assertEqual(_n_kind(uint(1)), "unsigned")
+        self.assertEqual(_n_kind(u8(1)), "unsigned")
+        self.assertEqual(_n_kind(int32(1)), "signed")
+
+    def test_generic_union_constraint(self):
+        """`proc f[T: SomeInteger | bool](arg: T)`: a union constraint of a type parameter is a type class."""
+        @dispatch
+        def _n_width[T: SomeInteger | bool](arg: T) -> nint:
+            return -1 if comptime(isinstance(arg, bool)) else sizeof(T)  # names as in the module (bool)
+
+        self.assertEqual(_n_width(u64(1)), 8)
+        self.assertEqual(_n_width(int16(1)), 2)
+        self.assertEqual(_n_width(True), -1)
+        with self.assertRaises(NotImplementedError):
+            _n_width(1.5)
+
+    def test_dispatch_typedesc(self):
+        """`typedesc[T]` parameters match the type T itself (Nim `low(Int128)`); system low/high still
+        serve the other types."""
+        class _Wide(Object):
+            v: nint
+
+        @template
+        def low(t: typedesc[_Wide]) -> nint:
+            return -99
+
+        @dispatch
+        def describe(t: typedesc[_Wide]) -> string:
+            return string("wide")
+
+        @dispatch
+        def describe(x: _Wide) -> string:
+            return string("value")
+
+        self.assertEqual(low(_Wide), -99)
+        self.assertEqual(low(int8), -128)
+        self.assertEqual(describe(_Wide), "wide")
+        self.assertEqual(describe(_Wide(v=1)), "value")
+
+    def test_mixed_operators_follow_nim_overloads(self):
+        """`proc <(a: BiggestInt, b: T)` and `proc +(a: BiggestInt, b: T)` are written with the Nim
+        parameter order; Python's reflected calls (`int64(3) < t`, `int64(3) + t`) reach them, and
+        `t > x` is `x < t` as Nim's `>` template."""
+        class _Big(Object):
+            v: nint
+
+        @ufcs(_Big)
+        @dispatch
+        def __lt__(a: _Big, b: _Big) -> bool:
+            return a.v < b.v
+
+        @ufcs(_Big)
+        @dispatch
+        def __lt__(a: BiggestInt, b: _Big) -> bool:
+            return a < b.v
+
+        @ufcs(_Big)
+        @dispatch
+        def __le__(a: BiggestInt, b: _Big) -> bool:
+            return a <= b.v
+
+        @ufcs(_Big)
+        @dispatch
+        def __add__(a: BiggestInt, b: _Big) -> _Big:
+            return _Big(v=a + b.v)
+
+        @ufcs(_Big)
+        @dispatch
+        def __sub__(a: BiggestInt, b: _Big) -> _Big:
+            return _Big(v=a - b.v)
+
+        @ufcs(_Big)
+        def __str__(a: _Big) -> string:
+            return string("big ") + str(a.v)
+
+        t = _Big(v=10)
+        self.assertEqual(str(t), "big 10")  # a `$` returning a nimic string serves Python's str()
+        self.assertEqual(f"{t}", "big 10")
+        self.assertTrue(int64(3) < t)
+        self.assertFalse(int64(30) < t)
+        self.assertTrue(t > int64(3))  # Nim: `>`(t, 3) is 3 < t
+        self.assertTrue(t >= int64(10))
+        self.assertTrue(_Big(v=20) > t)
+        self.assertEqual((int64(3) + t).v, 13)
+        self.assertEqual((int64(3) - t).v, -7)
+        with self.assertRaises(TypeError):
+            _ = int64(3) * t  # no `*` overload: Python's TypeError, not a wrong value
+        self.assertEqual(int64(3) + 4, 7)  # plain scalars unchanged
+        self.assertTrue(int64(3) < 4.5)
+
+    def test_importc_proc(self):
+        """`@importc` binds a body-less proc to the C function named by its `{.importc.}` pragma, through
+        ctypes, with the annotated nimic types; the transpiler drops the decorator."""
+        @importc
+        def _c_abs(x: cint) -> cint:
+            """{.importc: "abs", header: "<stdlib.h>".}"""
+            pass
+
+        @importc
+        def ldexp(x: float64, exp: cint) -> float64:
+            """{.importc, header: "<math.h>".}"""
+            pass
+
+        self.assertEqual(_c_abs(cint(-5)), 5)
+        self.assertIsInstance(_c_abs(cint(-5)), cint)
+        self.assertEqual(ldexp(1.5, -1), 0.75)
+        self.assertIsInstance(ldexp(1.0, 3), float64)
+        out = unparse(ast.parse('@importc\ndef _c_abs(x: cint) -> cint:\n'
+                                '    """{.importc: "abs", header: "<stdlib.h>".}"""\n    pass\n'))[0]
+        self.assertNotIn("importc\n", out.split("proc")[0])
+        self.assertIn('proc local_c_abs(x: cint): cint {.importc: "abs", header: "<stdlib.h>".}', out)
+
+    def test_bitops_math_and_branch_hints(self):
+        """std/bitops fastLog2, std/math trunc (a float, as in Nim), likely/unlikely."""
+        self.assertEqual(fastLog2(u32(1)), 0)
+        self.assertEqual(fastLog2(u32(0x80000000)), 31)
+        self.assertEqual(fastLog2(u64(1) << 40), 40)
+        self.assertIsInstance(fastLog2(u32(8)), nint)
+        self.assertEqual(trunc(-2.7), -2.0)
+        self.assertIsInstance(trunc(2.7), float)
+        self.assertTrue(unlikely(True))
+        self.assertFalse(likely(False))
 
     def test_quit_overloads(self):
         """Nim quit(errorcode: int) exits with the code (any nimic integer), quit(errormsg: string)

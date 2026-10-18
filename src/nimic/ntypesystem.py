@@ -62,6 +62,7 @@ import ast
 import bisect
 import ctypes
 import collections
+import collections.abc
 import contextvars
 import functools
 import inspect as ins
@@ -211,6 +212,11 @@ __arg_defaults__ = {}
 # a `*args: T` parameter; tried when no overload matches the call's arity (Nim prefers non-varargs)
 __dispatch_varargs__ = {}
 
+# name -> the proc of that name a @dispatch overload set extends (Nim overloads system/imported procs):
+# the module global (system, std, another module) or Python builtin it shadowed when first registered
+_n_imported_procs: dict = {}
+_n_imported_sigs: set = set()  # (name, call signature) served by the imported proc
+
 # --- Generic Type Classes & Aliases ---
 
 _n_generic_types = {
@@ -226,14 +232,43 @@ _n_generic_types = {
         "uint8",
     ),
     "SomeFloat": ("float64", "float32"),
+    "SomeSignedInt": ("nint", "int64", "int32", "int16", "int8"),
+    "SomeUnsignedInt": ("uint", "uint64", "uint32", "uint16", "uint8"),
 }
+_n_generic_types["SomeInteger"] += ("uint",)
+_n_generic_types["SomeNumber"] = _n_generic_types["SomeInteger"] + _n_generic_types["SomeFloat"]
+
+
+class _NTypeClass:
+    """A Nim type class (SomeInteger, SomeUnsignedInt, ...): `isinstance(x, SomeUnsignedInt)` is Nim's
+    `x is SomeUnsignedInt`, by the member type names of _n_generic_types (an integer or float literal is
+    of type int32 / float64); dispatch reads the name."""
+
+    def __init__(self, name: str):
+        self.__name__ = name
+
+    def __instancecheck__(self, instance) -> bool:
+        return not isinstance(instance, bool) and autorename(instance) in _n_generic_types[self.__name__]
+
+    def __subclasscheck__(self, cls) -> bool:
+        return isinstance(cls, type) and _n_aliases.get(cls.__name__, cls.__name__) in _n_generic_types[self.__name__]
+
+    def __repr__(self) -> str:
+        return self.__name__
+
+
+SomeInteger = _NTypeClass("SomeInteger")
+SomeSignedInt = _NTypeClass("SomeSignedInt")
+SomeUnsignedInt = _NTypeClass("SomeUnsignedInt")
+SomeFloat = _NTypeClass("SomeFloat")
+SomeNumber = _NTypeClass("SomeNumber")
 
 # for now map Python types to native types
 # should map from alias directly to native type
 _n_aliases = {"float": "float64", "int": "int32", "str": "string", "NBool": "bool",
               "static[bool]": "bool", "static[int]": "int32",
               "static[float]": "float64", "static[str]": "string",
-              "nint": "int64", "RootObj": "Object"}
+              "nint": "int64", "uint": "uint64", "RootObj": "Object"}
 
 # Names of types marked with @distinct — excluded from issubclass-based dispatch matching
 _n_distinct_types: set = set()
@@ -323,9 +358,11 @@ def _specialize_generic(fn: callable, T_var: dict[str, str]) -> callable:
 
     # Compile in the caller's namespace
     code = compile(tree, ins.getfile(fn), "exec")
-    # Build namespace with access to the module's globals
-    ns = fn.__globals__.copy()
-    ns.update(DICT_OF_TYPES)
+    # Build namespace with access to the module's globals; registered types only fill names the module
+    # lacks, globals and builtins alike (the module's `bool` is Python's bool, DICT_OF_TYPES["bool"] NBool)
+    builtin_names = vars(sys.modules["builtins"])
+    ns = {name: t for name, t in DICT_OF_TYPES.items() if name not in builtin_names}
+    ns.update(fn.__globals__)
     exec(code, ns)
     specialized_fn = ns[func_def.name]
     # Preserve the original function name for dispatch lookup
@@ -487,7 +524,14 @@ def _n_resolve_type_aliases(ann: str, namespace: dict) -> str:
     def resolve(n):
         nonlocal changed
         if isinstance(n, ast.Name):
-            if n.id in _n_aliases or n.id in _n_generic_types or n.id in DICT_OF_TYPES:
+            if n.id in _n_aliases or n.id in _n_generic_types:
+                return n.id
+            registered = DICT_OF_TYPES.get(n.id)
+            if registered is not None:
+                if (isinstance(registered, type) and registered.__name__ != n.id
+                        and registered.__name__ not in _n_aliases):  # BiggestInt -> int64 (not bool -> NBool)
+                    changed = True
+                    return registered.__name__
                 return n.id
             obj = namespace.get(n.id)
             if isinstance(obj, type) and obj.__name__ != n.id and obj.__module__ != "builtins":
@@ -678,6 +722,48 @@ def _n_named_tuple_result(fn: callable) -> callable:
     return named_tuple_result
 
 
+def _n_typed_literals(fn: callable, targets: list) -> callable:
+    """Nim types a number literal by the parameter it is passed to: `f(5)` with `x: BiggestInt` gets an
+    int64. Wraps a resolved overload so Python int/float arguments become the nimic scalar type named
+    at their position (`targets`); other arguments pass unchanged."""
+    convert = {i: DICT_OF_TYPES.get(name) for i, name in enumerate(targets)}
+    convert = {i: cls for i, cls in convert.items() if isinstance(cls, type) and issubclass(cls, NScalar)}
+    if not convert:
+        return fn
+
+    @functools.wraps(fn)
+    def typed(*args):
+        return fn(*(convert[i](a) if i in convert and type(a) in (int, float) else a
+                    for i, a in enumerate(args)))
+    return typed
+
+
+def _n_typedesc_sig(annotation: str) -> str:
+    """`typedesc[T]` matches the type T itself: a class argument's signature is `type[T]` (autorename)."""
+    if isinstance(annotation, str) and annotation.startswith("typedesc[") and annotation.endswith("]"):
+        return f"type[{annotation[len('typedesc['):-1]}]"
+    return annotation
+
+
+# Python builtins that nimic code calls as Nim system procs (other builtins are no Nim procs to extend)
+_N_SYSTEM_BUILTINS = frozenset({"abs", "len", "min", "max"})
+
+
+def _n_register_imported_proc(fn: callable, fn_globals: dict) -> None:
+    """Nim overloading spans modules: `proc cmp*(a, b: Int128)` adds an overload to system.cmp. When a
+    @dispatch proc shadows a routine of the same name that is no overload set itself (a system or std
+    proc imported into the module, or a builtin of _N_SYSTEM_BUILTINS such as abs), calls no overload matches go to it.
+    A plain function of the same module (a forward declaration) is not such a routine."""
+    if fn.__name__ in _n_imported_procs:
+        return
+    prior = fn_globals.get(fn.__name__)
+    if prior is None and fn.__name__ in _N_SYSTEM_BUILTINS:
+        prior = getattr(sys.modules["builtins"], fn.__name__)
+    if (callable(prior) and not isinstance(prior, (type, _DispatchedCallable))
+            and getattr(prior, "__module__", None) != fn.__module__):
+        _n_imported_procs[fn.__name__] = prior
+
+
 def dispatch(fn: callable) -> callable:
     """Decorator implementing Nim-style multi-dispatch based on argument type annotations.
 
@@ -730,6 +816,7 @@ def dispatch(fn: callable) -> callable:
         if name in _annotations
     ]
     fn_globals = getattr(fn, "_n_globals", fn.__globals__)  # block template factories: the template's module
+    sig_list = [_n_typedesc_sig(v) for v in sig_list]
     sig_list = [_n_resolve_type_aliases(v, fn_globals) for v in sig_list]
     sig_list = [_n_aliases[v] if v in _n_aliases else v for v in sig_list]
     sig_list = [_n_union_type_class(v, fn_globals) for v in sig_list]
@@ -747,6 +834,7 @@ def dispatch(fn: callable) -> callable:
         elem, conv = _n_vararg_type(fn.__annotations__.get(vararg_name, "untyped"), fn_globals)
         entries = __dispatch_varargs__.setdefault(fn.__name__, [])
         entries[:] = [e for e in entries if e[0] != tuple(sig_list)] + [(tuple(sig_list), elem, conv, fn)]
+    _n_register_imported_proc(fn, fn_globals)
     generic = any((arg in _n_generic_types for arg in sig_list))
     genericT = len(fn.__type_params__) > 0
     # register signature
@@ -754,7 +842,7 @@ def dispatch(fn: callable) -> callable:
         __arg_names__[fn.__name__] = {}
 
     if genericT:
-        T_def = get_type_params(fn)
+        T_def = {t: _n_union_type_class(c, fn_globals) for t, c in get_type_params(fn).items()}  # `T: A | B` is a type class
         # register T def
         # expand generic types
         sigs = tuple(
@@ -791,28 +879,35 @@ def dispatch(fn: callable) -> callable:
         __arg_defaults__.setdefault(fn.__name__, {})[sigs] = arg_defaults
 
     def fn_dispatch(*args, **kwargs):
+        # a call already bound to one overload's parameters (keywords and defaults filled in): dispatch it
+        # as it is; filling defaults again could bind it to another overload with shifted positions
+        bound = kwargs.pop("_n_bound", False)
         if kwargs:
             # bind keywords (and defaults) to each overload's parameters, then dispatch positionally
             candidates = _n_bind_overloads(fn.__name__, args, kwargs)
+            if not candidates and fn.__name__ in _n_imported_procs:
+                return _n_imported_procs[fn.__name__](*args, **kwargs)
             if not candidates:
                 raise TypeError(f"Invalid keyword arguments for {fn.__name__}")
             for cand in candidates:
                 try:
-                    return fn_dispatch(*cand)
+                    return fn_dispatch(*cand, _n_bound=True)
                 except NotImplementedError:
                     pass
             raise NotImplementedError(f"Function not defined for keyword signature: {fn.__name__}")
 
-        if not _n_has_arity(fn.__name__, len(args)):
+        if not bound and not _n_has_arity(fn.__name__, len(args)):
             # no overload takes exactly this many arguments: fill trailing defaults per overload
             for cand in _n_bind_overloads(fn.__name__, args, {}):
                 try:
-                    return fn_dispatch(*cand)
+                    return fn_dispatch(*cand, _n_bound=True)
                 except NotImplementedError:
                     pass
 
         sigs = ((autorename(arg),) for arg in args)
         fn_sig = tuple(sigs)
+        if (fn.__name__, fn_sig) in _n_imported_sigs:
+            return _n_imported_procs[fn.__name__](*args)
         is_resolved = (
             fn.__name__ in __resolved__ and fn_sig in __resolved__[fn.__name__]
         )
@@ -922,6 +1017,9 @@ def dispatch(fn: callable) -> callable:
                     _, best_sig_def, best_T_var = best_match
                     generic_fn = sig_defs[best_sig_def]
                     specialized = _specialize_generic(generic_fn, best_T_var)
+                    targets = [best_T_var.get(d[0], d[0]) if len(d) == 1 else a[0]
+                               for d, a in zip(best_sig_def, fn_sig)]
+                    specialized = _n_typed_literals(specialized, targets)
                     if fn.__name__ in __resolved__:
                         __resolved__[fn.__name__][fn_sig] = specialized
                     else:
@@ -939,15 +1037,15 @@ def dispatch(fn: callable) -> callable:
                             or _match_converter(fn_sig[i][0], sig_def[i][0])
                             for i in range(len(fn_sig))
                         ):
-                            __resolved__[fn.__name__][fn_sig] = sig_fn
+                            __resolved__[fn.__name__][fn_sig] = _n_typed_literals(sig_fn, [d[0] for d in sig_def])
                             is_resolved = True
                             break
-        if not is_resolved:
+        if not is_resolved and not bound:
             # overloads of this arity didn't match the types: try overloads whose defaults fill the call
             for cand in _n_bind_overloads(fn.__name__, args, {}):
                 if len(cand) > len(args):
                     try:
-                        return fn_dispatch(*cand)
+                        return fn_dispatch(*cand, _n_bound=True)
                     except NotImplementedError:
                         pass
         if not is_resolved:
@@ -970,6 +1068,10 @@ def dispatch(fn: callable) -> callable:
         varargs_call = _n_varargs_call(fn.__name__, args)
         if varargs_call is not None:
             return varargs_call()
+        if fn.__name__ in _n_imported_procs:
+            # no overload of this set matches: the imported proc it extends (system `low`, builtin `abs`)
+            _n_imported_sigs.add((fn.__name__, fn_sig))
+            return _n_imported_procs[fn.__name__](*args)
         sig_str = ", ".join([sig[0] for sig in fn_sig])
         raise NotImplementedError(
             f"Function not defined for signature: {fn.__name__}({sig_str})"
@@ -988,22 +1090,40 @@ def dispatch(fn: callable) -> callable:
 _n_ufcs_registry: dict = {}
 
 
+def _n_str_method(fn: callable) -> callable:
+    """A Nim `$` installed as __str__: Python's str() needs a builtin str, the proc returns a nimic string
+    (str(x) is Python text in nimic, as for the builtin types)."""
+    @functools.wraps(fn)
+    def __str__(self) -> str:
+        result = fn(self)
+        return result if type(result) is str else _n_dollar(result)
+    return __str__
+
+
 def ufcs(*classes: type, aliases: tuple = ()) -> callable:
     """Nim method-call syntax for a free proc: after `@ufcs(string)` on `def f(s, ...)`,
     `s.f(...)` calls `f(s, ...)`. The proc is installed under its own name and each of
     `aliases` (e.g. the camelCase spelling). An operator (dunder) defined in another module for this
     class is installed even if the class inherits one (Nim: `proc `%`*(f: FormatStr, ...)` next to the
-    type alias); any other attribute the class already has is never shadowed (TypeError); re-registering a name installed by @ufcs (a further @dispatch
+    type alias), and a @dispatch overload extends a method of the class's own; any other attribute the class
+    already has is never shadowed (TypeError); re-registering a name installed by @ufcs (a further @dispatch
     overload, a module reload) replaces it. Returns the proc unchanged."""
     def install(fn):
+        method = _n_str_method(fn) if fn.__name__ == "__str__" else fn
         for cls in classes:
             for name in (fn.__name__, *aliases):
                 operator_override = name.startswith("__") and name.endswith("__") and name not in cls.__dict__
-                if hasattr(cls, name) and (cls, name) not in _n_ufcs_registry and not operator_override:
+                own = cls.__dict__.get(name)
+                if (isinstance(fn, _DispatchedCallable) and isinstance(own, types.FunctionType)
+                        and (cls, name) not in _n_ufcs_registry):
+                    # an overload of a method the class defines (e.g. `==` of two values in the class, a
+                    # later `==` with an integer): the method joins the overload set
+                    dispatch(own)
+                elif hasattr(cls, name) and (cls, name) not in _n_ufcs_registry and not operator_override:
                     raise TypeError(f"@ufcs: {cls.__name__}.{name} already exists; "
                                     f"refusing to shadow it with the free proc {fn.__name__}")
                 _n_ufcs_registry[(cls, name)] = fn
-                setattr(cls, name, fn)
+                setattr(cls, name, method)
         return fn
     return install
 
@@ -1386,10 +1506,12 @@ class NIntEnum(IntEnum):
         return self.name
 
     def __format__(self, spec: str) -> str:
-        return format(self.name, spec)
+        return format(str(self), spec)  # `$`: the name, or the enum's own `$` (__str__)
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
+        if "__str__" in cls.__dict__:
+            cls.__str__ = _n_str_method(cls.__dict__["__str__"])  # a `$` defined in the enum
         cls._n_register_type()
 
     @classmethod
@@ -1798,7 +1920,41 @@ class NMetaClass(type):
             namespace["_n_caller_globals"] = frame.f_globals
             if frame.f_locals is not frame.f_globals:  # class defined inside a function
                 namespace["_n_caller_locals"] = dict(frame.f_locals)
-        return super().__new__(mcs, name, bases, dict(namespace), **kwargs)
+        if isinstance(namespace.get("__str__"), types.FunctionType):
+            dict.__setitem__(namespace, "__str__", _n_str_method(namespace["__str__"]))  # a `$` defined in the class
+        cls = super().__new__(mcs, name, bases, dict(namespace), **kwargs)
+        if "_n_caller_locals" not in namespace:  # module level: its methods are the module's procs
+            _n_export_method_procs(cls, namespace["_n_caller_globals"])
+        return cls
+
+
+def _n_method_proc(name: str, prior: callable | None) -> callable:
+    """The free proc `name(x, args)` of methods named `name` (Nim procs are free procs; nimic writes the
+    procs of a type as its methods): calls the method of the first argument's type, else the routine the
+    module had under that name (an imported proc)."""
+    def proc(*args, **kwargs):
+        if args and callable(getattr(type(args[0]), name, None)):
+            return getattr(args[0], name)(*args[1:], **kwargs)
+        if prior is not None:
+            return prior(*args, **kwargs)
+        raise NotImplementedError(f"{name}: no method {name} for {type(args[0]).__name__ if args else 'no arguments'}")
+    proc.__name__ = proc.__qualname__ = name
+    proc._n_method_proc = True
+    return proc
+
+
+def _n_export_method_procs(cls: type, module_globals: dict) -> None:
+    """Binds each method of an Object class defined at module level (not dunders, properties or nimic
+    internals) as a free proc of the module, so `extract(b)` calls `b.extract()` as in Nim."""
+    for name, value in vars(cls).items():
+        if name.startswith(("__", "_n_")):
+            continue
+        fn = value._fn if isinstance(value, _DispatchedCallable) else value
+        if not isinstance(fn, types.FunctionType):
+            continue
+        current = module_globals.get(name)
+        if not getattr(current, "_n_method_proc", False):
+            module_globals[name] = _n_method_proc(name, current)
 
 
 
@@ -1837,6 +1993,19 @@ class Tset(set):
     ``set`` subclass that can be instantiated, used in ``isinstance()``, and
     inherited from.  Results are cached so ``Tset[X] is Tset[X]``."""
     _cache: dict = {}
+
+    def __init__(self, *items):
+        """Nim set constructor `{a, b..c}`: `Tset[T](a, inrange(b, c))` or `Tset[T]({a, inrange(b, c)})`;
+        a single iterable argument (another set, `inrange(b, c)`, a char) gives its members."""
+        if len(items) == 1 and isinstance(items[0], collections.abc.Iterable):
+            items = items[0]
+        members = []
+        for item in items:
+            if isinstance(item, (tuple, list, range, set, frozenset)):  # a range: elements are ordinals
+                members.extend(item)
+            else:
+                members.append(item)
+        super().__init__(members)
 
     def incl(self, elem):
         self.add(elem)
@@ -2068,6 +2237,15 @@ def _n_coerce_int_field(cls: type, name: str, value: object) -> object:
     return value
 
 
+def _n_nim_operator(obj: object, name: str, a: object, b: object) -> object:
+    """Calls the operator `name` of obj's type as `name(a, b)` (Nim order); NotImplemented when the type
+    defines no such operator, so Python raises its TypeError."""
+    op = getattr(type(obj), name, None)
+    if op is None or op is getattr(object, name, None):
+        return NotImplemented
+    return op(a, b)
+
+
 class _Object(Ntype):
     # Cache for specialized generic classes
     _n_specializations = {}
@@ -2090,6 +2268,34 @@ class _Object(Ntype):
         return all(getattr(self, n) == getattr(other, n) for n in names)
 
     __hash__ = object.__hash__  # Nim's `hash` is independent of `==`
+
+    # Nim has no reflected operators: `proc +(a: BiggestInt, b: T)` is an ordinary overload with that
+    # parameter order, and `>` / `>=` are system templates for `<` / `<=` with swapped arguments.
+    # Python calls these methods when the left operand (e.g. an int64) does not handle the right one, or
+    # for `a > b`: they call the operator overload in Nim's order.
+    def __gt__(self, other):
+        return _n_nim_operator(self, "__lt__", other, self)
+
+    def __ge__(self, other):
+        return _n_nim_operator(self, "__le__", other, self)
+
+    def __radd__(self, other):
+        return _n_nim_operator(self, "__add__", other, self)
+
+    def __rsub__(self, other):
+        return _n_nim_operator(self, "__sub__", other, self)
+
+    def __rmul__(self, other):
+        return _n_nim_operator(self, "__mul__", other, self)
+
+    def __rtruediv__(self, other):
+        return _n_nim_operator(self, "__truediv__", other, self)
+
+    def __rfloordiv__(self, other):
+        return _n_nim_operator(self, "__floordiv__", other, self)
+
+    def __rmod__(self, other):
+        return _n_nim_operator(self, "__mod__", other, self)
 
     def __class_getitem__(cls, params) -> type:
         """Create a specialized subclass with resolved type annotations.
@@ -2185,9 +2391,10 @@ class _Object(Ntype):
         if (layout is not None and name in layout.fields and "_n_discs" in self.__dict__
                 and name not in self.__dict__.get("_n_fields", ())):
             raise FieldDefect(self._n_field_defect_msg(name))
-        if not name.startswith("_"):
+        if not name.startswith(("__", "_n_")):
             # Nim method-call syntax (UFCS): `obj.f(args)` calls the proc `f(obj, args)` visible in the
-            # caller's scope (e.g. `builder.addArgumentSeparator()`, `b.addCast(t):` for a template)
+            # caller's scope (e.g. `builder.addArgumentSeparator()`, `b.addCast(t):` for a template),
+            # private procs (`_sdata`) included; dunders and nimic internals (`_n_*`) are never procs
             frame = sys._getframe(1)
             while frame is not None and frame.f_code.co_filename.startswith(_N_RUNTIME_DIR):
                 frame = frame.f_back
@@ -3962,6 +4169,12 @@ def determine_common_type(type_a: type, type_b: type) -> type:
 # --- Scalar Numerics (NScalar) ---
 
 
+def _n_is_number(x: object) -> bool:
+    """A scalar or Python number an NScalar operator computes with; other operands (objects) get
+    NotImplemented, so Python calls their reflected operator with the scalar itself."""
+    return isinstance(x, NScalar) or hasattr(x, "__float__")
+
+
 class NScalar:
     def _n_bind(
         self, get_value: callable, set_value: callable, get_addr: callable
@@ -4122,7 +4335,7 @@ class NScalar:
             if checked:
                 _n_check_overflow(target_type, res_val)
             return target_type(res_val)
-        return op_func(self._n_get_value(), other)
+        return NotImplemented  # not a number: Python asks the other operand (Nim overload order)
 
     def _n_rop(self, other: NScalar | int | float, op_func: callable, checked: bool = False) -> NScalar:
         if isinstance(other, NScalar):
@@ -4141,7 +4354,7 @@ class NScalar:
             if checked:
                 _n_check_overflow(target_type, res_val)
             return target_type(res_val)
-        return op_func(other, self._n_get_value())
+        return NotImplemented  # not a number: Python asks the other operand (Nim overload order)
 
     def _n_iop(self, other: NScalar | int | float, op_func: callable, checked: bool = False) -> None:
         if isinstance(other, NScalar):
@@ -4262,31 +4475,43 @@ class NScalar:
 
     # --- Boolean and Comparison Operations ---
     def __lt__(self, other):
+        if not _n_is_number(other):
+            return NotImplemented  # e.g. an object with `proc <(a: int64, b: T)`: Python asks it
         return self._n_get_value() < (
             other._n_get_value() if isinstance(other, NScalar) else other
         )
 
     def __le__(self, other):
+        if not _n_is_number(other):
+            return NotImplemented  # e.g. an object with `proc <=(a: int64, b: T)`: Python asks it
         return self._n_get_value() <= (
             other._n_get_value() if isinstance(other, NScalar) else other
         )
 
     def __gt__(self, other):
+        if not _n_is_number(other):
+            return NotImplemented  # e.g. an object with `proc >(a: int64, b: T)`: Python asks it
         return self._n_get_value() > (
             other._n_get_value() if isinstance(other, NScalar) else other
         )
 
     def __ge__(self, other):
+        if not _n_is_number(other):
+            return NotImplemented  # e.g. an object with `proc >=(a: int64, b: T)`: Python asks it
         return self._n_get_value() >= (
             other._n_get_value() if isinstance(other, NScalar) else other
         )
 
     def __eq__(self, other):
+        if not _n_is_number(other):
+            return NotImplemented  # e.g. an object with `proc ==(a: int64, b: T)`: Python asks it
         return self._n_get_value() == (
             other._n_get_value() if isinstance(other, NScalar) else other
         )
 
     def __ne__(self, other):
+        if not _n_is_number(other):
+            return NotImplemented  # e.g. an object with `proc !=(a: int64, b: T)`: Python asks it
         return self._n_get_value() != (
             other._n_get_value() if isinstance(other, NScalar) else other
         )
@@ -4580,6 +4805,11 @@ class nint(NInteger):
     _n_bits, _n_signed, _n_rank = 64, True, 8
 
 
+class uint(NInteger):
+    """Nim uint: the unsigned machine word (dispatches as uint64, as nint does as int64)."""
+    _n_bits, _n_signed, _n_rank = 64, False, 7
+
+
 # # --- Floating Point Logic (using struct for IEEE-754) ---
 
 
@@ -4688,83 +4918,71 @@ def _n_os_result(s) -> 'string':
 class cstring:
     """Nim cstring — a nullable pointer to a null-terminated char buffer.
 
-    In Nim, cstring is pointer-sized (char*), can be nil, does not own
-    its data.  In nimic it is ctypes-backed as c_char_p inside Object
-    structs (correct layout for c_malloc / pointer arithmetic).
+    In Nim, cstring is pointer-sized (char*), can be nil, does not own its data. In nimic it is
+    ctypes-backed as c_char_p inside Object structs (correct layout for c_malloc / pointer
+    arithmetic).
 
-    Python-side it stores either None (nil) or a bytes value, and
-    provides len(), str(), __eq__(None), and c_free compatibility.
+    Python-side it holds a ctypes char buffer (`_n_view`, None for nil). `cstring(s)` / `s.cstring`
+    of a `string` points into the string's buffer, so writes through either are seen by both (Nim
+    `L.buf = L.bufStorage.cstring`); other values are copied into a buffer of their own. Reads stop at
+    the first NUL (strlen) and index past the buffer gives the terminator '\\0'.
     str(cs) is the Latin-1 byte view (one char per byte), as for `string`.
     """
-    __slots__ = ('_value', '_n_view')
+    __slots__ = ('_n_view',)
 
     def __init__(self, value=None):
-        self._n_view = getattr(value, '_n_view', None)
-        if isinstance(value, int):
-            # new_string(length) path
-            self._value = b'\x00' * value
-        elif isinstance(value, str):
-            self._value = _n_encode_str(value)
-        elif isinstance(value, bytes):
-            self._value = value
-        elif value is None:
-            self._value = None
+        if isinstance(value, (string, cstring)):
+            self._n_view = value._n_view  # the same buffer: a pointer, no copy
+        elif isinstance(value, int):
+            self._n_view = (ctypes.c_char * value)()  # new_cstring_of_cap(length): zero-filled
         else:
-            self._value = _n_encode_str(value)
-        if self._n_view is None and self._value is not None:
-            self._n_view = (ctypes.c_char * len(self._value)).from_buffer_copy(self._value)
+            self._value = value
+
+    @property
+    def _value(self) -> bytes | None:
+        """The bytes up to the first NUL, None for nil."""
+        if self._n_view is None:
+            return None
+        raw = bytes(self._n_view)
+        return raw.split(b'\0', 1)[0]
+
+    @_value.setter
+    def _value(self, value) -> None:
+        """Points the cstring at a new buffer holding a copy of value (None: nil)."""
+        if value is None:
+            self._n_view = None
+            return
+        data = value if isinstance(value, bytes) else _n_encode_str(value)
+        self._n_view = (ctypes.c_char * len(data)).from_buffer_copy(data)
 
     # --- Object field integration ---
 
     @classmethod
     def _n_on_struct(cls, parent_elems, id, value=None):
         """Read/create a cstring backed by a c_char_p field in a ctypes struct."""
-        raw = getattr(parent_elems, id)  # c_char_p → bytes or None
         inst = cls.__new__(cls)
         if value is not None:
-            if isinstance(value, cstring):
-                inst._value = value._value
-            elif isinstance(value, bytes):
-                inst._value = value
-            elif isinstance(value, str):
-                inst._value = _n_encode_str(value)
-            elif value is None:
-                inst._value = None
-            else:
-                inst._value = _n_encode_str(value)
+            inst._n_set_value(value)
             setattr(parent_elems, id, inst._value)
         else:
-            inst._value = raw
+            inst._value = getattr(parent_elems, id)  # c_char_p → bytes or None
         return inst
 
     def _n_set_value(self, value):
         if isinstance(value, cstring):
-            self._value = value._value
-        elif value is None:
-            self._value = None
-        elif isinstance(value, str):
-            self._value = _n_encode_str(value)
-        elif isinstance(value, bytes):
-            self._value = value
+            self._n_view = value._n_view
         else:
-            self._value = _n_encode_str(value)
+            self._value = value
 
     @classmethod
     def _n_sizeof(cls) -> int:
         return ctypes.sizeof(ctypes.c_char_p)
 
-    def __getitem__(self, index):
-        if self._value is None:
-            raise IndexError("cstring is nil")
-        if isinstance(index, slice):
-            return cstring(self._value[index])
-        return char(self._value[index])
-
     # --- Nim-compatible interface ---
 
     def __eq__(self, other):
         if other is None:
-            return self._value is None
+            return self._n_view is None
         if isinstance(other, cstring):
             return self._value == other._value
         if isinstance(other, (str, bytes)):
@@ -4779,28 +4997,40 @@ class cstring:
         return eq if eq is NotImplemented else not eq
 
     def __bool__(self):
-        return self._value is not None
+        return self._n_view is not None
 
     def __len__(self):
-        if self._value is None:
-            return 0
-        return len(self._value)
+        value = self._value
+        return 0 if value is None else len(value)
 
     def __str__(self):
-        if self._value is None:
-            return ""
-        return _n_decode_bytes(self._value)
+        value = self._value
+        return "" if value is None else _n_decode_bytes(value)
 
     def __repr__(self):
-        if self._value is None:
-            return "cstring(nil)"
-        return f"cstring({self._value!r})"
+        value = self._value
+        return "cstring(nil)" if value is None else f"cstring({value!r})"
 
     def __getitem__(self, index):
-        """Nim cstring indexing — returns '\\0' past end (null-terminated)."""
-        if self._value is None or index >= len(self._value):
-            return '\0'
-        return chr(self._value[index])
+        """Nim cstring indexing: the char in the buffer, bound to its address (addr(c[i])); past the
+        buffer the terminator '\\0'. A slice is a cstring copy."""
+        if self._n_view is None:
+            raise IndexError("cstring is nil")
+        if isinstance(index, slice):
+            return cstring(bytes(self._n_view)[index])
+        idx = int(index)
+        if 0 <= idx < len(self._n_view):
+            return char(self._n_view[idx], addr=ctypes.addressof(self._n_view) + idx)
+        return char("\0")
+
+    def __setitem__(self, index, value) -> None:
+        """Nim `c[i] = x`: writes into the buffer (the string's, for a cstring of a string)."""
+        if self._n_view is None:
+            raise IndexError("cstring is nil")
+        idx = int(index)
+        if not 0 <= idx < len(self._n_view):
+            raise IndexError(f"cstring index {idx} outside its buffer of {len(self._n_view)} chars")
+        self._n_view[idx] = bytes([int(char(value))])
 
 
 def new_string(length: int) -> cstring:
@@ -4944,6 +5174,11 @@ class string(collections.UserString):
     @property
     def string(self) -> 'string':
         return self
+
+    @property
+    def cstring(self) -> 'cstring':
+        """Nim `s.cstring`: a cstring pointing into this string's buffer."""
+        return cstring(self)
         
     @data.setter
     def data(self, value):
@@ -5275,6 +5510,7 @@ DICT_OF_C_TYPES.update(
         "int32": ctypes.c_int,
         "int64": ctypes.c_long,
         "nint": ctypes.c_long,
+        "uint": ctypes.c_ulong,
         "uint8": ctypes.c_uint8,
         "uint16": ctypes.c_uint16,
         "uint32": ctypes.c_uint,
@@ -5296,6 +5532,7 @@ __native_types__ = {
     "float64": float64,
     "float32": float32,
     "nint": nint,
+    "uint": uint,
     "int8": int8,
     "int16": int16,
     "int32": int32,

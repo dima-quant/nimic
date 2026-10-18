@@ -42,6 +42,10 @@ def copy_mem(dst, src, size: int):
     src_addr = int(src._n_addr if isinstance(src, pointer) else ctypes.addressof(src))
     ctypes.memmove(dst_addr, src_addr, n)
 
+def move_mem(dst, src, size: int):
+    """Nim moveMem: copy size bytes from src to dst; the regions may overlap (copy_mem is a memmove)."""
+    copy_mem(dst, src, size)
+
 def zero_mem(dst, size: int):
     """Zero size bytes at dst."""
     n = int(size._n_get_value()) if hasattr(size, '_n_get_value') else int(size)
