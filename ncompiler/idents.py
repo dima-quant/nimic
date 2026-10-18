@@ -19,7 +19,22 @@ class TIdent(Object):
     h: Hash                 # hash value of s
 
 @ref
-class PIdent(TIdent): pass
+class PIdent(TIdent):
+    def whichKeyword(id: PIdent) -> TSpecialWord:
+        if id.id < 0: return TSpecialWord.wInvalid
+        else: return TSpecialWord(id.id)
+
+    def hash(x: PIdent) -> Hash:
+        """{.inline.}"""
+        return x.h
+
+    def __eq__(a: PIdent, b: PIdent) -> bool:
+        """{.inline.}"""
+        if isNil(a) or isNil(b):
+            result = isNil(a) and isNil(b)  # system.`==`(a, b): references, one of them nil
+        else:
+            result = a.id == b.id
+        return result
 
 @ref
 class IdentCache(Object):
@@ -123,24 +138,6 @@ def newIdentCache() -> IdentCache:
         getIdent(result, string(str(s)), hashIgnoreStyle(string(str(s)))).id = ord(s)
     return result
 
-def whichKeyword(id: PIdent) -> TSpecialWord:
-    if id.id < 0: return TSpecialWord.wInvalid
-    else: return TSpecialWord(id.id)
-
-@dispatch
-def hash(x: PIdent) -> Hash:
-    """{.inline.}"""
-    return x.h
-
-@ufcs(PIdent)
-def __eq__(a: PIdent, b: PIdent) -> bool:
-    """{.inline.}"""
-    if isNil(a) or isNil(b):
-        result = isNil(a) and isNil(b)  # system.`==`(a, b): references, one of them nil
-    else:
-        result = a.id == b.id
-    return result
-
 if comptime(__name__ == "__main__"):
     with var:
         ic = newIdentCache()
@@ -158,12 +155,12 @@ if comptime(__name__ == "__main__"):
 
     with var:
         keyword = getIdent(ic, string("yield"))
-    assert whichKeyword(keyword) == TSpecialWord.wYield
+    assert keyword.whichKeyword() == TSpecialWord.wYield
     with var:
         keyword2 = getIdent(ic, string("addr"))
-    assert whichKeyword(keyword2) == TSpecialWord.wAddr
+    assert keyword2.whichKeyword() == TSpecialWord.wAddr
 
-    assert hash(id1) == id1.h
+    assert id1.hash() == id1.h
 
     with var:
         id_different = getIdent(ic, string("bar"))
@@ -172,7 +169,7 @@ if comptime(__name__ == "__main__"):
     with var:
         user_id = getIdent(ic, string("myCustomIdent"))
     assert user_id.id < 0
-    assert whichKeyword(user_id) == TSpecialWord.wInvalid
+    assert user_id.whichKeyword() == TSpecialWord.wInvalid
 
     assert cmpIgnoreStyle(cstring("foo"), cstring("foo"), 3) == 0
     assert cmpIgnoreStyle(cstring("foo"), cstring("fOo"), 3) == 0

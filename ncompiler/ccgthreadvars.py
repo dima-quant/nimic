@@ -75,7 +75,7 @@ def generateThreadLocalStorage(m: BModule) -> None:
         finishTypeDescriptions(m)
         with m.s[TCFileSection.cfsSeqTypes].addTypedef(name=string("NimThreadVars")):
             with m.s[TCFileSection.cfsSeqTypes].addSimpleStruct(m, name=string(""), baseType=string("")):
-                m.s[TCFileSection.cfsSeqTypes].add(extract(m.g.nimtv))
+                m.s[TCFileSection.cfsSeqTypes].add(m.g.nimtv.extract())
 
 
 def generateThreadVarsSize(m: BModule) -> None:

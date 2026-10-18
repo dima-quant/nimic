@@ -1,6 +1,6 @@
 # Nim Compiler → Nimic: Conversion Queue
 
-> **Generated** by `python -m ncompiler.tools.dependencies` | **Total modules**: 163 | **Converted**: 29 | **Needs rework**: 2 | **Remaining**: 134
+> **Generated** by `python -m ncompiler.tools.dependencies` | **Total modules**: 163 | **Converted**: 32 | **Needs rework**: 2 | **Remaining**: 131
 
 ## Conversion Rules
 
@@ -19,7 +19,7 @@ Pending modules whose dependencies are all converted, smallest first:
 | `debugutils` | 4 | 2,192 bytes |  |
 | `nimlexbase` | 2 | 5,417 bytes |  |
 | `condsyms` | 4 | 6,460 bytes |  |
-| `int128` | 0 | 16,767 bytes |  |
+| `astdef` | 4 | 48,591 bytes |  |
 
 ## Needs Rework
 
@@ -34,9 +34,9 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 
 | Tier | Modules | Converted | Remaining |
 |---|---|---|---|
-| 0 | 14 | 13 | 1 |
+| 0 | 14 | 14 | 0 |
 | 1 | 4 | 4 | 0 |
-| 2 | 3 | 1 | 2 |
+| 2 | 3 | 2 | 1 |
 | 3 | 1 | 1 | 0 |
 | 4 | 4 | 0 | 4 |
 | 5 | 6 | 0 | 6 |
@@ -47,7 +47,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | 10 | 8 | 0 | 8 |
 | 11 | 8 | 0 | 8 |
 | 12 | 9 | 1 | 8 |
-| 13 | 19 | 2 | 17 |
+| 13 | 19 | 3 | 16 |
 | 14 | 10 | 0 | 10 |
 | 15 | 3 | 1 | 2 |
 | 16 | 8 | 2 | 6 |
@@ -73,13 +73,13 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 
 ## Full Tier Breakdown
 
-### Tier 0 (13/14 converted)
+### Tier 0 (14/14 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `bitsets` | 2,754 bytes |  |  | ✅ Converted + Reviewed |
 | `btrees` | 5,048 bytes |  |  | ✅ Converted + Reviewed |
-| `int128` | 16,767 bytes |  |  | 🔲 Pending |
+| `int128` | 16,767 bytes |  |  | ✅ Converted |
 | `nimpaths` | 2,194 bytes |  |  | ✅ Converted + Reviewed |
 | `nodejs` | 347 bytes |  |  | ✅ Converted + Reviewed |
 | `nodekinds` | 9,756 bytes |  |  | ✅ Converted |
@@ -101,11 +101,11 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `packagehandling` | 1,343 bytes | pathutils | options | ✅ Converted + Reviewed |
 | `ropes` | 4,172 bytes | pathutils |  | ✅ Converted + Reviewed |
 
-### Tier 2 (1/3 converted)
+### Tier 2 (2/3 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
-| `cbuilderbase` | 4,152 bytes | int128, ropes |  | 🔲 Pending |
+| `cbuilderbase` | 4,152 bytes | int128, ropes |  | ✅ Converted |
 | `lineinfos` | 16,909 bytes | pathutils, ropes |  | ✅ Converted + Reviewed |
 | `nimlexbase` | 5,417 bytes | llstream |  | 🔲 Pending |
 
@@ -207,12 +207,12 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `vmhooks` | 2,334 bytes | ast, btrees, lineinfos, options, pathutils +2 more | vm | 🔲 Pending |
 | `vmprofiler` | 1,366 bytes | ast, lineinfos, msgs, options, vmdef |  | 🔲 Pending |
 
-### Tier 13 (2/19 converted)
+### Tier 13 (3/19 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `aliases` | 6,452 bytes | ast, astalgo, trees, types |  | 🔲 Pending |
-| `cbuilderdecls` | 22,463 bytes | ast, astalgo, cbuilderbase, cbuilderexprs, cgendata +7 more | cgen | 🔲 Pending |
+| `cbuilderdecls` | 22,463 bytes | ast, astalgo, cbuilderbase, cbuilderexprs, cgendata +7 more | cgen | ✅ Converted |
 | `cbuilderstmts` | 9,403 bytes | ast, astalgo, cbuilderbase, cbuilderexprs, cgendata +1 more | cgen | ✅ Converted |
 | `ccgutils` | 5,474 bytes | ast, cgendata, mangleutils, msgs, options +5 more |  | 🔲 Pending |
 | `errorhandling` | 2,419 bytes | ast, options, renderer, types |  | 🔲 Pending |

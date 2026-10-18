@@ -1922,39 +1922,8 @@ class NMetaClass(type):
                 namespace["_n_caller_locals"] = dict(frame.f_locals)
         if isinstance(namespace.get("__str__"), types.FunctionType):
             dict.__setitem__(namespace, "__str__", _n_str_method(namespace["__str__"]))  # a `$` defined in the class
-        cls = super().__new__(mcs, name, bases, dict(namespace), **kwargs)
-        if "_n_caller_locals" not in namespace:  # module level: its methods are the module's procs
-            _n_export_method_procs(cls, namespace["_n_caller_globals"])
-        return cls
+        return super().__new__(mcs, name, bases, dict(namespace), **kwargs)
 
-
-def _n_method_proc(name: str, prior: callable | None) -> callable:
-    """The free proc `name(x, args)` of methods named `name` (Nim procs are free procs; nimic writes the
-    procs of a type as its methods): calls the method of the first argument's type, else the routine the
-    module had under that name (an imported proc)."""
-    def proc(*args, **kwargs):
-        if args and callable(getattr(type(args[0]), name, None)):
-            return getattr(args[0], name)(*args[1:], **kwargs)
-        if prior is not None:
-            return prior(*args, **kwargs)
-        raise NotImplementedError(f"{name}: no method {name} for {type(args[0]).__name__ if args else 'no arguments'}")
-    proc.__name__ = proc.__qualname__ = name
-    proc._n_method_proc = True
-    return proc
-
-
-def _n_export_method_procs(cls: type, module_globals: dict) -> None:
-    """Binds each method of an Object class defined at module level (not dunders, properties or nimic
-    internals) as a free proc of the module, so `extract(b)` calls `b.extract()` as in Nim."""
-    for name, value in vars(cls).items():
-        if name.startswith(("__", "_n_")):
-            continue
-        fn = value._fn if isinstance(value, _DispatchedCallable) else value
-        if not isinstance(fn, types.FunctionType):
-            continue
-        current = module_globals.get(name)
-        if not getattr(current, "_n_method_proc", False):
-            module_globals[name] = _n_method_proc(name, current)
 
 
 

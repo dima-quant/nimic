@@ -89,7 +89,7 @@ def makeCString(s: string) -> Rope:
 
 def _newFileInfo(fullPath: AbsoluteFile, projPath: RelativeFile, kind: FileInfoKind = FileInfoKind.fikSource) -> TFileInfo:
     result = TFileInfo(fullPath=fullPath, projPath=projPath,
-                       shortName=extractFilename(fullPath),
+                       shortName=fullPath.extractFilename(),
                        quotedFullName=makeCString(string(fullPath)),
                        lines=seq[string](),
                        kind=kind)
@@ -124,7 +124,7 @@ def fileInfoKnown(conf: ConfigRef, filename: AbsoluteFile) -> bool:
     with var:
         canon = AbsoluteFile()
     try:
-        canon = canonicalizePath(conf, filename)
+        canon = conf.canonicalizePath(filename)
     except OSError:
         canon = filename
     _canonicalCase(string(canon))
@@ -139,7 +139,7 @@ def fileInfoIdx(conf: ConfigRef, filename: AbsoluteFile, isKnownFile: mut@bool) 
         pseudoPath = False
 
     try:
-        canon = canonicalizePath(conf, filename)
+        canon = conf.canonicalizePath(filename)
     except OSError:
         canon = filename
         # The compiler uses "filenames" such as `command line` or `stdin`
@@ -562,9 +562,9 @@ def log(s: string) -> None:
 
 def _quit(conf: ConfigRef, msg: TMsgKind) -> None:
     """{.gcsafe.}"""
-    if isDefined(conf, string("nimDebug")):
+    if conf.isDefined(string("nimDebug")):
         quitOrRaise(conf, string(str(msg)))
-    elif defined("debug") or msg == TMsgKind.errInternal or hasHint(conf, TMsgKind.hintStackTrace):
+    elif defined("debug") or msg == TMsgKind.errInternal or conf.hasHint(TMsgKind.hintStackTrace):
         with pragma("gcsafe"):
             if stackTraceAvailable() and isNil(conf.writelnHook):
                 writeStackTrace()
@@ -672,7 +672,7 @@ def sourceLine(conf: ConfigRef, i: TLineInfo) -> string:
 
 
 def _getSurroundingSrc(conf: ConfigRef, info: TLineInfo) -> string:
-    if hasHint(conf, TMsgKind.hintSource) and info != unknownLineInfo:
+    if conf.hasHint(TMsgKind.hintSource) and info != unknownLineInfo:
         with const:
             indent = string("  ")
         result = string("\n") + indent + string(str(sourceLine(conf, info)))
@@ -725,7 +725,7 @@ def liMessage(conf: ConfigRef, info: TLineInfo, msg: TMsgKind, arg: string,
                 conf.m.lastError = info
         case _ if msg in inrange(warnMin, warnMax):
             sev = Severity.Warning
-            ignoreMsg = not hasWarn(conf, msg)
+            ignoreMsg = not conf.hasWarn(msg)
             if not ignoreMsg and msg in conf.warningAsErrors:
                 title = ErrorTitle
                 color = ErrorColor
@@ -737,7 +737,7 @@ def liMessage(conf: ConfigRef, info: TLineInfo, msg: TMsgKind, arg: string,
             conf.warnCounter += 1
         case _ if msg in inrange(hintMin, hintMax):
             sev = Severity.Hint
-            ignoreMsg = not hasHint(conf, msg)
+            ignoreMsg = not conf.hasHint(msg)
             if not ignoreMsg and msg in conf.warningAsErrors:
                 title = ErrorTitle
                 color = ErrorColor
@@ -924,16 +924,16 @@ def genSuccessX(conf: ConfigRef) -> None:
             else:
                 build.add(debugModeHints)
                 # pending https://github.com/timotheecour/Nim/issues/752, point to optimization.html
-            if isDefined(conf, string("danger")):
+            if conf.isDefined(string("danger")):
                 flags.add(string(" -d:danger"))
-            elif isDefined(conf, string("release")):
+            elif conf.isDefined(string("release")):
                 flags.add(string(" -d:release"))
         else:
             build.add(string("opt: "))
-            if isDefined(conf, string("danger")):
+            if conf.isDefined(string("danger")):
                 build.add(string("speed"))
                 flags.add(string(" -d:danger"))
-            elif isDefined(conf, string("release")):
+            elif conf.isDefined(string("release")):
                 build.add(string("speed"))
                 flags.add(string(" -d:release"))
             else:
@@ -954,9 +954,9 @@ def genSuccessX(conf: ConfigRef) -> None:
     elif TGlobalOption.optStdout in conf.globalOptions:
         output = string("stdout")
     else:
-        output = string(str(absOutFile(conf)))
+        output = string(str(conf.absOutFile()))
     if conf.filenameOption != FilenameOption.foAbs:
-        output = extractFilename(AbsoluteFile(output))
+        output = AbsoluteFile(output).extractFilename()
         # xxx honor filenameOption more accurately
     rawMessage(conf, TMsgKind.hintSuccessX, [
         string("build"), build,

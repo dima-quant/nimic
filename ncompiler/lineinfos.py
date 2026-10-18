@@ -355,6 +355,9 @@ class TLineInfo(Object):
         commentOffsetA: nint
         commentOffsetB: nint
 
+    def hash(i: TLineInfo) -> Hash:
+        return hash((nint(i.line), nint(i.col), nint(i.fileIndex)))
+
 class TErrorOutput(NIntEnum):
     eStdOut = auto()
     eStdErr = auto()
@@ -363,10 +366,6 @@ class TErrorOutputs(Tset[TErrorOutput]): pass
 
 class ERecoverableError(ValueError): pass
 class ESuggestDone(ValueError): pass
-
-@dispatch
-def hash(i: TLineInfo) -> Hash:
-    return hash((nint(i.line), nint(i.col), nint(i.fileIndex)))
 
 def raiseRecoverableError(msg: string):
     """{.noinline, noreturn.}"""
@@ -445,7 +444,7 @@ if comptime(__name__ == '__main__'):
     assert li.col == 15
     assert li.fileIndex == FileIndex(3)
     with var:
-        h = hash(li)
+        h = li.hash()
     assert nint(h) != 0
 
     # 6. Exceptions

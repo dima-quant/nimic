@@ -44,6 +44,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]  # this script runs from tests/: nimic and ncompiler.tools
 from ncompiler.tools.dependencies import dependencies  # noqa: E402
+from nimic import transpiler  # noqa: E402
 SCRATCH = ROOT / ".scratch" / "verify_transpiled"
 PY = sys.executable
 MODULES = sorted(p.stem for p in (ROOT / "ncompiler").glob("*.py") if p.stem != "__init__")
@@ -161,6 +162,7 @@ def check_modules() -> None:
 # --- fidelity: `if comptime` mirrors `when` (nimic_translation_rules.md §2.1) ---
 
 def _norm_cond(text: str) -> str:
+    text = re.sub(r"\blocal_(?=\w)", "", text)  # a private name `_x` transpiles to local_x
     text = re.sub(r"""defined\(['"]?(\w+)['"]?\)""", r"defined(\1)", text)
     text = re.sub(r"""declared\(['"]?([\w.]+)['"]?\)""", r"declared(\1)", text)
     text = text.replace("isinstance(", "is(").replace("True", "true").replace("False", "false")
@@ -168,22 +170,41 @@ def _norm_cond(text: str) -> str:
 
 
 def _py_conditions(tree: ast.AST) -> list[str]:
+    """The `when` conditions the module's `if comptime(...)` transpile to (so `nint`, `isinstance`,
+    `issubclass`, ... compare in their Nim spelling)."""
     out = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.If, ast.IfExp)) and "comptime(" in ast.unparse(node.test):
-            cond = ast.unparse(node.test)
-            if "__name__" in cond:
+            if "__name__" in ast.unparse(node.test):
                 continue  # test guard (the exception of §2.1)
-            out.append(_norm_cond(cond.replace("comptime", "")))
+            if isinstance(node, ast.If):
+                snippet = ast.If(test=node.test, body=[ast.Pass()], orelse=[])
+            else:
+                snippet = ast.Assign(targets=[ast.Name("x", ast.Store())], value=node)
+            module = ast.fix_missing_locations(ast.Module(body=[snippet], type_ignores=[]))
+            out.extend(_nim_conditions(transpiler.unparse(module)[0]))
     return out
 
 
 def _nim_conditions(text: str) -> list[str]:
     out = []
+    when_chain = {}  # indentation -> whether the statement chain at it is a `when` (its `elif`s count)
     for line in text.splitlines():
         line = line.split("#", 1)[0]
-        # a `when` statement, or a `when` expression (after `=`, or as a call argument after `(` / `,`)
-        m = re.match(r"^\s*when\s+(.+?):\s*(\S.*)?$", line) or re.search(r"[=(,]\s*when\s+(.+?):", line)
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        keyword = line.split(None, 1)[0].rstrip(":")
+        when_chain = {i: w for i, w in when_chain.items() if i <= indent}
+        if keyword == "when":
+            when_chain[indent] = True
+        elif keyword not in ("elif", "else"):
+            when_chain[indent] = False
+        # a `when` statement or one of its `elif`s, or a `when` expression (after `=`, or as a call argument
+        # after `(` / `,`)
+        m = (re.match(r"^\s*when\s+(.+?):\s*(\S.*)?$", line)
+             or (re.match(r"^\s*elif\s+(.+?):\s*(\S.*)?$", line) if when_chain.get(indent) else None)
+             or re.search(r"[=(,]\s*when\s+(.+?):", line))
         if m and "isMainModule" not in m.group(1):
             cond = m.group(1)
             # `x is T` is spelled isinstance(x, T) in nimic

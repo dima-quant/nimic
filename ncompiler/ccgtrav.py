@@ -226,7 +226,7 @@ def genTraverseProc(m: BModule, origTyp: PType, sig: SigHash) -> Rope:
             headerBuilder.addParam(paramBuilder, name=string("p"), typ=CPointer)
             headerBuilder.addParam(paramBuilder, name=string("op"), typ=NimInt)
     with let:
-        header = extract(headerBuilder)
+        header = headerBuilder.extract()
 
     with m.s[TCFileSection.cfsProcHeaders].addDeclWithVisibility(DeclVisibility.StaticProc):
         m.s[TCFileSection.cfsProcHeaders].add(header)
@@ -234,9 +234,9 @@ def genTraverseProc(m: BModule, origTyp: PType, sig: SigHash) -> Rope:
     with m.s[TCFileSection.cfsProcs].addDeclWithVisibility(DeclVisibility.StaticProc):
         m.s[TCFileSection.cfsProcs].add(header)
         with m.s[TCFileSection.cfsProcs].finishProcHeaderWithBody():
-            m.s[TCFileSection.cfsProcs].add(extract(p.s(TCProcSection.cpsLocals)))
-            m.s[TCFileSection.cfsProcs].add(extract(p.s(TCProcSection.cpsInit)))
-            m.s[TCFileSection.cfsProcs].add(extract(p.s(TCProcSection.cpsStmts)))
+            m.s[TCFileSection.cfsProcs].add(p.s(TCProcSection.cpsLocals).extract())
+            m.s[TCFileSection.cfsProcs].add(p.s(TCProcSection.cpsInit).extract())
+            m.s[TCFileSection.cfsProcs].add(p.s(TCProcSection.cpsStmts).extract())
 
     if hcrOn:
         with var:
@@ -246,7 +246,7 @@ def genTraverseProc(m: BModule, origTyp: PType, sig: SigHash) -> Rope:
             desc.addUnnamedParam(unnamedParamBuilder, CPointer)
             desc.addUnnamedParam(unnamedParamBuilder, NimInt)
         with let:
-            unnamedParams = extract(desc)
+            unnamedParams = desc.extract()
         m.s[TCFileSection.cfsProcHeaders].addProcVar(TCallingConvention.ccNimCall, result, unnamedParams, CVoid)
         with m.s[TCFileSection.cfsDynLibInit].addAssignmentWithValue(result):
             with m.s[TCFileSection.cfsDynLibInit].addCast(procPtrTypeUnnamed(TCallingConvention.ccNimCall, CVoid,
@@ -286,7 +286,7 @@ def genTraverseProcForGlobal(m: BModule, s: PSym, info: TLineInfo) -> Rope:
             # (void)
             discard
     with let:
-        header = extract(headerBuilder)
+        header = headerBuilder.extract()
 
     with m.s[TCFileSection.cfsProcHeaders].addDeclWithVisibility(DeclVisibility.StaticProc):
         m.s[TCFileSection.cfsProcHeaders].add(header)
@@ -294,7 +294,7 @@ def genTraverseProcForGlobal(m: BModule, s: PSym, info: TLineInfo) -> Rope:
     with m.s[TCFileSection.cfsProcs].addDeclWithVisibility(DeclVisibility.StaticProc):
         m.s[TCFileSection.cfsProcs].add(header)
         with m.s[TCFileSection.cfsProcs].finishProcHeaderWithBody():
-            m.s[TCFileSection.cfsProcs].add(extract(p.s(TCProcSection.cpsLocals)))
-            m.s[TCFileSection.cfsProcs].add(extract(p.s(TCProcSection.cpsInit)))
-            m.s[TCFileSection.cfsProcs].add(extract(p.s(TCProcSection.cpsStmts)))
+            m.s[TCFileSection.cfsProcs].add(p.s(TCProcSection.cpsLocals).extract())
+            m.s[TCFileSection.cfsProcs].add(p.s(TCProcSection.cpsInit).extract())
+            m.s[TCFileSection.cfsProcs].add(p.s(TCProcSection.cpsStmts).extract())
     return result

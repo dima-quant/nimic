@@ -38,6 +38,37 @@ class _SourceInfo(Object):
     names: seq[string] = seq[string]()
     files: seq[string] = seq[string]()
 
+    def _add_segment(info: mut@_SourceInfo, original: nint, generated: nint, name: string = string("")) -> None:
+        """Adds a new segment into the current line"""
+        assert len(info.mappings) > 0, "No lines have been added yet"
+        with var:
+            segment = _Segment(original=original, generated=generated, name=-1)
+        if name != string(""):
+            # Make name be index into names list
+            segment.name = info.names.find(name)
+            if segment.name == -1:
+                segment.name = len(info.names)
+                info.names.add(name)
+
+        assert info.mappings[len(info.mappings) - 1].inSource, "Current line isn't in Nim source"
+        info.mappings[len(info.mappings) - 1].segments.add(segment)
+
+    def _new_line(info: mut@_SourceInfo) -> None:
+        """Add new mapping which doesn't appear in the Nim source"""
+        info.mappings.add(_Mapping(inSource=False))
+
+    def _new_line(info: mut@_SourceInfo, file: string, line: nint) -> None:
+        """Starts a new line in the mappings. Call addSegment after this to add
+        segments into the line"""
+        with var:
+            mapping = _Mapping(inSource=True, line=line, segments=seq[_Segment]())
+        # Set file to file position. Add in if needed
+        mapping.file = info.files.find(file)
+        if mapping.file == -1:
+            mapping.file = len(info.files)
+            info.files.add(file)
+        info.mappings.add(mapping)
+
 
 class SourceMap(Object):
     version: nint = 0
@@ -50,42 +81,6 @@ class SourceMap(Object):
 # =============================================================================
 # SourceInfo helpers
 # =============================================================================
-
-def _add_segment(info: mut@_SourceInfo, original: nint, generated: nint, name: string = string("")) -> None:
-    """Adds a new segment into the current line"""
-    assert len(info.mappings) > 0, "No lines have been added yet"
-    with var:
-        segment = _Segment(original=original, generated=generated, name=-1)
-    if name != string(""):
-        # Make name be index into names list
-        segment.name = info.names.find(name)
-        if segment.name == -1:
-            segment.name = len(info.names)
-            info.names.add(name)
-
-    assert info.mappings[len(info.mappings) - 1].inSource, "Current line isn't in Nim source"
-    info.mappings[len(info.mappings) - 1].segments.add(segment)
-
-
-@dispatch
-def _new_line(info: mut@_SourceInfo) -> None:
-    """Add new mapping which doesn't appear in the Nim source"""
-    info.mappings.add(_Mapping(inSource=False))
-
-
-@dispatch
-def _new_line(info: mut@_SourceInfo, file: string, line: nint) -> None:
-    """Starts a new line in the mappings. Call addSegment after this to add
-    segments into the line"""
-    with var:
-        mapping = _Mapping(inSource=True, line=line, segments=seq[_Segment]())
-    # Set file to file position. Add in if needed
-    mapping.file = info.files.find(file)
-    if mapping.file == -1:
-        mapping.file = len(info.files)
-        info.files.add(file)
-    info.mappings.add(mapping)
-
 
 # =============================================================================
 # base64_VLQ encoding
@@ -192,17 +187,17 @@ def parse(source: string) -> _SourceInfo:
             currLine = lineNumber - 1
             currFile = linePath
             # Lines are zero indexed
-            _new_line(result, currFile, currLine)
+            result._new_line(currFile, currLine)
             # Skip whitespace to find the starting column
-            _add_segment(result, currColumn, line.skipWhitespace())
+            result._add_segment(currColumn, line.skipWhitespace())
         elif currFile != string(""):
-            _new_line(result, currFile, currLine)
+            result._new_line(currFile, currLine)
             # There mightn't be any tokens so add a starting segment
-            _add_segment(result, currColumn, line.skipWhitespace())
+            result._add_segment(currColumn, line.skipWhitespace())
             for jsColumn, token in tokenize(line):
-                _add_segment(result, currColumn, jsColumn, token)
+                result._add_segment(currColumn, jsColumn, token)
         else:
-            _new_line(result)
+            result._new_line()
     return result
 
 

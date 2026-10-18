@@ -73,7 +73,7 @@ def genStringLiteralDataOnlyV1(m: BModule, s: string, result: mut@Rope) -> None:
                             res.add(cCast(NimInt, cOp(TypedBinaryOp.BitOr, NimUint, cCast(NimUint, cIntValue(s.len)), NimStrlitFlag)))
                 with res.addField(strInit, name=string("data")):
                     res.add(makeCString(s))
-    m.s[TCFileSection.cfsStrData].add(extract(res))
+    m.s[TCFileSection.cfsStrData].add(res.extract())
 
 
 def genStringLiteralV1(m: BModule, n: PNode, result: mut@Builder) -> None:
@@ -112,7 +112,7 @@ def genStringLiteralDataOnlyV2(m: BModule, s: string, result: Rope, isConst: boo
                     res.add(cOp(TypedBinaryOp.BitOr, NimInt, cIntValue(s.len), NimStrlitFlag))
                 with res.addField(structInit, name=string("data")):
                     res.add(makeCString(s))
-    m.s[TCFileSection.cfsStrData].add(extract(res))
+    m.s[TCFileSection.cfsStrData].add(res.extract())
 
 
 def genStringLiteralV2(m: BModule, n: PNode, isConst: bool, result: mut@Builder) -> None:
@@ -145,7 +145,7 @@ def genStringLiteralV2(m: BModule, n: PNode, isConst: bool, result: mut@Builder)
                 res.addIntValue(n.strVal.len)
             with res.addField(strInit, name=string("p")):
                 res.add(cCast(ptrType(string("NimStrPayload")), cAddr(litName)))
-    m.s[TCFileSection.cfsStrData].add(extract(res))
+    m.s[TCFileSection.cfsStrData].add(res.extract())
 
 
 def genStringLiteralV2Const(m: BModule, n: PNode, isConst: bool, result: mut@Builder) -> None:
@@ -299,7 +299,7 @@ def genStringLiteralV3Const(m: BModule, n: PNode, isConst: bool, result: mut@Bui
                             res.addIntValue(0)  # static, never freed
                         with res.addField(di, name=string("data")):
                             res.add(makeCString(s))
-            m.s[TCFileSection.cfsStrData].add(extract(res))
+            m.s[TCFileSection.cfsStrData].add(res.extract())
             # slen = StaticSlen (254): marks this as a static (never-freed) long string.
             with result.addField(si, name=string("bytes")):
                 result.add(ssoBytesLit(m, s, 254))
@@ -397,7 +397,7 @@ def genStringLiteralV3(m: BModule, n: PNode, isConst: bool, result: mut@Builder)
                     res.add(ssoBytesLit(m, s, 254))
                 with res.addField(si, name=string("more")):
                     res.add(cCast(ptrType(string("LongString")), cAddr(dataName)))
-    m.s[TCFileSection.cfsStrData].add(extract(res))
+    m.s[TCFileSection.cfsStrData].add(res.extract())
 
 
 # ------ Version selector ---------------------------------------------------

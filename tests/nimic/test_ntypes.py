@@ -2769,20 +2769,16 @@ class TestNTypes(unittest.TestCase):
         out = unparse(ast.parse("with pragma('cast(gcsafe)'):\n    f()\n"))[0]
         self.assertIn("{.cast(gcsafe).}:\n  f()", out)
 
-    def test_class_methods_are_free_procs(self):
-        """A method of an Object class is a Nim proc: `grow(h, 2)` and `h.grow(2)` both call it (overloads
-        too); a module-level name of another kind keeps working through the first argument's methods. A
-        `$` (`__str__`) defined in the class may return a nimic string, also in enums."""
+    def test_class_methods(self):
+        """Procs of a type are methods of its class (methods rule) and are called as methods; overloads
+        of a name in the class are dispatched. A `$` (`__str__`) defined in the class may return a nimic
+        string, also in enums."""
         h = _NMethodHost(n=1)
-        grow(h, 2)
+        h.grow(2)
         h.grow(string("abc"))
-        grow(h, string("x"))
-        self.assertEqual(total(h), 7)
-        self.assertEqual(h.total(), 7)
-        self.assertEqual(str(h), "host 7")
-        s = seq[nint]()
-        s.add(nint(1))
-        self.assertEqual(total.__name__, "total")
+        self.assertEqual(h.total(), 6)
+        self.assertEqual(str(h), "host 6")
+        self.assertNotIn("grow", globals())  # no free proc: a method is called as a method
         self.assertEqual(str(_NEnumWithDollar.first), "1st")
         self.assertEqual(f"{_NEnumWithDollar.second}", "2nd")
 

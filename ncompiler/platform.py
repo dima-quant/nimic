@@ -202,15 +202,15 @@ class Target(Object):
     ptrSize: nint
     tnl: string
 
-def setTarget(t: mut@Target, o: TSystemOS, c: TSystemCPU):
-    assert c != TSystemCPU.cpuNone
-    assert o != TSystemOS.osNone
-    t.targetCPU = c
-    t.targetOS = o
-    t.intSize = CPU[c].intSize // 8
-    t.floatSize = CPU[c].floatSize // 8
-    t.ptrSize = CPU[c].bit // 8
-    t.tnl = OS[o].newLine
+    def setTarget(t: mut@Target, o: TSystemOS, c: TSystemCPU):
+        assert c != TSystemCPU.cpuNone
+        assert o != TSystemOS.osNone
+        t.targetCPU = c
+        t.targetOS = o
+        t.intSize = CPU[c].intSize // 8
+        t.floatSize = CPU[c].floatSize // 8
+        t.ptrSize = CPU[c].bit // 8
+        t.tnl = OS[o].newLine
 
 def nameToOS(name: string) -> TSystemOS:
     for i in inrange(succ(low(TSystemOS)), high(TSystemOS)):
@@ -239,7 +239,7 @@ def listCPUnames() -> seq[string]:
 def setTargetFromSystem(t: mut@Target):
     t.hostOS = nameToOS(system.hostOS)
     t.hostCPU = nameToCPU(system.hostCPU)
-    setTarget(t, t.hostOS, t.hostCPU)
+    t.setTarget(t.hostOS, t.hostCPU)
 
 if comptime(__name__ == '__main__'):
     # Basic nameToOS lookups
@@ -264,7 +264,7 @@ if comptime(__name__ == '__main__'):
     # Target configuration tests: 64-bit Linux Amd64
     with var:
         t_linux = Target()
-    setTarget(t_linux, TSystemOS.osLinux, TSystemCPU.cpuAmd64)
+    t_linux.setTarget(TSystemOS.osLinux, TSystemCPU.cpuAmd64)
     assert t_linux.targetOS == TSystemOS.osLinux
     assert t_linux.targetCPU == TSystemCPU.cpuAmd64
     assert t_linux.intSize == 8
@@ -275,7 +275,7 @@ if comptime(__name__ == '__main__'):
     # Target configuration tests: 32-bit Windows i386
     with var:
         t_win32 = Target()
-    setTarget(t_win32, TSystemOS.osWindows, TSystemCPU.cpuI386)
+    t_win32.setTarget(TSystemOS.osWindows, TSystemCPU.cpuI386)
     assert t_win32.targetOS == TSystemOS.osWindows
     assert t_win32.targetCPU == TSystemCPU.cpuI386
     assert t_win32.intSize == 4
@@ -286,7 +286,7 @@ if comptime(__name__ == '__main__'):
     # Target configuration tests: 16-bit embedded AVR
     with var:
         t_avr = Target()
-    setTarget(t_avr, TSystemOS.osStandalone, TSystemCPU.cpuAVR)
+    t_avr.setTarget(TSystemOS.osStandalone, TSystemCPU.cpuAVR)
     assert t_avr.targetOS == TSystemOS.osStandalone
     assert t_avr.targetCPU == TSystemCPU.cpuAVR
     assert t_avr.intSize == 2

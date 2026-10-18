@@ -51,6 +51,9 @@ class AbsoluteFile(string):
         """{.borrow.}"""
         writeFile(string(self), content)
 
+    def copyFile(source: AbsoluteFile, dest: AbsoluteFile):
+        copyFile(string(source), string(dest))
+
 @distinct
 class AbsoluteDir(string):
     def dirExists(self) -> bool:
@@ -87,9 +90,6 @@ type AnyPath = AbsoluteFile | AbsoluteDir | RelativeFile | RelativeDir
 def isEmpty(x: AnyPath) -> bool:
     """{.inline.}"""
     return len(string(x)) == 0
-
-def copyFile(source: AbsoluteFile, dest: AbsoluteFile):
-    copyFile(string(source), string(dest))
 
 class _SplitFileTuple(NTuple):
     dir: AbsoluteDir

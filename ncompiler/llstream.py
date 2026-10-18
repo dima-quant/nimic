@@ -53,7 +53,119 @@ class TLLStream(RootObj):
     onPrompt: OnPrompt
 
 @ref
-class PLLStream(TLLStream): pass
+class PLLStream(TLLStream):
+    def llStreamClose(s: PLLStream):
+        match s.kind:
+            case TLLStreamKind.llsNone | TLLStreamKind.llsString | TLLStreamKind.llsStdIn:
+                pass
+            case TLLStreamKind.llsFile:
+                close(s.f)
+
+    def llStreamRead(s: PLLStream, buf: pointer, bufLen: nint) -> nint:
+        with var:
+            result = 0
+        match s.kind:
+            case TLLStreamKind.llsNone:
+                result = 0
+            case TLLStreamKind.llsString:
+                result = min(bufLen, len(s.s) - s.rd)
+                if result > 0:
+                    copyMem(buf, addr(s.s[s.rd]), result)
+                    s.rd += result
+            case TLLStreamKind.llsFile:
+                result = readBuffer(s.f, buf, bufLen)
+            case TLLStreamKind.llsStdIn:
+                if s.onPrompt != None: s.onPrompt()
+                result = s.repl(s, buf, bufLen)
+        return result
+
+    def llStreamReadLine(s: PLLStream, line: mut@string) -> bool:
+        setLen(line, 0)
+        match s.kind:
+            case TLLStreamKind.llsNone:
+                result = True
+            case TLLStreamKind.llsString:
+                while s.rd < s.s.len:
+                    match s.s[s.rd]:
+                        case _ if s.s[s.rd] == ch('\r'):
+                            s.rd += 1
+                            if s.s[s.rd] == ch('\n'): s.rd += 1
+                            break
+                        case _ if s.s[s.rd] == ch('\n'):
+                            s.rd += 1
+                            break
+                        case _:
+                            line.add(s.s[s.rd])
+                            s.rd += 1
+                result = line.len > 0 or s.rd < s.s.len
+            case TLLStreamKind.llsFile:
+                result = readLine(s.f, line)
+            case TLLStreamKind.llsStdIn:
+                result = readLine(stdin, line)
+        return result
+
+    def llStreamWrite(s: PLLStream, data: string):
+        match s.kind:
+            case TLLStreamKind.llsNone | TLLStreamKind.llsStdIn:
+                pass
+            case TLLStreamKind.llsString:
+                s.s.add(data)
+                s.wr += len(data)
+            case TLLStreamKind.llsFile:
+                write(s.f, data)
+
+    def llStreamWriteln(s: PLLStream, data: string):
+        s.llStreamWrite(data)
+        s.llStreamWrite(string("\n"))
+
+    def llStreamWrite(s: PLLStream, data: char):
+        with var:
+            c: char
+        match s.kind:
+            case TLLStreamKind.llsNone | TLLStreamKind.llsStdIn:
+                pass
+            case TLLStreamKind.llsString:
+                s.s.add(data)
+                s.wr += 1
+            case TLLStreamKind.llsFile:
+                c = data
+                _ = writeBuffer(s.f, addr(c), sizeof(c))
+
+    def llStreamWrite(s: PLLStream, buf: pointer, buflen: nint):
+        match s.kind:
+            case TLLStreamKind.llsNone | TLLStreamKind.llsStdIn:
+                pass
+            case TLLStreamKind.llsString:
+                if buflen > 0:
+                    setLen(s.s, len(s.s) + buflen)
+                    copyMem(addr(s.s[s.wr]), buf, buflen)
+                    s.wr += buflen
+            case TLLStreamKind.llsFile:
+                _ = writeBuffer(s.f, buf, buflen)
+
+    def llStreamReadAll(s: PLLStream) -> string:
+        with const:
+            bufSize = 2048
+        with var:
+            result = string("")
+        match s.kind:
+            case TLLStreamKind.llsNone | TLLStreamKind.llsStdIn:
+                result = string("")
+            case TLLStreamKind.llsString:
+                if s.rd == 0: result = s.s
+                else: result = substr(s.s, s.rd)
+                s.rd = len(s.s)
+            case TLLStreamKind.llsFile:
+                result = newString(bufSize)
+                with var:
+                    bytes = readBuffer(s.f, addr(result[0]), bufSize)
+                    i = bytes
+                while bytes == bufSize:
+                    setLen(result, i + bufSize)
+                    bytes = readBuffer(s.f, addr(result[i + 0]), bufSize)
+                    i += bytes
+                setLen(result, i)
+        return result
 
 @dispatch
 def llStreamOpen(data: string) -> PLLStream:
@@ -209,123 +321,6 @@ def llReadFromStdin(s: PLLStream, buf: pointer, bufLen: nint) -> nint:
 def llStreamOpenStdIn(r: TLLRepl = llReadFromStdin, onPrompt: OnPrompt = None) -> PLLStream:
     return PLLStream(kind=TLLStreamKind.llsStdIn, s=string(""), lineOffset=-1, repl=r, onPrompt=onPrompt)
 
-def llStreamClose(s: PLLStream):
-    match s.kind:
-        case TLLStreamKind.llsNone | TLLStreamKind.llsString | TLLStreamKind.llsStdIn:
-            pass
-        case TLLStreamKind.llsFile:
-            close(s.f)
-
-def llStreamRead(s: PLLStream, buf: pointer, bufLen: nint) -> nint:
-    with var:
-        result = 0
-    match s.kind:
-        case TLLStreamKind.llsNone:
-            result = 0
-        case TLLStreamKind.llsString:
-            result = min(bufLen, len(s.s) - s.rd)
-            if result > 0:
-                copyMem(buf, addr(s.s[s.rd]), result)
-                s.rd += result
-        case TLLStreamKind.llsFile:
-            result = readBuffer(s.f, buf, bufLen)
-        case TLLStreamKind.llsStdIn:
-            if s.onPrompt != None: s.onPrompt()
-            result = s.repl(s, buf, bufLen)
-    return result
-
-def llStreamReadLine(s: PLLStream, line: mut@string) -> bool:
-    setLen(line, 0)
-    match s.kind:
-        case TLLStreamKind.llsNone:
-            result = True
-        case TLLStreamKind.llsString:
-            while s.rd < s.s.len:
-                match s.s[s.rd]:
-                    case _ if s.s[s.rd] == ch('\r'):
-                        s.rd += 1
-                        if s.s[s.rd] == ch('\n'): s.rd += 1
-                        break
-                    case _ if s.s[s.rd] == ch('\n'):
-                        s.rd += 1
-                        break
-                    case _:
-                        line.add(s.s[s.rd])
-                        s.rd += 1
-            result = line.len > 0 or s.rd < s.s.len
-        case TLLStreamKind.llsFile:
-            result = readLine(s.f, line)
-        case TLLStreamKind.llsStdIn:
-            result = readLine(stdin, line)
-    return result
-
-@dispatch
-def llStreamWrite(s: PLLStream, data: string):
-    match s.kind:
-        case TLLStreamKind.llsNone | TLLStreamKind.llsStdIn:
-            pass
-        case TLLStreamKind.llsString:
-            s.s.add(data)
-            s.wr += len(data)
-        case TLLStreamKind.llsFile:
-            write(s.f, data)
-
-def llStreamWriteln(s: PLLStream, data: string):
-    llStreamWrite(s, data)
-    llStreamWrite(s, string("\n"))
-
-@dispatch
-def llStreamWrite(s: PLLStream, data: char):
-    with var:
-        c: char
-    match s.kind:
-        case TLLStreamKind.llsNone | TLLStreamKind.llsStdIn:
-            pass
-        case TLLStreamKind.llsString:
-            s.s.add(data)
-            s.wr += 1
-        case TLLStreamKind.llsFile:
-            c = data
-            _ = writeBuffer(s.f, addr(c), sizeof(c))
-
-@dispatch
-def llStreamWrite(s: PLLStream, buf: pointer, buflen: nint):
-    match s.kind:
-        case TLLStreamKind.llsNone | TLLStreamKind.llsStdIn:
-            pass
-        case TLLStreamKind.llsString:
-            if buflen > 0:
-                setLen(s.s, len(s.s) + buflen)
-                copyMem(addr(s.s[s.wr]), buf, buflen)
-                s.wr += buflen
-        case TLLStreamKind.llsFile:
-            _ = writeBuffer(s.f, buf, buflen)
-
-def llStreamReadAll(s: PLLStream) -> string:
-    with const:
-        bufSize = 2048
-    with var:
-        result = string("")
-    match s.kind:
-        case TLLStreamKind.llsNone | TLLStreamKind.llsStdIn:
-            result = string("")
-        case TLLStreamKind.llsString:
-            if s.rd == 0: result = s.s
-            else: result = substr(s.s, s.rd)
-            s.rd = len(s.s)
-        case TLLStreamKind.llsFile:
-            result = newString(bufSize)
-            with var:
-                bytes = readBuffer(s.f, addr(result[0]), bufSize)
-                i = bytes
-            while bytes == bufSize:
-                setLen(result, i + bufSize)
-                bytes = readBuffer(s.f, addr(result[i + 0]), bufSize)
-                i += bytes
-            setLen(result, i)
-    return result
-
-
 
 if comptime(__name__ == "__main__"):
     from nimic.std.os import removeFile, fileExists
@@ -342,39 +337,39 @@ if comptime(__name__ == "__main__"):
     with var:
         s = llStreamOpen()
     assert s.kind == TLLStreamKind.llsNone
-    llStreamWrite(s, string("noop"))
-    llStreamWriteln(s, string("noop"))
-    llStreamWrite(s, ch("x"))
+    s.llStreamWrite(string("noop"))
+    s.llStreamWriteln(string("noop"))
+    s.llStreamWrite(ch("x"))
     with var:
         line = string("")
-    assert llStreamReadLine(s, line) == True
+    assert s.llStreamReadLine(line) == True
     assert line == string("")
-    assert llStreamReadAll(s) == string("")
-    llStreamClose(s)
+    assert s.llStreamReadAll() == string("")
+    s.llStreamClose()
 
     # 2. String stream reading
     with var:
         s2 = llStreamOpen(string("first\nsecond\r\nthird"))
     assert s2.kind == TLLStreamKind.llsString
-    assert llStreamReadLine(s2, line) == True
+    assert s2.llStreamReadLine(line) == True
     assert line == string("first")
-    assert llStreamReadLine(s2, line) == True
+    assert s2.llStreamReadLine(line) == True
     assert line == string("second")
-    assert llStreamReadLine(s2, line) == True
+    assert s2.llStreamReadLine(line) == True
     assert line == string("third")
-    assert llStreamReadLine(s2, line) == False
+    assert s2.llStreamReadLine(line) == False
     with var:
         s2r = llStreamOpen(string("a\rb\n"))
-    assert llStreamReadLine(s2r, line) == True and line == string("a")
-    assert llStreamReadLine(s2r, line) == True and line == string("b")
-    assert llStreamReadLine(s2r, line) == False
+    assert s2r.llStreamReadLine(line) == True and line == string("a")
+    assert s2r.llStreamReadLine(line) == True and line == string("b")
+    assert s2r.llStreamReadLine(line) == False
 
     # 3. String stream writing
     with var:
         s3 = llStreamOpen(string(""))
-    llStreamWrite(s3, string("abc"))
-    llStreamWriteln(s3, string("def"))
-    llStreamWrite(s3, ch("!"))
+    s3.llStreamWrite(string("abc"))
+    s3.llStreamWriteln(string("def"))
+    s3.llStreamWrite(ch("!"))
     assert s3.s == string("abcdef\n!")
     assert s3.wr == 8
 
@@ -382,18 +377,18 @@ if comptime(__name__ == "__main__"):
     with var:
         s4 = llStreamOpen(string("ABCDEFGH"))
         buf = array[4, char]()
-        n = llStreamRead(s4, addr(buf[0]), 4)
+        n = s4.llStreamRead(addr(buf[0]), 4)
     assert n == 4
     assert buf[0] == ch("A") and buf[1] == ch("B") and buf[2] == ch("C") and buf[3] == ch("D")
     with var:
-        rem = llStreamReadAll(s4)
+        rem = s4.llStreamReadAll()
     assert rem == string("EFGH")
 
     with var:
         s5 = llStreamOpen(string(""))
-    llStreamWrite(s5, addr(buf[0]), 4)
+    s5.llStreamWrite(addr(buf[0]), 4)
     assert s5.s == string("ABCD")
-    llStreamWrite(s5, addr(buf[0]), 2)
+    s5.llStreamWrite(addr(buf[0]), 2)
     assert s5.s == string("ABCDAB")
 
     # 5. Stdin stream and callbacks
@@ -411,10 +406,10 @@ if comptime(__name__ == "__main__"):
         s_stdin = llStreamOpenStdIn(r=my_repl, onPrompt=my_prompt)
     assert s_stdin.kind == TLLStreamKind.llsStdIn
     with var:
-        res = llStreamRead(s_stdin, None, 0)
+        res = s_stdin.llStreamRead(None, 0)
     assert res == 42
     assert called[0] == True and called[1] == True
-    llStreamClose(s_stdin)
+    s_stdin.llStreamClose()
 
     # 6. Helpers
     assert countTriples(string('"""hello"""')) == 2
@@ -433,20 +428,20 @@ if comptime(__name__ == "__main__"):
         tf_name = string(".scratch/test_llstream_tmp.txt")
         sf = llStreamOpen(AbsoluteFile(tf_name), FileMode.fmWrite)
     assert sf is not None
-    llStreamWriteln(sf, string("line 1"))
-    llStreamWriteln(sf, string("line 2"))
-    llStreamClose(sf)
+    sf.llStreamWriteln(string("line 1"))
+    sf.llStreamWriteln(string("line 2"))
+    sf.llStreamClose()
 
     with var:
         sf_in = llStreamOpen(AbsoluteFile(tf_name), FileMode.fmRead)
     assert sf_in is not None
     with var:
         fline = string("")
-    assert llStreamReadLine(sf_in, fline) == True
+    assert sf_in.llStreamReadLine(fline) == True
     assert fline == string("line 1")
-    assert llStreamReadLine(sf_in, fline) == True
+    assert sf_in.llStreamReadLine(fline) == True
     assert fline == string("line 2")
-    llStreamClose(sf_in)
+    sf_in.llStreamClose()
 
     if fileExists(tf_name):
         removeFile(tf_name)

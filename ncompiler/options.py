@@ -231,6 +231,30 @@ class IdeCmd(NIntEnum):
     ideExpand = auto()
     ideInlayHints = auto()
 
+    def __str__(c: IdeCmd) -> string:
+        match c:
+            case IdeCmd.ideSug: return "sug"
+            case IdeCmd.ideCon: return "con"
+            case IdeCmd.ideDef: return "def"
+            case IdeCmd.ideUse: return "use"
+            case IdeCmd.ideDus: return "dus"
+            case IdeCmd.ideChk: return "chk"
+            case IdeCmd.ideChkFile: return "chkFile"
+            case IdeCmd.ideMod: return "mod"
+            case IdeCmd.ideNone: return "none"
+            case IdeCmd.ideHighlight: return "highlight"
+            case IdeCmd.ideOutline: return "outline"
+            case IdeCmd.ideKnown: return "known"
+            case IdeCmd.ideMsg: return "msg"
+            case IdeCmd.ideProject: return "project"
+            case IdeCmd.ideGlobalSymbols: return "globalSymbols"
+            case IdeCmd.ideDeclaration: return "declaration"
+            case IdeCmd.ideExpand: return "expand"
+            case IdeCmd.ideRecompile: return "recompile"
+            case IdeCmd.ideChanged: return "changed"
+            case IdeCmd.ideType: return "type"
+            case IdeCmd.ideInlayHints: return "inlayHints"
+
 class Feature(NIntEnum):
     dotOperators = 0
     callOperator = auto()
@@ -500,6 +524,266 @@ class ConfigRef(Object):
     currentConfigDir: string
     clientProcessId: nint
 
+    @template_expand
+    def setNoteDefaults(conf: ConfigRef, note: TNoteKind, enabled: bool = True) -> None:
+        @template
+        def fun(op: untyped):
+            conf.notes.op(note)
+            conf.mainPackageNotes.op(note)
+            conf.foreignPackageNotes.op(note)
+        if enabled:
+            fun(incl)
+        else:
+            fun(excl)
+
+    def setNote(conf: ConfigRef, note: TNoteKind, enabled: bool = True) -> None:
+        # see also `prepareConfigNotes` which sets notes
+        if note not in conf.cmdlineNotes:
+            if enabled:
+                conf.notes.incl(note)
+            else:
+                conf.notes.excl(note)
+
+    def hasHint(conf: ConfigRef, note: TNoteKind) -> bool:
+        # ternary states instead of binary states would simplify logic
+        if TOption.optHints not in conf.options:
+            return False
+        elif note in {TMsgKind.hintConf, TMsgKind.hintProcessing}:
+            # could add here other special notes like hintSource
+            # these notes apply globally.
+            return note in conf.mainPackageNotes
+        else:
+            return note in conf.notes
+
+    def hasWarn(conf: ConfigRef, note: TNoteKind) -> bool:
+        """{.inline.}"""
+        return TOption.optWarns in conf.options and note in conf.notes
+
+    def hcrOn(conf: ConfigRef) -> bool:
+        return TGlobalOption.optHotCodeReloading in conf.globalOptions
+
+    def isDefined(conf: ConfigRef, symbol: string) -> bool:
+        pass
+
+    def cppDefine(c: ConfigRef, define: string) -> None:
+        c.cppDefines.incl(define)
+
+    def isDefined(conf: ConfigRef, symbol: string) -> bool:
+        if conf.symbols.hasKey(symbol):
+            result = True
+        elif cmpIgnoreStyle(symbol, CPU[conf.target.targetCPU].name) == 0:
+            result = True
+        elif cmpIgnoreStyle(symbol, OS[conf.target.targetOS].name) == 0:
+            result = True
+        else:
+            match normalize(symbol):
+                case "x86": result = conf.target.targetCPU == TSystemCPU.cpuI386
+                case "itanium": result = conf.target.targetCPU == TSystemCPU.cpuIa64
+                case "x8664": result = conf.target.targetCPU == TSystemCPU.cpuAmd64
+                case "posix" | "unix":
+                    result = conf.target.targetOS in {TSystemOS.osLinux, TSystemOS.osMorphos, TSystemOS.osSkyos, TSystemOS.osIrix, TSystemOS.osPalmos,
+                                        TSystemOS.osQnx, TSystemOS.osAtari, TSystemOS.osAix,
+                                        TSystemOS.osHaiku, TSystemOS.osVxWorks, TSystemOS.osSolaris, TSystemOS.osNetbsd,
+                                        TSystemOS.osFreebsd, TSystemOS.osOpenbsd, TSystemOS.osDragonfly, TSystemOS.osMacosx, TSystemOS.osIos,
+                                        TSystemOS.osAndroid, TSystemOS.osNintendoSwitch, TSystemOS.osFreeRTOS, TSystemOS.osCrossos, TSystemOS.osZephyr, TSystemOS.osNuttX}
+                case "linux":
+                    result = conf.target.targetOS in {TSystemOS.osLinux, TSystemOS.osAndroid}
+                case "bsd":
+                    result = conf.target.targetOS in {TSystemOS.osNetbsd, TSystemOS.osFreebsd, TSystemOS.osOpenbsd, TSystemOS.osDragonfly, TSystemOS.osCrossos}
+                case "freebsd":
+                    result = conf.target.targetOS in {TSystemOS.osFreebsd, TSystemOS.osCrossos}
+                case "emulatedthreadvars":
+                    result = OS[conf.target.targetOS].props.contains(TInfoOSProp.ospLacksThreadVars)
+                case "msdos": result = conf.target.targetOS == TSystemOS.osDos
+                case "mswindows" | "win32": result = conf.target.targetOS == TSystemOS.osWindows
+                case "macintosh":
+                    result = conf.target.targetOS in {TSystemOS.osMacos, TSystemOS.osMacosx, TSystemOS.osIos}
+                case "osx" | "macosx":
+                    result = conf.target.targetOS in {TSystemOS.osMacosx, TSystemOS.osIos}
+                case "sunos": result = conf.target.targetOS == TSystemOS.osSolaris
+                case "nintendoswitch":
+                    result = conf.target.targetOS == TSystemOS.osNintendoSwitch
+                case "freertos" | "lwip":
+                    result = conf.target.targetOS == TSystemOS.osFreeRTOS
+                case "zephyr":
+                    result = conf.target.targetOS == TSystemOS.osZephyr
+                case "nuttx":
+                    result = conf.target.targetOS == TSystemOS.osNuttX
+                case "littleendian": result = CPU[conf.target.targetCPU].endian == Endianness.littleEndian
+                case "bigendian": result = CPU[conf.target.targetCPU].endian == Endianness.bigEndian
+                case "cpu8": result = CPU[conf.target.targetCPU].bit == 8
+                case "cpu16": result = CPU[conf.target.targetCPU].bit == 16
+                case "cpu32": result = CPU[conf.target.targetCPU].bit == 32
+                case "cpu64": result = CPU[conf.target.targetCPU].bit == 64
+                case "nimrawsetjmp":
+                    result = conf.target.targetOS in {TSystemOS.osSolaris, TSystemOS.osNetbsd, TSystemOS.osFreebsd, TSystemOS.osOpenbsd,
+                                        TSystemOS.osDragonfly, TSystemOS.osMacosx}
+                case _: result = False
+        return result
+
+    def importantComments(conf: ConfigRef) -> bool:
+        """{.inline.}"""
+        return conf.cmd in cmdDocLike + Tset[Command]({Command.cmdIdeTools})
+
+    def usesWriteBarrier(conf: ConfigRef) -> bool:
+        """{.inline.}"""
+        return conf.selectedGC >= TGCMode.gcRefc
+
+    def usesSso(conf: ConfigRef) -> bool:
+        """{.inline.}"""
+        return conf.selectedStrings == StringsMode.stringSso
+
+    @template
+    def compilationCachePresent(conf: ConfigRef) -> untyped:
+        return False
+
+    @template
+    def optPreserveOrigSource(conf: ConfigRef) -> untyped:
+        return TGlobalOption.optEmbedOrigSrc in conf.globalOptions
+
+    def mainCommandArg(conf: ConfigRef) -> string:
+        ## This is intended for commands like check or parse
+        ## which will work on the main project file unless
+        ## explicitly given a specific file argument
+        if conf.commandArgs.len > 0:
+            result = conf.commandArgs[0]
+        else:
+            result = conf.projectName
+        return result
+
+    def existsConfigVar(conf: ConfigRef, key: string) -> bool:
+        result = hasKey(conf.configVars, key)
+        return result
+
+    def getConfigVar(conf: ConfigRef, key: string, default: string = string("")) -> string:
+        result = conf.configVars.getOrDefault(key, default)
+        return result
+
+    def setConfigVar(conf: ConfigRef, key: string, val: string) -> None:
+        conf.configVars[key] = val
+
+    def getOutFile(conf: ConfigRef, filename: RelativeFile, ext: string) -> AbsoluteFile:
+        # explains regression https://github.com/nim-lang/Nim/issues/6583#issuecomment-625711125
+        # Yet another reason why "" should not mean ".";  `""/something` should raise
+        # instead of implying "" == "." as it's bug prone.
+        doAssert(string(conf.outDir).len > 0)
+        result = conf.outDir / filename.changeFileExt(ext)
+        return result
+
+    def absOutFile(conf: ConfigRef) -> AbsoluteFile:
+        doAssert(not isEmpty(conf.outDir))
+        doAssert(not isEmpty(conf.outFile))
+        result = conf.outDir / conf.outFile
+        if comptime(defined("posix")):
+            if dirExists(string(result)):
+                string(result).add(string(".out"))
+        return result
+
+    def getPrefixDir(conf: ConfigRef) -> AbsoluteDir:
+        ## Gets the prefix dir, usually the parent directory where the binary resides.
+        ##
+        ## This is overridden by some tools (namely nimsuggest) via the ``conf.prefixDir``
+        ## field.
+        ## This should resolve to root of nim sources, whether running nim from a local
+        ##  clone or using installed nim, so that these exist: `result/doc/advopt.txt`
+        ## and `result/lib/system.nim`
+        if not isEmpty(conf.prefixDir):
+            result = conf.prefixDir
+        else:
+            with let:
+                binParent = AbsoluteDir(splitPath(getAppDir()).head)
+            if comptime(defined("posix")):
+                if binParent == AbsoluteDir(string("/usr")):
+                    result = AbsoluteDir(string("/usr/lib/nim"))
+                elif binParent == AbsoluteDir(string("/usr/local")):
+                    result = AbsoluteDir(string("/usr/local/lib/nim"))
+                else:
+                    result = binParent
+            else:
+                result = binParent
+        return result
+
+    def canonicalizePath(conf: ConfigRef, path: AbsoluteFile) -> AbsoluteFile:
+        result = AbsoluteFile(expandFilename(string(path)))
+        return result
+
+    def disableNimblePath(conf: ConfigRef) -> None:
+        incl(conf.globalOptions, TGlobalOption.optNoNimblePath)
+        conf.lazyPaths.setLen(0)
+        conf.nimblePaths.setLen(0)
+
+    def clearNimblePath(conf: ConfigRef) -> None:
+        conf.lazyPaths.setLen(0)
+        conf.nimblePaths.setLen(0)
+
+    def findProjectNimFile(conf: ConfigRef, pkg: string) -> string:
+        with const:
+            extensions = [string(".nims"), string(".cfg"), string(".nimcfg"), string(".nimble")]
+        with var:
+            candidates: seq[string] = seq[string]()
+            dir = pkg.copy()
+            prev = dir.copy()
+            nimblepkg = string("")
+        with let:
+            pkgname = lastPathPart(pkg)
+        while True:
+            for k, f in walkDir(dir, relative=True):
+                if k == pcFile and f != string("config.nims"):
+                    with let:
+                        (_, name, ext) = splitFile(f)
+                    if ext in extensions:
+                        with let:
+                            x = changeFileExt(dir / name, string(".nim"))
+                        if fileExists(x):
+                            candidates.add(x)
+                        if ext == string(".nimble"):
+                            if nimblepkg.len == 0:
+                                nimblepkg = name
+                                # Since nimble packages can have their source in a subfolder,
+                                # check the last folder we were in for a possible match.
+                                if dir != prev:
+                                    with let:
+                                        x = prev / extractFilename(x)
+                                    if fileExists(x):
+                                        candidates.add(x)
+                            else:
+                                # If we found more than one nimble file, chances are that we
+                                # missed the real project file, or this is an invalid nimble
+                                # package. Either way, bailing is the better choice.
+                                return string("")
+            with let:
+                pkgname = nimblepkg if nimblepkg.len > 0 else pkgname
+            for c in candidates:
+                if pkgname in extractFilename(c):
+                    return c
+            if candidates.len > 0:
+                return candidates[0]
+            prev = dir
+            dir = parentDir(dir)
+            if dir == string(""):
+                break
+        return string("")
+
+    def showNonExportedFields(conf: ConfigRef) -> None:
+        incl(conf.globalOptions, TGlobalOption.optShowNonExportedFields)
+
+    def docRawOutput(conf: ConfigRef) -> None:
+        incl(conf.globalOptions, TGlobalOption.optDocRaw)
+
+    def expandDone(conf: ConfigRef) -> bool:
+        result = conf.ideCmd == IdeCmd.ideExpand and conf.expandLevels == 0 and conf.expandProgress
+        return result
+
+    def floatInt64Align(conf: ConfigRef) -> int16:
+        ## Returns either 4 or 8 depending on reasons.
+        if conf is not None and conf.target.targetCPU == TSystemCPU.cpuI386:
+            #on Linux/BSD i386, double are aligned to 4bytes (except with -malign-double)
+            if conf.target.targetOS != TSystemOS.osWindows:
+                # on i386 for all known POSIX systems, 64bits ints are aligned
+                # to 4bytes (except with -malign-double)
+                return int16(4)
+        return int16(8)
+
 # TODO: requires nimic feature generic default parameters (`def = default(T)`): proc assignIfDefault*[T]
 def assignIfDefault(result: mut@nint, val: nint, def_: nint = nint(0)) -> None:
     ## if `result` was already assigned to a value (that wasn't `def`), this is a noop.
@@ -511,45 +795,6 @@ def assignIfDefault(result: mut@nint, val: nint, def_: nint = nint(0)) -> None:
 def setErrorMaxHighMaybe(conf: ConfigRef):
     ## do not stop after first error (but honor --errorMax if provided)
     assignIfDefault(conf.errorMax, high(nint))
-
-@template_expand
-def setNoteDefaults(conf: ConfigRef, note: TNoteKind, enabled: bool = True) -> None:
-    @template
-    def fun(op: untyped):
-        conf.notes.op(note)
-        conf.mainPackageNotes.op(note)
-        conf.foreignPackageNotes.op(note)
-    if enabled:
-        fun(incl)
-    else:
-        fun(excl)
-
-def setNote(conf: ConfigRef, note: TNoteKind, enabled: bool = True) -> None:
-    # see also `prepareConfigNotes` which sets notes
-    if note not in conf.cmdlineNotes:
-        if enabled:
-            conf.notes.incl(note)
-        else:
-            conf.notes.excl(note)
-
-def hasHint(conf: ConfigRef, note: TNoteKind) -> bool:
-    # ternary states instead of binary states would simplify logic
-    if TOption.optHints not in conf.options:
-        return False
-    elif note in {TMsgKind.hintConf, TMsgKind.hintProcessing}:
-        # could add here other special notes like hintSource
-        # these notes apply globally.
-        return note in conf.mainPackageNotes
-    else:
-        return note in conf.notes
-
-
-def hasWarn(conf: ConfigRef, note: TNoteKind) -> bool:
-    """{.inline.}"""
-    return TOption.optWarns in conf.options and note in conf.notes
-
-def hcrOn(conf: ConfigRef) -> bool:
-    return TGlobalOption.optHotCodeReloading in conf.globalOptions
 
 if comptime(False):
     @template
@@ -605,10 +850,6 @@ def _newProfileData() -> ProfileData:
 with const:
     foreignPackageNotesDefault = Tset[TNoteKind]({
         TMsgKind.hintProcessing, TMsgKind.warnUnknownMagic, TMsgKind.hintQuitCalled, TMsgKind.hintExecuting, TMsgKind.hintUser, TMsgKind.warnUser})
-
-
-def isDefined(conf: ConfigRef, symbol: string) -> bool:
-    pass
 
 
 if comptime(defined("nimDebugUtils")):
@@ -702,170 +943,22 @@ def newPartialConfigRef() -> ConfigRef:
     return result
 
 
-def cppDefine(c: ConfigRef, define: string) -> None:
-    c.cppDefines.incl(define)
-
-def isDefined(conf: ConfigRef, symbol: string) -> bool:
-    if conf.symbols.hasKey(symbol):
-        result = True
-    elif cmpIgnoreStyle(symbol, CPU[conf.target.targetCPU].name) == 0:
-        result = True
-    elif cmpIgnoreStyle(symbol, OS[conf.target.targetOS].name) == 0:
-        result = True
-    else:
-        match normalize(symbol):
-            case "x86": result = conf.target.targetCPU == TSystemCPU.cpuI386
-            case "itanium": result = conf.target.targetCPU == TSystemCPU.cpuIa64
-            case "x8664": result = conf.target.targetCPU == TSystemCPU.cpuAmd64
-            case "posix" | "unix":
-                result = conf.target.targetOS in {TSystemOS.osLinux, TSystemOS.osMorphos, TSystemOS.osSkyos, TSystemOS.osIrix, TSystemOS.osPalmos,
-                                    TSystemOS.osQnx, TSystemOS.osAtari, TSystemOS.osAix,
-                                    TSystemOS.osHaiku, TSystemOS.osVxWorks, TSystemOS.osSolaris, TSystemOS.osNetbsd,
-                                    TSystemOS.osFreebsd, TSystemOS.osOpenbsd, TSystemOS.osDragonfly, TSystemOS.osMacosx, TSystemOS.osIos,
-                                    TSystemOS.osAndroid, TSystemOS.osNintendoSwitch, TSystemOS.osFreeRTOS, TSystemOS.osCrossos, TSystemOS.osZephyr, TSystemOS.osNuttX}
-            case "linux":
-                result = conf.target.targetOS in {TSystemOS.osLinux, TSystemOS.osAndroid}
-            case "bsd":
-                result = conf.target.targetOS in {TSystemOS.osNetbsd, TSystemOS.osFreebsd, TSystemOS.osOpenbsd, TSystemOS.osDragonfly, TSystemOS.osCrossos}
-            case "freebsd":
-                result = conf.target.targetOS in {TSystemOS.osFreebsd, TSystemOS.osCrossos}
-            case "emulatedthreadvars":
-                result = OS[conf.target.targetOS].props.contains(TInfoOSProp.ospLacksThreadVars)
-            case "msdos": result = conf.target.targetOS == TSystemOS.osDos
-            case "mswindows" | "win32": result = conf.target.targetOS == TSystemOS.osWindows
-            case "macintosh":
-                result = conf.target.targetOS in {TSystemOS.osMacos, TSystemOS.osMacosx, TSystemOS.osIos}
-            case "osx" | "macosx":
-                result = conf.target.targetOS in {TSystemOS.osMacosx, TSystemOS.osIos}
-            case "sunos": result = conf.target.targetOS == TSystemOS.osSolaris
-            case "nintendoswitch":
-                result = conf.target.targetOS == TSystemOS.osNintendoSwitch
-            case "freertos" | "lwip":
-                result = conf.target.targetOS == TSystemOS.osFreeRTOS
-            case "zephyr":
-                result = conf.target.targetOS == TSystemOS.osZephyr
-            case "nuttx":
-                result = conf.target.targetOS == TSystemOS.osNuttX
-            case "littleendian": result = CPU[conf.target.targetCPU].endian == Endianness.littleEndian
-            case "bigendian": result = CPU[conf.target.targetCPU].endian == Endianness.bigEndian
-            case "cpu8": result = CPU[conf.target.targetCPU].bit == 8
-            case "cpu16": result = CPU[conf.target.targetCPU].bit == 16
-            case "cpu32": result = CPU[conf.target.targetCPU].bit == 32
-            case "cpu64": result = CPU[conf.target.targetCPU].bit == 64
-            case "nimrawsetjmp":
-                result = conf.target.targetOS in {TSystemOS.osSolaris, TSystemOS.osNetbsd, TSystemOS.osFreebsd, TSystemOS.osOpenbsd,
-                                    TSystemOS.osDragonfly, TSystemOS.osMacosx}
-            case _: result = False
-    return result
-
 @template
 def quitOrRaise(conf: ConfigRef, msg: string = string("")):
     # xxx in future work, consider whether to also intercept `msgQuit` calls
-    if isDefined(conf, string("nimDebug")):
+    if conf.isDefined(string("nimDebug")):
         raiseAssert(msg)
     else:
         quit(msg)  # quits with QuitFailure
 
 
-def importantComments(conf: ConfigRef) -> bool:
-    """{.inline.}"""
-    return conf.cmd in cmdDocLike + Tset[Command]({Command.cmdIdeTools})
-
-
-def usesWriteBarrier(conf: ConfigRef) -> bool:
-    """{.inline.}"""
-    return conf.selectedGC >= TGCMode.gcRefc
-
-
-def usesSso(conf: ConfigRef) -> bool:
-    """{.inline.}"""
-    return conf.selectedStrings == StringsMode.stringSso
-
-
-@template
-def compilationCachePresent(conf: ConfigRef) -> untyped:
-    return False
     #  conf.symbolFiles in {v2Sf, writeOnlySf}
-
-
-@template
-def optPreserveOrigSource(conf: ConfigRef) -> untyped:
-    return TGlobalOption.optEmbedOrigSrc in conf.globalOptions
-
-
-def mainCommandArg(conf: ConfigRef) -> string:
-    ## This is intended for commands like check or parse
-    ## which will work on the main project file unless
-    ## explicitly given a specific file argument
-    if conf.commandArgs.len > 0:
-        result = conf.commandArgs[0]
-    else:
-        result = conf.projectName
-    return result
-
-
-def existsConfigVar(conf: ConfigRef, key: string) -> bool:
-    result = hasKey(conf.configVars, key)
-    return result
-
-
-def getConfigVar(conf: ConfigRef, key: string, default: string = string("")) -> string:
-    result = conf.configVars.getOrDefault(key, default)
-    return result
-
-
-def setConfigVar(conf: ConfigRef, key: string, val: string) -> None:
-    conf.configVars[key] = val
-
-
-def getOutFile(conf: ConfigRef, filename: RelativeFile, ext: string) -> AbsoluteFile:
-    # explains regression https://github.com/nim-lang/Nim/issues/6583#issuecomment-625711125
-    # Yet another reason why "" should not mean ".";  `""/something` should raise
-    # instead of implying "" == "." as it's bug prone.
-    doAssert(string(conf.outDir).len > 0)
-    result = conf.outDir / changeFileExt(filename, ext)
-    return result
-
-
-def absOutFile(conf: ConfigRef) -> AbsoluteFile:
-    doAssert(not isEmpty(conf.outDir))
-    doAssert(not isEmpty(conf.outFile))
-    result = conf.outDir / conf.outFile
-    if comptime(defined("posix")):
-        if dirExists(string(result)):
-            string(result).add(string(".out"))
-    return result
 
 
 def prepareToWriteOutput(conf: ConfigRef) -> AbsoluteFile:
     ## Create the output directory and returns a full path to the output file
-    result = absOutFile(conf)
+    result = conf.absOutFile()
     createDir(parentDir(string(result)))
-    return result
-
-
-def getPrefixDir(conf: ConfigRef) -> AbsoluteDir:
-    ## Gets the prefix dir, usually the parent directory where the binary resides.
-    ##
-    ## This is overridden by some tools (namely nimsuggest) via the ``conf.prefixDir``
-    ## field.
-    ## This should resolve to root of nim sources, whether running nim from a local
-    ##  clone or using installed nim, so that these exist: `result/doc/advopt.txt`
-    ## and `result/lib/system.nim`
-    if not isEmpty(conf.prefixDir):
-        result = conf.prefixDir
-    else:
-        with let:
-            binParent = AbsoluteDir(splitPath(getAppDir()).head)
-        if comptime(defined("posix")):
-            if binParent == AbsoluteDir(string("/usr")):
-                result = AbsoluteDir(string("/usr/lib/nim"))
-            elif binParent == AbsoluteDir(string("/usr/local")):
-                result = AbsoluteDir(string("/usr/local/lib/nim"))
-            else:
-                result = binParent
-        else:
-            result = binParent
     return result
 
 
@@ -874,7 +967,7 @@ def setDefaultLibpath(conf: ConfigRef) -> None:
     if isEmpty(conf.libpath):
         # choose default libpath:
         with var:
-            prefix = getPrefixDir(conf)
+            prefix = conf.getPrefixDir()
         conf.libpath = prefix / RelativeDir(string("lib"))
 
         # Special rule to support other tools (nimble) which import the compiler
@@ -889,21 +982,16 @@ def setDefaultLibpath(conf: ConfigRef) -> None:
             conf.libpath = AbsoluteDir(parentNimLibPath)
 
 
-def canonicalizePath(conf: ConfigRef, path: AbsoluteFile) -> AbsoluteFile:
-    result = AbsoluteFile(expandFilename(string(path)))
-    return result
-
-
 def setFromProjectName(conf: ConfigRef, projectName: string) -> None:
     try:
-        conf.projectFull = canonicalizePath(conf, AbsoluteFile(projectName))
+        conf.projectFull = conf.canonicalizePath(AbsoluteFile(projectName))
     except OSError:
         conf.projectFull = AbsoluteFile(projectName)
     with let:
         p = splitFile(conf.projectFull)
         dir = AbsoluteDir(getCurrentDir()) if isEmpty(p.dir) else p.dir
     try:
-        conf.projectPath = AbsoluteDir(canonicalizePath(conf, AbsoluteFile(dir)))
+        conf.projectPath = AbsoluteDir(conf.canonicalizePath(AbsoluteFile(dir)))
     except OSError:
         conf.projectPath = dir
     conf.projectName = p.name
@@ -915,17 +1003,6 @@ def removeTrailingDirSep(path: string) -> string:
     else:
         result = path
     return result
-
-
-def disableNimblePath(conf: ConfigRef) -> None:
-    incl(conf.globalOptions, TGlobalOption.optNoNimblePath)
-    conf.lazyPaths.setLen(0)
-    conf.nimblePaths.setLen(0)
-
-
-def clearNimblePath(conf: ConfigRef) -> None:
-    conf.lazyPaths.setLen(0)
-    conf.nimblePaths.setLen(0)
 
 
 include("packagehandling")
@@ -943,7 +1020,7 @@ def getNimcacheDir(conf: ConfigRef) -> AbsoluteDir:
     def nimcacheSuffix(conf: ConfigRef) -> string:
         if conf.cmd == Command.cmdCheck:
             return string("_check")
-        elif isDefined(conf, string("release")) or isDefined(conf, string("danger")):
+        elif conf.isDefined(string("release")) or conf.isDefined(string("danger")):
             return string("_r")
         else:
             return string("_d")
@@ -961,7 +1038,7 @@ def pathSubs(conf: ConfigRef, p: string, config: string) -> string:
     with let:
         home = removeTrailingDirSep(getHomeDir())
     result = expandTilde(unixToNativePath(p % [
-        string("nim"), string(getPrefixDir(conf)),
+        string("nim"), string(conf.getPrefixDir()),
         string("lib"), string(conf.libpath),
         string("home"), home,
         string("config"), config,
@@ -1009,8 +1086,8 @@ def _rawFindFile(conf: ConfigRef, f: RelativeFile, suppressStdlib: bool) -> Abso
         if suppressStdlib and startsWith(string(it), string(conf.libpath)):
             continue
         result = it / f
-        if fileExists(result):
-            return canonicalizePath(conf, result)
+        if result.fileExists():
+            return conf.canonicalizePath(result)
     result = AbsoluteFile(string(""))
     return result
 
@@ -1018,12 +1095,12 @@ def _rawFindFile(conf: ConfigRef, f: RelativeFile, suppressStdlib: bool) -> Abso
 def _rawFindFile2(conf: ConfigRef, f: RelativeFile) -> AbsoluteFile:
     for i, it in pairs(conf.lazyPaths):
         result = it / f
-        if fileExists(result):
+        if result.fileExists():
             # bring to front
             for j in range(i, 0, -1):
                 (conf.lazyPaths[j], conf.lazyPaths[j - 1]) = (conf.lazyPaths[j - 1], conf.lazyPaths[j])
 
-            return canonicalizePath(conf, result)
+            return conf.canonicalizePath(result)
     result = AbsoluteFile(string(""))
     return result
 
@@ -1119,63 +1196,14 @@ def findModule(conf: ConfigRef, modulename: string, currentModule: string) -> Ab
             with let:
                 currentPath = splitFile(currentModule).dir
             result = AbsoluteFile(currentPath / m)
-            if startsWith(m, ch('.')) and not fileExists(result):
+            if startsWith(m, ch('.')) and not result.fileExists():
                 result = AbsoluteFile(string(""))
                 hasRelativeDot = True
 
-        if not fileExists(result) and not hasRelativeDot:
+        if not result.fileExists() and not hasRelativeDot:
             result = findFile(conf, m)
     _patchModule(conf)
     return result
-
-
-def findProjectNimFile(conf: ConfigRef, pkg: string) -> string:
-    with const:
-        extensions = [string(".nims"), string(".cfg"), string(".nimcfg"), string(".nimble")]
-    with var:
-        candidates: seq[string] = seq[string]()
-        dir = pkg.copy()
-        prev = dir.copy()
-        nimblepkg = string("")
-    with let:
-        pkgname = lastPathPart(pkg)
-    while True:
-        for k, f in walkDir(dir, relative=True):
-            if k == pcFile and f != string("config.nims"):
-                with let:
-                    (_, name, ext) = splitFile(f)
-                if ext in extensions:
-                    with let:
-                        x = changeFileExt(dir / name, string(".nim"))
-                    if fileExists(x):
-                        candidates.add(x)
-                    if ext == string(".nimble"):
-                        if nimblepkg.len == 0:
-                            nimblepkg = name
-                            # Since nimble packages can have their source in a subfolder,
-                            # check the last folder we were in for a possible match.
-                            if dir != prev:
-                                with let:
-                                    x = prev / extractFilename(x)
-                                if fileExists(x):
-                                    candidates.add(x)
-                        else:
-                            # If we found more than one nimble file, chances are that we
-                            # missed the real project file, or this is an invalid nimble
-                            # package. Either way, bailing is the better choice.
-                            return string("")
-        with let:
-            pkgname = nimblepkg if nimblepkg.len > 0 else pkgname
-        for c in candidates:
-            if pkgname in extractFilename(c):
-                return c
-        if candidates.len > 0:
-            return candidates[0]
-        prev = dir
-        dir = parentDir(dir)
-        if dir == string(""):
-            break
-    return string("")
 
 
 def canonicalImportAux(conf: ConfigRef, file: AbsoluteFile) -> string:
@@ -1226,19 +1254,6 @@ def isDynlibOverride(conf: ConfigRef, lib: string) -> bool:
     return result
 
 
-def showNonExportedFields(conf: ConfigRef) -> None:
-    incl(conf.globalOptions, TGlobalOption.optShowNonExportedFields)
-
-
-def docRawOutput(conf: ConfigRef) -> None:
-    incl(conf.globalOptions, TGlobalOption.optDocRaw)
-
-
-def expandDone(conf: ConfigRef) -> bool:
-    result = conf.ideCmd == IdeCmd.ideExpand and conf.expandLevels == 0 and conf.expandProgress
-    return result
-
-
 def parseIdeCmd(s: string) -> IdeCmd:
     match s:
         case "sug": return IdeCmd.ideSug
@@ -1260,42 +1275,6 @@ def parseIdeCmd(s: string) -> IdeCmd:
         case "type": return IdeCmd.ideType
         case _: return IdeCmd.ideNone
 
-
-@ufcs(IdeCmd)
-def __str__(c: IdeCmd) -> string:
-    match c:
-        case IdeCmd.ideSug: return "sug"
-        case IdeCmd.ideCon: return "con"
-        case IdeCmd.ideDef: return "def"
-        case IdeCmd.ideUse: return "use"
-        case IdeCmd.ideDus: return "dus"
-        case IdeCmd.ideChk: return "chk"
-        case IdeCmd.ideChkFile: return "chkFile"
-        case IdeCmd.ideMod: return "mod"
-        case IdeCmd.ideNone: return "none"
-        case IdeCmd.ideHighlight: return "highlight"
-        case IdeCmd.ideOutline: return "outline"
-        case IdeCmd.ideKnown: return "known"
-        case IdeCmd.ideMsg: return "msg"
-        case IdeCmd.ideProject: return "project"
-        case IdeCmd.ideGlobalSymbols: return "globalSymbols"
-        case IdeCmd.ideDeclaration: return "declaration"
-        case IdeCmd.ideExpand: return "expand"
-        case IdeCmd.ideRecompile: return "recompile"
-        case IdeCmd.ideChanged: return "changed"
-        case IdeCmd.ideType: return "type"
-        case IdeCmd.ideInlayHints: return "inlayHints"
-
-
-def floatInt64Align(conf: ConfigRef) -> int16:
-    ## Returns either 4 or 8 depending on reasons.
-    if conf is not None and conf.target.targetCPU == TSystemCPU.cpuI386:
-        #on Linux/BSD i386, double are aligned to 4bytes (except with -malign-double)
-        if conf.target.targetOS != TSystemOS.osWindows:
-            # on i386 for all known POSIX systems, 64bits ints are aligned
-            # to 4bytes (except with -malign-double)
-            return int16(4)
-    return int16(8)
 
 if comptime(__name__ == "__main__"):
     echo("Running options.py tests...")
@@ -1321,16 +1300,16 @@ if comptime(__name__ == "__main__"):
 
 
     # 3. Notes manipulation
-    setNoteDefaults(conf, TMsgKind.hintProcessing, True)
-    assert hasHint(conf, TMsgKind.hintProcessing)
+    conf.setNoteDefaults(TMsgKind.hintProcessing, True)
+    assert conf.hasHint(TMsgKind.hintProcessing)
     assert TMsgKind.hintProcessing in conf.mainPackageNotes and TMsgKind.hintProcessing in conf.foreignPackageNotes
-    setNoteDefaults(conf, TMsgKind.hintProcessing, False)
+    conf.setNoteDefaults(TMsgKind.hintProcessing, False)
     assert TMsgKind.hintProcessing not in conf.notes and TMsgKind.hintProcessing not in conf.foreignPackageNotes
-    setNoteDefaults(conf, TMsgKind.hintProcessing, True)
-    setNote(conf, TMsgKind.warnUser, True)
-    assert hasWarn(conf, TMsgKind.warnUser)
-    setNote(conf, TMsgKind.warnUser, False)
-    assert not hasWarn(conf, TMsgKind.warnUser)
+    conf.setNoteDefaults(TMsgKind.hintProcessing, True)
+    conf.setNote(TMsgKind.warnUser, True)
+    assert conf.hasWarn(TMsgKind.warnUser)
+    conf.setNote(TMsgKind.warnUser, False)
+    assert not conf.hasWarn(TMsgKind.warnUser)
 
     # 4. ErrorMax
     conf.errorMax = 0
@@ -1357,19 +1336,19 @@ if comptime(__name__ == "__main__"):
         assert str(cmd) == name
 
     # 6. Alignments
-    assert floatInt64Align(conf) == 8
+    assert conf.floatInt64Align() == 8
     conf.target.targetCPU = TSystemCPU.cpuI386
     conf.target.targetOS = TSystemOS.osLinux
-    assert floatInt64Align(conf) == 4
+    assert conf.floatInt64Align() == 4
     conf.target.targetOS = TSystemOS.osWindows
-    assert floatInt64Align(conf) == 8
+    assert conf.floatInt64Align() == 8
 
     # 7. isDefined
     conf.target.targetCPU = TSystemCPU.cpuAmd64
     conf.target.targetOS = TSystemOS.osLinux
-    assert isDefined(conf, string("amd64"))
-    assert isDefined(conf, string("linux"))
-    assert isDefined(conf, string("posix"))
+    assert conf.isDefined(string("amd64"))
+    assert conf.isDefined(string("linux"))
+    assert conf.isDefined(string("posix"))
 
     # 8. Dynlib overrides
     assert _canonDynlibName(string("libssl.so.1.1")) == string("ssl")
@@ -1389,14 +1368,14 @@ if comptime(__name__ == "__main__"):
     assert string(getRelativePathFromConfigPath(conf, AbsoluteFile(string("/other/c.nim")))) == string("")
 
     # 10. Global options flags
-    assert not hcrOn(conf)
+    assert not conf.hcrOn()
     conf.globalOptions.incl(TGlobalOption.optHotCodeReloading)
-    assert hcrOn(conf)
+    assert conf.hcrOn()
 
-    showNonExportedFields(conf)
+    conf.showNonExportedFields()
     assert TGlobalOption.optShowNonExportedFields in conf.globalOptions
 
-    docRawOutput(conf)
+    conf.docRawOutput()
     assert TGlobalOption.optDocRaw in conf.globalOptions
 
     # 11. Timestamps
