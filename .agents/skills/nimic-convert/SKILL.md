@@ -71,10 +71,10 @@ Translate every construct following `nimic_translation_rules.md`. Key rules to r
 > **`if comptime` must mirror `when`** (`nimic_translation_rules.md` §2.1): every `if comptime(X)` must correspond one to one to a `when X` of the original Nim, with all branches converted (also inactive ones, `when false`, `when true`). The only exception is the added test block `if comptime(__name__ == "__main__"):` with its test scaffolding, which must not redefine, rebind or monkey-patch converted code. Never use a condition to run different code in Python and in Nim (`defined("c")`, `declared(X)` stand-ins, `not (__name__ == "__main__")`, `_py_*` copies): if the conversion seems to need one, nimic lacks a feature, so follow "Missing Nimic Features" below.
 >
 > Common violations to avoid:
-> - Using `f-string` formatting (use `string("...") % [args]` instead)
+> - Formatting strings differently from the original. f-strings are Nim's `&"..."` interpolation (`rule:stringjoin`): write them where the original uses `&"..."` or `fmt"..."`, with `from nimic.std.strformat import *` where the original imports `std/strformat`; where it uses `%` (strutils, ropes), keep `%`. Don't print a `bool` through an f-string in tests: Python prints `True`, Nim `true` (gap G23)
 > - Using Python `with open(...) as f:` (use `var f: File; open(f, path, fmWrite)` pattern instead)
 > - Using Python `list` instead of `seq` for typed sequences
-> - Using `isinstance()` or other Python reflection where Nim uses type dispatch
+> - Using `isinstance()` or other Python reflection where Nim uses type dispatch (`if comptime(isinstance(x, T))` for Nim's `when x is T` is fine)
 > - Using chained comparisons like `0 <= x <= 10` (use `x >= 0 and x <= 10` instead)
 
 ### Missing `nimic.std` modules
@@ -153,7 +153,7 @@ Write test cases that exercise the most important and non-trivial functionality 
 
 > [!IMPORTANT]
 > **Tests must be valid Nimic** — they must survive transpilation and execute correctly in Nim via `nim r`.
-> - Do not use Python-only testing constructs (`unittest`, `pytest`, `assert` with f-strings, etc.).
+> - Do not use Python-only testing constructs (`unittest`, `pytest`, etc.).
 > - Use `doAssert(condition, string("message"))` for assertions.
 > - Use `echo(string("..."))` for output.
 > - Wrap test code in a `def test_[filename]():` function if callbacks or closures are needed, to ensure they satisfy Nim's `{.closure, gcsafe.}` requirements.
@@ -199,7 +199,7 @@ If Nim compilation fails, debug and fix the Nimic source. Common issues:
 - Missing export asterisks (functions wrapped in extra scope blocks)
 - Chained comparisons (`0 <= x <= 10` must be split to `x >= 0 and x <= 10`)
 - Python-only constructs that don't transpile
-- String formatting using f-strings instead of `%` operator
+- An f-string without `from nimic.std.strformat import *` (Nim's `&` needs `import std/strformat`)
 
 ## Step 6 — Trigger Review
 

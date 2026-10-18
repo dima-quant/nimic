@@ -66,12 +66,12 @@ Compare `compiler/[filename].nim` against `ncompiler/[filename].py` **line by li
    - Correct pointer/memory primitives (`ptr[T]`, `p.contents`, `addr(x)`)
 3. **Completeness**: No Nim code was accidentally skipped or summarized.
 4. **No Python-mode-only code**: All code, including tests, must be valid Nimic that compiles and runs in Nim after transpiling. Flag any of these violations:
-   - `f-string` formatting (must use `string("...") % [args]`)
+   - String formatting that differs from the original. f-strings are Nim's `&"..."` interpolation (`rule:stringjoin`): write them where the original uses `&"..."` or `fmt"..."`, with `from nimic.std.strformat import *` where the original imports `std/strformat`; where it uses `%` (strutils, ropes), keep `%`. Flag an f-string that replaces a `%` or `format` call, and a missing `std/strformat` import. A `bool` inside an f-string prints `True` in Python but `true` in Nim (gap G23), so tests should not print bools through f-strings
    - Python `with open(...) as f:` (must use `open(f, path, mode)`)
    - Python `list` instead of `seq` for typed sequences
-   - Python `isinstance()` where Nim uses type dispatch
+   - Python `isinstance()` where Nim uses type dispatch (`if comptime(isinstance(x, T))` is Nim's `when x is T` and is fine)
    - Chained comparisons like `0 <= x <= 10` (must use `x >= 0 and x <= 10`)
-   - Python `unittest` / `pytest` / `assert` with f-strings in tests
+   - Python `unittest` / `pytest` in tests
    - Any construct that would not survive transpilation to valid Nim
 5. **`if comptime` mirrors `when`** (`nimic_translation_rules.md` §2.1): list every `comptime(...)` in the converted module and every `when` in the original. Apart from the added test guard `if comptime(__name__ == "__main__"):` they must pair up one to one, with the same conditions and all branches converted. Flag as **High** severity:
    - conditions that run different code in Python and Nim (`defined("c")`, `not defined("c")`, `declared(X)` stand-ins, `not (__name__ == "__main__")`)
