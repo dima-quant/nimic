@@ -1,6 +1,6 @@
 # Nimic Translation Rules (Nim -> Python Nimic)
 
-This document serves as a comprehensive collection of translation rules and syntax mappings when transpiling from Nim syntax to Python syntax for the `nimic` transpiler. These rules correspond directly to the internal `rule:` definitions located in `nimic/transpiler.py`. The major requirement is that nimic code should be a valid Python that transpiles to valid Nim code. Expressions not explicitly mentioned as a rule are assumed to be translated directly to Python syntax. Nimic code should be marked by the meta-comment and typically makes havy use of annotations and nimic.ntypes:
+This document serves as a comprehensive collection of translation rules and syntax mappings when transpiling from Nim syntax to Python syntax for the `nimic` transpiler. These rules correspond directly to the internal `rule:` definitions located in `nimic/transpiler.py`. The major requirement is that nimic code is valid Python that transpiles to valid Nim code with the same behavior (§0, unity principle). Expressions not explicitly mentioned as a rule are assumed to be translated directly to Python syntax. Nimic code should be marked by the meta-comment and typically makes havy use of annotations and nimic.ntypes:
 
 ```python
 # /// nimic
@@ -15,6 +15,35 @@ from nimic.ntypes import *
 | --- | --- | --- |
 | `isNil`, `copyMem` | `is_nil`, `copy_mem` | Nimic follows the Python convention, replacing `camelCase` with `snake_case` for functions and attributes |
 | `let x = 5` | `with let: x = 5` | Immutable assignments |
+
+## 0. Unity principle — one source, one behavior
+
+Every line of converted code — statements, declarations, imports and tests — is nimic: it runs in Python and
+transpiles to Nim that behaves the same. Same behavior means the same output, results and raised errors under
+the same build profile; `tests/verify_transpiled.py` checks it (Python run vs compiled Nim).
+
+*Nimic* means the constructs of these rules and the API of `nimic.ntypes` and `nimic.std`. Other Python is not
+nimic, even if it happens to run or to transpile: Python builtins, the standard library and idioms with no Nim
+equivalent.
+
+There is no code for only one side:
+- no branches on the backend (`defined("c")`, `not defined("c")`);
+- no `_py_*` copies or alternative implementations;
+- no rebinding or monkey-patching (`Class.attr = proc`, `setattr`, `globals()[...]`);
+- no Python builtins or idioms that have no Nim equivalent.
+
+`if comptime(X)` is allowed only where it mirrors a `when X` of the original (§2.1). That isn't a split: Python
+emulates one Nim build, the build profile aligned with `nim.cfg`.
+
+Python implementations belong in the nimic core (`src/nimic/`) and in `nimic.std`, never in converted modules.
+
+When nimic can't express a construct faithfully, don't work around it:
+1. write the closest faithful code and mark it `# TODO: requires nimic feature <name>`;
+2. report the gap (a proposal in `ncompiler/proposals/`, or the conversion report);
+3. continue with the rest.
+
+A gap closed in the core benefits every module; a workaround in a module splits it into a Python and a Nim
+version.
 
 ## 1. Variable Declarations (`rule:varini`, `rule:dropwith`)
 Nim variable declarations are mapped to Python context managers to encapsulate scoping and mutability semantics. The transpiler strips the `with` block and generates standard Nim variable sections.
@@ -52,6 +81,8 @@ Compile-time metaprogramming relies on function calls or specific decorators. Ge
 | `{.emit: """C code""".}` | `emit("""C code""")` | `rule:emit`; raises in Python, so it belongs in a `when` branch that is inactive in the emulated build |
 
 ### 2.1 Rule: `if comptime` must mirror a `when` of the original Nim
+
+This rule applies the unity principle (§0) to compile-time branches.
 
 Every `if comptime(X)` in a converted module, with its `elif comptime(...)` and `else` branches, must correspond one to one to a `when X` (`elif`, `else`) of the original Nim source: same position, same condition in nimic spelling, every branch converted. The only exception is test code that the original source does not contain.
 

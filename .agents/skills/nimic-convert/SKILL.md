@@ -65,8 +65,8 @@ Translate every construct following `nimic_translation_rules.md`. Key rules to r
 ### No Python-Mode-Only Code
 
 > [!IMPORTANT]
-> **All code — including test cases — must be valid Nimic that compiles and runs in Nim after transpiling.**
-> Do not use Python builtins, idioms, or workarounds that would not survive transpilation. Every line must be dual-mode: runnable as Python via `python -m ncompiler.[filename]` **and** compilable/runnable as Nim via `nim r` on the transpiled output.
+> **Unity principle — one source, one behavior** (`nimic_translation_rules.md` §0): all code, including test cases, is nimic. It runs in Python and transpiles to Nim that behaves the same.
+> Do not use Python builtins, idioms, or workarounds that would not survive transpilation. Every line runs as Python via `python -m ncompiler.[filename]` **and**, transpiled, as Nim via `nim r`, with the same output. Never write a Python-only or Nim-only version of anything; at a nimic gap, mark a TODO and report it.
 >
 > **`if comptime` must mirror `when`** (`nimic_translation_rules.md` §2.1): every `if comptime(X)` must correspond one to one to a `when X` of the original Nim, with all branches converted (also inactive ones, `when false`, `when true`). The only exception is the added test block `if comptime(__name__ == "__main__"):` with its test scaffolding, which must not redefine, rebind or monkey-patch converted code. Never use a condition to run different code in Python and in Nim (`defined("c")`, `declared(X)` stand-ins, `not (__name__ == "__main__")`, `_py_*` copies): if the conversion seems to need one, nimic lacks a feature, so follow "Missing Nimic Features" below.
 >

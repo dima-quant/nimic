@@ -65,7 +65,7 @@ Compare `compiler/[filename].nim` against `ncompiler/[filename].py` **line by li
    - Correct operator mappings (`and`→`&`, `or`→`|`, `shr`→`>>`, etc.)
    - Correct pointer/memory primitives (`ptr[T]`, `p.contents`, `addr(x)`)
 3. **Completeness**: No Nim code was accidentally skipped or summarized.
-4. **No Python-mode-only code**: All code, including tests, must be valid Nimic that compiles and runs in Nim after transpiling. Flag any of these violations:
+4. **Unity principle** (`nimic_translation_rules.md` §0, one source, one behavior): all code, including tests, is nimic. It runs in Python and transpiles to Nim that behaves the same. Flag any of these violations:
    - String formatting that differs from the original. f-strings are Nim's `&"..."` interpolation (`rule:stringjoin`): write them where the original uses `&"..."` or `fmt"..."`, with `from nimic.std.strformat import *` where the original imports `std/strformat`; where it uses `%` (strutils, ropes), keep `%`. Flag an f-string that replaces a `%` or `format` call, and a missing `std/strformat` import. A `bool` inside an f-string prints `True` in Python but `true` in Nim (gap G23), so tests should not print bools through f-strings
    - Python `with open(...) as f:` (must use `open(f, path, mode)`)
    - Python `list` instead of `seq` for typed sequences
