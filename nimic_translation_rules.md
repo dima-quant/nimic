@@ -56,7 +56,7 @@ Nim variable declarations are mapped to Python context managers to encapsulate s
 | `let x = 5` | `with let: x = 5` | Immutable assignments |
 | `const x = 5` | `with const: x = 5` | Compile-time constants |
 | `var x, y: int` | `with var:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x = nint(0)`<br>&nbsp;&nbsp;&nbsp;&nbsp;`y = nint(0)` | Groups declarations |
-| `var tY: uint16` | `with var:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`_tY = uint16()` | Local variable, declared outside function or inner block in Nim, should be named as a local variable with prefix `_` to avoid being mistranslated as exported globals `tY*` after transpiling |
+| `var tY: uint16` | `with var:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`_tY = uint16()` | A module-level (or inner-block) variable without `*` is written `_tY`: it transpiles to `tY`, not exported (`rule:localname`); without the `_` it would become the exported global `tY*` |
 
 ## 2. Compile-Time and Metaprogramming (`rule:comptime`, `rule:templateinline`)
 Compile-time metaprogramming relies on function calls or specific decorators. Generic Nim's macro definitions are not supported.
@@ -158,7 +158,9 @@ Functions use standard Python `def` definitions but might employ specific decora
 | `proc s(p: BProc): var Builder` | `def s(p: BProc) -> mut@Builder:` | Mutable (`var`) return type, also in `@calltype` signatures (`rule:funcdefmut`). |
 | `proc init(x: out T)` | `def init(x: out@T):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x <<= T(...)` | `out` parameter (`rule:funcdefout`) |
 | `type InstantiationInfo* = typeof(instantiationInfo())` | `InstantiationInfo = typeof(instantiationInfo())` | `typeof(x)` as a type alias (`rule:typealias`); `instantiationInfo(-2, fullPaths = true)` gives the call site in Python too |
-| `proc canonicalCase(path: var string)` (not exported) | `def _canonicalCase(path: mut@string)` | A private proc or template has a leading `_` (transpiled `local_name`), so star imports don't re-export it |
+| `proc canonicalCase(path: var string)` (not exported) | `def _canonicalCase(path: mut@string)` | A private proc or template has a leading `_`. It transpiles to the original Nim name without `*` (`proc canonicalCase(...)`), and Python star imports don't re-export it. A private overload of a public name is written the same way: `def _abs(a: int32)` next to a public `abs` is Nim's private `proc abs(a: int32)`, `_addToHex(uint32)` next to `addToHex(Int128)` |
+| `udata: array[4, uint32]` (a private field) | `_udata: array[4, uint32]` | A private field has a leading `_`, also in constructors and accesses: `Int128(_udata=[...])`, `a._udata[0]` transpile to `Int128(udata: [...])`, `a.udata[0]` |
+| `proc `*`(a: Int128, b: uint32): Int128` (private operator) | `def __mul__(a: Int128, b: uint32) -> Int128:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`"""{.private.}"""` | An operator can't take a `_`: the `{.private.}` docstring pragma (`rule:privatepragma`) keeps it unexported in Nim and is not emitted. In Python the overload stays visible to other modules (Nim would reject such a call) |
 | `proc f(x: int): int` (forward declaration) | `def f(x: nint) -> nint:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`pass` | A body of only `pass` (after an optional pragma docstring) is a forward declaration; the later definition replaces it in Python. Overloaded procs: both with `@dispatch` |
 | `obj.f(a)` (method call syntax) | `obj.f(a)` | For an `Object`, `obj.f(a)` calls the proc `f(obj, a)` visible in the caller's scope, also a block template (`with b.addCast(t):`). For other types (`string`, ...) declare the proc with `@ufcs(string)`. A call without parentheses (`typ.elementType`) needs a `@property` in the class (transpiled as a proc) or the call form `elementType(typ)` |
 | `foo(nil)` for `x: SomeRef` | `foo(None)` | `None` dispatches only to nilable parameter types: `@ref` classes, `ptr[T]`, `pointer`, `@calltype` procs. |
@@ -306,7 +308,7 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
 | `export` | `with export:` | |
-| Local variables | `_` or `local_` prefix | Identifiers defined **without** `*` in Nim should be prefixed in Nimic to prevent transpiling as public with `*`. |
+| Private names | `_` prefix (operators: `{.private.}`) | Identifiers defined **without** `*` in Nim (procs, templates, types, fields, module variables) are written `_name`; they transpile to `name` without `*` (`rule:localname`). Names starting with `__` or `_<digit>` keep a `local_` prefix. The transpiler rejects a module where dropping the `_` changes meaning (`private_name_collisions`): `_x` and `x` both defined in one scope (except overloaded procs, and `_base = f(base)` for a parameter `base` not used afterwards, i.e. Nim's `let base = f(base)`), or `x` used as a value after a private value `_x` (calls `x(...)` still find the proc in Nim). Rename then, e.g. `_pkgConf` |
 | `import std/tables` | `from nimic.std.tables import *` | Module paths are translated: `nimic.x.y` → `x/y`, with module renaming (`rule:modulepath`) |
 | `import ../options` | `from ..options import *` | Relative imports keep their level: one `../` per extra dot |
 | `import std/times` | `from nimic.std.times import *` (or `import a, b` of it) | A Python `from m import ...` is a full Nim `import m`: a class comes with its methods, which are procs in Nim |

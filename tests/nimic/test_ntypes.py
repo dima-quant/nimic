@@ -30,7 +30,7 @@ from nimic.std.strscans import scanf
 from nimic.std.strutils import isUpperAscii, find, nimIdentNormalize, repeat, rfind, strip, toLowerAscii
 from nimic.std.syncio import lines, read_file
 from nimic.system.ansi_c import c_free, c_malloc, csize_t
-from nimic.transpiler import unparse
+from nimic.transpiler import unparse, private_name_collisions
 
 def _n_fwd_proc(a, b):
     """A forward declaration in this module (overloads below)."""
@@ -3095,7 +3095,7 @@ class TestNTypes(unittest.TestCase):
         out = unparse(ast.parse('@importc\ndef _c_abs(x: cint) -> cint:\n'
                                 '    """{.importc: "abs", header: "<stdlib.h>".}"""\n    pass\n'))[0]
         self.assertNotIn("importc\n", out.split("proc")[0])
-        self.assertIn('proc local_c_abs(x: cint): cint {.importc: "abs", header: "<stdlib.h>".}', out)
+        self.assertIn('proc c_abs(x: cint): cint {.importc: "abs", header: "<stdlib.h>".}', out)
 
     def test_bitops_math_and_branch_hints(self):
         """std/bitops fastLog2, std/math trunc (a float, as in Nim), likely/unlikely."""
@@ -3807,6 +3807,91 @@ def addWord(b: mut@Builder, w: string) -> None:
         self.assertTrue(declared("system.getMaxMem"))   # Nim's system module: nimic's system procs
         self.assertFalse(declared("system.noSuchProc"))
 
+    def test_transpile_private_names(self):
+        """rule:localname: a private _x keeps its Nim name x, unexported (procs, overloads of public procs,
+        templates, fields, types, module variables); __x and _1 keep the local_ prefix. rule:privatepragma
+        keeps an operator unexported."""
+        src = textwrap.dedent('''\
+            class _T(Object):
+                _a: int32
+                b: int32
+            def _abs(a: int32) -> nint:
+                return nint(a)
+            def abs(a: _T) -> _T:
+                return a
+            @ufcs(_T)
+            @dispatch
+            def __mul__(a: _T, b: uint32) -> _T:
+                """{.private, inline.}"""
+                return a
+            with var:
+                _x = 1
+                __y = 2
+                t = _T(_a=int32(1), b=int32(2))
+            type _P = int32
+            type Q = int32 | int64
+            class _E(byte): pass
+            class S(seq[_E]): pass
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("T(a: int32(1), b: int32(2))", out)
+        self.assertIn("type P = int32", out)
+        self.assertIn("type Q* = int32 or int64", out)
+        self.assertIn("S* = seq[E]", out)
+        self.assertIn("T = object", out)
+        self.assertNotIn("T* =", out)
+        self.assertIn("a: int32", out)
+        self.assertIn("b*: int32", out)
+        self.assertIn("proc abs(a: int32): int", out)
+        self.assertIn("proc abs*(a: T): T", out)
+        self.assertIn("proc `*`(a: T, b: uint32): T {.inline.}", out)
+        self.assertIn("x = 1", out)
+        self.assertIn("local__y = 2", out)
+
+    def test_private_name_collisions(self):
+        """rule:localname: modules where dropping the _ of a private name changes meaning are rejected."""
+        def collisions(src):
+            return [msg for _, _, msg in private_name_collisions(ast.parse(textwrap.dedent(src)))]
+        # overloads and Nim's `let base = f(base)` shadowing a parameter are fine
+        self.assertEqual(collisions('''\
+            def _f(a: int32): pass
+            def f(a: int64): pass
+            def g(base: int32):
+                with let:
+                    _base = f(base)
+                return _base
+            '''), [])
+        # a variable defined twice
+        self.assertEqual(collisions('''\
+            with var:
+                x = 1
+                _x = 2
+            '''), ["_x and x are both defined"])
+        # a field and a method of the same name
+        self.assertEqual(collisions('''\
+            class T(Object):
+                _a: int32
+                def a(self): pass
+            '''), ["_a and a are both defined"])
+        # a parameter _a doesn't hide the proc a in a call (Nim's `var a = a(1)`), but does as a value
+        self.assertEqual(collisions('''\
+            def g(_a: int32):
+                return a(_a)
+            '''), [])
+        self.assertEqual(collisions('''\
+            def g(_a: int32):
+                return h(a)
+            '''), ["a is used after _a, which transpiles to a"])
+        # a parameter used after a private local shadows it
+        self.assertEqual(collisions('''\
+            def g(base: int32):
+                with let:
+                    _base = base + 1
+                return base
+            '''), ["base is used after _base, which transpiles to base"])
+        with self.assertRaises(ValueError):
+            unparse(ast.parse("with var:\n    x = 1\n    _x = 2\n"))
+
     def test_transpile_defined_declared(self):
         """rule:defined / rule:declared strip the quotes."""
         src = textwrap.dedent('''\
@@ -3982,7 +4067,7 @@ def addWord(b: mut@Builder, w: string) -> None:
         self.assertIs(_tEndsWithWords(string("x b"), ch(" ")), False)  # bare `return` returns result
         self.assertIs(_tEndsWithWords(string("a c"), ch(" ")), False)  # bare `return` returns result
         out = unparse(ast.parse(textwrap.dedent(inspect.getsource(_tDetectVersion))))[0]
-        self.assertIn("template local_tDetectVersion(field: untyped) =", out)
+        self.assertIn("template tDetectVersion(field: untyped) =", out)
         self.assertNotIn("dirty", out)
 
     def test_template_routine_params_and_expanded_procs(self):

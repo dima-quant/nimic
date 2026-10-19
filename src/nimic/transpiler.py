@@ -137,8 +137,12 @@ Imports:
 
 Memory & variables:
   rule:dropbrackets -> remove brackets from what follows after "ptr" and "ref"
-  rule:localname -> rename identifiers that starts with _ to local_, otherwise add "*" when definition,
-    except for "result"
+  rule:localname -> a private name _x transpiles to x (not exported); otherwise add "*" when definition,
+    except for "result". Names starting with __ or _<digit> keep the old local_ prefix. Before transpiling,
+    private_name_collisions() rejects modules where dropping the _ would change meaning (_x and x bound in
+    one scope, or x used after a private value _x shadows it)
+  rule:privatepragma -> a {.private.} docstring pragma keeps a proc (an operator, which can't take a _
+    prefix) unexported; the pragma itself is not emitted
   rule:deref -> pointer dereference: ".contents" -> "[]"
   rule:copy -> value types are copied, drop .copy()
   rule:varini -> var initialization call without arguments with the same name as annotation is interpreted as
@@ -175,6 +179,7 @@ The docstring for the original ``ast`` module is given below:
 """
 import argparse
 import ast
+import copy
 import inspect
 import keyword as pykeyword
 import re
@@ -1488,13 +1493,22 @@ class _Unparser(NodeVisitor):
         # rule:nint -> nint transpiles to Nim int (nimic does not shadow Python int)
         if not definition and name == "nint":
             return "int"
-        if len(name)>1 and name[0] == "_":
-            _str = "local" + name
+        if len(name) > 1 and name[0] == "_":
+            # private names keep their Nim name, unexported; __x / _1 are no Nim identifiers without a prefix
+            _str = "local" + name if name[1] == "_" or name[1].isdigit() else name[1:]
         elif definition and not name[0].startswith("local_"):
             _str = name + "*"
         else:
             _str = name
         return _str
+
+    def _unparse_names(self, node):
+        """ast.unparse of a type expression, with rule:localname applied to its names (seq[_T] -> seq[T])."""
+        node = copy.deepcopy(node)
+        for n in walk(node):
+            if isinstance(n, Name):
+                n.id = self._adjust_name(n.id, definition=False)
+        return ast.unparse(node)
 
     def visit_ClassDef(self, node):
         self._declared_classes.add(node.name)
@@ -1523,13 +1537,13 @@ class _Unparser(NodeVisitor):
         if isinstance(node.bases[0], Subscript):
             base_val = getattr(node.bases[0].value, "id", "")
             if base_val == "Tset":
-                base = "set[" + ast.unparse(node.bases[0].slice) + "]"
+                base = "set[" + self._unparse_names(node.bases[0].slice) + "]"
                 from_object = base
                 no_object = True
                 self._set_types.add(node.name)
                 self._set_types.add(type_str)
             elif base_val == "seq":
-                base = "seq[" + ast.unparse(node.bases[0].slice) + "]"
+                base = "seq[" + self._unparse_names(node.bases[0].slice) + "]"
                 from_object = base
                 no_object = True
                 self._seq_types.add(node.name)
@@ -1537,22 +1551,19 @@ class _Unparser(NodeVisitor):
             elif base_val == "Trange":
                 slice_node = node.bases[0].slice
                 if isinstance(slice_node, Tuple) and len(slice_node.elts) == 2:
-                    low_str = ast.unparse(slice_node.elts[0])
-                    high_str = ast.unparse(slice_node.elts[1])
+                    low_str = self._unparse_names(slice_node.elts[0])
+                    high_str = self._unparse_names(slice_node.elts[1])
                     base = f"range[{low_str} .. {high_str}]"
                 else:
-                    base = "range[" + ast.unparse(slice_node) + "]"
+                    base = "range[" + self._unparse_names(slice_node) + "]"
                 from_object = base
                 no_object = True
             else:
-                base = ast.unparse(node.bases[0])
+                base = self._unparse_names(node.bases[0])
                 from_object = base
                 no_object = True
         elif hasattr(node.bases[0], "id"):
-            if node.bases[0].id[0] == "_":
-                base = node.bases[0].id[1:]
-            else:
-                base = node.bases[0].id
+            base = self._adjust_name(node.bases[0].id, definition=False)  # rule:localname
         elif hasattr(node.bases[0], "attr"):
             base = node.bases[0].attr
         else:
@@ -1711,6 +1722,7 @@ class _Unparser(NodeVisitor):
                 decl_str = deco.id
         # rule:pragma
         body, pragma = self._get_body_and_pragma(node)
+        is_private = False
         # rule:funcdefbody
         write_body = not isinstance(body[0], Pass)
         if pragma:
@@ -1718,7 +1730,11 @@ class _Unparser(NodeVisitor):
             write_body = write_body and "borrow" not in parsed_pragma
             if "noSideEffect" in parsed_pragma and decl_str == "proc":
                 decl_str = "func"
-                pragma = ",".join([x for x in parsed_pragma if x != "noSideEffect"])
+                parsed_pragma = [x for x in parsed_pragma if x != "noSideEffect"]
+                pragma = ",".join(parsed_pragma)
+            if "private" in parsed_pragma:  # rule:privatepragma
+                is_private = True
+                pragma = ",".join([x for x in parsed_pragma if x != "private"])
         func_name = node.name
         do_arg_swap = False  # rule:funcdefargswap
         inplace = False  # rule:funcdefinplace
@@ -1737,7 +1753,7 @@ class _Unparser(NodeVisitor):
         if decl_str != "iterator" and self._has_yield(body):
            decl_str = "iterator"
         is_module_level = (self._scope_depth <= 1)
-        name_str = self._adjust_name(func_name, definition=is_module_level)  # rule:localname
+        name_str = self._adjust_name(func_name, definition=is_module_level and not is_private)  # rule:localname
         # rule:calltype — emit as type alias: Name* = proc(...): T {.pragma.}
         if decl_str == "calltype":
             self.fill(name_str + " = proc")
@@ -1862,7 +1878,7 @@ class _Unparser(NodeVisitor):
 
     def visit_TypeAlias(self, node):
         self.fill("type ")
-        self.traverse(node.name)
+        self.write(self._adjust_name(node.name.id, definition=self._scope_depth == 0))  # rule:localname
         self._type_params_helper(node.type_params)
         self.write(" = ")
         self.traverse(node.value)
@@ -2952,7 +2968,7 @@ class _Unparser(NodeVisitor):
         if node.arg is None:
             self.write("**")
         else:
-            self.write(node.arg)
+            self.write(self._adjust_name(node.arg, definition=False))  # rule:localname, a private field/param
             # rule:instantiation
             if self._context_stack and self._context_stack[-1] == "instance":
                 self.write(": ")
@@ -3095,7 +3111,76 @@ class _Unparser(NodeVisitor):
             self.set_precedence(_Precedence.BOR.next(), *node.patterns)
             self.interleave(lambda: self.write(", "), self.traverse, node.patterns)
 
+def _is_private(name):
+    return len(name) > 1 and name[0] == "_" and name[1] != "_" and not name[1].isdigit()
+
+
+def private_name_collisions(tree):
+    """rule:localname: a private _x transpiles to x. Returns (line, scope, message) for each place where that
+    changes meaning: _x and x bound in one scope (except overloaded procs, or a parameter x shadowed by a
+    later _x, as Nim's `let x = f(x)`), or x used as a value after a private value _x is bound (Nim's x would
+    then be _x). Calls x(...) are fine: Nim's `var x = x(1)` still calls the proc x afterwards."""
+    found = []
+
+    def scan_scope(label, body, params=(), start=(0, 0)):
+        bound = {p: ("param", start) for p in params}  # name -> (kind, position after which it is bound)
+        used = []  # (name, position) of uses as a value
+        callees = set()  # ids of Name nodes called, x(...)
+
+        def bind(name, kind, pos):
+            if name not in bound:
+                bound[name] = (kind, pos)
+            elif kind != bound[name][0] == "proc":  # a proc name also bound as a value
+                bound[name] = ("value", bound[name][1])
+
+        for stmt in body:
+            end = (stmt.end_lineno, stmt.end_col_offset)
+            stack = [stmt]
+            while stack:
+                n = stack.pop()
+                if isinstance(n, (FunctionDef, AsyncFunctionDef)):
+                    bind(n.name, "proc", (n.lineno, n.col_offset))
+                    a = n.args
+                    ps = [x.arg for x in a.posonlyargs + a.args + a.kwonlyargs]
+                    ps += [x.arg for x in (a.vararg, a.kwarg) if x]
+                    scan_scope("def " + n.name, n.body, ps, (n.lineno, n.col_offset))
+                    stack.extend(n.decorator_list + [d for d in a.defaults + a.kw_defaults if d])
+                    continue
+                if isinstance(n, ClassDef):
+                    bind(n.name, "value", (n.lineno, n.col_offset))
+                    scan_scope("class " + n.name, n.body, (), (n.lineno, n.col_offset))
+                    stack.extend(n.decorator_list + n.bases)
+                    continue
+                if isinstance(n, Call) and isinstance(n.func, Name):
+                    callees.add(id(n.func))
+                if isinstance(n, Name):
+                    if isinstance(n.ctx, Store):
+                        bind(n.id, "value", end)
+                    elif id(n) not in callees:
+                        used.append((n.id, (n.lineno, n.col_offset)))
+                stack.extend(iter_child_nodes(n))
+        for name, (kind, pos) in bound.items():
+            if not _is_private(name):
+                continue
+            twin = name[1:]
+            if twin in bound:
+                twin_kind = bound[twin][0]
+                if not (kind == twin_kind == "proc" or twin_kind == "param"):  # overloads; Nim's let x = f(x)
+                    found.append((pos[0], label, f"{name} and {twin} are both defined"))
+                    continue
+            if kind != "proc":
+                later = [p for n_, p in used if n_ == twin and p > pos]
+                if later:
+                    found.append((later[0][0], label, f"{twin} is used after {name}, which transpiles to {twin}"))
+
+    scan_scope("module", tree.body if isinstance(tree, Module) else [tree])
+    return sorted(found)
+
+
 def unparse(ast_obj, type_registry: dict[str, ] | None = None):
+    if collisions := private_name_collisions(ast_obj):  # rule:localname
+        raise ValueError("private names collide with their Nim names (_x transpiles to x):\n" +
+                         "\n".join(f"  line {line} [{scope}]: {msg}" for line, scope, msg in collisions))
     unparser = _Unparser(type_registry=type_registry)
     return unparser.visit(ast_obj), unparser.module_names
 

@@ -53,7 +53,7 @@ Translate every construct following `nimic_translation_rules.md`. Key rules to r
 - **Sets**: `set[T]` → `Tset[T]`. Initialize with `Tset[T](inrange(low(T), high(T)))`.
 - **Types**: `int` → `nint`, `string` → `string`, `bool` → `bool`. Char literals: `'#'` → `ch("#")`. **Do not shadow Python's `int`**: always use `nint` for Nim `int` (in type annotations, field types, parameter types, return types, and explicit casts like `nint(x)`). Standard Python integer literals (e.g. `0`, `1`, `42`) are allowed.
 - **Operators**: Nim binary `and`/`or` → Python `&`/`|`. Bitwise shift `shr`/`shl` → `>>`/`<<`.
-- **Local variables**: Variables without `*` export marker should be prefixed with `_` to prevent transpiling as public.
+- **Private names**: every Nim identifier without `*` (procs, templates, types, fields, module variables, private overloads of public procs) is written `_name`; it transpiles to `name`, unexported. A private operator gets a `"""{.private.}"""` docstring. If the transpiler reports a private-name collision, rename the private one.
 - **Pointers**: `ptr T` → `ptr[T]`, `p[]` → `p.contents`, `addr x` → `addr(x)`.
 - **Enums**: `type E = enum` → `class E(NIntEnum):` with `auto()` values.
 - **Objects**: `type T = object` → `class T(Object):`.
