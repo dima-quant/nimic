@@ -1,6 +1,6 @@
 # Nim Compiler → Nimic: Conversion Queue
 
-> **Generated** by `python -m ncompiler.tools.dependencies` | **Total modules**: 163 | **Converted**: 32 | **Needs rework**: 2 | **Remaining**: 131
+> **Generated** by `python -m ncompiler.tools.dependencies` | **Total modules**: 163 | **Converted**: 34 | **Needs rework**: 2 | **Remaining**: 129
 
 ## Conversion Rules
 
@@ -17,8 +17,6 @@ Pending modules whose dependencies are all converted, smallest first:
 | Module | Tier | Size | Included from |
 |---|---|---|---|
 | `debugutils` | 4 | 2,192 bytes |  |
-| `nimlexbase` | 2 | 5,417 bytes |  |
-| `condsyms` | 4 | 6,460 bytes |  |
 | `astdef` | 4 | 48,591 bytes |  |
 
 ## Needs Rework
@@ -27,7 +25,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 
 | Module | Tier | Status | Missing dependencies |
 |---|---|---|---|
-| `aliasanalysis` | 8 | ⚠️ Needs reconversion | ast |
+| `aliasanalysis` | 6 | ⚠️ Needs reconversion | ast |
 | `msgs` | 4 | ⚠️ Needs re-review |  |
 
 ## Progress by Tier
@@ -36,40 +34,38 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 |---|---|---|---|
 | 0 | 14 | 14 | 0 |
 | 1 | 4 | 4 | 0 |
-| 2 | 3 | 2 | 1 |
+| 2 | 3 | 3 | 0 |
 | 3 | 1 | 1 | 0 |
-| 4 | 4 | 0 | 4 |
-| 5 | 6 | 0 | 6 |
-| 6 | 1 | 0 | 1 |
-| 7 | 1 | 0 | 1 |
+| 4 | 4 | 1 | 3 |
+| 5 | 7 | 0 | 7 |
+| 6 | 9 | 0 | 9 |
+| 7 | 2 | 0 | 2 |
 | 8 | 8 | 0 | 8 |
-| 9 | 2 | 0 | 2 |
-| 10 | 8 | 0 | 8 |
-| 11 | 8 | 0 | 8 |
-| 12 | 9 | 1 | 8 |
-| 13 | 19 | 3 | 16 |
-| 14 | 10 | 0 | 10 |
-| 15 | 3 | 1 | 2 |
-| 16 | 8 | 2 | 6 |
-| 17 | 7 | 0 | 7 |
-| 18 | 6 | 2 | 4 |
-| 19 | 4 | 0 | 4 |
-| 20 | 2 | 0 | 2 |
-| 21 | 2 | 0 | 2 |
-| 22 | 3 | 0 | 3 |
-| 23 | 5 | 1 | 4 |
-| 24 | 5 | 1 | 4 |
-| 25 | 5 | 0 | 5 |
-| 26 | 2 | 0 | 2 |
+| 9 | 8 | 0 | 8 |
+| 10 | 9 | 1 | 8 |
+| 11 | 19 | 3 | 16 |
+| 12 | 10 | 0 | 10 |
+| 13 | 3 | 1 | 2 |
+| 14 | 8 | 2 | 6 |
+| 15 | 7 | 0 | 7 |
+| 16 | 6 | 2 | 4 |
+| 17 | 4 | 0 | 4 |
+| 18 | 2 | 0 | 2 |
+| 19 | 2 | 0 | 2 |
+| 20 | 3 | 0 | 3 |
+| 21 | 5 | 1 | 4 |
+| 22 | 5 | 1 | 4 |
+| 23 | 5 | 0 | 5 |
+| 24 | 2 | 0 | 2 |
+| 25 | 1 | 0 | 1 |
+| 26 | 1 | 0 | 1 |
 | 27 | 1 | 0 | 1 |
-| 28 | 1 | 0 | 1 |
-| 29 | 1 | 0 | 1 |
+| 28 | 2 | 0 | 2 |
+| 29 | 2 | 0 | 2 |
 | 30 | 2 | 0 | 2 |
 | 31 | 2 | 0 | 2 |
-| 32 | 2 | 0 | 2 |
-| 33 | 2 | 0 | 2 |
-| 34 | 1 | 0 | 1 |
-| 35 | 1 | 0 | 1 |
+| 32 | 1 | 0 | 1 |
+| 33 | 1 | 0 | 1 |
 
 ## Full Tier Breakdown
 
@@ -101,13 +97,13 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `packagehandling` | 1,343 bytes | pathutils | options | ✅ Converted + Reviewed |
 | `ropes` | 4,172 bytes | pathutils |  | ✅ Converted + Reviewed |
 
-### Tier 2 (2/3 converted)
+### Tier 2 (3/3 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `cbuilderbase` | 4,152 bytes | int128, ropes |  | ✅ Converted |
 | `lineinfos` | 16,909 bytes | pathutils, ropes |  | ✅ Converted + Reviewed |
-| `nimlexbase` | 5,417 bytes | llstream |  | 🔲 Pending |
+| `nimlexbase` | 5,417 bytes | llstream |  | ✅ Converted |
 
 ### Tier 3 (1/1 converted)
 
@@ -115,19 +111,20 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 |---|---|---|---|---|
 | `options` | 42,863 bytes | lineinfos, nimpaths, packagehandling, pathutils, platform +1 more |  | ✅ Converted |
 
-### Tier 4 (0/4 converted)
+### Tier 4 (1/4 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `astdef` | 48,591 bytes | idents, int128, lineinfos, nodekinds, options +1 more |  | 🔲 Pending |
-| `condsyms` | 6,460 bytes | lineinfos, options |  | 🔲 Pending |
+| `condsyms` | 6,460 bytes | lineinfos, options |  | ✅ Converted |
 | `debugutils` | 2,192 bytes | options |  | 🔲 Pending |
 | `msgs` | 28,370 bytes | lineinfos, options, pathutils, ropes |  | ⚠️ Needs re-review |
 
-### Tier 5 (0/6 converted)
+### Tier 5 (0/7 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
+| `ast` | 53,120 bytes | astdef, idents, int128, lineinfos, nodekinds +2 more |  | 🔲 Pending |
 | `deps` | 18,153 bytes | lineinfos, msgs, options, pathutils |  | 🔲 Pending |
 | `gorgeimpl` | 2,279 bytes | lineinfos, msgs, options, pathutils |  | 🔲 Pending |
 | `lexer` | 48,749 bytes | idents, lineinfos, llstream, msgs, nimlexbase +4 more |  | 🔲 Pending |
@@ -135,23 +132,12 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `tccgen` | 2,914 bytes | lineinfos, msgs, options |  | 🔲 Pending |
 | `typekeys` | 8,978 bytes | astdef, idents, lineinfos, msgs, options |  | 🔲 Pending |
 
-### Tier 6 (0/1 converted)
-
-| Module | Size | Dependencies | Included from | Status |
-|---|---|---|---|---|
-| `ast2nif` | 60,319 bytes | astdef, idents, lineinfos, msgs, options +2 more |  | 🔲 Pending |
-
-### Tier 7 (0/1 converted)
-
-| Module | Size | Dependencies | Included from | Status |
-|---|---|---|---|---|
-| `ast` | 53,120 bytes | ast2nif, astdef, idents, int128, lineinfos +3 more |  | 🔲 Pending |
-
-### Tier 8 (0/8 converted)
+### Tier 6 (0/9 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `aliasanalysis` | 4,352 bytes | ast |  | ⚠️ Needs reconversion |
+| `ast2nif` | 60,319 bytes | astdef, idents, lineinfos, msgs, options +2 more |  | 🔲 Pending |
 | `astmsgs` | 1,970 bytes | ast, msgs, options |  | 🔲 Pending |
 | `astyaml` | 5,843 bytes | ast, lineinfos, msgs, options, rodutils |  | 🔲 Pending |
 | `layouter` | 19,550 bytes | ast, idents, lexer, lineinfos, llstream +3 more |  | 🔲 Pending |
@@ -160,14 +146,14 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `suggestsymdb` | 7,101 bytes | ast, lineinfos, msgs |  | 🔲 Pending |
 | `trees` | 9,171 bytes | ast, idents, wordrecg |  | 🔲 Pending |
 
-### Tier 9 (0/2 converted)
+### Tier 7 (0/2 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `astalgo` | 19,737 bytes | ast, astyaml, idents, lineinfos, msgs +2 more |  | 🔲 Pending |
 | `renderer` | 72,612 bytes | ast, idents, lexer, lineinfos, msgs +3 more |  | 🔲 Pending |
 
-### Tier 10 (0/8 converted)
+### Tier 8 (0/8 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
@@ -175,12 +161,12 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `evaltempl` | 8,317 bytes | ast, astalgo, idents, lineinfos, msgs +3 more |  | 🔲 Pending |
 | `filters` | 2,779 bytes | ast, idents, llstream, msgs, options +2 more |  | 🔲 Pending |
 | `layeredtable` | 3,220 bytes | ast, astalgo |  | 🔲 Pending |
-| `modulegraphs` | 29,119 bytes | ast, ast2nif, astalgo, btrees, idents +8 more |  | 🔲 Pending |
+| `modulegraphs` | 29,119 bytes | ast, astalgo, btrees, idents, lineinfos +7 more |  | 🔲 Pending |
 | `modulepaths` | 4,195 bytes | ast, idents, lineinfos, msgs, options +2 more |  | 🔲 Pending |
 | `optimizer` | 8,219 bytes | ast, idents, renderer, trees |  | 🔲 Pending |
 | `renderverbatim` | 4,389 bytes | ast, astalgo, msgs, options, renderer |  | 🔲 Pending |
 
-### Tier 11 (0/8 converted)
+### Tier 9 (0/8 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
@@ -193,7 +179,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `sizealignoffsetimpl` | 17,025 bytes | ast, int128, lineinfos, modulegraphs, msgs +3 more | types | 🔲 Pending |
 | `vmdef` | 11,634 bytes | ast, idents, lineinfos, modulegraphs, options |  | 🔲 Pending |
 
-### Tier 12 (1/9 converted)
+### Tier 10 (1/9 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
@@ -207,7 +193,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `vmhooks` | 2,334 bytes | ast, btrees, lineinfos, options, pathutils +2 more | vm | 🔲 Pending |
 | `vmprofiler` | 1,366 bytes | ast, lineinfos, msgs, options, vmdef |  | 🔲 Pending |
 
-### Tier 13 (3/19 converted)
+### Tier 11 (3/19 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
@@ -231,7 +217,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `vmdeps` | 13,802 bytes | ast, idents, lineinfos, msgs, options +2 more |  | 🔲 Pending |
 | `vmmarshal` | 9,895 bytes | ast, astalgo, idents, lineinfos, msgs +2 more |  | 🔲 Pending |
 
-### Tier 14 (0/10 converted)
+### Tier 12 (0/10 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
@@ -246,7 +232,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `semmacrosanity` | 6,152 bytes | ast, msgs, nimsets, options, trees +1 more |  | 🔲 Pending |
 | `vmops` | 14,897 bytes | ast, btrees, gorgeimpl, idents, int128 +9 more | vm | 🔲 Pending |
 
-### Tier 15 (1/3 converted)
+### Tier 13 (1/3 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
@@ -254,7 +240,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `docgen2` | 2,211 bytes | ast, docgen, lineinfos, modulegraphs, msgs +3 more |  | 🔲 Pending |
 | `semdata` | 31,097 bytes | ast, astalgo, idents, layeredtable, lineinfos +11 more |  | 🔲 Pending |
 
-### Tier 16 (2/8 converted)
+### Tier 14 (2/8 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
@@ -267,7 +253,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `sinkparameter_inference` | 2,393 bytes | ast, astalgo, guards, idents, lineinfos +7 more | sempass2 | ✅ Converted + Reviewed |
 | `typeallowed` | 10,737 bytes | ast, options, renderer, semdata, types |  | 🔲 Pending |
 
-### Tier 17 (0/7 converted)
+### Tier 15 (0/7 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
@@ -279,7 +265,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `suggest` | 36,588 bytes | ast, astalgo, idents, lexer, lineinfos +10 more | sigmatch | 🔲 Pending |
 | `varpartitions` | 37,399 bytes | ast, isolation_check, lineinfos, modulegraphs, msgs +5 more |  | 🔲 Pending |
 
-### Tier 18 (2/6 converted)
+### Tier 16 (2/6 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
@@ -290,7 +276,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `semparallel` | 17,154 bytes | ast, astalgo, guards, idents, lineinfos +9 more |  | 🔲 Pending |
 | `sigmatch` | 122,192 bytes | ast, astalgo, concepts, idents, layeredtable +16 more |  | 🔲 Pending |
 
-### Tier 19 (0/4 converted)
+### Tier 17 (0/4 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
@@ -299,21 +285,21 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `pragmas` | 52,923 bytes | ast, astalgo, condsyms, extccomp, idents +15 more |  | 🔲 Pending |
 | `semcall` | 44,523 bytes | ast, astalgo, astmsgs, idents, int128 +14 more | sem | 🔲 Pending |
 
-### Tier 20 (0/2 converted)
+### Tier 18 (0/2 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `liftlocals` | 2,355 bytes | ast, idents, lineinfos, lowerings, msgs +5 more |  | 🔲 Pending |
 | `pushpoppragmas` | 2,049 bytes | ast, idents, lineinfos, options, pragmas +3 more |  | 🔲 Pending |
 
-### Tier 21 (0/2 converted)
+### Tier 19 (0/2 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `ccgstmts` | 71,794 bytes | ast, astalgo, cbuilderbase, cbuilderdecls, cbuilderexprs +20 more | cgen | 🔲 Pending |
 | `sempass2` | 71,677 bytes | ast, astalgo, errorhandling, guards, idents +19 more |  | 🔲 Pending |
 
-### Tier 22 (0/3 converted)
+### Tier 20 (0/3 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
@@ -321,7 +307,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `cgmeth` | 11,076 bytes | ast, astalgo, idents, lineinfos, magicsys +6 more |  | 🔲 Pending |
 | `seminst` | 18,919 bytes | ast, astalgo, extccomp, idents, int128 +16 more | sem | 🔲 Pending |
 
-### Tier 23 (1/5 converted)
+### Tier 21 (1/5 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
@@ -331,7 +317,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `transf` | 49,864 bytes | ast, astalgo, cgmeth, closureiters, idents +12 more |  | 🔲 Pending |
 | `vtables` | 6,703 bytes | ast, cgmeth, lineinfos, magicsys, modulegraphs +2 more |  | 🔲 Pending |
 
-### Tier 24 (1/5 converted)
+### Tier 22 (1/5 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
@@ -341,7 +327,7 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `semtypes` | 106,643 bytes | ast, astalgo, concepts, enumtostr, idents +29 more | sem | 🔲 Pending |
 | `vmgen` | 86,949 bytes | ast, astmsgs, evalffi, lineinfos, lowerings +10 more |  | 🔲 Pending |
 
-### Tier 25 (0/5 converted)
+### Tier 23 (0/5 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
@@ -351,66 +337,66 @@ See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_
 | `semtempl` | 31,451 bytes | ast, astalgo, idents, int128, lineinfos +18 more | sem | 🔲 Pending |
 | `vm` | 95,117 bytes | ast, btrees, evalffi, evaltempl, gorgeimpl +23 more |  | 🔲 Pending |
 
-### Tier 26 (0/2 converted)
+### Tier 24 (0/2 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `semmagic` | 27,519 bytes | aliases, ast, astalgo, idents, int128 +22 more | semexprs | 🔲 Pending |
 | `semstmts` | 117,249 bytes | ast, astalgo, cgmeth, hlo, idents +27 more | sem | 🔲 Pending |
 
-### Tier 27 (0/1 converted)
+### Tier 25 (0/1 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `semobjconstr` | 23,372 bytes | ast, astalgo, astmsgs, idents, int128 +18 more | semexprs | 🔲 Pending |
 
-### Tier 28 (0/1 converted)
+### Tier 26 (0/1 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `semexprs` | 142,092 bytes | ast, astalgo, astmsgs, evaltempl, idents +35 more | sem | 🔲 Pending |
 
-### Tier 29 (0/1 converted)
+### Tier 27 (0/1 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `sem` | 35,019 bytes | aliases, ast, astalgo, astmsgs, cgmeth +51 more |  | 🔲 Pending |
 
-### Tier 30 (0/2 converted)
+### Tier 28 (0/2 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `passes` | 8,340 bytes | ast, idents, lineinfos, llstream, modulegraphs +10 more |  | 🔲 Pending |
-| `pipelines` | 15,252 bytes | ast, ast2nif, cgen, cgendata, depends +25 more |  | 🔲 Pending |
+| `pipelines` | 15,252 bytes | ast, cgen, cgendata, depends, docgen2 +23 more |  | 🔲 Pending |
 
-### Tier 31 (0/2 converted)
+### Tier 29 (0/2 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `passaux` | 942 bytes | ast, lineinfos, modulegraphs, msgs, options +1 more |  | 🔲 Pending |
 | `scriptconfig` | 8,169 bytes | ast, commands, condsyms, idents, llstream +8 more |  | 🔲 Pending |
 
-### Tier 32 (0/2 converted)
+### Tier 30 (0/2 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `nimconf` | 11,746 bytes | ast, commands, idents, lexer, lineinfos +6 more |  | 🔲 Pending |
 | `nimeval` | 6,447 bytes | ast, condsyms, idents, lineinfos, llstream +8 more |  | 🔲 Pending |
 
-### Tier 33 (0/2 converted)
+### Tier 31 (0/2 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `cmdlinehelper` | 3,134 bytes | commands, condsyms, extccomp, idents, lineinfos +5 more |  | 🔲 Pending |
-| `main` | 17,538 bytes | ast, cgen, condsyms, depends, deps +18 more |  | 🔲 Pending |
+| `main` | 17,538 bytes | ast, cgen, condsyms, depends, docgen +16 more |  | 🔲 Pending |
 
-### Tier 34 (0/1 converted)
+### Tier 32 (0/1 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|
 | `nim` | 6,157 bytes | cmdlinehelper, commands, extccomp, idents, lineinfos +7 more |  | 🔲 Pending |
 
-### Tier 35 (0/1 converted)
+### Tier 33 (0/1 converted)
 
 | Module | Size | Dependencies | Included from | Status |
 |---|---|---|---|---|

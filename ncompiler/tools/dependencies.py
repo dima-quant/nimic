@@ -9,7 +9,7 @@ before the include point, recursively for nested includes (ccgtrav <- ccgtypes <
 dependencies are the modules of that context that export an identifier the include file uses (procs,
 types, constants, enum members), plus its own imports. The includer depends on its include files. Tiers are longest dependency paths (import cycles are
 collapsed). Imports under a `when` whose condition is false in the default compiler build (the build
-profile of compiler/nim.cfg, e.g. `when defined(nimDebugUtils)`) are not counted. Statuses of
+profile of ncompiler/nim.cfg, e.g. `when defined(nimDebugUtils)`) are not counted. Statuses of
 conversion_queue.md are kept.
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ def _strip_comments(text: str) -> str:
                      for line in text.splitlines())
 
 
-_PROFILE = _BuildProfile(str(COMPILER / "nim.nim"), "")
+_PROFILE = _BuildProfile(str(NCOMPILER / "nim.nim"), "")  # ncompiler/nim.cfg: the build the conversion targets
 
 
 def _when_active(cond: str) -> bool:
