@@ -213,10 +213,10 @@ if comptime(__name__ == "__main__"):
         tracker.common_opt_count += 1
         return n
 
-def hlo(c: PContext, n: PNode, loopDetector: nint) -> PNode:
+def _hlo(c: PContext, n: PNode, loopDetector: nint) -> PNode:
     pass
 
-def evalPattern(c: PContext, n: PNode, orig: PNode) -> PNode:
+def _evalPattern(c: PContext, n: PNode, orig: PNode) -> PNode:
     internalAssert(c.config, n.kind == TNodeKind.nkCall and n[0].kind == TNodeKind.nkSym)
     # we need to ensure that the resulting AST is semchecked. However, it's
     # awful to semcheck before macro invocation, so we don't and treat
@@ -245,7 +245,7 @@ def evalPattern(c: PContext, n: PNode, orig: PNode) -> PNode:
         )
     return result
 
-def applyPatterns(c: PContext, n: PNode) -> PNode:
+def _applyPatterns(c: PContext, n: PNode) -> PNode:
     result = n
     # we apply the last pattern first, so that pattern overriding is possible;
     # however the resulting AST would better not trigger the old rule then
@@ -266,16 +266,16 @@ def applyPatterns(c: PContext, n: PNode) -> PNode:
                 c.patterns[i] = None
                 if x.kind == TNodeKind.nkStmtList:
                     assert x.len == 3
-                    x[1] = evalPattern(c, x[1], result)
+                    x[1] = _evalPattern(c, x[1], result)
                     result = flattenStmts(x)
                 else:
-                    result = evalPattern(c, x, result)
+                    result = _evalPattern(c, x, result)
                 c.config.evalTemplateCounter -= 1
                 # activate this pattern again:
                 c.patterns[i] = pattern
     return result
 
-def hlo(c: PContext, n: PNode, loopDetector: nint) -> PNode:
+def _hlo(c: PContext, n: PNode, loopDetector: nint) -> PNode:
     # simply stop and do not perform any further transformations:
     if loopDetector > 300:
         message(c.config, n.info, warnUser, string("term rewrite macro instantiation too nested"))
@@ -302,13 +302,13 @@ def hlo(c: PContext, n: PNode, loopDetector: nint) -> PNode:
             ):
                 # do not optimize 'var g {.global} = re(...)' again!
                 return n
-            result = applyPatterns(c, n)
+            result = _applyPatterns(c, n)
             if result == n:
                 # no optimization applied, try subtrees:
                 for i in range(result.safeLen):
                     with let:
                         a = result[i]
-                        h = hlo(c, a, loopDetector)
+                        h = _hlo(c, a, loopDetector)
                     if h != a:
                         result[i] = h
             else:
@@ -319,22 +319,22 @@ def hlo(c: PContext, n: PNode, loopDetector: nint) -> PNode:
                     result = fitNode(c, n.typ, result, n.info)
                 # optimization has been applied so check again:
                 result = commonOptimizations(c.graph, c.idgen, c.module, result)
-                result = hlo(c, result, loopDetector + 1)
+                result = _hlo(c, result, loopDetector + 1)
                 result = commonOptimizations(c.graph, c.idgen, c.module, result)
     return result
 
-def hloBody(c: PContext, n: PNode) -> PNode:
+def _hloBody(c: PContext, n: PNode) -> PNode:
     # fast exit:
     if c.patterns.len == 0 or TOption.optTrMacros not in c.config.options:
         return n
-    result = hlo(c, n, 0)
+    result = _hlo(c, n, 0)
     return result
 
-def hloStmt(c: PContext, n: PNode) -> PNode:
+def _hloStmt(c: PContext, n: PNode) -> PNode:
     # fast exit:
     if c.patterns.len == 0 or TOption.optTrMacros not in c.config.options:
         return n
-    result = hlo(c, n, 0)
+    result = _hlo(c, n, 0)
     return result
 
 if comptime(__name__ == "__main__"):
@@ -392,8 +392,8 @@ if comptime(__name__ == "__main__"):
     with var:
         callNode = newNodeWithSons(TNodeKind.nkCall, seq[PNode]([symNode]))
 
-    assert hloBody(c1, callNode) == callNode
-    assert hloStmt(c1, callNode) == callNode
+    assert _hloBody(c1, callNode) == callNode
+    assert _hloStmt(c1, callNode) == callNode
 
     # --- Test 2: Fast exit when optTrMacros is disabled ---
     with var:
@@ -407,15 +407,15 @@ if comptime(__name__ == "__main__"):
     c2.patterns.add(patNode)
     c2.config.options = Tset[TOption]() # remove optTrMacros
 
-    assert hloBody(c2, callNode) == callNode
-    assert hloStmt(c2, callNode) == callNode
+    assert _hloBody(c2, callNode) == callNode
+    assert _hloStmt(c2, callNode) == callNode
 
     # --- Test 3: Loop detector recursion limit ---
     with var:
         c3 = newContext()
     tracker.last_warning = string("")
     with let:
-        loopRes = hlo(c3, callNode, 301)
+        loopRes = _hlo(c3, callNode, 301)
     assert loopRes == callNode
     assert len(tracker.last_warning) > 0
 
@@ -428,10 +428,10 @@ if comptime(__name__ == "__main__"):
         lambdaNode = newNode(TNodeKind.nkLambda)
     c4.patterns.add(patNode)
 
-    assert hlo(c4, procNode, 0) == procNode
-    assert hlo(c4, macroNode, 0) == macroNode
-    assert hlo(c4, templNode, 0) == templNode
-    assert hlo(c4, lambdaNode, 0) == lambdaNode
+    assert _hlo(c4, procNode, 0) == procNode
+    assert _hlo(c4, macroNode, 0) == macroNode
+    assert _hlo(c4, templNode, 0) == templNode
+    assert _hlo(c4, lambdaNode, 0) == lambdaNode
 
     # --- Test 5: Skip global pure variables ---
     with var:
@@ -444,7 +444,7 @@ if comptime(__name__ == "__main__"):
         asgnNode = newNodeWithSons(TNodeKind.nkAsgn, seq[PNode]([globPureSymNode, intLitNode]))
     c5.patterns.add(patNode)
 
-    assert hlo(c5, asgnNode, 0) == asgnNode
+    assert _hlo(c5, asgnNode, 0) == asgnNode
 
     # --- Test 6: evalPattern macro, template, directOp and hints ---
     with var:
@@ -456,7 +456,7 @@ if comptime(__name__ == "__main__"):
         macroCall = newNodeWithSons(TNodeKind.nkCall, seq[PNode]([macroSymNode]))
     tracker.macro_invoked = False
     with let:
-        rMacro = evalPattern(c6, macroCall, macroCall)
+        rMacro = _evalPattern(c6, macroCall, macroCall)
     assert tracker.macro_invoked
     assert rMacro == macroCall
 
@@ -468,7 +468,7 @@ if comptime(__name__ == "__main__"):
         templCall = newNodeWithSons(TNodeKind.nkCall, seq[PNode]([templSymNode]))
     tracker.template_invoked = False
     with let:
-        rTempl = evalPattern(c6, templCall, templCall)
+        rTempl = _evalPattern(c6, templCall, templCall)
     assert tracker.template_invoked
     assert rTempl == templCall
 
@@ -480,7 +480,7 @@ if comptime(__name__ == "__main__"):
         procCall = newNodeWithSons(TNodeKind.nkCall, seq[PNode]([procSymNode]))
     tracker.direct_op_invoked = False
     with let:
-        rProc = evalPattern(c6, procCall, procCall)
+        rProc = _evalPattern(c6, procCall, procCall)
     assert tracker.direct_op_invoked
     assert rProc == procCall
 
@@ -488,7 +488,7 @@ if comptime(__name__ == "__main__"):
     c6.config.hints = Tset[uint8]({hintPattern})
     tracker.last_message = string("")
     with let:
-        rProcHint = evalPattern(c6, procCall, procCall)
+        rProcHint = _evalPattern(c6, procCall, procCall)
     assert len(tracker.last_message) > 0
 
     # --- Test 7: Subtree optimization when result == n ---
@@ -499,7 +499,7 @@ if comptime(__name__ == "__main__"):
         parent = newNodeWithSons(TNodeKind.nkStmtList, seq[PNode]([child1, child2]))
     # No pattern matches parent or children
     with let:
-        resTree = hlo(c7, parent, 0)
+        resTree = _hlo(c7, parent, 0)
     assert resTree == parent
 
     # --- Test 8: applyPatterns and fitNode execution on match ---
@@ -526,7 +526,7 @@ if comptime(__name__ == "__main__"):
     tracker.fit_node_count = 0
     tracker.common_opt_count = 0
     with let:
-        resOpt = hlo(c8, matchNode, 0)
+        resOpt = _hlo(c8, matchNode, 0)
     assert resOpt.kind == TNodeKind.nkCall
     assert tracker.fit_node_count > 0
     assert tracker.common_opt_count > 0
@@ -569,7 +569,7 @@ if comptime(__name__ == "__main__"):
     # Verify applyPatterns executes the nkStmtList branch (len == 3, evalPattern on son[1], flattenStmts)
     c9.patterns.add(sListDirect)
     with let:
-        resStmt = applyPatterns(c9, stmtNode)
+        resStmt = _applyPatterns(c9, stmtNode)
     assert resStmt == sListDirect
     assert resStmt.len == 3
 
@@ -595,7 +595,7 @@ if comptime(__name__ == "__main__"):
         limitRaised = False
     try:
         with let:
-            _dummy = applyPatterns(c10, nestNode)
+            _dummy = _applyPatterns(c10, nestNode)
     except ValueError:
         limitRaised = True
     assert limitRaised
@@ -624,7 +624,7 @@ if comptime(__name__ == "__main__"):
     with var:
         parentTree = newNodeWithSons(TNodeKind.nkStmtList, seq[PNode]([newNode(TNodeKind.nkEmpty), childCall]))
     with let:
-        resTreeOpt = hlo(c11, parentTree, 0)
+        resTreeOpt = _hlo(c11, parentTree, 0)
     assert resTreeOpt == parentTree
     assert resTreeOpt[1] != childCall
     assert resTreeOpt[1].kind == TNodeKind.nkCall
@@ -650,7 +650,7 @@ if comptime(__name__ == "__main__"):
 
     tracker.fit_node_count = 0
     with let:
-        resEmptyOpt = hlo(c12, emptyTypeNode, 0)
+        resEmptyOpt = _hlo(c12, emptyTypeNode, 0)
     assert resEmptyOpt.kind == TNodeKind.nkCall
     assert tracker.fit_node_count == 0
 
@@ -664,7 +664,7 @@ if comptime(__name__ == "__main__"):
         localAsgnNode = newNodeWithSons(TNodeKind.nkAsgn, seq[PNode]([localSymNode, newNode(TNodeKind.nkIntLit)]))
     c13.patterns.add(patNode)
     with let:
-        asgnRes = hlo(c13, localAsgnNode, 0)
+        asgnRes = _hlo(c13, localAsgnNode, 0)
     assert asgnRes == localAsgnNode
 
     # --- Test 14: Pattern overriding in applyPatterns (last added pattern takes precedence) ---
@@ -712,7 +712,7 @@ if comptime(__name__ == "__main__"):
     c14.patterns.add(rule2)
 
     with let:
-        ovRes = applyPatterns(c14, ovNode)
+        ovRes = _applyPatterns(c14, ovNode)
     assert ovRes == replNode2
     assert ovRes != replNode1
 

@@ -6,7 +6,7 @@ from nimic.ntypes import *
 
 # included from cgen.nim (tests: ncompiler/tests/test_ccg.py)
 
-def copySymdef(n: PNode, locals: mut @ Table[nint, PSym], idgen: IdGenerator, owner: PSym) -> PNode:
+def _copySymdef(n: PNode, locals: mut @ Table[nint, PSym], idgen: IdGenerator, owner: PSym) -> PNode:
     match n.kind:
         case _ if n.kind in inrange(TNodeKind.nkEmpty, pred(TNodeKind.nkSym)) or n.kind in inrange(succ(TNodeKind.nkSym), TNodeKind.nkNilLit):
             result = n
@@ -20,10 +20,10 @@ def copySymdef(n: PNode, locals: mut @ Table[nint, PSym], idgen: IdGenerator, ow
         case _:
             result = shallowCopy(n)
             for i in range(n.len):
-                result[i] = copySymdef(n[i], locals, idgen, owner)
+                result[i] = _copySymdef(n[i], locals, idgen, owner)
     return result
 
-def copyInlineProcBody(n: PNode, locals: mut @ Table[nint, PSym], idgen: IdGenerator, owner: PSym) -> PNode:
+def _copyInlineProcBody(n: PNode, locals: mut @ Table[nint, PSym], idgen: IdGenerator, owner: PSym) -> PNode:
     match n.kind:
         case _ if n.kind in inrange(TNodeKind.nkEmpty, pred(TNodeKind.nkSym)) or n.kind in inrange(succ(TNodeKind.nkSym), TNodeKind.nkNilLit):
             result = n
@@ -44,9 +44,9 @@ def copyInlineProcBody(n: PNode, locals: mut @ Table[nint, PSym], idgen: IdGener
                 elif it.kind in {TNodeKind.nkIdentDefs, TNodeKind.nkConstDef}:
                     result[i] = shallowCopy(it)
                     for j in range(0, it.len - 2):
-                        result[i][j] = copySymdef(it[j], locals, idgen, owner)
+                        result[i][j] = _copySymdef(it[j], locals, idgen, owner)
                     for j in range(it.len - 2, it.len):
-                        result[i][j] = copyInlineProcBody(it[j], locals, idgen, owner)
+                        result[i][j] = _copyInlineProcBody(it[j], locals, idgen, owner)
                 else:
                     assert it.kind == TNodeKind.nkVarTuple
                     result[i] = shallowCopy(it)
@@ -59,7 +59,7 @@ def copyInlineProcBody(n: PNode, locals: mut @ Table[nint, PSym], idgen: IdGener
                         locals[oldSym.id] = newSym
                         result[i][j] = newSymNode(newSym, oldSym.info)
                     for j in range(it.len - 2, it.len):
-                        result[i][j] = copyInlineProcBody(it[j], locals, idgen, owner)
+                        result[i][j] = _copyInlineProcBody(it[j], locals, idgen, owner)
         case TNodeKind.nkForStmt | TNodeKind.nkParForStmt:
             result = shallowCopy(n)
             for i in range(0, n.len - 2):
@@ -70,18 +70,18 @@ def copyInlineProcBody(n: PNode, locals: mut @ Table[nint, PSym], idgen: IdGener
                 setOwner(newSym, owner)
                 locals[oldSym.id] = newSym
                 result[i] = newSymNode(newSym, oldSym.info)
-            result[n.len - 2] = copyInlineProcBody(n[n.len - 2], locals, idgen, owner)
-            result[n.len - 1] = copyInlineProcBody(n[n.len - 1], locals, idgen, owner)
+            result[n.len - 2] = _copyInlineProcBody(n[n.len - 2], locals, idgen, owner)
+            result[n.len - 1] = _copyInlineProcBody(n[n.len - 1], locals, idgen, owner)
         case _ if (n.kind in routineDefs or n.kind == TNodeKind.nkTypeSection or n.kind == TNodeKind.nkTypeOfExpr or
                    n.kind == TNodeKind.nkMixinStmt or n.kind == TNodeKind.nkBindStmt or n.kind == TNodeKind.nkConstSection):
             result = n
         case _:
             result = shallowCopy(n)
             for i in range(n.len):
-                result[i] = copyInlineProcBody(n[i], locals, idgen, owner)
+                result[i] = _copyInlineProcBody(n[i], locals, idgen, owner)
     return result
 
-def copyParams(n: PNode, locals: mut @ Table[nint, PSym], idgen: IdGenerator, owner: PSym) -> PNode:
+def _copyParams(n: PNode, locals: mut @ Table[nint, PSym], idgen: IdGenerator, owner: PSym) -> PNode:
     result = shallowCopy(n)
     result[0] = n[0]  # return type
     for i in range(1, n.len):
@@ -99,10 +99,10 @@ def copyParams(n: PNode, locals: mut @ Table[nint, PSym], idgen: IdGenerator, ow
             result[i][j] = newSymNode(newSym, oldSym.info)
             addParam(owner.typ, newSym)
         for j in range(it.len - 2, it.len):
-            result[i][j] = copyInlineProcBody(it[j], locals, idgen, owner)
+            result[i][j] = _copyInlineProcBody(it[j], locals, idgen, owner)
     return result
 
-def copyInlineProc(prc: PSym, idgen: IdGenerator) -> PSym:
+def _copyInlineProc(prc: PSym, idgen: IdGenerator) -> PSym:
     result = copySym(prc, idgen)
     with var:
         locals = initTable[nint, PSym]()
@@ -136,6 +136,6 @@ def copyInlineProc(prc: PSym, idgen: IdGenerator) -> PSym:
         elif i == resultPos and prc.ast[i].kind == TNodeKind.nkSym:
             _ = "handled above"
         else:
-            a[i] = copyInlineProcBody(prc.ast[i], locals, idgen, result)
+            a[i] = _copyInlineProcBody(prc.ast[i], locals, idgen, result)
     result.ast = a
     return result

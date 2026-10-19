@@ -18,76 +18,76 @@ from nimic.ntypes import *
 
 # included from cgen.nim (tests: ncompiler/tests/test_ccg.py)
 
-def emulatedThreadVars(conf: ConfigRef) -> bool:
+def _emulatedThreadVars(conf: ConfigRef) -> bool:
     result = Tset[TGlobalOption]({TGlobalOption.optThreads, TGlobalOption.optTlsEmulation}) <= conf.globalOptions
     return result
 
 
-def accessThreadLocalVar(p: BProc, s: PSym) -> None:
-    if emulatedThreadVars(p.config) and TCProcFlag.threadVarAccessed not in p.flags:
+def _accessThreadLocalVar(p: BProc, s: PSym) -> None:
+    if _emulatedThreadVars(p.config) and TCProcFlag.threadVarAccessed not in p.flags:
         incl(p.flags, TCProcFlag.threadVarAccessed)
         incl(p.module.flags, CodegenFlag.usesThreadVars)
-        p.procSec(TCProcSection.cpsLocals).addVar(
-            kind=VarKind.Local,
+        p.procSec(TCProcSection.cpsLocals)._addVar(
+            kind=_VarKind.Local,
             name=string("NimTV_"),
-            typ=ptrType(string("NimThreadVars")),
+            typ=_ptrType(string("NimThreadVars")),
         )
-        p.procSec(TCProcSection.cpsInit).addAssignment(
+        p.procSec(TCProcSection.cpsInit)._addAssignment(
             string("NimTV_"),
-            cCast(
-                ptrType(string("NimThreadVars")),
-                cCall(cgsymValue(p.module, string("GetThreadLocalVars"))),
+            _cCast(
+                _ptrType(string("NimThreadVars")),
+                _cCall(cgsymValue(p.module, string("GetThreadLocalVars"))),
             ),
         )
 
 
-def declareThreadVar(m: BModule, s: PSym, isExtern: bool) -> None:
-    if emulatedThreadVars(m.config):
+def _declareThreadVar(m: BModule, s: PSym, isExtern: bool) -> None:
+    if _emulatedThreadVars(m.config):
         # we gather all thread locals var into a struct; we need to allocate
         # storage for that somehow, can't use the thread local storage
         # allocator for it :-(
         if not containsOrIncl(m.g.nimtvDeclared, s.id):
             m.g.nimtvDeps.add(s.loc.t)
-            m.g.nimtv.addField(name=s.loc.snippet, typ=getTypeDesc(m, s.loc.t))
+            m.g.nimtv._addField(name=s.loc.snippet, typ=getTypeDesc(m, s.loc.t))
     else:
         with let:
             vis = (
-                DeclVisibility.Extern
+                _DeclVisibility.Extern
                 if isExtern
-                else (DeclVisibility.ExportLibVar if TLocFlag.lfExportLib in s.loc.flags else DeclVisibility.Private)
+                else (_DeclVisibility.ExportLibVar if TLocFlag.lfExportLib in s.loc.flags else _DeclVisibility.Private)
             )
-        m.s[TCFileSection.cfsVars].addVar(
+        m.s[TCFileSection.cfsVars]._addVar(
             m,
             s,
             name=s.loc.snippet,
             typ=getTypeDesc(m, s.loc.t),
-            kind=VarKind.Threadvar,
+            kind=_VarKind.Threadvar,
             visibility=vis,
         )
 
 
-def generateThreadLocalStorage(m: BModule) -> None:
+def _generateThreadLocalStorage(m: BModule) -> None:
     if m.g.nimtv.buf.len != 0 and (
         CodegenFlag.usesThreadVars in m.flags or TSymFlag.sfMainModule in m.module.flags
     ):
         for t in items(m.g.nimtvDeps):
             _ = getTypeDesc(m, t)
         finishTypeDescriptions(m)
-        with m.s[TCFileSection.cfsSeqTypes].addTypedef(name=string("NimThreadVars")):
-            with m.s[TCFileSection.cfsSeqTypes].addSimpleStruct(m, name=string(""), baseType=string("")):
+        with m.s[TCFileSection.cfsSeqTypes]._addTypedef(name=string("NimThreadVars")):
+            with m.s[TCFileSection.cfsSeqTypes]._addSimpleStruct(m, name=string(""), baseType=string("")):
                 m.s[TCFileSection.cfsSeqTypes].add(m.g.nimtv.extract())
 
 
-def generateThreadVarsSize(m: BModule) -> None:
+def _generateThreadVarsSize(m: BModule) -> None:
     if m.g.nimtv.buf.len != 0:
         with let:
             externc = (
-                DeclVisibility.ExternC
+                _DeclVisibility.ExternC
                 if (m.config.backend == TBackend.backendCpp)
                 or (TSymFlag.sfCompileToCpp in m.module.flags)
-                else DeclVisibility.None_
+                else _DeclVisibility.None_
             )
-        with m.s[TCFileSection.cfsProcs].addDeclWithVisibility(externc):
-            m.s[TCFileSection.cfsProcs].addProcHeader(string("NimThreadVarsSize"), NimInt, cProcParams())
-            with m.s[TCFileSection.cfsProcs].finishProcHeaderWithBody():
-                m.s[TCFileSection.cfsProcs].addReturn(cCast(NimInt, cSizeof(string("NimThreadVars"))))
+        with m.s[TCFileSection.cfsProcs]._addDeclWithVisibility(externc):
+            m.s[TCFileSection.cfsProcs]._addProcHeader(string("NimThreadVarsSize"), NimInt, _cProcParams())
+            with m.s[TCFileSection.cfsProcs]._finishProcHeaderWithBody():
+                m.s[TCFileSection.cfsProcs]._addReturn(_cCast(NimInt, _cSizeof(string("NimThreadVars"))))

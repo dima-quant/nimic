@@ -264,13 +264,13 @@ if comptime(__name__ == "__main__"):
         return n.sons[n.sons.len - 1]
 
 @dispatch
-def rope(arg: Int128) -> Rope:
+def _rope(arg: Int128) -> Rope:
     return rope(str(arg))
 
-def genTypeInfo(p: PProc, typ: PType) -> Rope:
+def _genTypeInfo(p: PProc, typ: PType) -> Rope:
     pass
 
-def genObjectFields(p: PProc, typ: PType, n: PNode) -> Rope:
+def _genObjectFields(p: PProc, typ: PType, n: PNode) -> Rope:
     with var:
         s = Rope("")
         u = Rope("")
@@ -280,19 +280,19 @@ def genObjectFields(p: PProc, typ: PType, n: PNode) -> Rope:
     match n.kind:
         case TNodeKind.nkRecList:
             if n.len == 1:
-                result = genObjectFields(p, typ, n[0])
+                result = _genObjectFields(p, typ, n[0])
             else:
                 s = Rope("")
                 for i in range(n.len):
                     if i > 0:
                         s.add(string(", \n"))
-                    s.add(genObjectFields(p, typ, n[i]))
+                    s.add(_genObjectFields(p, typ, n[i]))
                 result = FormatStr(
                     "{kind: 2, len: $1, offset: 0, typ: null, name: null, sons: [$2]}"
                 ) % [rope(n.len), s]
         case TNodeKind.nkSym:
             field = n.sym
-            s = genTypeInfo(p, field.typ)
+            s = _genTypeInfo(p, field.typ)
             result = FormatStr(
                 "{kind: 1, offset: \"$1\", len: 0, typ: $2, name: $3, sons: null}"
             ) % [mangleName(p.module, field), s, makeJSString(field.name.s)]
@@ -300,7 +300,7 @@ def genObjectFields(p: PProc, typ: PType, n: PNode) -> Rope:
             if n[0].kind != TNodeKind.nkSym:
                 internalError(p.config, n.info, string("genObjectFields"))
             field = n[0].sym
-            s = genTypeInfo(p, field.typ)
+            s = _genTypeInfo(p, field.typ)
             for i in range(1, n.len):
                 b = n[i]  # branch
                 u = Rope("")
@@ -312,22 +312,22 @@ def genObjectFields(p: PProc, typ: PType, n: PNode) -> Rope:
                             if u != string(""):
                                 u.add(string(", "))
                             if b[j].kind == TNodeKind.nkRange:
-                                u.addf(FormatStr("[$1, $2]"), [rope(getOrdValue(b[j][0])), rope(getOrdValue(b[j][1]))])
+                                u.addf(FormatStr("[$1, $2]"), [_rope(getOrdValue(b[j][0])), _rope(getOrdValue(b[j][1]))])
                             else:
-                                u.add(rope(getOrdValue(b[j])))
+                                u.add(_rope(getOrdValue(b[j])))
                     case TNodeKind.nkElse:
-                        u = rope(lengthOrd(p.config, field.typ))
+                        u = _rope(lengthOrd(p.config, field.typ))
                     case _:
                         internalError(p.config, n.info, string("genObjectFields(nkRecCase)"))
                 if result != string(""):
                     result.add(string(", \n"))
-                result.addf(FormatStr("[setConstr($1), $2]"), [u, genObjectFields(p, typ, lastSon(b))])
+                result.addf(FormatStr("[setConstr($1), $2]"), [u, _genObjectFields(p, typ, lastSon(b))])
             result = FormatStr(
                 "{kind: 3, offset: \"$1\", len: $3, typ: $2, name: $4, sons: [$5]}"
             ) % [
                 mangleName(p.module, field),
                 s,
-                rope(lengthOrd(p.config, field.typ)),
+                _rope(lengthOrd(p.config, field.typ)),
                 makeJSString(field.name.s),
                 result,
             ]
@@ -335,27 +335,27 @@ def genObjectFields(p: PProc, typ: PType, n: PNode) -> Rope:
             internalError(p.config, n.info, string("genObjectFields"))
     return result
 
-def objHasTypeField(t: PType) -> bool:
+def _objHasTypeField(t: PType) -> bool:
     """{.inline.}"""
     return TTypeFlag.tfInheritable in t.flags or t.baseClass is not None
 
-def genObjectInfo(p: PProc, typ: PType, name: Rope) -> None:
+def _genObjectInfo(p: PProc, typ: PType, name: Rope) -> None:
     with let:
-        kind = TTypeKind.tyObject if objHasTypeField(typ) else TTypeKind.tyTuple
+        kind = TTypeKind.tyObject if _objHasTypeField(typ) else TTypeKind.tyTuple
     with var:
         s = FormatStr(
             "var $1 = {size: 0, kind: $2, base: null, node: null, finalizer: null};$n"
         ) % [name, rope(ord(kind))]
     prepend(p.g.typeInfo, s)
-    p.g.typeInfo.addf(FormatStr("var NNI$1 = $2;$n"), [rope(typ.id), genObjectFields(p, typ, typ.n)])
+    p.g.typeInfo.addf(FormatStr("var NNI$1 = $2;$n"), [rope(typ.id), _genObjectFields(p, typ, typ.n)])
     p.g.typeInfo.addf(FormatStr("$1.node = NNI$2;$n"), [name, rope(typ.id)])
     if (typ.kind == TTypeKind.tyObject) and (typ.baseClass is not None):
         p.g.typeInfo.addf(
             FormatStr("$1.base = $2;$n"),
-            [name, genTypeInfo(p, typ.baseClass.skipTypes(skipPtrs))],
+            [name, _genTypeInfo(p, typ.baseClass.skipTypes(skipPtrs))],
         )
 
-def genTupleFields(p: PProc, typ: PType) -> Rope:
+def _genTupleFields(p: PProc, typ: PType) -> Rope:
     with var:
         s = Rope("")
     for i in range(typ.len):
@@ -365,23 +365,23 @@ def genTupleFields(p: PProc, typ: PType) -> Rope:
             FormatStr(
                 "{kind: 1, offset: \"Field$1\", len: 0, typ: $2, name: \"Field$1\", sons: null}"
             ),
-            [rope(i), genTypeInfo(p, typ[i])],
+            [rope(i), _genTypeInfo(p, typ[i])],
         )
     result = FormatStr(
         "{kind: 2, len: $1, offset: 0, typ: null, name: null, sons: [$2]}"
     ) % [rope(typ.len), s]
     return result
 
-def genTupleInfo(p: PProc, typ: PType, name: Rope) -> None:
+def _genTupleInfo(p: PProc, typ: PType, name: Rope) -> None:
     with var:
         s = FormatStr(
             "var $1 = {size: 0, kind: $2, base: null, node: null, finalizer: null};$n"
         ) % [name, rope(ord(typ.kind))]
     prepend(p.g.typeInfo, s)
-    p.g.typeInfo.addf(FormatStr("var NNI$1 = $2;$n"), [rope(typ.id), genTupleFields(p, typ)])
+    p.g.typeInfo.addf(FormatStr("var NNI$1 = $2;$n"), [rope(typ.id), _genTupleFields(p, typ)])
     p.g.typeInfo.addf(FormatStr("$1.node = NNI$2;$n"), [name, rope(typ.id)])
 
-def genEnumInfo(p: PProc, typ: PType, name: Rope) -> None:
+def _genEnumInfo(p: PProc, typ: PType, name: Rope) -> None:
     with var:
         s = Rope("")
     for i in range(typ.n.len):
@@ -408,9 +408,9 @@ def genEnumInfo(p: PProc, typ: PType, name: Rope) -> None:
     p.g.typeInfo.add(n)
     p.g.typeInfo.addf(FormatStr("$1.node = NNI$2;$n"), [name, rope(typ.id)])
     if typ.baseClass is not None:
-        p.g.typeInfo.addf(FormatStr("$1.base = $2;$n"), [name, genTypeInfo(p, typ.baseClass)])
+        p.g.typeInfo.addf(FormatStr("$1.base = $2;$n"), [name, _genTypeInfo(p, typ.baseClass)])
 
-def genTypeInfo(p: PProc, typ: PType) -> Rope:
+def _genTypeInfo(p: PProc, typ: PType) -> Rope:
     with let:
         t = typ.skipTypes(
             Tset[TTypeKind]({
@@ -427,7 +427,7 @@ def genTypeInfo(p: PProc, typ: PType) -> Rope:
         return result
     match t.kind:
         case TTypeKind.tyDistinct:
-            result = genTypeInfo(p, t.skipModifier())
+            result = _genTypeInfo(p, t.skipModifier())
         case (
             TTypeKind.tyPointer
             | TTypeKind.tyProc
@@ -470,23 +470,23 @@ def genTypeInfo(p: PProc, typ: PType) -> Rope:
                     "var $1 = {size: 0, kind: $2, base: null, node: null, finalizer: null};$n"
                 ) % [result, rope(ord(t.kind))]
             prepend(p.g.typeInfo, s)
-            p.g.typeInfo.addf(FormatStr("$1.base = $2;$n"), [result, genTypeInfo(p, t.elementType)])
+            p.g.typeInfo.addf(FormatStr("$1.base = $2;$n"), [result, _genTypeInfo(p, t.elementType)])
         case TTypeKind.tyArray:
             with var:
                 s = FormatStr(
                     "var $1 = {size: 0, kind: $2, base: null, node: null, finalizer: null};$n"
                 ) % [result, rope(ord(t.kind))]
             prepend(p.g.typeInfo, s)
-            p.g.typeInfo.addf(FormatStr("$1.base = $2;$n"), [result, genTypeInfo(p, t.elementType)])
+            p.g.typeInfo.addf(FormatStr("$1.base = $2;$n"), [result, _genTypeInfo(p, t.elementType)])
         case TTypeKind.tyEnum:
-            genEnumInfo(p, t, result)
+            _genEnumInfo(p, t, result)
         case TTypeKind.tyObject:
-            genObjectInfo(p, t, result)
+            _genObjectInfo(p, t, result)
         case TTypeKind.tyTuple:
-            genTupleInfo(p, t, result)
+            _genTupleInfo(p, t, result)
         case TTypeKind.tyStatic:
             if t.n is not None:
-                result = genTypeInfo(p, t.skipModifier())
+                result = _genTypeInfo(p, t.skipModifier())
             else:
                 internalError(p.config, string("genTypeInfo(") + string(str(t.kind)) + string(")"))
         case _:
@@ -573,31 +573,31 @@ if comptime(__name__ == "__main__"):
     with var:
         tInherit = makeType(1, TTypeKind.tyObject)
     tInherit.flags.incl(TTypeFlag.tfInheritable)
-    doAssert(objHasTypeField(tInherit) == True)
+    doAssert(_objHasTypeField(tInherit) == True)
 
     with var:
         tBase = makeType(2, TTypeKind.tyObject)
         tSub = makeType(3, TTypeKind.tyObject)
     tSub.baseClass = tBase
-    doAssert(objHasTypeField(tSub) == True)
+    doAssert(_objHasTypeField(tSub) == True)
 
     with var:
         tPlain = makeType(4, TTypeKind.tyObject)
-    doAssert(objHasTypeField(tPlain) == False)
+    doAssert(_objHasTypeField(tPlain) == False)
 
     # --- Test 3: genTypeInfo primitive types ---
     with var:
         proc1 = makeProc()
         tInt = makeType(10, TTypeKind.tyInt)
     with let:
-        ntiInt = genTypeInfo(proc1, tInt)
+        ntiInt = _genTypeInfo(proc1, tInt)
     doAssert(str(ntiInt) == "NTI10")
     doAssert(containsStr(proc1.g.typeInfo, string("var NTI10 = {size: 0,kind: 31,base: null,node: null,finalizer: null};\n")))
 
     # Deduplication test: calling again should not re-generate
     with let:
         lenBefore = len(str(proc1.g.typeInfo))
-        ntiInt2 = genTypeInfo(proc1, tInt)
+        ntiInt2 = _genTypeInfo(proc1, tInt)
     doAssert(str(ntiInt2) == "NTI10")
     doAssert(len(str(proc1.g.typeInfo)) == lenBefore)
 
@@ -606,14 +606,14 @@ if comptime(__name__ == "__main__"):
         proc2 = makeProc()
         tBool = makeType(11, TTypeKind.tyBool)
     with let:
-        ntiBool = genTypeInfo(proc2, tBool)
+        ntiBool = _genTypeInfo(proc2, tBool)
     doAssert(str(ntiBool) == "NTI11")
     doAssert(containsStr(proc2.g.typeInfo, string("var NTI11 = {size: 0,kind: 1,base: null,node: null,finalizer: null};\n")))
 
     # tyString and tyCstring
     with var:
         tStr = makeType(12, TTypeKind.tyString)
-        ntiStr = genTypeInfo(proc2, tStr)
+        ntiStr = _genTypeInfo(proc2, tStr)
     doAssert(str(ntiStr) == "NTI12")
     doAssert(containsStr(proc2.g.typeInfo, string("var NTI12 = {size: 0,kind: 28,base: null,node: null,finalizer: null};\n")))
 
@@ -622,7 +622,7 @@ if comptime(__name__ == "__main__"):
         proc3 = makeProc()
         tRefInt = makeType(20, TTypeKind.tyRef, tInt)
     with let:
-        ntiRef = genTypeInfo(proc3, tRefInt)
+        ntiRef = _genTypeInfo(proc3, tRefInt)
     doAssert(str(ntiRef) == "NTI20")
     # Base should point to NTI10
     doAssert(containsStr(proc3.g.typeInfo, string("NTI20.base = NTI10;\n")))
@@ -632,7 +632,7 @@ if comptime(__name__ == "__main__"):
         procArray = makeProc()
         tArr = makeType(21, TTypeKind.tyArray, tInt)
     with let:
-        ntiArr = genTypeInfo(procArray, tArr)
+        ntiArr = _genTypeInfo(procArray, tArr)
     doAssert(str(ntiArr) == "NTI21")
     doAssert(containsStr(procArray.g.typeInfo, string("NTI21.base = NTI10;\n")))
 
@@ -641,7 +641,7 @@ if comptime(__name__ == "__main__"):
         procDist = makeProc()
         tDistinct = makeType(25, TTypeKind.tyDistinct, tInt)
     with let:
-        ntiDist = genTypeInfo(procDist, tDistinct)
+        ntiDist = _genTypeInfo(procDist, tDistinct)
     # Distinct gets unwrapped via skipModifier to tInt
     doAssert(str(ntiDist) == "NTI10")
 
@@ -663,7 +663,7 @@ if comptime(__name__ == "__main__"):
     tEnum.n = enumRec
 
     with let:
-        ntiEnum = genTypeInfo(procEnum, tEnum)
+        ntiEnum = _genTypeInfo(procEnum, tEnum)
     doAssert(str(ntiEnum) == "NTI30")
     doAssert(containsStr(procEnum.g.typeInfo, string("var NNI30 = {kind: 2, offset: 0, typ: null, name: null, len: 2, sons: {")))
     doAssert(containsStr(procEnum.g.typeInfo, string("\"0\": {kind: 1, offset: 0, typ: NTI30, name: \"Alpha\", len: 0, sons: null}")))
@@ -683,7 +683,7 @@ if comptime(__name__ == "__main__"):
     enumRecAst.sons = seq[PNode]([nodeA, nodeB])
     tEnumAst.n = enumRecAst
     with let:
-        ntiEnumAst = genTypeInfo(procEnumAst, tEnumAst)
+        ntiEnumAst = _genTypeInfo(procEnumAst, tEnumAst)
     doAssert(containsStr(procEnumAst.g.typeInfo, string("\"CustomBeta\"")))
 
     # --- Test 7: genTupleInfo ---
@@ -692,7 +692,7 @@ if comptime(__name__ == "__main__"):
         tTuple = makeType(40, TTypeKind.tyTuple)
     tTuple.sons = seq[PType]([tInt, tBool])
     with let:
-        ntiTup = genTypeInfo(procTup, tTuple)
+        ntiTup = _genTypeInfo(procTup, tTuple)
     doAssert(str(ntiTup) == "NTI40")
     doAssert(containsStr(procTup.g.typeInfo, string("var NNI40 = {kind: 2, len: 2, offset: 0, typ: null, name: null, sons: [")))
     doAssert(containsStr(procTup.g.typeInfo, string("{kind: 1, offset: \"Field0\", len: 0, typ: NTI10, name: \"Field0\", sons: null}")))
@@ -717,7 +717,7 @@ if comptime(__name__ == "__main__"):
     tObj.n = objRec
 
     with let:
-        ntiObj = genTypeInfo(procObj, tObj)
+        ntiObj = _genTypeInfo(procObj, tObj)
     doAssert(str(ntiObj) == "NTI50")
     doAssert(containsStr(procObj.g.typeInfo, string("var NNI50 = {kind: 2, len: 2, offset: 0, typ: null, name: null, sons: [")))
     doAssert(containsStr(procObj.g.typeInfo, string("{kind: 1, offset: \"x\", len: 0, typ: NTI10, name: \"x\", sons: null}")))
@@ -733,7 +733,7 @@ if comptime(__name__ == "__main__"):
     objRecSingle.sons = seq[PNode]([nodeF1])
     tObjSingle.n = objRecSingle
     with let:
-        ntiObjSingle = genTypeInfo(procObjSingle, tObjSingle)
+        ntiObjSingle = _genTypeInfo(procObjSingle, tObjSingle)
     doAssert(containsStr(procObjSingle.g.typeInfo, string("var NNI55 = {kind: 1, offset: \"x\", len: 0, typ: NTI10, name: \"x\", sons: null};\n")))
 
     # Object with inheritance (baseClass)
@@ -748,7 +748,7 @@ if comptime(__name__ == "__main__"):
     tSubObj.n = objRecSingle
     tSubObj.baseClass = tBaseObj
     with let:
-        ntiSubObj = genTypeInfo(procObjInh, tSubObj)
+        ntiSubObj = _genTypeInfo(procObjInh, tSubObj)
     doAssert(containsStr(procObjInh.g.typeInfo, string("NTI61.base = NTI60;\n")))
 
     # --- Test 9: genObjectFields with nkRecCase (variant objects) ---
@@ -799,7 +799,7 @@ if comptime(__name__ == "__main__"):
 
     tCaseObj.n = caseRoot
     with let:
-        ntiCase = genTypeInfo(procCase, tCaseObj)
+        ntiCase = _genTypeInfo(procCase, tCaseObj)
     doAssert(str(ntiCase) == "NTI70")
     doAssert(containsStr(procCase.g.typeInfo, string("[setConstr(0), {kind: 1, offset: \"x\"")))
     doAssert(containsStr(procCase.g.typeInfo, string("[setConstr([1, 5]), {kind: 1, offset: \"y\"")))
@@ -815,7 +815,7 @@ if comptime(__name__ == "__main__"):
     tStatic.n = staticSon
     tStatic.elementType = tInt
     with let:
-        ntiStatic = genTypeInfo(procStatic, tStatic)
+        ntiStatic = _genTypeInfo(procStatic, tStatic)
     doAssert(str(ntiStatic) == "NTI10")
 
     # --- Test 11: genTypeInfo compound types (tySequence and tySet) ---
@@ -823,7 +823,7 @@ if comptime(__name__ == "__main__"):
         procSeq = makeProc()
         tSeq = makeType(90, TTypeKind.tySequence, tInt)
     with let:
-        ntiSeq = genTypeInfo(procSeq, tSeq)
+        ntiSeq = _genTypeInfo(procSeq, tSeq)
     doAssert(str(ntiSeq) == "NTI90")
     doAssert(containsStr(procSeq.g.typeInfo, string("NTI90.base = NTI10;\n")))
 
@@ -831,7 +831,7 @@ if comptime(__name__ == "__main__"):
         procSet = makeProc()
         tSet = makeType(91, TTypeKind.tySet, tInt)
     with let:
-        ntiSet = genTypeInfo(procSet, tSet)
+        ntiSet = _genTypeInfo(procSet, tSet)
     doAssert(str(ntiSet) == "NTI91")
     doAssert(containsStr(procSet.g.typeInfo, string("NTI91.base = NTI10;\n")))
 
@@ -841,7 +841,7 @@ if comptime(__name__ == "__main__"):
         tAlias = makeType(100, TTypeKind.tyAlias, tInt)
         tGenericInst = makeType(101, TTypeKind.tyGenericInst, tAlias)
     with let:
-        ntiSkip = genTypeInfo(procSkip, tGenericInst)
+        ntiSkip = _genTypeInfo(procSkip, tGenericInst)
     doAssert(str(ntiSkip) == "NTI10")
 
     # --- Test 13: genEnumInfo with baseClass ---
@@ -857,7 +857,7 @@ if comptime(__name__ == "__main__"):
     tEnumChild.baseClass = tEnumBase
 
     with let:
-        ntiEnumChild = genTypeInfo(procEnumBase, tEnumChild)
+        ntiEnumChild = _genTypeInfo(procEnumBase, tEnumChild)
     doAssert(str(ntiEnumChild) == "NTI111")
     doAssert(containsStr(procEnumBase.g.typeInfo, string("NTI111.base = NTI110;\n")))
 
@@ -868,9 +868,9 @@ if comptime(__name__ == "__main__"):
         tPtr = makeType(121, TTypeKind.tyPointer)
         tPrc = makeType(122, TTypeKind.tyProc)
     with let:
-        ntiFloat = genTypeInfo(procPrim, tFloat)
-        ntiPtr = genTypeInfo(procPrim, tPtr)
-        ntiPrc = genTypeInfo(procPrim, tPrc)
+        ntiFloat = _genTypeInfo(procPrim, tFloat)
+        ntiPtr = _genTypeInfo(procPrim, tPtr)
+        ntiPrc = _genTypeInfo(procPrim, tPrc)
     doAssert(str(ntiFloat) == "NTI120")
     doAssert(str(ntiPtr) == "NTI121")
     doAssert(str(ntiPrc) == "NTI122")
