@@ -15,59 +15,59 @@ from nimic.std.assertions import *
 class _Segment(Object):
     """Segment refers to a block of something in the JS output.
     This could be a token or an entire line"""
-    original: nint = 0  # Column in the Nim source
-    generated: nint = 0  # Column in the generated JS
-    name: nint = 0  # Index into names list (-1 for no name)
+    _original: nint = 0  # Column in the Nim source
+    _generated: nint = 0  # Column in the generated JS
+    _name: nint = 0  # Index into names list (-1 for no name)
 
 
 class _Mapping(Object):
     """Mapping refers to a line in the JS output.
     It is made up of segments which refer to the tokens in the line"""
-    inSource: bool = False  # Whether the line in JS has Nim equivalent
-    match inSource:
+    _inSource: bool = False  # Whether the line in JS has Nim equivalent
+    match _inSource:
         case True:
-            file: nint = 0  # Index into files list
-            line: nint = 0  # 0 indexed line of code in the Nim source
-            segments: seq[_Segment] = seq[_Segment]()
+            _file: nint = 0  # Index into files list
+            _line: nint = 0  # 0 indexed line of code in the Nim source
+            _segments: seq[_Segment] = seq[_Segment]()
         case False:
             pass
 
 
 class _SourceInfo(Object):
-    mappings: seq[_Mapping] = seq[_Mapping]()
-    names: seq[string] = seq[string]()
-    files: seq[string] = seq[string]()
+    _mappings: seq[_Mapping] = seq[_Mapping]()
+    _names: seq[string] = seq[string]()
+    _files: seq[string] = seq[string]()
 
     def _add_segment(info: mut@_SourceInfo, original: nint, generated: nint, name: string = string("")) -> None:
         """Adds a new segment into the current line"""
-        assert len(info.mappings) > 0, "No lines have been added yet"
+        assert len(info._mappings) > 0, "No lines have been added yet"
         with var:
-            segment = _Segment(original=original, generated=generated, name=-1)
+            segment = _Segment(_original=original, _generated=generated, _name=-1)
         if name != string(""):
             # Make name be index into names list
-            segment.name = info.names.find(name)
-            if segment.name == -1:
-                segment.name = len(info.names)
-                info.names.add(name)
+            segment._name = info._names.find(name)
+            if segment._name == -1:
+                segment._name = len(info._names)
+                info._names.add(name)
 
-        assert info.mappings[len(info.mappings) - 1].inSource, "Current line isn't in Nim source"
-        info.mappings[len(info.mappings) - 1].segments.add(segment)
+        assert info._mappings[len(info._mappings) - 1]._inSource, "Current line isn't in Nim source"
+        info._mappings[len(info._mappings) - 1]._segments.add(segment)
 
     def _new_line(info: mut@_SourceInfo) -> None:
         """Add new mapping which doesn't appear in the Nim source"""
-        info.mappings.add(_Mapping(inSource=False))
+        info._mappings.add(_Mapping(_inSource=False))
 
     def _new_line(info: mut@_SourceInfo, file: string, line: nint) -> None:
         """Starts a new line in the mappings. Call addSegment after this to add
         segments into the line"""
         with var:
-            mapping = _Mapping(inSource=True, line=line, segments=seq[_Segment]())
+            mapping = _Mapping(_inSource=True, _line=line, _segments=seq[_Segment]())
         # Set file to file position. Add in if needed
-        mapping.file = info.files.find(file)
-        if mapping.file == -1:
-            mapping.file = len(info.files)
-            info.files.add(file)
-        info.mappings.add(mapping)
+        mapping._file = info._files.find(file)
+        if mapping._file == -1:
+            mapping._file = len(info._files)
+            info._files.add(file)
+        info._mappings.add(mapping)
 
 
 class SourceMap(Object):
@@ -204,7 +204,7 @@ def parse(source: string) -> _SourceInfo:
 def toSourceMap(info: _SourceInfo, file: string) -> SourceMap:
     """Convert from high level SourceInfo into the required SourceMap object"""
     # Add basic info
-    result = SourceMap(version=3, file=file, sources=info.files, names=info.names)
+    result = SourceMap(version=3, file=file, sources=info._files, names=info._names)
     # Convert nodes into mappings.
     # Mappings are split into blocks where each block referes to a line in the outputted JS.
     # Blocks can be separated into statements which refere to tokens on the line.
@@ -216,7 +216,7 @@ def toSourceMap(info: _SourceInfo, file: string) -> SourceMap:
         prevName: nint = 0
         prevNimCol: nint = 0
 
-    for mapping in info.mappings:
+    for mapping in info._mappings:
         # We know need to encode segments with the following fields
         # All these fields are relative to their previous values
         # - 0: Column in generated code
@@ -224,28 +224,28 @@ def toSourceMap(info: _SourceInfo, file: string) -> SourceMap:
         # - 2: Line in Nim source
         # - 3: Column in Nim source
         # - 4: Index in names list
-        if mapping.inSource:
+        if mapping._inSource:
             # JS Column is special in that it is reset after every line
             with var:
                 prevJSCol: nint = 0
-            for segment in mapping.segments:
+            for segment in mapping._segments:
                 with var:
                     values = seq[nint]()
-                values.add(segment.generated - prevJSCol)
-                values.add(mapping.file - prevFile)
-                values.add(mapping.line - prevLine)
-                values.add(segment.original - prevNimCol)
+                values.add(segment._generated - prevJSCol)
+                values.add(mapping._file - prevFile)
+                values.add(mapping._line - prevLine)
+                values.add(segment._original - prevNimCol)
                 # Add name field if needed
-                if segment.name != -1:
-                    values.add(segment.name - prevName)
-                    prevName = segment.name
-                prevJSCol = segment.generated
-                prevNimCol = segment.original
-                prevFile = mapping.file
-                prevLine = mapping.line
+                if segment._name != -1:
+                    values.add(segment._name - prevName)
+                    prevName = segment._name
+                prevJSCol = segment._generated
+                prevNimCol = segment._original
+                prevFile = mapping._file
+                prevLine = mapping._line
                 result.mappings.add(encode(values) + string(","))
             # Remove trailing ,
-            if len(mapping.segments) > 0:
+            if len(mapping._segments) > 0:
                 result.mappings.setLen(len(result.mappings) - 1)
 
         result.mappings.add(string(";"))

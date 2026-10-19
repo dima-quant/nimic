@@ -114,16 +114,16 @@ def __str__(x: AnyPath) -> string:
     return string(x)
 
 if comptime(True):
-    def eqImpl(x: string, y: string) -> bool:
+    def _eqImpl(x: string, y: string) -> bool:
         """{.inline.}"""
         result = cmpPaths(x, y) == 0
         return result
 
     def __eq__[T: AnyPath](x: T, y: T) -> bool:
-        return eqImpl(string(x), string(y))
+        return _eqImpl(string(x), string(y))
 
     @template
-    def postProcessBase(base: AbsoluteDir) -> untyped:
+    def _postProcessBase(base: AbsoluteDir) -> untyped:
         # xxx: as argued here https://github.com/nim-lang/Nim/pull/10018#issuecomment-448192956
         # empty paths should not mean `cwd` so the correct behavior would be to throw
         # here and make sure `outDir` is always correctly initialized; for now
@@ -137,7 +137,7 @@ if comptime(True):
     @dispatch
     def __truediv__(base: AbsoluteDir, f: RelativeFile) -> AbsoluteFile:
         with let:
-            _base = postProcessBase(base)
+            _base = _postProcessBase(base)
         doAssert(not isAbsolute(string(f)), string(f))
         result = AbsoluteFile(newStringOfCap(len(string(_base)) + len(string(f))))
         with var:
@@ -149,7 +149,7 @@ if comptime(True):
     @dispatch
     def __truediv__(base: AbsoluteDir, f: RelativeDir) -> AbsoluteDir:
         with let:
-            _base = postProcessBase(base)
+            _base = _postProcessBase(base)
         doAssert(not isAbsolute(string(f)))
         result = AbsoluteDir(newStringOfCap(len(string(_base)) + len(string(f))))
         with var:
@@ -170,7 +170,7 @@ if comptime(True):
             result = base / RelativeFile(file)
         return result
 
-def skipHomeDir(x: string) -> nint:
+def _skipHomeDir(x: string) -> nint:
     with var:
         result = 0
     if comptime(defined("windows")):
@@ -187,7 +187,7 @@ def skipHomeDir(x: string) -> nint:
             result = 0
     return result
 
-def relevantPart(s: string, afterSlashX: nint) -> string:
+def _relevantPart(s: string, afterSlashX: nint) -> string:
     with var:
         result = newStringOfCap(len(s) - 8)
         slashes = afterSlashX
@@ -199,28 +199,28 @@ def relevantPart(s: string, afterSlashX: nint) -> string:
     return result
 
 @template
-def canonSlashes(x: string) -> string:
+def _canonSlashes(x: string) -> string:
     if comptime(defined("windows")):
         return x.replace(ch('\\'), ch('/'))
     else:
         return x
 
-def customPathImpl(x: string) -> string:
+def _customPathImpl(x: string) -> string:
     with var:
         result = string("")
     if not isAbsolute(x):
-        result = customPathImpl(canonSlashes(getCurrentDir() / x))
+        result = _customPathImpl(_canonSlashes(getCurrentDir() / x))
     else:
         with let:
-            slashes = skipHomeDir(x)
+            slashes = _skipHomeDir(x)
         if slashes > 0:
-            result = string("//user/") + relevantPart(x, slashes)
+            result = string("//user/") + _relevantPart(x, slashes)
         else:
             result = x
     return result
 
 def customPath(x: string) -> string:
-    return customPathImpl(canonSlashes(x))
+    return _customPathImpl(_canonSlashes(x))
 
 if comptime(__name__ == "__main__"):
     doAssert(isEmpty(AbsoluteFile("")))

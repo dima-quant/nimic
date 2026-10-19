@@ -298,7 +298,7 @@ with const:
 class TNoteKind(Trange[warnMin, hintMax]): pass
 class TNoteKinds(Tset[TNoteKind]): pass
 
-def computeNotesVerbosity() -> array[4, TNoteKinds]:
+def _computeNotesVerbosity() -> array[4, TNoteKinds]:
     with var:
         result = default(array[4, TNoteKinds])
     result[3] = Tset[TNoteKind](inrange(low(TNoteKind), high(TNoteKind))) - Tset[TNoteKind]({TMsgKind.warnObservableStores, TMsgKind.warnResultUsed, TMsgKind.warnAnyEnumConv, TMsgKind.warnBareExcept, TMsgKind.warnStdPrefix, TMsgKind.warnSystemRangeConversion})
@@ -308,7 +308,7 @@ def computeNotesVerbosity() -> array[4, TNoteKinds]:
     return result
 
 with const:
-    NotesVerbosity = computeNotesVerbosity()
+    NotesVerbosity = _computeNotesVerbosity()
     errXMustBeCompileTime = "'$1' can only be used in compile-time context"
     errArgsNeedRunOption = "arguments can only be given if the '--run' option is selected"
     errFloatToString = "cannot convert '$1' to '$2'"
@@ -385,7 +385,7 @@ with const:
     trackPosInvalidFileIdx = FileIndex(-2)
     commandLineIdx = FileIndex(-3)
 
-class class_msgContext_1(NTuple):
+class _class_msgContext_1(NTuple):
     info: TLineInfo
     detail: string
 
@@ -394,14 +394,14 @@ class MsgConfig(Object):
     trackPosAttached: bool
 
     errorOutputs: TErrorOutputs
-    msgContext: seq[class_msgContext_1]
+    msgContext: seq[_class_msgContext_1]
     lastError: TLineInfo
     filenameToIndexTbl: Table[string, FileIndex]
     fileInfos: seq[TFileInfo]
     systemFileIdx: FileIndex
 
 def initMsgConfig() -> MsgConfig:
-    result = MsgConfig(msgContext=seq[class_msgContext_1](), lastError=unknownLineInfo, filenameToIndexTbl=Table[string, FileIndex](), fileInfos=seq[TFileInfo](), errorOutputs=TErrorOutputs({TErrorOutput.eStdOut, TErrorOutput.eStdErr}))
+    result = MsgConfig(msgContext=seq[_class_msgContext_1](), lastError=unknownLineInfo, filenameToIndexTbl=Table[string, FileIndex](), fileInfos=seq[TFileInfo](), errorOutputs=TErrorOutputs({TErrorOutput.eStdOut, TErrorOutput.eStdErr}))
     result.filenameToIndexTbl[string("???")] = FileIndex(-1)
     return result
 

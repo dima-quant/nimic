@@ -395,17 +395,17 @@ class FilenameOption(NIntEnum):
     foStacktrace = auto()
 
 @calltype
-def SuggestionResultHook(result: Suggest) -> None:
+def _SuggestionResultHook(result: Suggest) -> None:
     """{.closure.}"""
     pass
 
 @calltype
-def WritelnHook(output: string) -> None:
+def _WritelnHook(output: string) -> None:
     """{.closure, gcsafe.}"""
     pass
 
 @calltype
-def StructuredErrorHook(config: ConfigRef, info: TLineInfo, msg: string, severity: Severity) -> None:
+def _StructuredErrorHook(config: ConfigRef, info: TLineInfo, msg: string, severity: Severity) -> None:
     """{.closure, gcsafe.}"""
     pass
 
@@ -506,12 +506,12 @@ class ConfigRef(Object):
     compileOptions: string
     cCompilerPath: string
     toCompile: CfileList
-    suggestionResultHook: SuggestionResultHook
+    suggestionResultHook: _SuggestionResultHook
     suggestVersion: nint
     suggestMaxResults: nint
     lastLineInfo: TLineInfo
-    writelnHook: WritelnHook
-    structuredErrorHook: StructuredErrorHook
+    writelnHook: _WritelnHook
+    structuredErrorHook: _StructuredErrorHook
     cppCustomNamespace: string
     nimMainPrefix: string
     vmProfileData: ProfileData
@@ -1386,10 +1386,10 @@ if comptime(__name__ == "__main__"):
 
     # packagehandling (included): nimble file / package lookup, cached per directory
     with var:
-        _pconf = newConfigRef()
+        _pkgConf = newConfigRef()
     with let:
-        _pkgName = getPackageName(_pconf, string(getCurrentDir()) / string("ncompiler") / string("options.py"))
+        _pkgName = getPackageName(_pkgConf, string(getCurrentDir()) / string("ncompiler") / string("options.py"))
     doAssert(len(_pkgName) > 0, string("getPackageName"))
-    doAssert(getPackageName(_pconf, string(getCurrentDir()) / string("ncompiler") / string("options.py")) == _pkgName,
+    doAssert(getPackageName(_pkgConf, string(getCurrentDir()) / string("ncompiler") / string("options.py")) == _pkgName,
              string("getPackageName cached"))
     echo(string("packagehandling tests passed"))

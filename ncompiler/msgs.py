@@ -266,14 +266,14 @@ def suggestQuit() -> None:
 # this format is understood by many text editors: it is the same that
 # Borland and Freepascal use
 with const:
-    KindFormat = string(" [$1]")
-    KindColor = ForegroundColor.fgCyan
-    ErrorTitle = string("Error: ")
-    ErrorColor = ForegroundColor.fgRed
-    WarningTitle = string("Warning: ")
-    WarningColor = ForegroundColor.fgYellow
-    HintTitle = string("Hint: ")
-    HintColor = ForegroundColor.fgGreen
+    _KindFormat = string(" [$1]")
+    _KindColor = ForegroundColor.fgCyan
+    _ErrorTitle = string("Error: ")
+    _ErrorColor = ForegroundColor.fgRed
+    _WarningTitle = string("Warning: ")
+    _WarningColor = ForegroundColor.fgYellow
+    _HintTitle = string("Hint: ")
+    _HintColor = ForegroundColor.fgGreen
     # NOTE: currently line info line numbers start with 1,
     # but column numbers start with 0, however most editors expect
     # first column to be 1, so we need to +1 here
@@ -451,7 +451,7 @@ def toFileLineCol(conf: ConfigRef, info: TLineInfo) -> string:
 
 
 # TODO: requires nimic feature `$` with two parameters (G13): proc `$`*(conf: ConfigRef; info: TLineInfo): string
-def lineInfoToStr(conf: ConfigRef, info: TLineInfo) -> string:
+def _lineInfoToStr(conf: ConfigRef, info: TLineInfo) -> string:
     return toFileLineCol(conf, info)
 
 
@@ -686,9 +686,9 @@ def _getSurroundingSrc(conf: ConfigRef, info: TLineInfo) -> string:
 def formatMsg(conf: ConfigRef, info: TLineInfo, msg: TMsgKind, arg: string) -> string:
     # TODO: requires nimic feature case expressions in a `let` (G15): `let title = case msg of warnMin..warnMax: ...`
     with let:
-        title = (WarningTitle if msg in inrange(warnMin, warnMax)
-                 else HintTitle if msg in inrange(hintMin, hintMax)
-                 else ErrorTitle)
+        title = (_WarningTitle if msg in inrange(warnMin, warnMax)
+                 else _HintTitle if msg in inrange(hintMin, hintMax)
+                 else _ErrorTitle)
     return toFileLineCol(conf, info) + string(" ") + title + _getMessageStr(msg, arg)
 
 
@@ -714,8 +714,8 @@ def liMessage(conf: ConfigRef, info: TLineInfo, msg: TMsgKind, arg: string,
         case _ if msg in inrange(errMin, errMax):
             sev = Severity.Error
             _writeContext(conf, info)
-            title = ErrorTitle
-            color = ErrorColor
+            title = _ErrorTitle
+            color = _ErrorColor
             if comptime(False):
                 # we try to filter error messages so that not two error message
                 # in the same file and line are produced:
@@ -727,11 +727,11 @@ def liMessage(conf: ConfigRef, info: TLineInfo, msg: TMsgKind, arg: string,
             sev = Severity.Warning
             ignoreMsg = not conf.hasWarn(msg)
             if not ignoreMsg and msg in conf.warningAsErrors:
-                title = ErrorTitle
-                color = ErrorColor
+                title = _ErrorTitle
+                color = _ErrorColor
             else:
-                title = WarningTitle
-                color = WarningColor
+                title = _WarningTitle
+                color = _WarningColor
             if not ignoreMsg:
                 _writeContext(conf, info)
             conf.warnCounter += 1
@@ -739,11 +739,11 @@ def liMessage(conf: ConfigRef, info: TLineInfo, msg: TMsgKind, arg: string,
             sev = Severity.Hint
             ignoreMsg = not conf.hasHint(msg)
             if not ignoreMsg and msg in conf.warningAsErrors:
-                title = ErrorTitle
-                color = ErrorColor
+                title = _ErrorTitle
+                color = _ErrorColor
             else:
-                title = HintTitle
-                color = HintColor
+                title = _HintTitle
+                color = _HintColor
             conf.hintCounter += 1
 
     with let:
@@ -753,7 +753,7 @@ def liMessage(conf: ConfigRef, info: TLineInfo, msg: TMsgKind, arg: string,
             loc = toFileLineCol(conf, info) + string(" ") if info != unknownLineInfo else string("")
         # we could also show `conf.cmdInput` here for `projectIsCmd`
         with var:
-            kindmsg = KindFormat % kind if kind.len > 0 else string("")
+            kindmsg = _KindFormat % kind if kind.len > 0 else string("")
         if conf.structuredErrorHook is not None:
             conf.structuredErrorHook(conf, info, s + kindmsg, sev)
         if not _ignoreMsgBecauseOfIdeTools(conf, msg):
@@ -768,7 +768,7 @@ def liMessage(conf: ConfigRef, info: TLineInfo, msg: TMsgKind, arg: string,
                     # TODO: requires nimic feature macros (G17): styledMsgWriteln(styleBright, toFileLineCol(info2),
                     #   resetStyle, " compiler msg initiated here", KindColor, KindFormat % $hintMsgOrigin, resetStyle, conf.unitSep)
                     _styledMsgWriteln(conf, toFileLineCol(info2) + string(" compiler msg initiated here") +
-                                      KindFormat % string(str(TMsgKind.hintMsgOrigin)) + conf.unitSep)
+                                      _KindFormat % string(str(TMsgKind.hintMsgOrigin)) + conf.unitSep)
     if not ignoreError:
         _handleError(conf, msg, eh, s, ignoreMsg)
     if msg in fatalMsgs:
@@ -1050,7 +1050,7 @@ if comptime(__name__ == "__main__"):
         doAssert(toFilenameOption(conf, idx, FilenameOption.foStacktrace) == string("/path/to/mock.nim"))
         doAssert(toMsgFilename(conf, li) == toFilenameOption(conf, idx, conf.filenameOption))
         doAssert(toFileLineCol(conf, li) == toMsgFilename(conf, idx) + string("(10, 6)"))
-        doAssert(lineInfoToStr(conf, li) == toFileLineCol(conf, li))
+        doAssert(_lineInfoToStr(conf, li) == toFileLineCol(conf, li))
         doAssert(quotedFilename(conf, li) == string("\"/path/to/mock.nim\""))
         doAssert(quotedFilename(conf, InvalidFileIdx) == string("\"\\?\\?\\?\""))
 

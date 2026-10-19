@@ -38,8 +38,8 @@ class PIdent(TIdent):
 
 @ref
 class IdentCache(Object):
-    buckets: array[8192, PIdent]
-    wordCounter: nint
+    _buckets: array[8192, PIdent]
+    _wordCounter: nint
     idAnon: PIdent
     idDelegator: PIdent
     emptyIdent: PIdent
@@ -89,16 +89,16 @@ def _cmpExact(a: cstring, b: cstring, blen: nint) -> nint:
 @dispatch
 def getIdent(ic: IdentCache, identifier: cstring, length: nint, h: Hash) -> PIdent:
     with var:
-        idx = nint(h) & high(ic.buckets)
-        res = ic.buckets[idx]
+        idx = nint(h) & high(ic._buckets)
+        res = ic._buckets[idx]
         last: PIdent = None
         id = 0
     while res is not None:
         if _cmpExact(cstring(res.s), identifier, length) == 0:
             if last is not None:
                 last.next = res.next
-                res.next = ic.buckets[idx]
-                ic.buckets[idx] = res
+                res.next = ic._buckets[idx]
+                ic._buckets[idx] = res
             return res
         elif cmpIgnoreStyle(cstring(res.s), identifier, length) == 0:
             assert (id == 0) or (id == res.id)
@@ -110,12 +110,12 @@ def getIdent(ic: IdentCache, identifier: cstring, length: nint, h: Hash) -> PIde
         new_res = PIdent(
             h=h,
             s=substr(str(identifier), 0, length - 1),
-            next=ic.buckets[idx]
+            next=ic._buckets[idx]
         )
-    ic.buckets[idx] = new_res
+    ic._buckets[idx] = new_res
     if id == 0:
-        ic.wordCounter += 1
-        new_res.id = -ic.wordCounter
+        ic._wordCounter += 1
+        new_res.id = -ic._wordCounter
     else:
         new_res.id = id
     return new_res
@@ -129,9 +129,9 @@ def getIdent(ic: IdentCache, identifier: string, h: Hash) -> PIdent:
     return getIdent(ic, cstring(identifier), len(identifier), h)
 
 def newIdentCache() -> IdentCache:
-    result = IdentCache(wordCounter=0)
+    result = IdentCache(_wordCounter=0)
     result.idAnon = getIdent(result, string(":anonymous"))
-    result.wordCounter = 1
+    result._wordCounter = 1
     result.idDelegator = getIdent(result, string(":delegator"))
     result.emptyIdent = getIdent(result, string(""))
     for s in inrange(succ(low(TSpecialWord)), high(TSpecialWord)):

@@ -19,15 +19,15 @@ from nimic.ntypes import *
 if comptime(defined("nimPreviewSlimSystem")):
     from nimic.std.assertions import *
 
-class ElemType(byte): pass
-class TBitSet(seq[ElemType]): pass    # we use byte here to avoid issues with
+class _ElemType(byte): pass
+class TBitSet(seq[_ElemType]): pass    # we use byte here to avoid issues with
                                       # cross-compiling; uint would be more efficient
                                       # however
 
 with const:
     ElemSize = 8
-    _one = ElemType(1)
-    _zero = ElemType(0)
+    _one = _ElemType(1)
+    _zero = _ElemType(0)
 
 @template
 def _modElemSize(arg: untyped) -> untyped:

@@ -22,9 +22,9 @@ if comptime(defined("nimPreviewSlimSystem")):
 
 with const:
     # support `useGnuReadline`, `useLinenoise` for backwards compatibility
-    hasRstdin = (defined("nimUseLinenoise") or defined("useLinenoise") or defined("useGnuReadline")) and not defined("windows")
+    _hasRstdin = (defined("nimUseLinenoise") or defined("useLinenoise") or defined("useGnuReadline")) and not defined("windows")
 
-if comptime(hasRstdin):
+if comptime(_hasRstdin):
     from nimic.std.rdstdin import *
 
 @calltype
@@ -186,7 +186,7 @@ def llStreamOpen(filename: AbsoluteFile, mode: FileMode) -> PLLStream:
 def llStreamOpen() -> PLLStream:
     return PLLStream(kind=TLLStreamKind.llsNone)
 
-def countTriples(s: string) -> nint:
+def _countTriples(s: string) -> nint:
     with var:
         result = 0
         i = 0
@@ -209,10 +209,10 @@ def endsWith(x: string, s: set[char]) -> bool:
     return result
 
 with const:
-    LineContinuationOprs = Tset[char]({ch('+'), ch('-'), ch('*'), ch('/'), ch('\\'), ch('<'), ch('>'), ch('!'), ch('?'), ch('^'),
+    _LineContinuationOprs = Tset[char]({ch('+'), ch('-'), ch('*'), ch('/'), ch('\\'), ch('<'), ch('>'), ch('!'), ch('?'), ch('^'),
                             ch('|'), ch('%'), ch('&'), ch('$'), ch('@'), ch('~'), ch(',')})
-    AdditionalLineContinuationOprs = Tset[char]({ch('#'), ch(':'), ch('=')})
-    LineContinuationTokens = array[22, string]([
+    _AdditionalLineContinuationOprs = Tset[char]({ch('#'), ch(':'), ch('=')})
+    _LineContinuationTokens = array[22, string]([
         string("let"), string("var"), string("const"), string("type"),  # section
         string("object"), string("tuple"),
         # from ./layouter.oprSet
@@ -220,28 +220,28 @@ with const:
         string("isnot"), string("not"), string("of"), string("as"), string("from"), string(".."), string("and"), string("or"), string("xor"),
     ])  # must be all `nimIdentNormalized`-ed
 
-def eqIdent(a: string, bNormalized: string) -> bool:
+def _eqIdent(a: string, bNormalized: string) -> bool:
     return nimIdentNormalize(a) == bNormalized
 
 @dispatch
-def endsWithIdent(s: string, subs: string) -> bool:
+def _endsWithIdent(s: string, subs: string) -> bool:
     with let:
         le = len(subs)
     if le > len(s): return False
-    return eqIdent(s[len(s) - le : len(s)], subs)
+    return _eqIdent(s[len(s) - le : len(s)], subs)
 
-def continuesWithIdent(s: string, subs: string, start: nint) -> bool:
-    return eqIdent(substr(s, start, start + len(subs) - 1), subs)
+def _continuesWithIdent(s: string, subs: string, start: nint) -> bool:
+    return _eqIdent(substr(s, start, start + len(subs) - 1), subs)
 
 @dispatch
-def endsWithIdent(s: string, subs: string, endIdx: mut@nint) -> bool:
+def _endsWithIdent(s: string, subs: string, endIdx: mut@nint) -> bool:
     endIdx -= len(subs)
     with var:
-        result = continuesWithIdent(s, subs, endIdx + 1)
+        result = _continuesWithIdent(s, subs, endIdx + 1)
     return result
 
 @template_expand
-def containsObjectOf(x: string) -> bool:
+def _containsObjectOf(x: string) -> bool:
     with const:
         sep = ch(' ')
     with var:
@@ -252,7 +252,7 @@ def containsObjectOf(x: string) -> bool:
     @template
     def eatWord(word: untyped):
         while x[idx] == sep: idx -= 1
-        result = endsWithIdent(x, word, idx)
+        result = _endsWithIdent(x, word, idx)
         if not result: return
 
     eatWord(string("of"))
@@ -260,33 +260,33 @@ def containsObjectOf(x: string) -> bool:
     result = True
     return result
 
-def endsWithLineContinuationToken(x: string) -> bool:
+def _endsWithLineContinuationToken(x: string) -> bool:
     with var:
         result = False
-    for tok in LineContinuationTokens:
-        if endsWithIdent(x, tok):
+    for tok in _LineContinuationTokens:
+        if _endsWithIdent(x, tok):
             return True
-    result = containsObjectOf(x)
+    result = _containsObjectOf(x)
     return result
 
 def endsWithOpr(x: string) -> bool:
     with var:
-        result = endsWith(x, LineContinuationOprs)
+        result = endsWith(x, _LineContinuationOprs)
     return result
 
-def continueLine(line: string, inTripleString: bool) -> bool:
+def _continueLine(line: string, inTripleString: bool) -> bool:
     """{.inline.}"""
     with var:
         result = inTripleString or (len(line) > 0 and (
             line[0] == ch(' ') or
-            endsWith(line, LineContinuationOprs + AdditionalLineContinuationOprs) or
-            endsWithLineContinuationToken(line)
+            endsWith(line, _LineContinuationOprs + _AdditionalLineContinuationOprs) or
+            _endsWithLineContinuationToken(line)
         ))
     return result
 
 if comptime(not declared("readLineFromStdin")):
     # fallback implementation:
-    def readLineFromStdin(prompt: string, line: mut@string) -> bool:
+    def _readLineFromStdin(prompt: string, line: mut@string) -> bool:
         stdout.write(prompt)
         stdout.flushFile()
         with var:
@@ -296,7 +296,7 @@ if comptime(not declared("readLineFromStdin")):
             quit(0)
         return result
 
-def llReadFromStdin(s: PLLStream, buf: pointer, bufLen: nint) -> nint:
+def _llReadFromStdin(s: PLLStream, buf: pointer, bufLen: nint) -> nint:
     s.s = string("")
     s.rd = 0
     with var:
@@ -304,13 +304,13 @@ def llReadFromStdin(s: PLLStream, buf: pointer, bufLen: nint) -> nint:
         triples = 0
         result = 0
     while True:
-        if not readLineFromStdin(string(">>> ") if len(s.s) == 0 else string("... "), line):
+        if not _readLineFromStdin(string(">>> ") if len(s.s) == 0 else string("... "), line):
             # now readLineFromStdin meets EOF (ctrl-D/Z) or ctrl-C
             quit()
         s.s.add(line)
         s.s.add(string("\n"))
-        triples += countTriples(line)
-        if not continueLine(line, (triples & 1) == 1): break
+        triples += _countTriples(line)
+        if not _continueLine(line, (triples & 1) == 1): break
     s.lineOffset += 1
     result = min(bufLen, len(s.s) - s.rd)
     if result > 0:
@@ -318,7 +318,7 @@ def llReadFromStdin(s: PLLStream, buf: pointer, bufLen: nint) -> nint:
         s.rd += result
     return result
 
-def llStreamOpenStdIn(r: TLLRepl = llReadFromStdin, onPrompt: OnPrompt = None) -> PLLStream:
+def llStreamOpenStdIn(r: TLLRepl = _llReadFromStdin, onPrompt: OnPrompt = None) -> PLLStream:
     return PLLStream(kind=TLLStreamKind.llsStdIn, s=string(""), lineOffset=-1, repl=r, onPrompt=onPrompt)
 
 
@@ -326,12 +326,12 @@ if comptime(__name__ == "__main__"):
     from nimic.std.os import removeFile, fileExists
 
     # 0. containsObjectOf: a line ending in `object of` (the template eatWord walks back over words)
-    assert containsObjectOf(string("T = object of ")) == True
-    assert containsObjectOf(string("T = object  of  ")) == True
-    assert containsObjectOf(string("T = obj of ")) == False
-    assert containsObjectOf(string("T = object in ")) == False
-    assert containsObjectOf(string("x")) == False
-    assert endsWithLineContinuationToken(string("type T = object of ")) == True
+    assert _containsObjectOf(string("T = object of ")) == True
+    assert _containsObjectOf(string("T = object  of  ")) == True
+    assert _containsObjectOf(string("T = obj of ")) == False
+    assert _containsObjectOf(string("T = object in ")) == False
+    assert _containsObjectOf(string("x")) == False
+    assert _endsWithLineContinuationToken(string("type T = object of ")) == True
 
     # 1. Null stream
     with var:
@@ -412,16 +412,16 @@ if comptime(__name__ == "__main__"):
     s_stdin.llStreamClose()
 
     # 6. Helpers
-    assert countTriples(string('"""hello"""')) == 2
-    assert countTriples(string('""hello""')) == 0
-    assert endsWith(string("x + "), LineContinuationOprs) == True
-    assert endsWith(string("x ; "), LineContinuationOprs) == False
+    assert _countTriples(string('"""hello"""')) == 2
+    assert _countTriples(string('""hello""')) == 0
+    assert endsWith(string("x + "), _LineContinuationOprs) == True
+    assert endsWith(string("x ; "), _LineContinuationOprs) == False
     assert endsWithOpr(string("a +")) == True
     assert endsWithOpr(string("a ;")) == False
-    assert continueLine(string("  indent"), False) == True
-    assert continueLine(string("foo ="), False) == True
-    assert continueLine(string("foo"), False) == False
-    assert continueLine(string("foo"), True) == True
+    assert _continueLine(string("  indent"), False) == True
+    assert _continueLine(string("foo ="), False) == True
+    assert _continueLine(string("foo"), False) == False
+    assert _continueLine(string("foo"), True) == True
 
     # 7. File stream read/write
     with var:
