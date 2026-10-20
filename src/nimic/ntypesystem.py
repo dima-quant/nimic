@@ -450,6 +450,7 @@ def _specialize_generic(fn: callable, T_var: dict[str, str]) -> callable:
 
 
 def autorename(x: object) -> str:
+    x = _n_uncell(x)  # a cell dispatches as its value
     if isinstance(x, NilPtr):
         return x._n_type_name
     if isinstance(x, tuple) and not isinstance(x, NTuple):
@@ -692,6 +693,7 @@ def _n_union_type_class(ann: str, namespace: dict) -> str:
 def _n_value_copy(value):
     """Nim assignment semantics for a field value: value types (string, seq, set, array, non-ref
     objects) are copied, refs, pointers, procs and scalars are shared."""
+    value = _n_uncell(value)  # a variable's cell stores its value
     if value is None or getattr(type(value), "_n_is_ref", False) or callable(value) and not hasattr(value, "copy"):
         return value
     if isinstance(value, (string, seq, Tset, array, _Object)) and callable(getattr(value, "copy", None)):
@@ -1629,11 +1631,23 @@ class Ntype:
 # --- Integer Enums (NIntEnum) ---
 
 
+def _n_enum_ilshift(self, other):
+    """`x <<= v` on an enum member (a `var` parameter holding one): Python can't change the caller's
+    variable, so it must be a cell (`with var: x = cell(E.a)`); without one, `<<=` would shift."""
+    raise TypeError(f"{type(self).__name__}.{self.name} is an immutable enum member: the variable passed "
+                    f"as `var` must be a cell, `with var: x = cell({type(self).__name__}.{self.name})`")
+
+
 class NIntEnum(IntEnum):
     @staticmethod
     def _generate_next_value_(name, start, count, last_values):
         """auto(): a Nim enum counts from 0, each member one more than the previous one."""
         return last_values[-1] + 1 if last_values else 0
+
+    __ilshift__ = _n_enum_ilshift
+
+    def _n_cell(self) -> NCell:
+        return NCell(self)
 
     def __str__(self) -> str:
         """Nim `$` of an enum member: its name."""
@@ -1704,6 +1718,11 @@ class NStrEnum(StrEnum):
     @staticmethod
     def _generate_next_value_(name, start, count, last_values):
         return name  # Nim: `$` of a member without a string value is its name
+
+    __ilshift__ = _n_enum_ilshift
+
+    def _n_cell(self) -> NCell:
+        return NCell(self)
 
     def __new__(cls, value):
         member = str.__new__(cls, value)
@@ -1824,6 +1843,59 @@ class NStrEnum(StrEnum):
         return super().__ge__(other)
 
 
+
+class NCell:
+    """A variable holding an immutable Python value that has no nimic cell type (an enum member), for
+    passing it as a Nim `var` parameter: `with var: res = cell(TSystemOS.osEmbedded)`, and the callee
+    assigns with `res <<= v` (as nint is the cell of a Nim int and nbool of a bool). It dispatches,
+    compares, hashes, indexes, prints and matches as its value; storing it in a field, seq or array
+    stores the value (_n_value_copy). Transpiles to the value (rule:cell)."""
+
+    def __init__(self, value: object) -> None:
+        self._n_cell = value
+
+    def _n_get_value(self) -> object:
+        return self._n_cell
+
+    def __ilshift__(self, other: object) -> NCell:
+        self._n_cell = other._n_cell if isinstance(other, NCell) else other
+        return self
+
+    def copy(self) -> NCell:
+        return NCell(self._n_cell)
+
+    def __getattr__(self, name: str) -> object:
+        if name == "_n_cell":
+            raise AttributeError(name)
+        return getattr(self._n_cell, name)  # name, value, ord(), ...
+
+    def __eq__(self, other): return self._n_cell == _n_uncell(other)
+    def __ne__(self, other): return self._n_cell != _n_uncell(other)
+    def __lt__(self, other): return self._n_cell < _n_uncell(other)
+    def __le__(self, other): return self._n_cell <= _n_uncell(other)
+    def __gt__(self, other): return self._n_cell > _n_uncell(other)
+    def __ge__(self, other): return self._n_cell >= _n_uncell(other)
+    def __hash__(self): return hash(self._n_cell)
+    def __int__(self): return int(self._n_cell)
+    def __index__(self): return operator.index(self._n_cell)
+    def __str__(self): return str(self._n_cell)
+    def __format__(self, spec): return format(self._n_cell, spec)
+    def __repr__(self): return f"cell({self._n_cell!r})"
+
+
+def _n_uncell(x: object) -> object:
+    """The value of a cell, any other value unchanged."""
+    return x._n_cell if isinstance(x, NCell) else x
+
+
+def cell(value: object) -> NCell:
+    """A mutable variable of an immutable value with no nimic cell type, for a Nim `var` parameter (see
+    NCell); for ints, bools and floats the cells are nint, nbool and float64."""
+    make = getattr(type(value), "_n_cell", None)
+    if make is None:
+        raise TypeError(f"cell(): {type(value).__name__} has its own cell type or none is needed "
+                        f"(Nim int: nint(x), bool: nbool(x), float: float64(x))")
+    return make(value)
 
 
 def succ(item, n: int = 1):
@@ -3218,6 +3290,7 @@ class array(Ntype):
 
     @staticmethod
     def _n_normalize_index(index: object) -> int:
+        index = _n_uncell(index)
         if isinstance(index, NStrEnum):
             cls = index.__class__
             if cls.__n_members_tuple__ is None:

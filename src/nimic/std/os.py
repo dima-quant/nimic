@@ -9,7 +9,7 @@ from sys import stdout, stderr
 import sys
 from io import TextIOWrapper
 from enum import Enum
-from nimic.ntypes import char, string, dispatch, defined
+from nimic.ntypes import char, string, dispatch, defined, ufcs
 from nimic.ntypesystem import _n_os_arg, _n_os_result
 
 from nimic.std.syncio import read_file, read_file_bytes, write_buffer, set_file_pos, open
@@ -148,9 +148,18 @@ def getAppDir() -> string:
 import os.path
 import shutil
 
+@ufcs(string)
 @dispatch
 def isAbsolute(path: string) -> bool:
     return os.path.isabs(str(path))
+
+
+@ufcs(string)
+def absolutePath(path: string, root: string | None = None) -> string:
+    """Nim: os.absolutePath — `path` if it is absolute, else `root / path` (root: the current directory)."""
+    if isAbsolute(path):
+        return string(path)
+    return string(_os.path.join(str(root if root is not None else getCurrentDir()), str(path)))
 
 class _SplitFileTuple(tuple):
     @property
@@ -173,6 +182,7 @@ class _SplitPathTuple(tuple):
         return self[1]
 
 
+@ufcs(string)
 def splitPath(path: string) -> _SplitPathTuple:
     """Nim: splitPath — (head, tail) at the last separator (POSIX); head of "/x" is "/"."""
     p = str(path)
@@ -186,6 +196,7 @@ def splitPath(path: string) -> _SplitPathTuple:
     return _SplitPathTuple((string(""), string(p)))
 
 
+@ufcs(string)
 @dispatch
 def splitFile(path: string) -> _SplitFileTuple:
     d, f = os.path.split(str(path))
@@ -194,6 +205,7 @@ def splitFile(path: string) -> _SplitFileTuple:
 
 split_file = splitFile
 
+@ufcs(string)
 def relativePath(path: string, base: string = string("."), sep: char = DirSep) -> string:
     res = os.path.relpath(_n_os_arg(path), _n_os_arg(base))  # resolves against the cwd
     if str(sep) != _os.sep:
@@ -218,6 +230,7 @@ def _normExt(ext: string) -> string:
     return string(e if e == "" or e[0] == "." else "." + e)
 
 
+@ufcs(string)
 @dispatch
 def changeFileExt(filename: string, ext: string) -> string:
     """Nim: os.changeFileExt — replaces the extension found by searchExtPos (or adds one); an empty
@@ -227,6 +240,7 @@ def changeFileExt(filename: string, ext: string) -> string:
         return string(str(filename) + str(_normExt(ext)))
     return string(str(filename)[:ext_pos] + str(_normExt(ext)))
 
+@ufcs(string)
 @dispatch
 def addFileExt(filename: string, ext: string) -> string:
     """Nim: os.addFileExt — adds `ext` unless `filename` has an extension; an empty `ext` adds nothing."""
@@ -234,15 +248,18 @@ def addFileExt(filename: string, ext: string) -> string:
         return string(filename)
     return string(str(filename) + str(_normExt(ext)))
 
+@ufcs(string)
 @dispatch
 def removeFile(file: string) -> None:
     if os.path.exists(_n_os_arg(file)):
         _os.remove(_n_os_arg(file))
 
+@ufcs(string)
 @dispatch
 def fileExists(file: string) -> bool:
     return os.path.isfile(_n_os_arg(file))
 
+@ufcs(string)
 @dispatch
 def dirExists(dir: string) -> bool:
     return os.path.isdir(_n_os_arg(dir))
@@ -268,15 +285,18 @@ def cmpPaths(pathA: string, pathB: string) -> int:
     elif a > b: return 1
     else: return 0
 
+@ufcs(string)
 @dispatch
 def extractFilename(path: string) -> string:
     return string(os.path.basename(str(path)))
 
+@ufcs(string)
 @dispatch
 def lastPathPart(path: string) -> string:
     s = str(path).rstrip('/\\')
     return string(os.path.basename(s))
 
+@ufcs(string)
 @dispatch
 def quoteShell(path: string) -> string:
     return string(_shlex.quote(str(path)))
@@ -296,6 +316,7 @@ def findExe(exe: string) -> string:
 
 find_exe = findExe
 
+@ufcs(string)
 @dispatch
 def parentDir(path: string) -> string:
     s = str(path)

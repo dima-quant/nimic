@@ -119,6 +119,8 @@ from nimic.ntypesystem import (
     low,
     nint,
     nbool,
+    cell,
+    NCell,
     uint,
     SomeInteger,
     SomeSignedInt,

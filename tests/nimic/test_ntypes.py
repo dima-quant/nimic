@@ -26,7 +26,7 @@ from nimic.std.hashes import Hash, hashIgnoreStyle, mix_hash, finish_hash
 from nimic.std.strutils import parseFloat
 from nimic.std.math import classify, fcNegSubnormal, fcNormal, fcSubnormal, trunc
 from nimic.std.options import Option, none, some
-from nimic.std.os import ExeExt, addFileExt, changeFileExt, searchExtPos, fileExists, getCurrentDir, getEnv, walkDir
+from nimic.std.os import ExeExt, absolutePath, addFileExt, changeFileExt, searchExtPos, fileExists, getCurrentDir, getEnv, walkDir
 from nimic.std.parseutils import parse_hex, parse_ident, parseBiggestInt, parseBiggestUInt
 from nimic.std.strscans import scanf
 from nimic.std.strutils import isUpperAscii, find, nimIdentNormalize, repeat, rfind, strip, toLowerAscii
@@ -3311,6 +3311,75 @@ class TestNTypes(unittest.TestCase):
         self.assertIsNotNone(static[nint])
         out = unparse(ast.parse("with static:\n    assert A + B == 32\n"))[0]
         self.assertEqual(out.strip(), "static:\n  assert A + B == 32")
+
+    def test_var_enum_parameter(self):
+        """Nim `var E` of an enum: an enum member is immutable in Python, so the caller's variable is
+        `cell(member)`, which `<<=` changes; it dispatches, compares, indexes, prints and matches as its
+        member, and storing it stores the member. `<<=` on a bare member raises instead of shifting."""
+        class _TOs(NIntEnum):
+            osNone = 0
+            osLinux = auto()
+            osMac = auto()
+
+        class _TTxt(NStrEnum):
+            first = "First"
+            second = "Second"
+
+        @dispatch
+        def _tFind(name: string, res: mut @ _TOs) -> bool:
+            for i in inrange(low(_TOs), high(_TOs)):
+                if str(i) == str(name):
+                    res <<= i
+                    return True
+            return False
+
+        names = array[_TOs, string]([string("none"), string("linux"), string("mac")])
+        with var:
+            r = cell(_TOs.osNone)
+            t = cell(_TTxt.first)
+        self.assertTrue(_tFind(string("osMac"), r))
+        self.assertEqual(r, _TOs.osMac)
+        self.assertEqual(str(r), "osMac")
+        self.assertEqual(str(names[r]), "mac")
+        self.assertEqual(ord(r), 2)
+        self.assertTrue(r > _TOs.osLinux)
+        match r:
+            case _TOs.osMac:
+                matched = True
+            case _:
+                matched = False
+        self.assertTrue(matched)
+        s = seq[_TOs]()
+        s.add(r)
+        r <<= _TOs.osLinux
+        self.assertIs(s[0], _TOs.osMac)
+        self.assertEqual(str(names[r]), "linux")
+        t <<= _TTxt.second
+        self.assertEqual(str(t), "Second")
+        self.assertEqual(array[_TTxt, nint]([1, 2])[t], 2)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            echo(r, "|", t)
+        self.assertEqual(out.getvalue(), "osLinux|Second\n")
+        with self.assertRaises(TypeError):
+            v = _TOs.osNone
+            v <<= _TOs.osMac
+        with self.assertRaises(TypeError):
+            cell(nint(3))
+        out = unparse(ast.parse("with var:\n    r = cell(TSystemOS.osEmbedded)\n"))[0]
+        self.assertNotIn("cell", out)
+        self.assertIn("r* = TSystemOS.osEmbedded", out)
+
+    def test_os_path_procs_method_calls(self):
+        """std/os path procs are also method calls on a string, as nimony writes them
+        (`name.addFileExt(ExeExt)`, `p.isAbsolute`, `p.changeFileExt("html")`); absolutePath."""
+        p = string("a/b.c")
+        self.assertEqual(p.addFileExt(string("x")), addFileExt(p, string("x")))
+        self.assertEqual(p.changeFileExt(string("html")), string("a/b.html"))
+        self.assertFalse(p.isAbsolute())
+        self.assertEqual((p.splitFile().name, p.splitPath().tail, p.parentDir()), (string("b"), string("b.c"), string("a")))
+        self.assertEqual(string("x").absolutePath(string("/r")), string("/r/x"))
+        self.assertEqual(absolutePath(string("/y")), string("/y"))
 
     def test_var_bool_parameter(self):
         """Nim `var bool` (G19): a Python bool can't be changed through a parameter, so the caller's

@@ -97,6 +97,7 @@ Operators & renaming:
     | -> or, ^ -> xor
   rule:lowercasebool -> True -> true, False -> false, "None" -> "nil"
   rule:nint -> the names nint and nbool (nimic's Nim int / mutable Nim bool) are Nim's int and bool
+  rule:cell -> cell(x) (a mutable variable of an enum member, for a `var` parameter) is just x
   rule:funcrename -> rename functions "print" to "echo", "str" to "$"
   rule:stringjoin -> replace "f" by "&"
   rule:literaltypes -> write as type suffix u64(0x9e3779b97f4a7c15) -> 0x9e3779b97f4a7c15'u64
@@ -2690,6 +2691,9 @@ class _Unparser(NodeVisitor):
             self.traverse(node.args[0]) # should be only one argument
             self.write("'")
             self.traverse(node.func)
+        elif isinstance(node.func, Name) and node.func.id == "cell" and len(node.args) == 1 and not node.keywords:
+            # rule:cell -> cell(x), the variable of an enum member passed as `var`, is the value x in Nim
+            self.traverse(node.args[0])
         elif isinstance(node.func, Name) and (node.func.id == "ch" or (
                 node.func.id == "char" and len(node.args) == 1 and isinstance(node.args[0], Constant)
                 and isinstance(node.args[0].value, str) and len(node.args[0].value) == 1)):
