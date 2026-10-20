@@ -48,13 +48,13 @@ Compare `compiler/[filename].nim` against `ncompiler/[filename].py` **line by li
 
 > [!TIP]
 > **When verifying syntax**, use these two authoritative references:
-> 1. **`nimic_translation_rules.md`** (project root) — the definitive mapping for every Nim → Nimic construct.
+> 1. **`nimic_translation_rules_nimony.md`** (project root; for the frozen Nim 2 compiler conversion in `ncompiler/`: `nimic_translation_rules_nim2.md`) — the definitive mapping for every Nim → Nimic construct.
 > 2. **`tests/nraytracer/`** — a working Nimic project with 30+ modules showing correct patterns for `mut @ T`, `@dispatch`, `Tset`, `seq`, `array`, `Object`, `NIntEnum`, `ref[T]`, `ptr[T]`, iterators, templates, etc.
 >
 > If the converted code uses syntax not found in either resource, flag it as a potential issue.
 
 1. **Direct correspondence**: Every Nim construct has a matching Nimic Python expression such that the transpiler can restore equivalent Nim code.
-2. **Translation rules compliance**: All mappings follow `nimic_translation_rules.md`. Check especially:
+2. **Translation rules compliance**: All mappings follow `nimic_translation_rules_nimony.md`. Check especially:
    - No Python builtins used where `nimic.std` equivalents exist
    - No Python idioms replacing Nim loops (no list comprehensions, no `enumerate` replacing `mitems`, etc.)
    - Correct use of `Tset` vs `set`, `nint` vs `int` (verify that Python's built-in `int` is never shadowed, and `nint` is used for Nim's `int` in type annotations, fields, parameters, return types, and explicit casts; int literals like `0`, `1` are allowed), `string` vs `str`
@@ -65,7 +65,7 @@ Compare `compiler/[filename].nim` against `ncompiler/[filename].py` **line by li
    - Correct operator mappings (`and`→`&`, `or`→`|`, `shr`→`>>`, etc.)
    - Correct pointer/memory primitives (`ptr[T]`, `p.contents`, `addr(x)`)
 3. **Completeness**: No Nim code was accidentally skipped or summarized.
-4. **Unity principle** (`nimic_translation_rules.md` §0, one source, one behavior): all code, including tests, is nimic. It runs in Python and transpiles to Nim that behaves the same. Flag any of these violations:
+4. **Unity principle** (`nimic_translation_rules_nimony.md` §0, one source, one behavior): all code, including tests, is nimic. It runs in Python and transpiles to Nim that behaves the same. Flag any of these violations:
    - String formatting that differs from the original. f-strings are Nim's `&"..."` interpolation (`rule:stringjoin`): write them where the original uses `&"..."` or `fmt"..."`, with `from nimic.std.strformat import *` where the original imports `std/strformat`; where it uses `%` (strutils, ropes), keep `%`. Flag an f-string that replaces a `%` or `format` call, and a missing `std/strformat` import. A `bool` inside an f-string prints `True` in Python but `true` in Nim (gap G23), so tests should not print bools through f-strings
    - Python `with open(...) as f:` (must use `open(f, path, mode)`)
    - Python `list` instead of `seq` for typed sequences
@@ -73,7 +73,7 @@ Compare `compiler/[filename].nim` against `ncompiler/[filename].py` **line by li
    - Chained comparisons like `0 <= x <= 10` (must use `x >= 0 and x <= 10`)
    - Python `unittest` / `pytest` in tests
    - Any construct that would not survive transpilation to valid Nim
-5. **`if comptime` mirrors `when`** (`nimic_translation_rules.md` §2.1): list every `comptime(...)` in the converted module and every `when` in the original. Apart from the added test guard `if comptime(__name__ == "__main__"):` they must pair up one to one, with the same conditions and all branches converted. Flag as **High** severity:
+5. **`if comptime` mirrors `when`** (`nimic_translation_rules_nimony.md` §2.1): list every `comptime(...)` in the converted module and every `when` in the original. Apart from the added test guard `if comptime(__name__ == "__main__"):` they must pair up one to one, with the same conditions and all branches converted. Flag as **High** severity:
    - conditions that run different code in Python and Nim (`defined("c")`, `not defined("c")`, `declared(X)` stand-ins, `not (__name__ == "__main__")`)
    - `when` branches dropped, merged, or turned into runtime `if`
    - test code that redefines, rebinds or monkey-patches converted code (`_py_*` copies, `Class.method = ...`, `setattr`, `globals()`), or shadows names the module's imports provide
@@ -103,7 +103,7 @@ Perform the verification of the **entire file** from start to finish. Do not sto
 
 If issues were found in Steps 2–3:
 
-1. Start fixing them one by one, following `nimic_convertion_approach.md` and `nimic_translation_rules.md`. When unsure about correct Nimic syntax for a fix, check `tests/nraytracer/` for working examples.
+1. Start fixing them one by one, following `nimic_convertion_approach.md` and `nimic_translation_rules_nimony.md`. When unsure about correct Nimic syntax for a fix, check `tests/nraytracer/` for working examples.
 2. After each fix, write progress in the review file.
 3. For complex issues with no obvious fix:
    - Present 2–3 possible approaches with pros and cons of each.
@@ -175,7 +175,7 @@ If no core changes were made, write "No core engine changes" in this section.
 
 ## Reference Files
 
-- Translation rules: `nimic_translation_rules.md` (project root)
+- Translation rules: `nimic_translation_rules_nimony.md` (project root)
 - Conversion approach: `nimic_convertion_approach.md` (project root)
 - Feature addition protocol: `nimic_add_feature.md` (project root)
 - Dependency order: `compiler/dep.md`

@@ -11,7 +11,7 @@ When a Nim construct is encountered during conversion that cannot be expressed w
 
 ## When to Use
 
-- A Nim language construct has no mapping in `nimic_translation_rules.md`
+- A Nim language construct has no mapping in `nimic_translation_rules_nimony.md`
 - A required type is missing from `src/nimic/ntypesystem.py`
 - The transpiler (`src/nimic/transpiler.py`) lacks a rule for a needed pattern
 - A `nimic.std` module needs a function/type not yet implemented (note: basic `std` stubs can be created proactively without a proposal — this is for non-trivial additions)
@@ -68,7 +68,7 @@ Identify where the change goes:
 - **Other** (`src/nimic/[file].py`): specify which file
 
 ### 3c. Translation Rule
-If this is a user-facing DSL feature, draft the row for `nimic_translation_rules.md`:
+If this is a user-facing DSL feature, draft the row for `nimic_translation_rules_nimony.md`:
 
 | Nim | Python (Nimic) | Notes |
 |-----|-----------------|-------|
@@ -93,13 +93,13 @@ Once approved, implementation follows `nimic_add_feature.md`:
 1. Add tests to `tests/nimic/test_ntypes.py`
 2. Implement in the identified location (`ntypesystem.py`, `transpiler.py`, etc.)
 3. Verify tests pass: `python -m pytest tests/nimic/test_ntypes.py`
-4. Update `nimic_translation_rules.md` if applicable
+4. Update `nimic_translation_rules_nimony.md` if applicable
 5. Return to the conversion that triggered this proposal and complete it
 
 ## Reference Files
 
 - Feature addition protocol: `nimic_add_feature.md` (project root)
-- Translation rules: `nimic_translation_rules.md` (project root)
+- Translation rules: `nimic_translation_rules_nimony.md` (project root)
 - Type system: `src/nimic/ntypesystem.py`
 - Transpiler: `src/nimic/transpiler.py`
 - Existing tests: `tests/nimic/test_ntypes.py`

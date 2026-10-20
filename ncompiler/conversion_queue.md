@@ -2,13 +2,13 @@
 
 > **Generated** by `python -m ncompiler.tools.dependencies` | **Total modules**: 163 | **Converted**: 36 | **Needs rework**: 1 | **Remaining**: 127
 
-> **Current phase: 1 — front end.** The plan and its reasons: `ncompiler/conversion_plan.md`. Phases and scopes are set in `ncompiler/tools/dependencies.py` (`PHASE`, `PHASE1_TARGETS`, `BLOCKED`, `DEFERRED`).
+> **Frozen as test corpus** (2026-10-20): the work moved to nimony, see `nnimony/conversion_queue.md` and `ncompiler/conversion_plan.md`. The converted modules stay green in verification but are not extended; the phases below are where the Nim 2 conversion stood.
 
 ## Conversion Rules
 
 1. **Convert in phase order, then tier order** — only modules of the current phase, and only when all their dependencies are converted. Blocked and deferred modules are not converted (see below).
 2. **Include files** (`include x` in an includer) depend on everything their includer imports or includes before the include point, so they are placed after those modules (column *Included from*).
-3. **No stubs** unless strictly necessary and no reordering is possible; stand-ins for unconverted dependencies belong to tests only (`nimic_translation_rules.md` §2.1).
+3. **No stubs** unless strictly necessary and no reordering is possible; stand-ins for unconverted dependencies belong to tests only (`nimic_translation_rules_nim2.md` §2.1).
 4. **Missing `nimic.std` modules** can be created proactively.
 5. **Review runs automatically** after every conversion.
 
@@ -18,12 +18,11 @@ Pending modules of the current phase whose dependencies are all converted, small
 
 | Module | Tier | Size | Included from |
 |---|---|---|---|
-| `debugutils` | 4 | 2,192 bytes |  |
-| `astdef` | 4 | 48,591 bytes |  |
+| — | | | none: frozen |
 
 ## Phase 1 — front end
 
-Targets `parser`, `renderer`, `syntaxes`, `astalgo` and their dependencies, plus `debugutils`: 17/28 converted.
+Targets `parser`, `renderer`, `syntaxes`, `astalgo` and their dependencies: 17/27 converted.
 
 | Module | Tier | Size | Missing dependencies | Status |
 |---|---|---|---|---|
@@ -43,7 +42,6 @@ Targets `parser`, `renderer`, `syntaxes`, `astalgo` and their dependencies, plus
 | `nimlexbase` | 2 | 5,417 bytes |  | ✅ Converted |
 | `options` | 3 | 42,863 bytes |  | ✅ Converted |
 | `astdef` | 4 | 48,591 bytes |  | 🔲 Pending |
-| `debugutils` | 4 | 2,192 bytes |  | 🔲 Pending |
 | `msgs` | 4 | 28,370 bytes |  | ✅ Converted (open gaps: G13 `??`, G17 styled output) |
 | `ast` | 5 | 53,120 bytes | astdef | 🔲 Pending |
 | `lexer` | 5 | 48,749 bytes |  | ✅ Converted |
@@ -80,7 +78,7 @@ Nim 2 parts that Nim 3 replaces: not converted. Already converted ones (marked *
 - **Nim 2 VM: replaced in Nim 3** (13 modules, 271,416 bytes): `evalffi`, `macrocacheimpl`, `nimeval`, `scriptconfig`, `vm`, `vmconv`, `vmdef`, `vmdeps`, `vmgen`, `vmhooks`, `vmmarshal`, `vmops`, `vmprofiler`
 - **Nim 2 C backend: replaced by nifc (Phase 3)** (21 modules, 619,491 bytes): `cbuilderbase` *(corpus)*, `cbuilderdecls` *(corpus)*, `cbuilderexprs` *(corpus)*, `cbuilderstmts` *(corpus)*, `ccgcalls`, `ccgexprs`, `ccgliterals` *(corpus)*, `ccgmerge_unused`, `ccgreset` *(corpus)*, `ccgstmts`, `ccgthreadvars` *(corpus)*, `ccgtrav` *(corpus)*, `ccgtypes`, `ccgutils`, `cgen`, `cgendata`, `cgmeth`, `debuginfo`, `extccomp`, `inliner` *(corpus)*, `mangleutils`
 - **Nim 2 JS backend: not targeted** (4 modules, 124,236 bytes): `jsgen`, `jstypes` *(corpus)*, `nodejs` *(corpus)*, `sourcemap` *(corpus)*
-- **Nim 2 driver and tools: decide in Phase 2 (nimony's driver)** (20 modules, 264,507 bytes): `cmdlinehelper`, `commands`, `depends`, `docgen`, `docgen2`, `index`, `layouter`, `main`, `modulegraphs`, `modulepaths`, `modules`, `nim`, `nimconf`, `packages`, `passaux`, `passes`, `pipelines`, `pipelineutils`, `pluginsupport`, `renderverbatim`
+- **Nim 2 driver and tools: decide in Phase 2 (nimony's driver)** (21 modules, 266,699 bytes): `cmdlinehelper`, `commands`, `debugutils`, `depends`, `docgen`, `docgen2`, `index`, `layouter`, `main`, `modulegraphs`, `modulepaths`, `modules`, `nim`, `nimconf`, `packages`, `passaux`, `passes`, `pipelines`, `pipelineutils`, `pluginsupport`, `renderverbatim`
 
 ## Planned (outside compiler/)
 
@@ -190,7 +188,7 @@ Scope: `P1` current phase, `done` converted, `corpus` converted Nim 2 part that 
 |---|---|---|---|---|---|
 | `astdef` | 48,591 bytes | idents, int128, lineinfos, nodekinds, options +1 more |  | P1 | 🔲 Pending |
 | `condsyms` | 6,460 bytes | lineinfos, options |  | done | ✅ Converted |
-| `debugutils` | 2,192 bytes | options |  | P1 | 🔲 Pending |
+| `debugutils` | 2,192 bytes | options |  | deferred | 🔲 Pending |
 | `msgs` | 28,370 bytes | lineinfos, options, pathutils, ropes |  | P1 | ✅ Converted (open gaps: G13 `??`, G17 styled output) |
 
 ### Tier 5 (1/7 converted)

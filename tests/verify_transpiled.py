@@ -16,7 +16,7 @@ Execution verification of converted nimic code: Python run vs transpiled + compi
               and as compiled Nim; outputs must be byte-identical to reference.264 / reference.mp4 in
               tests/nraytracer/ncache/build/rendered_test (local, git-ignored inputs: skipped if absent).
 
-  fidelity    nimic_translation_rules.md §2.1: every `if comptime(X)` of a converted module pairs with a
+  fidelity    nimic_translation_rules_nimony.md §2.1: every `if comptime(X)` of a converted module pairs with a
               `when X` of the original (only the test guard `__name__ == "__main__"` is unpaired), and no
               Python/Nim switches or monkey-patching (`defined("c")`, `setattr`, `globals()[...]`, `_py_*`,
               `Class.attr = proc`).
@@ -24,6 +24,9 @@ Execution verification of converted nimic code: Python run vs transpiled + compi
               directory with ncompiler/nim.cfg, so both use the same build profile); stdout must match.
   imports     each module that is not an include file compiles when imported (`import <m>`), the way its
               users load it.
+  nimony      each converted nimony module nnimony/<path>.py is transpiled into a copy of nimony's src/
+              (the clone next to the project) and type-checked; its tests run in Python, as the compiled
+              transpiled module, and appended to the original nimony module: all three outputs must match.
 
 Modules marked for rework or with open gaps in ncompiler/conversion_queue.md are reported as XFAIL
 (expected failure).
@@ -48,6 +51,14 @@ sys.path[:0] = [str(ROOT / "src"), str(ROOT)]  # this script runs from tests/: n
 from ncompiler.tools.dependencies import dependencies  # noqa: E402
 from nimic import transpiler  # noqa: E402
 SCRATCH = ROOT / ".scratch" / "verify_transpiled"
+# compiler/ imports nimony and checksums as ../dist/...; they are cloned next to the project at the commits pinned
+# in ncompiler/conversion_plan.md (the snapshot's koch.nim) and linked in as SCRATCH/dist/<name>, which the work
+# directories (SCRATCH/compiler, ...) see as ../dist. The project's own dist/ is nimic's wheel output.
+DIST_PINS = {
+    "nimony": (Path(os.environ.get("NIMONY_DIR", ROOT.parent / "nimony")), "3f56467ab15a46746c4f2b33a904809a2ffa0a12"),
+    "checksums": (Path(os.environ.get("CHECKSUMS_DIR", ROOT.parent / "checksums")),
+                  "0b8e46379c5bc1bf73d8b3011908389c60fb9b98"),
+}
 PY = sys.executable
 MODULES = sorted(p.stem for p in (ROOT / "ncompiler").glob("*.py") if p.stem != "__init__")
 HARNESSES = sorted(p.stem for p in (ROOT / "ncompiler" / "tests").glob("test_*.py"))
@@ -174,7 +185,7 @@ def check_modules() -> None:
         report(chk.returncode == 0, f"module {m}", "" if chk.returncode == 0 else first_error(chk), m)
 
 
-# --- fidelity: `if comptime` mirrors `when` (nimic_translation_rules.md §2.1) ---
+# --- fidelity: `if comptime` mirrors `when` (nimic_translation_rules_nimony.md §2.1) ---
 
 def _norm_cond(text: str) -> str:
     text = re.sub(r"\blocal_(?=\w)", "", text)  # a private name `_x` transpiles to local_x
@@ -409,9 +420,86 @@ def check_converters() -> None:
         report(ok, f"{module} Nim == {ref}", "" if nim.returncode == 0 else first_error(nim))
 
 
+NNIMONY = ROOT / "nnimony"
+NIMONY_SRC = DIST_PINS["nimony"][0] / "src"
+
+
+def _nnimony_modules() -> list[str]:
+    """Converted nimony modules, as paths under nimony's src/ (`lib/bitabs`)."""
+    return sorted(p.relative_to(NNIMONY).with_suffix("").as_posix() for p in NNIMONY.rglob("*.py")
+                  if "tools" not in p.relative_to(NNIMONY).parts and p.stem != "__init__")
+
+
+def _with_tests(original: str, transpiled: str) -> str | None:
+    """The original module with the transpiled module's `when isMainModule:` block appended (its tests),
+    or None if it has none. Imports ncode/pydefs for the nimic helpers the tests use."""
+    marker = "\nwhen isMainModule:"
+    if marker not in transpiled:
+        return None
+    return "import ncode/pydefs\n" + original.rstrip("\n") + "\n" + transpiled[transpiled.index(marker):]
+
+
+def check_nimony() -> None:
+    print("== nimony modules (nnimony/): nim check, tests Python vs compiled Nim, vs the original nimony module",
+          flush=True)
+    if not NIMONY_SRC.is_dir():
+        print(f"  note: no nimony clone at {NIMONY_SRC.parent}", flush=True)
+        return
+    conv, orig = SCRATCH / "nimony_conv" / "src", SCRATCH / "nimony_orig" / "src"
+    shutil.copytree(NIMONY_SRC, conv)
+    shutil.copytree(NIMONY_SRC, orig)
+    flags = ["--hints:off", "--warnings:off", "--styleCheck:off", f"--path:{ROOT / 'src/nimic'}"]
+    for key in _nnimony_modules():
+        module = "nnimony." + key.replace("/", ".")
+        tr = run([PY, "-c", TRANSPILE_MODULE, module], ROOT, [ROOT / "src", ROOT])
+        if tr.returncode != 0:
+            report(False, f"nimony module {key}", "transpile: " + first_error(tr), key)
+            continue
+        target = conv / f"{key}.nim"
+        target.write_text(tr.stdout)
+        chk = run(["nim", "check", *flags, target.name], target.parent)
+        report(chk.returncode == 0, f"nimony module {key}", "" if chk.returncode == 0 else first_error(chk), key)
+        py = run([PY, "-m", module], ROOT, [ROOT / "src", ROOT])
+        original = _with_tests((NIMONY_SRC / f"{key}.nim").read_text(), tr.stdout)
+        if original is None:
+            print(f"  SKIP  nimony tests {key}  — no tests", flush=True)
+            continue
+        if py.returncode != 0:
+            report(False, f"nimony tests {key}", "Python: " + first_error(py), key)
+            continue
+        (orig / f"{key}.nim").write_text(original)
+        for what, base in (("tests", conv), ("original", orig)):
+            path = base / f"{key}.nim"
+            exe = base / f"bin_{key.replace('/', '_')}"
+            build = run(["nim", "c", *flags, f"--nimcache:{base / ('cache_' + exe.name)}", f"-o:{exe}", path.name],
+                        path.parent)
+            if build.returncode != 0:
+                report(False, f"nimony {what} {key}", "nim c: " + first_error(build), key)
+                continue
+            nim = run([exe], ROOT)
+            same = nim.returncode == 0 and py.stdout == nim.stdout
+            detail = "" if same else (f"Nim run: exit {nim.returncode}" if nim.returncode else "stdout differs: " + next(
+                (f"py {a!r} / nim {b!r}" for a, b in zip(py.stdout.splitlines(), nim.stdout.splitlines()) if a != b),
+                "different number of lines"))
+            report(same, f"nimony {what} {key}", detail[:200], key)
+
+
+def link_dist() -> None:
+    """Link the pinned clones of nimony and checksums in as SCRATCH/dist/<name>; warn if missing or not at the pin."""
+    (SCRATCH / "dist").mkdir(exist_ok=True)
+    for name, (path, commit) in DIST_PINS.items():
+        if not path.is_dir():
+            print(f"  note: {name} not found at {path}: modules importing ../dist/{name} can't be checked", flush=True)
+            continue
+        head = subprocess.run(["git", "-C", str(path), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        if head != commit:
+            print(f"  warning: {name} at {head[:12]}, pinned {commit[:12]} (ncompiler/conversion_plan.md)", flush=True)
+        (SCRATCH / "dist" / name).symlink_to(path)
+
+
 def main() -> int:
     checks = {"modules": check_modules, "fidelity": check_fidelity, "tests": check_tests, "imports": check_imports,
-              "raytracer": check_raytracer, "converters": check_converters}
+              "raytracer": check_raytracer, "converters": check_converters, "nimony": check_nimony}
     selected = sys.argv[1:] or list(checks)
     unknown = [s for s in selected if s not in checks]
     if unknown:
@@ -419,6 +507,7 @@ def main() -> int:
         return 2
     shutil.rmtree(SCRATCH, ignore_errors=True)
     SCRATCH.mkdir(parents=True)
+    link_dist()
     for name in selected:
         checks[name]()
     print(f"\n{'ALL PASSED' if not failures else f'{len(failures)} FAILED: ' + ', '.join(failures)}")

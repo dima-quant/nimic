@@ -124,7 +124,7 @@ For each change in the diff, answer these questions:
 ## Step 3 — Review Transpiler Changes
 
 > [!TIP]
-> Consult the transpiler header docstring (lines 10–100 of `transpiler.py`) for the existing rule list, and `nimic_translation_rules.md` for the user-facing documentation.
+> Consult the transpiler header docstring (lines 10–100 of `transpiler.py`) for the existing rule list, and `nimic_translation_rules_nimony.md` for the user-facing documentation.
 
 For each transpiler change:
 
@@ -147,7 +147,7 @@ Check transpiler changes for:
 - **Correct precedence** — new operators must have proper precedence entries in `binop_precedence` / `unop_precedence`
 
 ### 3c. Translation Rules Sync
-Verify that any new transpiler capability is documented in `nimic_translation_rules.md`. If not, draft the missing entry.
+Verify that any new transpiler capability is documented in `nimic_translation_rules_nimony.md`. If not, draft the missing entry.
 
 ## Step 4 — Review Type System Changes
 
@@ -290,13 +290,13 @@ Verify all tests pass after implementation.
 
 ### Step C — Document in Translation Rules
 
-If the feature is exposed to the user of the nimic DSL, update `nimic_translation_rules.md` with a new entry in the corresponding section table.
+If the feature is exposed to the user of the nimic DSL, update `nimic_translation_rules_nimony.md` with a new entry in the corresponding section table.
 
 ### Example 1: Adding `test_keyword_dispatch`
 
 1. **Tests**: `test_keyword_dispatch` added to `tests/nimic/test_ntypes.py` — tests positional + named args, out-of-order named args, and bad kwarg errors.
 2. **Implementation**: dispatch logic extended in the `fn_dispatch` subfunction of `src/nimic/ntypesystem.py` to handle non-empty `kwargs` by matching argument names to signature parameters and reordering.
-3. **Rule**: entry added to `nimic_translation_rules.md` table in the *Functions and Arguments* section.
+3. **Rule**: entry added to `nimic_translation_rules_nimony.md` table in the *Functions and Arguments* section.
 
 ### Example 2: Remediating `high()` / `low()` (core review 2026-10-01)
 
@@ -312,7 +312,7 @@ If the feature is exposed to the user of the nimic DSL, update `nimic_translatio
 ## Reference Files
 
 - Feature addition protocol: `nimic_add_feature.md` (project root)
-- Translation rules: `nimic_translation_rules.md` (project root)
+- Translation rules: `nimic_translation_rules_nimony.md` (project root)
 - Conversion approach: `nimic_convertion_approach.md` (project root)
 - Transpiler rules header: `src/nimic/transpiler.py` (lines 10–100)
 - Type system: `src/nimic/ntypesystem.py`

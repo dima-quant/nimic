@@ -34,12 +34,14 @@ OPEN_GAPS = {"msgs": "G13 `??`, G17 styled output"}
 
 # --- the plan (ncompiler/conversion_plan.md): what to convert, phase by phase ---
 PLAN = "ncompiler/conversion_plan.md"
-PHASE = 1  # the current phase
+# 2026-10-20: the work moved to nimony (nnimony/); the converted Nim 2 modules are frozen as test corpus
+FROZEN = True
+PHASE = 1  # the phase the Nim 2 conversion had reached
 PHASE_NAMES = {1: "front end", 2: "NIF libraries and nifler (pinned nimony)", 3: "backends: nifc, LLVM",
                4: "semantic checking: nimony's sem"}
 # Phase 1: these modules and everything they depend on (in the bootstrap build), plus small extras
 PHASE1_TARGETS = ("parser", "renderer", "syntaxes", "astalgo")
-PHASE1_EXTRA = {"debugutils"}
+PHASE1_EXTRA: set[str] = set()
 # modules that can't be converted yet, and why
 BLOCKED = {
     "tccgen": "needs tinyc (a binding of the Tiny C Compiler)",
@@ -65,7 +67,7 @@ DEFERRED = [
      "Nim 2 C backend: replaced by nifc (Phase 3)"),
     (r"jsgen|jstypes|sourcemap|nodejs", "Nim 2 JS backend: not targeted"),
     (r"main|nim|commands|cmdlinehelper|modules|modulegraphs|modulepaths|pipelines|pipelineutils|passes|passaux|"
-     r"depends|docgen\w*|index|nimconf|packages|pluginsupport|layouter|renderverbatim",
+     r"depends|docgen\w*|index|nimconf|packages|pluginsupport|layouter|renderverbatim|debugutils",
      "Nim 2 driver and tools: decide in Phase 2 (nimony's driver)"),
 ]
 # planned conversions that are not part of compiler/
@@ -398,28 +400,34 @@ def write_queue(deps, includer, sizes, tier) -> None:
              f"> **Generated** by `python -m ncompiler.tools.dependencies` | **Total modules**: {len(deps)} | "
              f"**Converted**: {len(done)} | **Needs rework**: {sum(s.startswith('⚠️') for s in statuses.values())} | "
              f"**Remaining**: {len(deps) - len(done)}", "",
-             f"> **Current phase: {PHASE} — {PHASE_NAMES[PHASE]}.** The plan and its reasons: `{PLAN}`. Phases and "
-             "scopes are set in `ncompiler/tools/dependencies.py` (`PHASE`, `PHASE1_TARGETS`, `BLOCKED`, `DEFERRED`).", "",
+             (f"> **Frozen as test corpus** (2026-10-20): the work moved to nimony, see `nnimony/conversion_queue.md` "
+              f"and `{PLAN}`. The converted modules stay green in verification but are not extended; the phases "
+              "below are where the Nim 2 conversion stood." if FROZEN else
+              f"> **Current phase: {PHASE} — {PHASE_NAMES[PHASE]}.** The plan and its reasons: `{PLAN}`. Phases and "
+              "scopes are set in `ncompiler/tools/dependencies.py` (`PHASE`, `PHASE1_TARGETS`, `BLOCKED`, `DEFERRED`)."), "",
              "## Conversion Rules", "",
              "1. **Convert in phase order, then tier order** — only modules of the current phase, and only when all "
              "their dependencies are converted. Blocked and deferred modules are not converted (see below).",
              "2. **Include files** (`include x` in an includer) depend on everything their includer imports or "
              "includes before the include point, so they are placed after those modules (column *Included from*).",
              "3. **No stubs** unless strictly necessary and no reordering is possible; stand-ins for unconverted "
-             "dependencies belong to tests only (`nimic_translation_rules.md` §2.1).",
+             "dependencies belong to tests only (`nimic_translation_rules_nim2.md` §2.1).",
              "4. **Missing `nimic.std` modules** can be created proactively.",
              "5. **Review runs automatically** after every conversion.", "",
              f"## Ready to Convert (Phase {PHASE})", "",
              "Pending modules of the current phase whose dependencies are all converted, smallest first:", "",
              "| Module | Tier | Size | Included from |", "|---|---|---|---|"]
-    ready = sorted((m for m in deps if statuses[m] == "🔲 Pending" and scope[m] == f"P{PHASE}" and deps[m] <= done),
-                   key=lambda m: sizes[m])
+    ready = [] if FROZEN else sorted(
+        (m for m in deps if statuses[m] == "🔲 Pending" and scope[m] == f"P{PHASE}" and deps[m] <= done),
+        key=lambda m: sizes[m])
+    if FROZEN:
+        lines.append("| — | | | none: frozen |")
     for m in ready:
         lines.append(f"| `{m}` | {tier[m]} | {sizes[m]:,} bytes | {includer.get(m, '')} |")
     p1 = sorted(phase1, key=lambda m: (tier[m], m))
     lines += ["", f"## Phase 1 — {PHASE_NAMES[1]}", "",
-              f"Targets {', '.join(f'`{t}`' for t in PHASE1_TARGETS)} and their dependencies, plus "
-              f"{', '.join(f'`{t}`' for t in sorted(PHASE1_EXTRA))}: "
+              f"Targets {', '.join(f'`{t}`' for t in PHASE1_TARGETS)} and their dependencies"
+              + (f", plus {', '.join(f'`{t}`' for t in sorted(PHASE1_EXTRA))}" if PHASE1_EXTRA else "") + ": "
               f"{sum(m in done for m in p1)}/{len(p1)} converted.", "",
               "| Module | Tier | Size | Missing dependencies | Status |", "|---|---|---|---|---|"]
     for m in p1:

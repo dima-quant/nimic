@@ -21,7 +21,7 @@ If the file already exists in `ncompiler/`, re-verify the entire conversion from
 
 1. Open `compiler/[filename].nim` and read the entire file.
 2. Open `compiler/dep.md` and note the dependencies listed for `[filename]`.
-3. Open `nimic_translation_rules.md` from the project root and keep it as your primary reference.
+3. Open `nimic_translation_rules_nimony.md` from the project root and keep it as your primary reference. For a module of the frozen Nim 2 compiler conversion (`ncompiler/`) use `nimic_translation_rules_nim2.md` instead.
 
 ## Step 2 — Translate Line-for-Line
 
@@ -35,11 +35,11 @@ from __future__ import annotations
 from nimic.ntypes import *
 ```
 
-Translate every construct following `nimic_translation_rules.md`. Key rules to remember:
+Translate every construct following `nimic_translation_rules_nimony.md`. Key rules to remember:
 
 > [!TIP]
 > **When unsure about Nimic syntax**, always consult these two resources first:
-> 1. **`nimic_translation_rules.md`** (project root) — the authoritative reference for every Nim → Nimic mapping (variables, types, operators, functions, pointers, enums, etc.).
+> 1. **`nimic_translation_rules_nimony.md`** (project root) — the authoritative reference for every Nim → Nimic mapping (variables, types, operators, functions, pointers, enums, etc.).
 > 2. **`tests/nraytracer/`** — a complete, working Nimic project with 30+ modules demonstrating correct usage patterns for `mut @ T`, `@dispatch`, `Tset`, `seq`, `array`, `Object`, `NIntEnum`, `ref[T]`, `ptr[T]`, iterators, templates, and more.
 >
 > Do **not** guess or invent syntax. If the translation rules don't cover a construct, check nraytracer for a working example. If neither covers it, follow the "Missing Nimic Features" section below.
@@ -65,10 +65,10 @@ Translate every construct following `nimic_translation_rules.md`. Key rules to r
 ### No Python-Mode-Only Code
 
 > [!IMPORTANT]
-> **Unity principle — one source, one behavior** (`nimic_translation_rules.md` §0): all code, including test cases, is nimic. It runs in Python and transpiles to Nim that behaves the same.
+> **Unity principle — one source, one behavior** (`nimic_translation_rules_nimony.md` §0): all code, including test cases, is nimic. It runs in Python and transpiles to Nim that behaves the same.
 > Do not use Python builtins, idioms, or workarounds that would not survive transpilation. Every line runs as Python via `python -m ncompiler.[filename]` **and**, transpiled, as Nim via `nim r`, with the same output. Never write a Python-only or Nim-only version of anything; at a nimic gap, mark a TODO and report it.
 >
-> **`if comptime` must mirror `when`** (`nimic_translation_rules.md` §2.1): every `if comptime(X)` must correspond one to one to a `when X` of the original Nim, with all branches converted (also inactive ones, `when false`, `when true`). The only exception is the added test block `if comptime(__name__ == "__main__"):` with its test scaffolding, which must not redefine, rebind or monkey-patch converted code. Never use a condition to run different code in Python and in Nim (`defined("c")`, `declared(X)` stand-ins, `not (__name__ == "__main__")`, `_py_*` copies): if the conversion seems to need one, nimic lacks a feature, so follow "Missing Nimic Features" below.
+> **`if comptime` must mirror `when`** (`nimic_translation_rules_nimony.md` §2.1): every `if comptime(X)` must correspond one to one to a `when X` of the original Nim, with all branches converted (also inactive ones, `when false`, `when true`). The only exception is the added test block `if comptime(__name__ == "__main__"):` with its test scaffolding, which must not redefine, rebind or monkey-patch converted code. Never use a condition to run different code in Python and in Nim (`defined("c")`, `declared(X)` stand-ins, `not (__name__ == "__main__")`, `_py_*` copies): if the conversion seems to need one, nimic lacks a feature, so follow "Missing Nimic Features" below.
 >
 > Common violations to avoid:
 > - Formatting strings differently from the original. f-strings are Nim's `&"..."` interpolation (`rule:stringjoin`): write them where the original uses `&"..."` or `fmt"..."`, with `from nimic.std.strformat import *` where the original imports `std/strformat`; where it uses `%` (strutils, ropes), keep `%`. Don't print a `bool` through an f-string in tests: Python prints `True`, Nim `true` (gap G23)
@@ -133,7 +133,7 @@ Refer to `src/nimic/ntypesystem.py` for the full type hierarchy and `tests/nrayt
 
 ### Missing Nimic Features
 
-If you encounter a Nim construct that **cannot** be expressed with current Nimic capabilities and is not covered by `nimic_translation_rules.md`:
+If you encounter a Nim construct that **cannot** be expressed with current Nimic capabilities and is not covered by `nimic_translation_rules_nimony.md`:
 
 1. **Do not hack around it** with Python builtins or workarounds.
 2. Instead, create a feature proposal following the `nimic-propose-feature` skill.
@@ -207,7 +207,7 @@ After conversion is complete and **both Python and Nim execution pass**, **autom
 
 ## Reference Files
 
-- Translation rules: `nimic_translation_rules.md` (project root)
+- Translation rules: `nimic_translation_rules_nimony.md` (project root)
 - Feature addition protocol: `nimic_add_feature.md` (project root)  
 - Dependency order: `compiler/dep.md`
 - Downstream consumers: `compiler/dep_tree.md`

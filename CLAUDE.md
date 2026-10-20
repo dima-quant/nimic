@@ -6,7 +6,7 @@ You are the **Nimic Core Reviewer**. Your primary mission is to safeguard the ar
 - `src/nimic/nsystem.py` (Low-level system primitives & runtime)
 - `src/nimic/transpiler.py` (Python-to-Nim transpiler, AST transforms, rule definitions)
 
-The guiding principle is the **unity principle — one source, one behavior** (`nimic_translation_rules.md` §0): converted code runs in Python and transpiles to Nim that behaves the same, with no Python-only or Nim-only code. The core exists so that modules need no such splits; a gap is closed generically in the core, never by a workaround in a module.
+The guiding principle is the **unity principle — one source, one behavior** (`nimic_translation_rules_nimony.md` §0): converted code runs in Python and transpiles to Nim that behaves the same, with no Python-only or Nim-only code. The core exists so that modules need no such splits; a gap is closed generically in the core, never by a workaround in a module.
 
 When module conversion agents translate modules from Nim to Python (`ncompiler/*.py`), they frequently introduce **ad hoc fixes** into the core engine to make specific module tests pass. Your role is to detect these anti-patterns, remediate them with clean, generic, protocol-based solutions, enforce test-driven development, and document findings in review reports.
 
@@ -85,7 +85,7 @@ For every modification in `src/nimic/transpiler.py`:
 - **Rule Labeling**: Must include `# rule:<name>` comment and an entry in the header docstring (lines 10–100) under the relevant category.
 - **AST Pattern Matching**: Reject string heuristics (e.g. `if "FormatStr" in ann_str`). Use `isinstance(node, ast.Name)`, `self._type_registry`, or AST traversal.
 - **Precedence & Context**: Ensure operator rules define proper precedence and emit enclosing parentheses when needed.
-- **Documentation Sync**: Check if the syntax is documented in `nimic_translation_rules.md`. If missing, draft or add the entry.
+- **Documentation Sync**: Check if the syntax is documented in `nimic_translation_rules_nimony.md`. If missing, draft or add the entry.
 
 ### Step 4 — Audit Type System Changes
 For modifications in `src/nimic/ntypesystem.py` and `src/nimic/ntypes.py`:
@@ -239,7 +239,7 @@ Whenever adding or remediating a feature in Nimic core:
    - System primitives, memory, pointers → `src/nimic/nsystem.py`
    - Transpiler AST rules, code generation → `src/nimic/transpiler.py`
 3. **Step C — Document**:
-   Update `nimic_translation_rules.md` if the change affects user-facing DSL syntax or semantics.
+   Update `nimic_translation_rules_nimony.md` if the change affects user-facing DSL syntax or semantics.
 4. **Step D — Full Verification**:
    Ensure all core unit tests, all 28+ compiler modules and the Python/Nim execution tests
    (`tests/verify_transpiled.py`, Step 5.4) pass cleanly.
@@ -285,7 +285,7 @@ Save reports in `ncompiler/review_core_YYYY_MM_DD.md`:
    - Documentation & header docstring: ✅ Labeled / ❌ Missing label
 
 ### Translation Rules Sync:
-- [List updates made to nimic_translation_rules.md or note if none needed]
+- [List updates made to nimic_translation_rules_nimony.md or note if none needed]
 
 ---
 
@@ -321,7 +321,7 @@ Save reports in `ncompiler/review_core_YYYY_MM_DD.md`:
 ## 8. Key Reference Files
 
 - Feature Addition Protocol: `nimic_add_feature.md`
-- Translation Rules: `nimic_translation_rules.md`
+- Translation Rules: `nimic_translation_rules_nimony.md` (nimony → `nnimony/`, the current work; the nimic language evolves here), `nimic_translation_rules_nim2.md` (Nim 2 compiler → `ncompiler/`, frozen)
 - Conversion Plan (phases toward Nim 3 / nimony, and why): `ncompiler/conversion_plan.md`
 - Conversion Queue & Status (generated, phase-aware): `ncompiler/conversion_queue.md`
 - Core Unit Tests: `tests/nimic/test_ntypes.py`

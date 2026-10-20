@@ -4,7 +4,7 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-# Test scaffolding (nimic_translation_rules.md §2.1): the context that cgen.nim gives its include files
+# Test scaffolding (nimic_translation_rules_nim2.md §2.1): the context that cgen.nim gives its include files
 # (cbuilderexprs, cbuilderstmts, ccgthreadvars, ...), for the modules that are not converted yet.
 # Included by the harnesses in ncompiler/tests first; cgen_procs and cgen_stmts
 # follow at their places in cgen.nim's include order. Each section is a subset of the named Nim

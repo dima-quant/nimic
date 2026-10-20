@@ -4,7 +4,7 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-# Test scaffolding (nimic_translation_rules.md §2.1): the procs of cgen.nim and ccgtypes.nim that come after
+# Test scaffolding (nimic_translation_rules_nim2.md §2.1): the procs of cgen.nim and ccgtypes.nim that come after
 # the C builders and before ccgtrav/ccgreset in cgen.nim's include order. Included by the harnesses in
 # ncompiler/tests after cbuilderstmts. Each section is a subset of the named Nim module, line for line
 # unless marked simplified.
