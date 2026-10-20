@@ -34,8 +34,12 @@ COMPONENTS = [
     ("nimony", "semantic checking (nimsem) and the driver", "later"),
 ]
 CURRENT = [c for c, _, state in COMPONENTS if state == "current"]
-# first modules for an agent: small, standard library only (brief: nnimony/brief_lib_first.md)
-AGENT_FIRST = {"lib/stringtrees", "lib/comesfrom", "lib/symparser"}
+# modules given to an agent, by brief (nnimony/<brief>): small, standard library only
+AGENT_BRIEFS = {
+    "brief_lib_first.md": {"lib/stringtrees", "lib/comesfrom", "lib/symparser"},
+    "brief_lib_batch2.md": {"models/tags", "lib/tooldirs", "lib/docpaths", "lib/platform"},
+}
+AGENT = {m: brief for brief, modules in AGENT_BRIEFS.items() for m in modules}
 
 
 def _parts(body: str) -> list[str]:
@@ -125,7 +129,7 @@ def write_queue() -> None:
         lines += ["", f"## Ready to Convert (`src/{component}`)", "",
                   "| Module | Size | Std imports (✗ = no nimic shim yet) | Agent |", "|---|---|---|---|"]
         for k in ready:
-            lines.append(f"| `{k}` | {sizes[k]:,} bytes | {_std_list(std[k])} | {'yes' if k in AGENT_FIRST else ''} |")
+            lines.append(f"| `{k}` | {sizes[k]:,} bytes | {_std_list(std[k])} | {AGENT.get(k, '')} |")
         lines += ["", f"## All modules of `src/{component}` ({len(done)}/{len(deps)} converted)", "",
                   "| Module | Tier | Size | Depends on | Std imports | Status |", "|---|---|---|---|---|---|"]
         for k in sorted(deps, key=lambda k: (tier[k], k)):

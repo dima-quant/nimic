@@ -24,31 +24,28 @@
 
 | Module | Size | Std imports (✗ = no nimic shim yet) | Agent |
 |---|---|---|---|
-| `lib/tooldirs` | 1,265 bytes | os, strutils |  |
+| `lib/tooldirs` | 1,265 bytes | os, strutils | brief_lib_batch2.md |
 | `lib/stringviews` | 2,238 bytes | hashes |  |
 | `lib/nimversion` | 2,742 bytes | syncio |  |
-| `lib/stringtrees` | 2,963 bytes | assertions | yes |
-| `lib/docpaths` | 3,130 bytes | os, strutils |  |
+| `lib/docpaths` | 3,130 bytes | os, strutils | brief_lib_batch2.md |
 | `lib/compat2` | 3,478 bytes | paths, tables |  |
 | `lib/nifroles` | 3,979 bytes |  |  |
 | `lib/argsfinder` | 4,466 bytes | assertions, os, parseopt ✗, strutils, syncio |  |
 | `lib/treemangler` | 5,308 bytes | assertions, formatfloat, hashes, strutils, syncio, tables |  |
 | `lib/lineinfos` | 5,345 bytes | assertions, hashes |  |
-| `lib/comesfrom` | 5,495 bytes |  | yes |
-| `lib/symparser` | 9,123 bytes | assertions | yes |
 | `lib/bitabs` | 10,085 bytes | assertions, hashes |  |
 | `lib/vfs` | 12,960 bytes | atomics ✗, memfiles ✗, os, posix/posix ✗, syncio, times |  |
-| `models/tags` | 13,811 bytes |  |  |
-| `lib/platform` | 16,405 bytes | strutils, syncio |  |
+| `models/tags` | 13,811 bytes |  | brief_lib_batch2.md |
+| `lib/platform` | 16,405 bytes | strutils, syncio | brief_lib_batch2.md |
 | `lib/intrinsics` | 80,220 bytes |  |  |
 
-## All modules of `src/lib` (1/39 converted)
+## All modules of `src/lib` (4/39 converted)
 
 | Module | Tier | Size | Depends on | Std imports | Status |
 |---|---|---|---|---|---|
 | `lib/argsfinder` | 0 | 4,466 bytes |  | assertions, os, parseopt ✗, strutils, syncio | 🔲 Pending |
 | `lib/bitabs` | 0 | 10,085 bytes |  | assertions, hashes | 🔲 Pending |
-| `lib/comesfrom` | 0 | 5,495 bytes |  |  | 🔲 Pending |
+| `lib/comesfrom` | 0 | 5,495 bytes |  |  | ✅ Converted |
 | `lib/compat2` | 0 | 3,478 bytes |  | paths, tables | 🔲 Pending |
 | `lib/docpaths` | 0 | 3,130 bytes |  | os, strutils | 🔲 Pending |
 | `lib/intrinsics` | 0 | 80,220 bytes |  |  | 🔲 Pending |
@@ -56,9 +53,9 @@
 | `lib/nifroles` | 0 | 3,979 bytes |  |  | 🔲 Pending |
 | `lib/nimversion` | 0 | 2,742 bytes |  | syncio | 🔲 Pending |
 | `lib/platform` | 0 | 16,405 bytes |  | strutils, syncio | 🔲 Pending |
-| `lib/stringtrees` | 0 | 2,963 bytes |  | assertions | 🔲 Pending |
+| `lib/stringtrees` | 0 | 2,963 bytes |  | assertions | ✅ Converted |
 | `lib/stringviews` | 0 | 2,238 bytes |  | hashes | 🔲 Pending |
-| `lib/symparser` | 0 | 9,123 bytes |  | assertions | 🔲 Pending |
+| `lib/symparser` | 0 | 9,123 bytes |  | assertions | ✅ Converted |
 | `lib/tinyhashes` | 0 | 817 bytes |  |  | ✅ Converted |
 | `lib/tooldirs` | 0 | 1,265 bytes |  | os, strutils | 🔲 Pending |
 | `lib/treemangler` | 0 | 5,308 bytes |  | assertions, formatfloat, hashes, strutils, syncio, tables | 🔲 Pending |
