@@ -38,8 +38,7 @@ class Builder(Object):
         builder.addNewline()
 
     def addDedent(builder: mut @ Builder, s: string):
-        # Nim: builder.buf[^1] (no nimic spelling for ^1 yet)
-        if builder.buf.len > 0 and builder.buf[builder.buf.len - 1] == ch('\t'):
+        if builder.buf.len > 0 and builder.buf[back(1)] == ch('\t'):
             builder.buf.setLen(builder.buf.len - 1)
         builder.add(s)
         builder.indents -= 1
