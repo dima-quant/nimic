@@ -6,122 +6,10 @@ from nimic.ntypes import *
 
 # Test scaffolding (nimic_translation_rules.md §2.1): the context that cgen.nim gives its include files
 # (cbuilderexprs, cbuilderstmts, ccgthreadvars, ...), for the modules that are not converted yet.
-# Included by the harnesses in ncompiler/tests first; cbuilderdecls_subset, cgen_procs and cgen_stmts
+# Included by the harnesses in ncompiler/tests first; cgen_procs and cgen_stmts
 # follow at their places in cgen.nim's include order. Each section is a subset of the named Nim
 # module; procs are copied line for line where they are used. Converted modules (options, lineinfos, msgs,
-# nodekinds, ropes, std/intsets) are imported by the harness.
-
-# --- int128.nim (subset) ---
-class Int128(Object):
-    udata: array[4, uint32]
-
-    def __str__(self) -> string:
-        # simplified: non-negative values below 2^64
-        return str((uint64(self.udata[1]) << 32) | uint64(self.udata[0]))
-
-
-def toInt128(arg: int64) -> Int128:
-    # simplified: non-negative values below 2^63
-    result = Int128()
-    result.udata[0] = uint32(arg & 0xFFFFFFFF)
-    result.udata[1] = uint32(arg >> 32)
-    return result
-
-
-# --- cbuilderbase.nim (subset) ---
-Snippet = string
-
-
-class Builder(Object):
-    buf: string
-    indents: nint
-
-    def add(self: mut@Builder, s: string) -> None:
-        self.buf.add(s)
-
-    def add(self: mut@Builder, s: char) -> None:
-        self.buf.add(s)
-
-    def addNewline(self: mut@Builder) -> None:
-        self.add(ch("\n"))
-        for i in range(self.indents):
-            self.add(ch("\t"))
-
-    def addLineEnd(self: mut@Builder, s: string) -> None:
-        self.add(s)
-        self.addNewline()
-
-    def addLineEndIndent(self: mut@Builder, s: string) -> None:
-        self.indents += 1
-        self.add(s)
-        self.addNewline()
-
-    def addDedent(self: mut@Builder, s: string) -> None:
-        if len(self.buf) > 0 and self.buf[len(self.buf) - 1] == ch("\t"):
-            self.buf.setLen(len(self.buf) - 1)
-        self.add(s)
-        self.indents -= 1
-
-    def addLineEndDedent(self: mut@Builder, s: string) -> None:
-        self.addDedent(s)
-        self.addNewline()
-
-    def addIntValue(self: mut@Builder, val: nint) -> None:
-        self.buf.add(string(str(val)))
-
-    def addIntValue(self: mut@Builder, val: int64) -> None:
-        self.buf.add(string(str(val)))
-
-    def addIntValue(self: mut@Builder, val: uint64) -> None:
-        self.buf.add(string(str(val)))
-
-    def addIntValue(self: mut@Builder, val: Int128) -> None:
-        self.buf.add(string("Int128"))
-
-
-def newBuilder(s: string) -> Builder:
-    return Builder(buf=s)
-
-
-def extract(builder: Builder) -> Snippet:
-    return builder.buf
-
-
-@dispatch
-def cIntValue(val: nint) -> Snippet:
-    return string(str(val))
-
-
-@dispatch
-def cIntValue(val: int64) -> Snippet:
-    return string(str(val))
-
-
-@dispatch
-def cIntValue(val: Int128) -> Snippet:
-    return string(str(val))
-
-
-class IfBuilderState(NIntEnum):
-    WaitingIf = 0
-    WaitingElseIf = auto()
-    InBlock = auto()
-
-
-class IfBuilder(Object):
-    state: IfBuilderState
-
-
-with const:
-    NimInt = string("NI")
-    NimUint = string("NU")
-    NimChar = string("NIM_CHAR")
-    NimNil = string("NIM_NIL")
-    NimStrlitFlag = string("NIM_STRLIT_FLAG")
-    CVoid = string("void")
-    CPointer = string("void*")
-    CChar = string("char")
-
+# nodekinds, ropes, int128, cbuilderbase, std/intsets) are imported by the harness.
 
 # --- astdef.nim (subset) ---
 class TCallingConvention(NIntEnum):
@@ -174,6 +62,13 @@ class TSymFlag(NIntEnum):
     sfMainModule = auto()
     sfCompileToCpp = auto()
     sfThread = auto()
+    sfPure = auto()
+    sfNoReturn = auto()
+    sfRegister = auto()
+    sfVolatile = auto()
+    sfNoalias = auto()
+    sfCodegenDecl = auto()
+    sfCppNonPod = auto()
 
 
 class TLocFlag(NIntEnum):
@@ -288,6 +183,7 @@ class TTypeFlag(NIntEnum):
     tfExplicit = auto()
     tfWildcard = auto()
     tfHasAsgn = auto()
+    tfUnion = auto()
 
 
 with const:
@@ -368,6 +264,11 @@ class PType(Object):
     def baseClass(self) -> PType:
         return self.sonsImpl[0]
 
+    @property
+    def itemId(self) -> nint:
+        # simplified: the id (an ItemId object in astdef)
+        return self.id
+
     def ikids(self) -> tuple[nint, PType]:
         for i in range(self.len):
             yield (i, self[i])
@@ -392,6 +293,9 @@ class PSym(Object):
     info: TLineInfo
     ast: PNode
     position: nint
+    alignment: nint
+    bitsize: nint
+    constraint: PNode
 
 
 @ref
@@ -400,6 +304,16 @@ class IdGenerator(Object):
     symId: int32
     typeId: int32
     sealed: bool
+
+    def nextSymId(x: IdGenerator) -> nint:
+        # simplified: a number instead of an ItemId
+        x.symId += 1
+        return nint(x.symId)
+
+    def nextTypeId(x: IdGenerator) -> nint:
+        # simplified: a number instead of an ItemId
+        x.typeId += 1
+        return nint(x.typeId)
 
 
 with const:
@@ -413,18 +327,6 @@ with const:
 
 
 # --- ast.nim (subset: the procs the include files use; simplified for the stand-in fields) ---
-def nextSymId(x: IdGenerator) -> nint:
-    # simplified: a number instead of an ItemId
-    x.symId += 1
-    return nint(x.symId)
-
-
-def nextTypeId(x: IdGenerator) -> nint:
-    # simplified: a number instead of an ItemId
-    x.typeId += 1
-    return nint(x.typeId)
-
-
 @dispatch
 def setOwner(s: PSym, owner: PSym) -> None:
     """{.inline.}"""
@@ -439,7 +341,7 @@ def setOwner(s: PType, owner: PSym) -> None:
 
 def newSym(symKind: TSymKind, name: string, idgen: IdGenerator, owner: PSym, info: TLineInfo) -> PSym:
     # simplified: no options, offsets or disambiguation
-    result = PSym(name=name, kind=symKind, info=info, id=nextSymId(idgen), owner=owner)
+    result = PSym(name=name, kind=symKind, info=info, id=idgen.nextSymId(), owner=owner)
     return result
 
 
@@ -455,7 +357,7 @@ def copySym(s: PSym, idgen: IdGenerator) -> PSym:
 
 def newType(kind: TTypeKind, idgen: IdGenerator, owner: PSym) -> PType:
     # simplified: no size, alignment or unique id
-    result = PType(kind=kind, owner=owner, id=nextTypeId(idgen))
+    result = PType(kind=kind, owner=owner, id=idgen.nextTypeId())
     return result
 
 
@@ -595,6 +497,13 @@ def containsGarbageCollectedRef(typ: PType) -> bool:
     return result
 
 
+def lacksMTypeField(typ: PType) -> bool:
+    """{.inline.}"""
+    ## Returns true if the type is an object that lacks a m_type field.
+    ## It doesn't check base classes.
+    return (typ.sym is not None and TSymFlag.sfPure in typ.sym.flags) or TTypeFlag.tfFinal in typ.flags
+
+
 def getSize(conf: ConfigRef, typ: PType) -> BiggestInt:
     # simplified: the size is preset
     return typ.size
@@ -605,10 +514,60 @@ def lengthOrd(conf: ConfigRef, t: PType) -> Int128:
     return toInt128(t.n[1].intVal - t.n[0].intVal + 1)
 
 
+# --- extccomp.nim (subset) ---
+class TInfoCCProp(NIntEnum):  # properties of the C compiler:
+    hasSwitchRange = 0  # CC allows ranges in switch statements (GNU C)
+    hasComputedGoto = auto()  # CC has computed goto (GNU C extension)
+    hasCpp = auto()  # CC is/contains a C++ compiler
+    hasAssume = auto()  # CC has __assume (Visual C extension)
+    hasGcGuard = auto()  # CC supports GC_GUARD to keep stack roots
+    hasGnuAsm = auto()  # CC's asm uses the absurd GNU assembler syntax
+    hasDeclspec = auto()  # CC has __declspec(X)
+    hasAttribute = auto()  # CC has __attribute__((X))
+    hasBuiltinUnreachable = auto()  # CC has __builtin_unreachable
+
+
+TInfoCCProps = Tset[TInfoCCProp]
+
+
+class TInfoCC(NTuple):
+    # simplified: the name and the properties of the compiler
+    name: string
+    props: TInfoCCProps
+
+
+with const:
+    _gccProps = TInfoCCProps({TInfoCCProp.hasSwitchRange, TInfoCCProp.hasComputedGoto, TInfoCCProp.hasCpp,
+                              TInfoCCProp.hasGcGuard, TInfoCCProp.hasGnuAsm, TInfoCCProp.hasAttribute,
+                              TInfoCCProp.hasBuiltinUnreachable})
+    _vccProps = TInfoCCProps({TInfoCCProp.hasCpp, TInfoCCProp.hasAssume, TInfoCCProp.hasDeclspec})
+    # simplified: gcc-like compilers have gcc's properties, Visual C-like ones vcc's
+    CC = array[TSystemCC, TInfoCC]([
+        TInfoCC(name=string("none"), props=TInfoCCProps()),
+        TInfoCC(name=string("gcc"), props=_gccProps),
+        TInfoCC(name=string("switch_gcc"), props=_gccProps),
+        TInfoCC(name=string("llvm_gcc"), props=_gccProps),
+        TInfoCC(name=string("clang"), props=_gccProps),
+        TInfoCC(name=string("bcc"), props=TInfoCCProps({TInfoCCProp.hasSwitchRange, TInfoCCProp.hasComputedGoto,
+                                                        TInfoCCProp.hasCpp, TInfoCCProp.hasGcGuard,
+                                                        TInfoCCProp.hasAttribute})),
+        TInfoCC(name=string("vcc"), props=_vccProps),
+        TInfoCC(name=string("tcc"), props=TInfoCCProps({TInfoCCProp.hasSwitchRange, TInfoCCProp.hasComputedGoto,
+                                                        TInfoCCProp.hasGnuAsm})),
+        TInfoCC(name=string("env"), props=TInfoCCProps({TInfoCCProp.hasGnuAsm})),
+        TInfoCC(name=string("icl"), props=_vccProps),
+        TInfoCC(name=string("icc"), props=_gccProps),
+        TInfoCC(name=string("clang_cl"), props=_vccProps),
+        TInfoCC(name=string("hipcc"), props=_gccProps),
+        TInfoCC(name=string("nvcc"), props=_gccProps),
+    ])
+
+
 # --- modulegraphs.nim, magicsys.nim (subset) ---
 @ref
 class ModuleGraph(Object):
     config: ConfigRef
+    memberProcsPerType: Table[nint, seq[PSym]]  # simplified: keyed by the type id (an ItemId in Nim)
 
 
 def getSysType(g: ModuleGraph, info: TLineInfo, kind: TTypeKind) -> PType:
@@ -755,7 +714,7 @@ class BModule(Object):
 
     @property
     def hcrOn(self) -> bool:
-        return hcrOn(self.config)
+        return self.config.hcrOn()
 
 
 @ref
@@ -774,12 +733,13 @@ class BProc(Object):
         return self.sections[s]
 
 
+
+# a module-level proc, not a method: ccgliterals.genStringLiteralV1 uses `s` itself as a value (`s.isNil`)
 @ufcs(BProc)
 def s(p: BProc, s: TCProcSection) -> mut @ Builder:
     """{.inline.}"""
     # simplified: one block
     return p.sections[s]
-
 
 def newProc(prc: PSym, module: BModule) -> BProc:
     # simplified: no options, one block
@@ -788,6 +748,11 @@ def newProc(prc: PSym, module: BModule) -> BProc:
 
 
 # --- cgen.nim (subset, before the C builders) ---
+def isNoReturn(m: BModule, s: PSym) -> bool:
+    """{.inline.}"""
+    return TSymFlag.sfNoReturn in s.flags and m.config.exc != ExceptionSystem.excGoto
+
+
 def getTempName(m: BModule) -> Rope:
     result = m.tmpBase + rope(m.labels)
     m.labels += 1
