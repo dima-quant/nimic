@@ -156,6 +156,7 @@ translates to
 ```
 `auto()` in a `NIntEnum` counts from 0 like Nim (the first member is 0, each next one more than the previous), so writing the first member `= 0` is not needed; `default(E)` and a zeroed field are the first member.
 An enum with string values (`warnUser = "User"`) is a `NStrEnum`: `$` of an `auto()` member is its name, and members with equal texts (`warnUser = "User", hintUser = "User"`) are distinct members, ordered by declaration.
+A member with an explicit ordinal and text (`Cdecl = (ord(CdeclTagId), "cdecl")`, the tag models) is written the same way in a `NStrEnum`: `Cdecl = (ord(TagEnum.CdeclTagId), "cdecl")`. Ordinals increase strictly and may leave holes. A member without one is the previous ordinal plus one (`"text"`, `auto()`). `ord`, `E(ordinal)`, comparisons and stored fields use the ordinal, and `succ`/iteration follow the declared members. An `NIntEnum` takes explicit values the same way (`a = 2`). As in Nim, an enum with holes is no ordinal type, so it can't index an array (`TypeError`). An array indexed by an enum spans `ord(low)..ord(high)`.
 
 **Types of one type section.** Consecutive classes are one Nim `type` section (methods are written after it), so a field may name a type declared later in the section (`PType.sym: PSym` before `class PSym`): the field resolves when the later type is defined, with that type's zero value (`nil` for a `@ref`).
 

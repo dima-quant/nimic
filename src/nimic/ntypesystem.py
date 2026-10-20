@@ -1649,6 +1649,10 @@ class NIntEnum(IntEnum):
     def _n_cell(self) -> NCell:
         return NCell(self)
 
+    def ord(self) -> int:
+        """Nim ord: the member's value (explicit values may leave holes)."""
+        return int(self)
+
     def __str__(self) -> str:
         """Nim `$` of an enum member: its name."""
         return self.name
@@ -1711,9 +1715,13 @@ class _NEnumText(str):
 
 class NStrEnum(StrEnum):
     """Nim enum whose members have string values: an ordinal enum whose `$` is the text (the member
-    name for auto()). Members are distinct even when their texts are equal."""
+    name for auto()). Members are distinct even when their texts are equal. A member may also give
+    its ordinal, Nim's `Cdecl = (ord(CdeclTagId), "cdecl")`: `Cdecl = (ord(TagEnum.CdeclTagId),
+    "cdecl")`; ordinals increase strictly and may leave holes, and a member without one is the
+    previous member's ordinal plus one (the first: 0)."""
     __n_members_tuple__ = None
     __n_indices__ = None
+    __n_by_ord__ = None
 
     @staticmethod
     def _generate_next_value_(name, start, count, last_values):
@@ -1724,9 +1732,20 @@ class NStrEnum(StrEnum):
     def _n_cell(self) -> NCell:
         return NCell(self)
 
-    def __new__(cls, value):
-        member = str.__new__(cls, value)
-        member._value_ = _NEnumText(value, len(cls._member_names_))
+    def __new__(cls, value, text=None):
+        if text is None:  # `A = "text"` or auto()
+            ordinal, text = None, value
+        else:  # `A = (ordinal, "text")`
+            ordinal = operator.index(value)
+        names = cls._member_names_
+        following = cls._member_map_[names[-1]]._value_._n_ord + 1 if names else 0
+        if ordinal is None:
+            ordinal = following
+        elif ordinal < following:
+            raise ValueError(f"{cls.__name__}: ordinal {ordinal} of {text!r} is not greater than the "
+                             f"previous member's {following - 1} (Nim: invalid order in enum)")
+        member = str.__new__(cls, text)
+        member._value_ = _NEnumText(text, ordinal)
         return member
 
     def __eq__(self, other):
@@ -1743,17 +1762,18 @@ class NStrEnum(StrEnum):
     def _missing_(cls, value):
         if not isinstance(value, (str, bytes)) and hasattr(value, "__index__"):
             value = value.__index__()  # E(ordinal) of any integer type (nint, int32, ...)
-        if isinstance(value, int):
+        if isinstance(value, int):  # E(ordinal)
             if cls.__n_members_tuple__ is None:
                 cls._n_set_indices()
-            if 0 <= value < len(cls.__n_members_tuple__):
-                return cls.__n_members_tuple__[value]
+            if value in cls.__n_by_ord__:
+                return cls.__n_by_ord__[value]
         return super()._missing_(value)
 
     @classmethod
     def _n_set_indices(cls) -> None:
         cls.__n_members_tuple__ = tuple(cls)
-        cls.__n_indices__ = {val: ind for ind, val in enumerate(cls.__n_members_tuple__)}
+        cls.__n_indices__ = {val: ind for ind, val in enumerate(cls.__n_members_tuple__)}  # declaration order
+        cls.__n_by_ord__ = {val._value_._n_ord: val for val in cls.__n_members_tuple__}
 
     @classmethod
     def _n_low_bound(cls) -> StrEnum:
@@ -1810,11 +1830,8 @@ class NStrEnum(StrEnum):
         return res
 
     def ord(item) -> int:
-        cls = item.__class__
-        if cls.__n_members_tuple__ is None:
-            cls._n_set_indices()
-        ind = cls.__n_indices__[item]
-        return ind
+        """Nim ord: the member's ordinal (its position unless the enum gives ordinals)."""
+        return item._value_._n_ord
 
     def __int__(self) -> int:
         return self.ord()
@@ -1955,8 +1972,7 @@ def inrange(first, last):
 
 
 def subset(newname: str, first: NStrEnum, last: NStrEnum) -> type:
-    cls = first.__class__
-    return NStrEnum(newname, [(a.name, a.value) for a in inrange(first, last)])
+    return NStrEnum(newname, [(a.name, (a.ord(), str(a))) for a in inrange(first, last)])  # Nim ordinals kept
 
 
 def low(obj: object) -> object:
@@ -3292,10 +3308,7 @@ class array(Ntype):
     def _n_normalize_index(index: object) -> int:
         index = _n_uncell(index)
         if isinstance(index, NStrEnum):
-            cls = index.__class__
-            if cls.__n_members_tuple__ is None:
-                cls._n_set_indices()
-            return cls.__n_indices__[index]
+            return index.ord()
         if hasattr(index, 'value'):
             v = index.value
             if isinstance(v, int):
@@ -3393,8 +3406,12 @@ class array(Ntype):
         n, _ntype = params
         first_val = 0
         # n can be ordinal
-        if isinstance(n, type) and issubclass(n, Enum):
-            n_val = len(n)
+        if isinstance(n, type) and issubclass(n, Enum):  # Nim: ord(low(E))..ord(high(E))
+            first_val = nord(low(n))
+            n_val = nord(high(n)) - first_val + 1
+            if n_val != len(n):
+                raise TypeError(f"array[{n.__name__}, ...]: an enum with holes is no ordinal type "
+                                f"(Nim: ordinal type expected)")
         elif isinstance(n, type) and issubclass(n, Trange):
             first_val = int(n._n_low_bound())
             n_val = int(n._n_high_bound()) - int(n._n_low_bound()) + 1

@@ -16,7 +16,7 @@ import unittest
 
 from nimic.ntypes import *
 from nimic.nsystem import ord as nim_ord, _BuildProfile, _n_set_build_profile
-from nimic.ntypesystem import (BUFFER_REGISTRY, _n_routine_pragmas, BufferRegistry, DICT_OF_C_TYPES, _match_subtype,
+from nimic.ntypesystem import (BUFFER_REGISTRY, _n_routine_pragmas, nord, BufferRegistry, DICT_OF_C_TYPES, _match_subtype,
                                _n_aliases, _n_distinct_types, _n_from_text, _n_registry, _n_to_text,
                                char as _char)
 from nimic.std.bitops import fastLog2
@@ -3380,6 +3380,78 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual((p.splitFile().name, p.splitPath().tail, p.parentDir()), (string("b"), string("b.c"), string("a")))
         self.assertEqual(string("x").absolutePath(string("/r")), string("/r/x"))
         self.assertEqual(absolutePath(string("/y")), string("/y"))
+
+    def test_str_enum_explicit_ordinals(self):
+        """Nim `Cdecl = (ord(CdeclTagId), "cdecl")`: a member with an explicit ordinal and text, as the
+        tag models write them. The ordinal may leave holes; a member without one continues from the
+        previous ordinal. ord, E(ordinal), comparisons, low/high, iteration and `$` follow Nim; an enum
+        with holes is no array index type, as in Nim; an Object field stores the member."""
+        class _TTag(NIntEnum):
+            NoTag = 0
+            CdeclTag = auto()
+            StdcallTag = auto()
+
+        class _TCallConv(NStrEnum):
+            NoCallConv = auto()
+            Cdecl = (ord(_TTag.CdeclTag) + 4, "cdecl")
+            Stdcall = (6, "stdcall")
+            Later = "later"
+
+        self.assertEqual([ord(m) for m in _TCallConv], [0, 5, 6, 7])
+        self.assertEqual([str(m) for m in _TCallConv], ["NoCallConv", "cdecl", "stdcall", "later"])
+        self.assertIs(_TCallConv(6), _TCallConv.Stdcall)
+        with self.assertRaises(ValueError):
+            _TCallConv(3)
+        self.assertTrue(_TCallConv.Cdecl < _TCallConv.Later)
+        self.assertEqual((low(_TCallConv), high(_TCallConv)), (_TCallConv.NoCallConv, _TCallConv.Later))
+        self.assertEqual(list(inrange(_TCallConv.Cdecl, _TCallConv.Later)),
+                         [_TCallConv.Cdecl, _TCallConv.Stdcall, _TCallConv.Later])
+        self.assertNotEqual(_TCallConv.Cdecl, _TCallConv.Stdcall)
+        with self.assertRaises(TypeError):  # Nim: ordinal type expected
+            array[_TCallConv, nint]
+
+        class _TUsesConv(Object):
+            conv: _TCallConv
+            n: nint
+
+        u = _TUsesConv(conv=_TCallConv.Stdcall, n=1)
+        self.assertIs(u.conv, _TCallConv.Stdcall)
+        u.conv = _TCallConv.Later
+        self.assertIs(u.conv, _TCallConv.Later)
+        with self.assertRaises(ValueError):
+            class _TBadConv(NStrEnum):
+                A = (3, "a")
+                B = (2, "b")
+        src = textwrap.dedent('''\
+            class CallConv(NStrEnum):
+                NoCallConv = auto()
+                Cdecl = (ord(TagEnum.CdeclTagId), "cdecl")
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn('Cdecl = (ord(TagEnum.CdeclTagId), "cdecl")', out)
+
+    def test_int_enum_explicit_values(self):
+        """An NIntEnum with explicit values: ord and nord are the values; an array indexed by an enum
+        that starts above 0 spans ord(low)..ord(high), as in Nim; one with holes is no index type."""
+        class _THoley(NIntEnum):
+            a = 2
+            b = 5
+            c = auto()
+
+        class _TFrom2(NIntEnum):
+            a = 2
+            b = auto()
+            c = auto()
+
+        self.assertEqual([nord(m) for m in _THoley], [2, 5, 6])
+        self.assertEqual(ord(_THoley.b), 5)
+        with self.assertRaises(TypeError):
+            array[_THoley, nint]
+        arr = array[_TFrom2, nint]()
+        self.assertEqual(len(arr), 3)
+        arr[_TFrom2.c] = 9
+        arr[_TFrom2.a] = 1
+        self.assertEqual((arr[_TFrom2.a], arr[_TFrom2.b], arr[_TFrom2.c]), (1, 0, 9))
 
     def test_var_bool_parameter(self):
         """Nim `var bool` (G19): a Python bool can't be changed through a parameter, so the caller's
