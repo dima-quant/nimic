@@ -27,8 +27,83 @@ QUEUE = NCOMPILER / "conversion_queue.md"
 
 # modules whose conversion must be redone or re-reviewed (ncompiler/review_core_2026_10_16.md)
 NEEDS_RECONVERSION = {"aliasanalysis"}
-# msgs: re-reviewed; its styled output waits for macros (G17)
-NEEDS_REREVIEW = {"msgs"}
+NEEDS_REREVIEW: set[str] = set()
+# converted modules with open core gaps; they count as converted for their dependents, which don't use
+# the affected parts
+OPEN_GAPS = {"msgs": "G13 `??`, G17 styled output"}
+
+# --- the plan (ncompiler/conversion_plan.md): what to convert, phase by phase ---
+PLAN = "ncompiler/conversion_plan.md"
+PHASE = 1  # the current phase
+PHASE_NAMES = {1: "front end", 2: "NIF libraries and nifler (pinned nimony)", 3: "backends: nifc, LLVM",
+               4: "semantic checking: nimony's sem"}
+# Phase 1: these modules and everything they depend on (in the bootstrap build), plus small extras
+PHASE1_TARGETS = ("parser", "renderer", "syntaxes", "astalgo")
+PHASE1_EXTRA = {"debugutils"}
+# modules that can't be converted yet, and why
+BLOCKED = {
+    "tccgen": "needs tinyc (a binding of the Tiny C Compiler)",
+    "gorgeimpl": "needs `checksums` (sha1) from dist/: Phase 2 import support",
+    "nimblecmd": "needs `checksums` (sha1) from dist/: Phase 2 import support",
+    "typekeys": "needs nimony's treemangler/modnames: Phase 2",
+    "deps": "nimony libraries; not in the bootstrap build",
+    "ast2nif": "Nim 3 NIF writer (nimony); not in the bootstrap build",
+    "nifgen": "Nim 3 NIF generation (nimony); not in the bootstrap build",
+    "nifbackend": "Nim 3 NIF backend (nimony); not in the bootstrap build",
+}
+# Nim 2 parts that Nim 3 replaces: not converted (converted ones stay as test corpus), by name pattern
+DEFERRED = [
+    (r"sem\w*|sigmatch|lookups|pragmas|procfind|concepts|typeallowed|types|typesrenderer|magicsys|importer|evaltempl|"
+     r"patterns|parampatterns|suggest|suggestsymdb|errorhandling|expanddefaults|isolation_check|nilcheck|guards|"
+     r"aliases|aliasanalysis|dfa|nimsets|optimizer|treetab|layeredtable|liftlocals|pushpoppragmas|enumtostr|"
+     r"sizealignoffsetimpl|astmsgs|linter|reorder|sighashes|sinkparameter_inference|hlo",
+     "Nim 2 semantic checking: replaced by nimony's sem (Phase 4)"),
+    (r"transf|lambdalifting|closureiters|injectdestructors|liftdestructors|lowerings|varpartitions|spawn|vtables",
+     "Nim 2 transforms: replaced by nimony's hexer (Phase 4)"),
+    (r"vm\w*|nimeval|scriptconfig|evalffi|macrocacheimpl", "Nim 2 VM: replaced in Nim 3"),
+    (r"cgen|ccg\w*|cbuilder\w*|cgendata|cgmeth|mangleutils|extccomp|debuginfo|inliner",
+     "Nim 2 C backend: replaced by nifc (Phase 3)"),
+    (r"jsgen|jstypes|sourcemap|nodejs", "Nim 2 JS backend: not targeted"),
+    (r"main|nim|commands|cmdlinehelper|modules|modulegraphs|modulepaths|pipelines|pipelineutils|passes|passaux|"
+     r"depends|docgen\w*|index|nimconf|packages|pluginsupport|layouter|renderverbatim",
+     "Nim 2 driver and tools: decide in Phase 2 (nimony's driver)"),
+]
+# planned conversions that are not part of compiler/
+PLANNED = [
+    (2, "nimony `src/lib`: bitabs, nifstreams, nifreader, nifbuilder, ... (at a pinned commit)"),
+    (2, "nifler (Nim → NIF, on Nim 2's parser)"),
+    (2, "`checksums` (md5, sha1) and nimony's treemangler/modnames, unblocking typekeys and modulegraphs"),
+    (3, "nifc (NIF → C), at the pin"),
+    (3, "an LLVM backend through the LLVM C API (`@importc`)"),
+    (4, "nimony's sem and hexer, once stable"),
+]
+
+
+def _deferred_reason(name: str) -> str | None:
+    return next((reason for pattern, reason in DEFERRED if re.fullmatch(pattern, name)), None)
+
+
+def phase1_modules(deps: dict[str, set[str]]) -> set[str]:
+    """Phase 1: the targets' dependency closure plus the extras."""
+    seen, stack = set(), list(PHASE1_TARGETS)
+    while stack:
+        m = stack.pop()
+        if m not in seen:
+            seen.add(m)
+            stack.extend(deps[m])
+    return seen | PHASE1_EXTRA
+
+
+def scope_of(name: str, phase1: set[str], converted: set[str]) -> str:
+    """The module's place in the plan: P1, blocked, deferred, or done (corpus: a converted Nim 2 part that
+    Nim 3 replaces)."""
+    if name in phase1:
+        return "P1"
+    if name in BLOCKED:
+        return "blocked"
+    if _deferred_reason(name):
+        return "corpus" if name in converted else "deferred"
+    return "done" if name in converted else "unplanned"
 
 
 def _strip_comments(text: str) -> str:
@@ -280,6 +355,8 @@ def status_of(name: str, converted: set[str], old: dict[str, str]) -> str:
     if name in NEEDS_REREVIEW:
         return "⚠️ Needs re-review"
     if name in converted:
+        if name in OPEN_GAPS:
+            return f"✅ Converted (open gaps: {OPEN_GAPS[name]})"
         prev = old.get(name, "")
         return prev if prev.startswith("✅") else "✅ Converted"
     return "🔲 Pending"
@@ -311,6 +388,8 @@ def write_queue(deps, includer, sizes, tier) -> None:
     old = _old_statuses()
     statuses = {m: status_of(m, converted, old) for m in deps}
     done = {m for m, s in statuses.items() if s.startswith("✅")}
+    phase1 = phase1_modules(deps)
+    scope = {m: scope_of(m, phase1, converted) for m in deps}
     by_tier: dict[int, list[str]] = {}
     for m, t in tier.items():
         by_tier.setdefault(t, []).append(m)
@@ -319,20 +398,49 @@ def write_queue(deps, includer, sizes, tier) -> None:
              f"> **Generated** by `python -m ncompiler.tools.dependencies` | **Total modules**: {len(deps)} | "
              f"**Converted**: {len(done)} | **Needs rework**: {sum(s.startswith('⚠️') for s in statuses.values())} | "
              f"**Remaining**: {len(deps) - len(done)}", "",
+             f"> **Current phase: {PHASE} — {PHASE_NAMES[PHASE]}.** The plan and its reasons: `{PLAN}`. Phases and "
+             "scopes are set in `ncompiler/tools/dependencies.py` (`PHASE`, `PHASE1_TARGETS`, `BLOCKED`, `DEFERRED`).", "",
              "## Conversion Rules", "",
-             "1. **Convert in tier order** — only convert a module when all its dependencies are converted.",
+             "1. **Convert in phase order, then tier order** — only modules of the current phase, and only when all "
+             "their dependencies are converted. Blocked and deferred modules are not converted (see below).",
              "2. **Include files** (`include x` in an includer) depend on everything their includer imports or "
              "includes before the include point, so they are placed after those modules (column *Included from*).",
              "3. **No stubs** unless strictly necessary and no reordering is possible; stand-ins for unconverted "
              "dependencies belong to tests only (`nimic_translation_rules.md` §2.1).",
              "4. **Missing `nimic.std` modules** can be created proactively.",
              "5. **Review runs automatically** after every conversion.", "",
-             "## Ready to Convert", "",
-             "Pending modules whose dependencies are all converted, smallest first:", "",
+             f"## Ready to Convert (Phase {PHASE})", "",
+             "Pending modules of the current phase whose dependencies are all converted, smallest first:", "",
              "| Module | Tier | Size | Included from |", "|---|---|---|---|"]
-    ready = sorted((m for m in deps if statuses[m] == "🔲 Pending" and deps[m] <= done), key=lambda m: sizes[m])
+    ready = sorted((m for m in deps if statuses[m] == "🔲 Pending" and scope[m] == f"P{PHASE}" and deps[m] <= done),
+                   key=lambda m: sizes[m])
     for m in ready:
         lines.append(f"| `{m}` | {tier[m]} | {sizes[m]:,} bytes | {includer.get(m, '')} |")
+    p1 = sorted(phase1, key=lambda m: (tier[m], m))
+    lines += ["", f"## Phase 1 — {PHASE_NAMES[1]}", "",
+              f"Targets {', '.join(f'`{t}`' for t in PHASE1_TARGETS)} and their dependencies, plus "
+              f"{', '.join(f'`{t}`' for t in sorted(PHASE1_EXTRA))}: "
+              f"{sum(m in done for m in p1)}/{len(p1)} converted.", "",
+              "| Module | Tier | Size | Missing dependencies | Status |", "|---|---|---|---|---|"]
+    for m in p1:
+        lines.append(f"| `{m}` | {tier[m]} | {sizes[m]:,} bytes | {_short(deps[m] - done)} | {statuses[m]} |")
+    lines += ["", "## Blocked", "", "Not convertible yet:", "", "| Module | Size | Reason |", "|---|---|---|"]
+    for m in sorted(n for n in deps if scope[n] == "blocked"):
+        lines.append(f"| `{m}` | {sizes[m]:,} bytes | {BLOCKED[m]} |")
+    lines += ["", "## Deferred", "",
+              "Nim 2 parts that Nim 3 replaces: not converted. Already converted ones (marked *corpus*) stay as "
+              "test corpus and are not extended.", ""]
+    for _, reason in DEFERRED:
+        ms = sorted(n for n in deps if scope[n] in ("deferred", "corpus") and _deferred_reason(n) == reason)
+        if ms:
+            size = sum(sizes[n] for n in ms)
+            lines.append(f"- **{reason}** ({len(ms)} modules, {size:,} bytes): " +
+                         ", ".join(f"`{n}`" + (" *(corpus)*" if scope[n] == "corpus" else "") for n in ms))
+    unplanned = sorted(n for n in deps if scope[n] == "unplanned")
+    if unplanned:
+        lines += ["", "Not yet placed in the plan: " + ", ".join(f"`{n}`" for n in unplanned)]
+    lines += ["", "## Planned (outside compiler/)", ""]
+    lines += [f"- **Phase {ph}:** {what}" for ph, what in PLANNED]
     rework = sorted(m for m, s in statuses.items() if s.startswith("⚠️"))
     lines += ["", "## Needs Rework", "",
               "See `ncompiler/review_core_2026_10_16.md` and `ncompiler/proposals/feature_line_for_line_fidelity.md`.",
@@ -344,14 +452,17 @@ def write_queue(deps, includer, sizes, tier) -> None:
         ms = by_tier.get(t, [])
         c = sum(m in done for m in ms)
         lines.append(f"| {t} | {len(ms)} | {c} | {len(ms) - c} |")
-    lines += ["", "## Full Tier Breakdown"]
+    lines += ["", "## Full Tier Breakdown", "",
+              "Scope: `P1` current phase, `done` converted, `corpus` converted Nim 2 part that Nim 3 replaces, "
+              "`blocked`, `deferred` (see above)."]
     for t in range(n_tiers):
         ms = sorted(by_tier.get(t, []))
         c = sum(m in done for m in ms)
         lines += ["", f"### Tier {t} ({c}/{len(ms)} converted)", "",
-                  "| Module | Size | Dependencies | Included from | Status |", "|---|---|---|---|---|"]
+                  "| Module | Size | Dependencies | Included from | Scope | Status |", "|---|---|---|---|---|---|"]
         for m in ms:
-            lines.append(f"| `{m}` | {sizes[m]:,} bytes | {_short(deps[m])} | {includer.get(m, '')} | {statuses[m]} |")
+            lines.append(f"| `{m}` | {sizes[m]:,} bytes | {_short(deps[m])} | {includer.get(m, '')} | {scope[m]} | "
+                         f"{statuses[m]} |")
     QUEUE.write_text("\n".join(lines) + "\n")
 
 

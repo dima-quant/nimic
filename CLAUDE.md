@@ -322,7 +322,8 @@ Save reports in `ncompiler/review_core_YYYY_MM_DD.md`:
 
 - Feature Addition Protocol: `nimic_add_feature.md`
 - Translation Rules: `nimic_translation_rules.md`
-- Conversion Queue & Status: `ncompiler/conversion_queue.md`
+- Conversion Plan (phases toward Nim 3 / nimony, and why): `ncompiler/conversion_plan.md`
+- Conversion Queue & Status (generated, phase-aware): `ncompiler/conversion_queue.md`
 - Core Unit Tests: `tests/nimic/test_ntypes.py`
 - Transpiler Rules Header: `src/nimic/transpiler.py` (lines 10–100)
 - Existing Core Reviews: `ncompiler/review_core_2026_10_01.md`, `ncompiler/review_core_2026_10_05.md`
