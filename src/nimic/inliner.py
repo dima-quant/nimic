@@ -37,7 +37,7 @@ import types
 import warnings
 from functools import wraps
 
-from nimic.ntypesystem import dispatch, _n_templates
+from nimic.ntypesystem import dispatch, _n_routine_pragmas, _n_templates
 
 
 class TemplateBlockError(RuntimeError):
@@ -286,8 +286,8 @@ def template(template_func):
         "return" in template_func.__annotations__
         and template_func.__annotations__["return"] == "untyped"
     )
-    # Also check for Nim-style {.dirty.} templates (always untyped)
-    if not is_untyped and template_func.__doc__ and "{.dirty.}" in template_func.__doc__:
+    # Also check for Nim-style {.dirty.} templates (always untyped), also through a pragma alias
+    if not is_untyped and "dirty" in _n_routine_pragmas(template_func):
         is_untyped = True
     # and for templates that use the caller's variables
     if not is_untyped and isinstance(func_def, ast.FunctionDef):

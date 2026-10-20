@@ -479,9 +479,10 @@ need them. Until then a converted module writes them faithfully inside their ina
 
 | Nim 3 (nimony) | Replaces (Nim 2 rows of §0–§12) | nimic support |
 | --- | --- | --- |
-| `{.feature: "lenientnils".}`, `{.feature: "untyped".}`, `{.feature: "ignoreStyle".}` (module features) | — | not yet: standalone pragma statements (in progress) |
-| `{.pragma: name.}` (a pragma alias), `template x() {.pragma.}` (a custom pragma) | — | not yet (in progress) |
-| `static:` blocks | — | not yet (in progress) |
+| `{.feature: "lenientnils".}`, `{.feature: "untyped".}`, `{.feature: "assumeSync".}` (module features), any standalone pragma `{.p.}` | — | `pragma('feature: "lenientnils"')` as a statement (`rule:pragmastmt`), usually in its `when defined(nimony)` branch. No effect in Python |
+| `{.pragma: maybeDirty, dirty.}`, `{.pragma: untyped.}` (a pragma alias) | — | `pragma("pragma: maybeDirty, dirty")` (`rule:pragmastmt`). Defines the alias for the module's routines: `"""{.maybeDirty.}"""` on a template makes it dirty in Python too. An alias to nothing (`{.pragma: untyped.}`) is an empty pragma |
+| `template nifEmits*(kind: string) {.pragma.}` (a custom pragma), `proc p() {.nifEmits: "D".}` | — | `@template`<br>`def nifEmits(kind: string):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`"""{.pragma.}"""` (the docstring is the whole body: no Nim body, `rule:funcdefbody`); used like any pragma, `"""{.nifEmits: "D".}"""`. Its `##` doc comment lines follow the docstring as comments. No effect in Python |
+| `static:` blocks | — | `with static:` (`rule:dropwith`). Python runs the body when the module runs (Nim's compile time): a failing `assert` stops the import |
 | Case-sensitive identifiers | style-insensitive names (`is_nil` row) | planned: `{.feature: "ignoreStyle".}` per module, or exact names |
 | `nil ref T` / `nil ptr T` (refs are not nil by default) | `None` for nilable refs | planned: a nilable marker |
 | `raise IOError`, `except IOError:` (no `as e`), `{.raises.}` opt-in; `ErrorCode` values | exceptions as classes with messages | planned |

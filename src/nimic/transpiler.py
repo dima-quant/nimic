@@ -19,7 +19,7 @@ Formatting:
   rule:nonlocal -> suppress "nonlocal" declarations (Nim closures capture by reference)
 
 Scope qualifiers:
-  rule:dropwith -> drop "with" for "const", "let", "var", "export", "block"
+  rule:dropwith -> drop "with" for "const", "let", "var", "export", "block", "static"
   rule:writeexport -> write no parentheses for "export" by assigning low priority
   feature:subscriptrename -> subscript can be renamed if in keywords_no_with context ("const", "let", "var", "export")
 
@@ -50,7 +50,8 @@ Function definitions:
   rule:funcdefmut -> arguments and return types denoted as "mut@" are mutable in function definition -> "var "
     (also in calltype signatures): def s(self: BProc) -> mut @ Builder -> proc s*(self: BProc): var Builder
   rule:funcdefout -> parameters annotated `out @ T` are Nim `out T` (in Python the same as mut @ T)
-  rule:funcdefbody -> no body is written for function definition with "borrow" in pragma or only "pass"
+  rule:funcdefbody -> no body is written for function definition with "borrow" in pragma, only "pass" or only the
+    pragma docstring (`template x() {.pragma.}`)
   rule:funcdefinplace -> remove return ... from dunder defs for binary in-place operators __i...__, first argument is
     annotated as mutable if not done already
   rule:funcdefargswap -> arguments are swapped for binary operators "__radd__", "__rmul__", etc
@@ -71,6 +72,8 @@ Control flow:
     `case _ if cond:` with any other condition -> `elif cond:`
   rule:uncheckedassign -> with uncheckedAssign: block transpiles as {.cast(uncheckedAssign).}: block
   rule:pragmablock -> with pragma("p"): block transpiles as a pragma block {.p.}: block
+  rule:pragmastmt -> pragma("p") as a statement is the standalone pragma {.p.} ({.feature: "x".},
+    {.pragma: name, p1.}, a pragma alias that the routines' docstring pragmas may use)
   rule:inlineif -> write inline if according to Nim syntax
   rule:comptime -> the expression "if comptime(x)" is written as "when x" ("if" directly followed by "comptime"
     should be resolvable at comptime (is interpreted as "when")
@@ -921,7 +924,7 @@ class _Unparser(NodeVisitor):
         self._keywords_no_with = ["const", "let", "var", "export"]  # rule:dropwith
         self._template_tail_returns = []  # rule:templatereturn, one set of Return ids per open template
         self._keywords_rename = {}
-        self._keywords_no_with_colon = ["block"]  # rule:dropwith
+        self._keywords_no_with_colon = ["block", "static"]  # rule:dropwith
         self._context_stack = []
         self._match_subjects = []  # rule:matchcase: subjects of the enclosing match statements
         self._case_assign_values = []  # rule:caseassign: ids of the assignments written as branch values
@@ -1148,6 +1151,11 @@ class _Unparser(NodeVisitor):
                 and len(value.args) == 1 and isinstance(value.args[0], Constant)):
             # rule:labeledblock -> breakBlock("name") is `break name`
             self.fill(f"break {value.args[0].value}")
+            return
+        if (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id == "pragma" and len(value.args) == 1
+                and isinstance(value.args[0], Constant) and isinstance(value.args[0].value, str)):
+            # rule:pragmastmt -> pragma("p") as a statement is the standalone pragma {.p.}
+            self.fill("{." + value.args[0].value + ".}")
             return
         if (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id == "emit" and len(value.args) == 1
                 and isinstance(value.args[0], Constant) and isinstance(value.args[0].value, str)):
@@ -1791,8 +1799,9 @@ class _Unparser(NodeVisitor):
         # rule:pragma
         body, pragma = self._get_body_and_pragma(node)
         is_private = False
-        # rule:funcdefbody
-        write_body = not isinstance(body[0], Pass)
+        # rule:funcdefbody -> a body of only `pass` (forward declaration) or only the pragma docstring
+        # (`template x() {.pragma.}`, a custom pragma) is a declaration without body
+        write_body = bool(body) and not isinstance(body[0], Pass)
         if pragma:
             parsed_pragma = pragma.replace(" ", "").split(",")
             write_body = write_body and "borrow" not in parsed_pragma

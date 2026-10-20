@@ -505,10 +505,14 @@ def declared(name: str) -> bool:
 
 class pragma:
     """Nim pragma block `{.p.}: body` (e.g. `with pragma("gcsafe"):`, rule:pragmablock): the body runs
-    as is; the pragma only affects the Nim output."""
+    as is; the pragma only affects the Nim output. As a statement, `pragma("p")` is the standalone
+    pragma `{.p.}` (rule:pragmastmt): `pragma('feature: "lenientnils"')` only affects the Nim output,
+    `pragma("pragma: name, p1, p2")` defines a pragma alias of the calling module (see
+    ntypesystem._n_routine_pragmas)."""
 
     def __init__(self, p: str):
         self._n_pragma = p
+        _ntypesystem._n_register_pragma(sys._getframe(1).f_globals.get("__name__"), p)
 
     def __enter__(self):
         return None
@@ -933,6 +937,24 @@ class _Block:
 
 
 block = _Block()
+
+
+class _Static:
+    """Nim `static:` (`with static:`, rule:dropwith): the body runs when the module runs, which is
+    Nim's compile time, so a failing `assert` in it stops the import as it stops the compilation.
+    `static[T]` is the type of a compile-time parameter."""
+
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *exc):
+        return False
+
+    def __getitem__(self, t):
+        return set[t]
+
+
+static = _Static()
 
 
 def breakBlock(label: str) -> None:

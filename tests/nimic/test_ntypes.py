@@ -16,7 +16,7 @@ import unittest
 
 from nimic.ntypes import *
 from nimic.nsystem import ord as nim_ord, _BuildProfile, _n_set_build_profile
-from nimic.ntypesystem import (BUFFER_REGISTRY, BufferRegistry, DICT_OF_C_TYPES, _match_subtype,
+from nimic.ntypesystem import (BUFFER_REGISTRY, _n_routine_pragmas, BufferRegistry, DICT_OF_C_TYPES, _match_subtype,
                                _n_aliases, _n_distinct_types, _n_from_text, _n_registry, _n_to_text,
                                char as _char)
 from nimic.std.bitops import fastLog2
@@ -79,6 +79,23 @@ class _TTupHolder(Object):
     best: tuple[char, nint]
     keys: seq[_TTupKey]
     nested: tuple[seq[nint], tuple[nint, string]]
+
+
+# Nim `{.pragma: name, p1, p2.}`: an alias of this module, used by the templates below
+pragma("pragma: _tMaybeDirty, dirty")
+pragma("pragma: _tTwice, _tMaybeDirty, inline")
+pragma("pragma: _tNothing")
+
+
+@template
+def _tDirtyByAlias():
+    """{._tMaybeDirty.}"""
+    pass
+
+
+@template
+def _tCustomPragma(kind: string):
+    """{.pragma.}"""
 
 
 class TestNTypes(unittest.TestCase):
@@ -3237,6 +3254,63 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(changeFileExt(string("a/b.c"), string("html")), string("a/b.html"))
         self.assertEqual(changeFileExt(string("a/b.c"), string("")), string("a/b"))
         self.assertEqual(changeFileExt(string("a.d/b"), string("x")), string("a.d/b.x"))
+
+    def test_pragma_aliases(self):
+        """`{.pragma: name, p1, p2.}` (`pragma("pragma: name, p1, p2")`) defines a pragma alias of its
+        module: a routine's pragmas are its docstring's, with the module's aliases expanded (nested,
+        with arguments, and to nothing); a template marked dirty through an alias is dirty."""
+        def f():
+            """{._tTwice, raises: [IOError, OSError], _tNothing, nifEmits: "D, Y".}"""
+        self.assertEqual(_n_routine_pragmas(f), ["dirty", "inline", "raises", "nifEmits"])
+        self.assertEqual(_n_routine_pragmas(_tDirtyByAlias), ["dirty"])
+        self.assertEqual(_n_routine_pragmas(lambda: 0), [])
+        with pragma("gcsafe"):  # a pragma block still only runs its body
+            x = 1
+        self.assertEqual(x, 1)
+
+    def test_transpile_pragma_statements(self):
+        """rule:pragmastmt: `pragma("p")` as a statement is the standalone pragma `{.p.}`; a routine
+        whose body is only its pragma docstring has no body (`template x() {.pragma.}`, a custom pragma)."""
+        src = textwrap.dedent('''\
+            if comptime(defined("nimony")):
+                pragma('feature: "untyped"')
+            else:
+                pragma("pragma: untyped")
+            pragma("pragma: maybeDirty, dirty")
+
+            @template
+            def nifEmits(kind: string):
+                """{.pragma.}"""
+
+            @template
+            def getOrInclImpl():
+                """{.maybeDirty.}"""
+                ensureIndexed(t)
+
+            def f(x: nint) -> nint:
+                """{.nifAdvance, nifEmits: "D".}"""
+                return x
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn('when defined(nimony):\n  {.feature: "untyped".}\nelse:\n  {.pragma: untyped.}\n', out)
+        self.assertIn("{.pragma: maybeDirty, dirty.}", out)
+        self.assertIn("template nifEmits*(kind: string) {.pragma.}\n", out)
+        self.assertNotIn("template nifEmits*(kind: string) {.pragma.} =", out)
+        self.assertIn("template getOrInclImpl*() {.maybeDirty.} =", out)
+        self.assertIn('proc f*(x: int): int {.nifAdvance, nifEmits: "D".} =', out)
+
+    def test_static_block(self):
+        """Nim `static:` is `with static:`: Python runs the body when the module runs (compile time in
+        Nim), so a failing assert stops the import; `static[T]` stays a parameter type."""
+        with static:
+            ran = True
+        self.assertTrue(ran)
+        with self.assertRaises(AssertionError):
+            with static:
+                assert 1 + 1 == 3
+        self.assertIsNotNone(static[nint])
+        out = unparse(ast.parse("with static:\n    assert A + B == 32\n"))[0]
+        self.assertEqual(out.strip(), "static:\n  assert A + B == 32")
 
     def test_var_bool_parameter(self):
         """Nim `var bool` (G19): a Python bool can't be changed through a parameter, so the caller's

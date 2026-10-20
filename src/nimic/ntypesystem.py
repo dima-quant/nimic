@@ -302,6 +302,64 @@ _n_protocol_subtypes: dict = {
 # Inlined templates registry shared with nimic.inliner
 _n_templates: dict = {}
 
+# Nim `{.pragma: name, p1, p2.}`: module name -> {alias: the pragma items it stands for}
+_n_pragma_aliases: dict[str, dict[str, list[str]]] = {}
+
+
+def _n_pragma_items(text: str) -> list[str]:
+    """The items of a pragma list `a, b: [c, d], e("x, y")`, split at its top-level commas (outside
+    brackets, parentheses and string literals)."""
+    items, depth, quote, start = [], 0, "", 0
+    for i, c in enumerate(text):
+        if quote:
+            quote = "" if c == quote and text[i - 1] != "\\" else quote
+        elif c in "\"'":
+            quote = c
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == "," and depth == 0:
+            items.append(text[start:i].strip())
+            start = i + 1
+    items.append(text[start:].strip())
+    return [item for item in items if item]
+
+
+def _n_pragma_name(item: str) -> str:
+    """The name of a pragma item (`raises: [E]` -> raises, `nifEmits("D")` -> nifEmits)."""
+    return re.split(r"[:(\s]", item, maxsplit=1)[0]
+
+
+def _n_register_pragma(module: str, text: str) -> None:
+    """A standalone pragma `{.text.}` executed in `module`: `pragma: name, p1, p2` defines the alias
+    `name` (Nim's pragma pragma); other standalone pragmas (`feature: "x"`) only affect the Nim output."""
+    items = _n_pragma_items(text)
+    if items and _n_pragma_name(items[0]) == "pragma" and ":" in items[0]:
+        alias = items[0].split(":", 1)[1].strip()
+        _n_pragma_aliases.setdefault(module, {})[alias] = items[1:]
+
+
+def _n_routine_pragmas(fn: callable) -> list[str]:
+    """The pragma names of a routine: the `{.x, y.}` of its docstring (rule:pragma), with the pragma
+    aliases of its module expanded."""
+    doc = getattr(fn, "__doc__", None) or ""
+    if "{." not in doc:
+        return []
+    aliases = _n_pragma_aliases.get(getattr(fn, "__module__", None), {})
+    names = []
+
+    def expand(items, seen):
+        for item in items:
+            name = _n_pragma_name(item)
+            if name in aliases and name not in seen:
+                expand(aliases[name], seen | {name})
+            elif name not in aliases and name not in names:
+                names.append(name)
+
+    expand(_n_pragma_items(doc.split("{.", 1)[1].split(".}", 1)[0]), frozenset())
+    return names
+
 
 def get_type_params(fn: callable) -> dict:
     lines = ins.getsource(fn).split("\n")

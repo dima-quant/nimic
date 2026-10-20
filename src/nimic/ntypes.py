@@ -85,6 +85,7 @@ from nimic.nsystem import (
     pragma,
     emit,
     block,
+    static,
     breakBlock,
     _n_setup_stdio,
 )
@@ -224,7 +225,6 @@ template_inline = contextlib.nullcontext()
 export = contextlib.nullcontext()
 alias = contextlib.nullcontext()
 
-static = set
 
 def doAssert(cond: bool, msg: str = "") -> None:
     """
