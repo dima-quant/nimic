@@ -26,7 +26,7 @@ from nimic.std.hashes import Hash, hashIgnoreStyle, mix_hash, finish_hash
 from nimic.std.strutils import parseFloat
 from nimic.std.math import classify, fcNegSubnormal, fcNormal, fcSubnormal, trunc
 from nimic.std.options import Option, none, some
-from nimic.std.os import fileExists, getCurrentDir, getEnv, walkDir
+from nimic.std.os import ExeExt, addFileExt, changeFileExt, searchExtPos, fileExists, getCurrentDir, getEnv, walkDir
 from nimic.std.parseutils import parse_hex, parse_ident, parseBiggestInt, parseBiggestUInt
 from nimic.std.strscans import scanf
 from nimic.std.strutils import isUpperAscii, find, nimIdentNormalize, repeat, rfind, strip, toLowerAscii
@@ -67,6 +67,18 @@ class _NEnumWithDollar(NIntEnum):
 
     def __str__(e: _NEnumWithDollar) -> string:
         return string("1st") if e == _NEnumWithDollar.first else string("2nd")
+
+
+# An alias of an anonymous tuple type (Nim `Key = (string, string)`), used as a seq element before a
+# field of another anonymous tuple type is resolved: the alias's name ("tuple") must not shadow `tuple`
+_TTupKey = tuple[string, string]
+_TTupKeys = seq[_TTupKey]
+
+
+class _TTupHolder(Object):
+    best: tuple[char, nint]
+    keys: seq[_TTupKey]
+    nested: tuple[seq[nint], tuple[nint, string]]
 
 
 class TestNTypes(unittest.TestCase):
@@ -3155,6 +3167,108 @@ class TestNTypes(unittest.TestCase):
             u.add(_TGrowObj(n=nint(i), name=string("u")))
         u[0:2] = a
         self.assertEqual((str(u[0].name), int(u[0].n)), ("a0", 1))
+
+    def test_anonymous_tuple_types(self):
+        """Nim's anonymous tuple types `(char, int)` are `tuple[char, nint]`: as Object fields (each
+        element defaults to its zero value), seq elements, aliases and nested; assigning or adding a
+        tuple copies its value elements, as Nim does."""
+        h = _TTupHolder()
+        self.assertEqual(h.best, (_char(0), 0))
+        self.assertEqual(h.nested[1], (0, string("")))
+        self.assertEqual(len(h.nested[0]), 0)
+        self.assertEqual(type(_TTupKeys()).__name__, "seq[tuple[string, string]]")
+        key = (string("a"), string("kA"))
+        h.keys.add(key)
+        key[0].add(string("x"))
+        self.assertEqual(str(h.keys[0][0]), "a")
+        h2 = _TTupHolder(best=(_char("b"), nint(3)), keys=h.keys)
+        self.assertEqual((str(h2.best[0]), int(h2.best[1])), ("b", 3))
+        h.keys[0][1].add(string("y"))
+        self.assertEqual(str(h2.keys[0][1]), "kA")
+        self.assertIs(_n_registry.get_or_eval_type("tuple[seq[nint], nint]").__origin__, tuple)
+
+    def test_transpile_anonymous_tuple_types(self):
+        """rule:tupletype: `tuple[A, B]` is Nim's `(A, B)` in aliases, fields and seq elements."""
+        src = textwrap.dedent('''\
+            Key = tuple[string, string]
+            class R(Object):
+                best: tuple[char, nint]
+                keys: seq[Key]
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("Key* = (string, string)", out)
+        self.assertIn("best*: (char, int)", out)
+        self.assertIn("keys*: seq[Key]", out)
+
+    def test_substr_method_call(self):
+        """Nim `s.substr(first, last)` (method-call syntax of system's substr), as `substr(s, ...)`."""
+        s = string("__crucial\0real.nim")
+        self.assertEqual(s.substr(10), string("real.nim"))
+        self.assertEqual(s.substr(2, 8), substr(s, 2, 8))
+        self.assertEqual(s.substr(30), string(""))
+
+    def test_transpile_char_constructor_literal(self):
+        """rule:char: `char("0")` of a one-char string constant is the char literal `'0'`, like `ch("0")`
+        (for a proc with a local named `ch`); `char(x)` of anything else stays a conversion."""
+        src = textwrap.dedent('''\
+            def f(entry: string, n: nint) -> bool:
+                with let:
+                    ch = entry[0]
+                return ch < char("0") or ch > char("\\0") or ch == char(n)
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("ch < '0' or ch > '\\0' or ch == char(n)", out)
+
+    def test_os_exe_ext(self):
+        """Nim os.ExeExt: "exe" on Windows, "" elsewhere; `addFileExt` adds nothing for "" (POSIX)."""
+        self.assertEqual(ExeExt, string("exe") if os.name == "nt" else string(""))
+        if os.name != "nt":
+            self.assertEqual(addFileExt(string("nifler2"), ExeExt), string("nifler2"))
+
+    def test_os_file_ext_procs(self):
+        """Nim's searchExtPos / addFileExt / changeFileExt: the extension is the last component's, an
+        empty extension adds nothing and removes one, a leading dot starts none."""
+        self.assertEqual(searchExtPos(string("a/b.c.nim")), 5)
+        self.assertEqual(searchExtPos(string("a.d/b")), -1)
+        self.assertEqual(searchExtPos(string("a/.bashrc")), -1)
+        self.assertEqual(addFileExt(string("a/b"), string("nim")), string("a/b.nim"))
+        self.assertEqual(addFileExt(string("a/b"), string(".nim")), string("a/b.nim"))
+        self.assertEqual(addFileExt(string("a/b.c"), string("nim")), string("a/b.c"))
+        self.assertEqual(changeFileExt(string("a/b.c"), string("html")), string("a/b.html"))
+        self.assertEqual(changeFileExt(string("a/b.c"), string("")), string("a/b"))
+        self.assertEqual(changeFileExt(string("a.d/b"), string("x")), string("a.d/b.x"))
+
+    def test_var_bool_parameter(self):
+        """Nim `var bool` (G19): a Python bool can't be changed through a parameter, so the caller's
+        variable is a `nbool` cell (like `nint` for `var int`) and the callee assigns it with `<<=`.
+        Object fields of type bool are such cells already."""
+        @dispatch
+        def _tSetFlag(flag: mut @ bool, v: bool) -> None:
+            flag <<= v
+
+        class _TFlags(Object):
+            known: bool
+
+        with var:
+            f = nbool(False)
+        _tSetFlag(f, True)
+        self.assertTrue(f)
+        self.assertEqual(f, True)
+        self.assertEqual(str(f), "true")
+        _tSetFlag(f, False)
+        self.assertFalse(f)
+        o = _TFlags()
+        _tSetFlag(o.known, True)
+        self.assertTrue(o.known)
+        g = f.copy()
+        _tSetFlag(g, True)
+        self.assertFalse(f)
+        self.assertTrue(g)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            echo(g, " ", not g)
+        self.assertEqual(out.getvalue(), "true false\n")
+        self.assertIn("f* = bool(false)", unparse(ast.parse("with var:\n    f = nbool(False)\n"))[0])
 
     def test_seq_of_named_tuples_accepts_tuple_literals(self):
         """`s.add((a, b))` / `s[i] = (a, b)` for a seq of a named tuple type converts the literal

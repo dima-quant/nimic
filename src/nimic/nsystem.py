@@ -542,8 +542,9 @@ def importFrom(module: str, *names: str) -> None:
             namespace[n] = getattr(mod, n)
 
 
+@ufcs(string)
 def substr(s, first: int = 0, last: int | None = None):
-    """Nim: substr — slice string from `first` to `last` (inclusive)."""
+    """Nim: substr — slice string from `first` to `last` (inclusive); also `s.substr(first, last)`."""
     s_val = str(s)
     f = max(int(first), 0)
     if last is None:

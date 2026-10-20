@@ -93,10 +93,12 @@ Operators & renaming:
   rule:bitwiserename -> bitwise operations get precedence adjusted and are renamed << -> shl, >> -> shr, & -> and,
     | -> or, ^ -> xor
   rule:lowercasebool -> True -> true, False -> false, "None" -> "nil"
+  rule:nint -> the names nint and nbool (nimic's Nim int / mutable Nim bool) are Nim's int and bool
   rule:funcrename -> rename functions "print" to "echo", "str" to "$"
   rule:stringjoin -> replace "f" by "&"
   rule:literaltypes -> write as type suffix u64(0x9e3779b97f4a7c15) -> 0x9e3779b97f4a7c15'u64
-  rule:char -> chars written as ch("#") transpile as char literals '#'
+  rule:char -> chars written as ch("#") transpile as char literals '#'; so does char("#") (a one-char
+    string constant), the spelling where a local named `ch` shadows ch()
   rule:latin1literal -> str literals are byte views: chars 0x80-0xFF emit as \\xNN ("é" -> "\\xE9"),
     chars above 0xFF raise SyntaxError (use utf8()); applies to f-string literal parts too
   rule:utf8literal -> utf8("é") with a constant argument emits the raw Nim literal "é" (its UTF-8 bytes);
@@ -1518,9 +1520,9 @@ class _Unparser(NodeVisitor):
         # rule:keywordescape -> strip trailing _ from Python keyword clashes (None_ -> None)
         if len(name) > 1 and name.endswith("_") and pykeyword.iskeyword(name[:-1]):
             name = name[:-1]
-        # rule:nint -> nint transpiles to Nim int (nimic does not shadow Python int)
-        if not definition and name == "nint":
-            return "int"
+        # rule:nint -> nint transpiles to Nim int (nimic does not shadow Python int), nbool to bool
+        if not definition and name in ("nint", "nbool"):
+            return "int" if name == "nint" else "bool"
         if len(name) > 1 and name[0] == "_":
             # private names keep their Nim name, unexported; __x / _1 are no Nim identifiers without a prefix
             _str = "local" + name if name[1] == "_" or name[1].isdigit() else name[1:]
@@ -2679,7 +2681,9 @@ class _Unparser(NodeVisitor):
             self.traverse(node.args[0]) # should be only one argument
             self.write("'")
             self.traverse(node.func)
-        elif isinstance(node.func, Name) and node.func.id == "ch":
+        elif isinstance(node.func, Name) and (node.func.id == "ch" or (
+                node.func.id == "char" and len(node.args) == 1 and isinstance(node.args[0], Constant)
+                and isinstance(node.args[0].value, str) and len(node.args[0].value) == 1)):
             # rule:char
             val = node.args[0].value
             char_escapes = {

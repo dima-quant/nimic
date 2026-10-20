@@ -117,6 +117,7 @@ from nimic.ntypesystem import (
     NInteger,
     low,
     nint,
+    nbool,
     uint,
     SomeInteger,
     SomeSignedInt,

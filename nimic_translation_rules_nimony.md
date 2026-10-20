@@ -203,7 +203,7 @@ Functions use standard Python `def` definitions but might employ specific decora
 | `iterator myIter(x: int): int = yield x` | `def myIter(x: nint) -> nint:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | Iterators are translated to generator functions. |
 | `for (a, b) in pairs:` | `for (a, b) in pairs:` | Tuple unpacking in for-loops; parentheses preserved for Nim (`rule:fortupleunpack`) |
 | `proc foo[T, U](): ...` | `@generic`<br>`def foo[T, U](): ...` | `@generic` decorator allows 0-arg generic functions to be parameterized via `foo[T, U]()` in Python runtime. Transpiler strips `@generic`. |
-| `(T1, T2)` (tuple type) | `tuple[T1, T2]` | Tuple type annotations in function return or variable types transpile as Nim parenthesized tuple types `(T1, T2)` (`rule:tupletype`). |
+| `(T1, T2)` (tuple type) | `tuple[T1, T2]` | Tuple type annotations in function return or variable types, aliases (`Key = tuple[string, string]`), object fields and seq elements transpile as Nim parenthesized tuple types `(T1, T2)` (`rule:tupletype`). A field defaults to the tuple of its elements' zero values; assigning or adding a tuple copies its value elements |
 
 **Get/Set Operators (`rule:funcdefrenamedunder`)** Nim get/set operators map to Python dunder (magic) methods.
   - `[]=` ➔ `__setitem__`
@@ -251,7 +251,7 @@ Because the transpiler is sensitive to Python's internal logic versus Nim's syst
 | `&"var: {x}"`, `fmt"var: {x}"` | `f"var: {x}"` | String interpolation (`rule:stringjoin`: `f` is written `&`); format specs (`{x:>5}`, `{f:.3f}`) mean the same in Python and Nim's strformat. Needs `from nimic.std.strformat import *` (Nim `import std/strformat`). `fmt"..."` is a raw literal in Nim, so a backslash in it is written `\\` in the f-string. A `bool` prints `True` in Python but `true` in Nim (G23) |
 | `true`, `false`, `nil`, `Inf` |` True`, `False`, `None`, `inf` | Python's standard `inf` is `Inf` in Nim, bools transpile via `rule:lowercasebool`|
 | `0x9e37...15'u64` | `u64(0x9e37...15)` | Numeric literal types |
-| `'#'` | `ch("#")` | Char literal types |
+| `'#'` | `ch("#")` | Char literal types. In a proc with a local named `ch` (which shadows `ch()` in Python), write `char("#")`: a one-char string constant is the same literal (`rule:char`); keep the local's name |
 | `None` (Nim keyword) | `None_` | Trailing `_` stripped by transpiler for Python keyword clashes (`rule:keywordescape`) |
 | `"format: $1" % [arg]` | `string("format: $1") % [arg]` | String `%` operator transpiles as Nim `%` (formatting), not `mod` (`rule:strformat`): the left operand is a string literal, `string(...)`/`FormatStr(...)`, a name declared `string`/`FormatStr` (parameter, annotated or `string(...)`-assigned variable, also in an enclosing scope), or a call of a proc declared `-> string`; or the right operand is a list/tuple or a name declared as a seq/openArray/array/varargs of `string` |
 | `chr(i)` | `chr(i)` | nimic's `chr` gives a `char` (Python's builtin gives a `str`); `RangeDefect` outside 0..255 |
@@ -306,7 +306,8 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | `toFloat(i)`, `toInt(f)` | `toFloat(i)`, `toInt(f)` | system procs |
 | `a == b` (objects, tuples) | `a == b` | Field-wise, as Nim's default `==`; refs compare as references. Object constructors copy value arguments |
 | `x = y` (value type) | `x = y.copy()` | Explicit copy of value types in Python, e.g. to create a mutable copy. `string`, `seq`, `array`, `Tset`, `Object` and the integer types (`nint`, `int64`, `uint8`, ...) have `.copy()`. Integers need it when the new variable is changed in place (`b = a.copy()` before `b -= 1` or passing `b` as `var`; Nim's `inc(b)` is `b += 1`), and when the source is changed while the new variable is still used: reading an object field gives a view of it, so `oldBufLen = L.bufLen.copy()` before `L.bufLen = L.bufLen * 2`. A parameter whose default is a Python literal has no `.copy()`: write `pos = nint(pos)`. A proc may return its argument itself (`abs(x)` of a non-negative `Int128`), so `var d = abs(d)` changed in place is `d = abs(d).copy()`, since in-place operators mutate the shared object; assigning an object, `a[i] = obj` and `s.add(v)` copy value fields/elements (strings, seqs, non-ref objects) and share refs, as Nim does |
-| `x = y` through a `var` parameter | `x <<= y` | Works for objects, `string`, `seq`, `array` and `Tset` (in place) |
+| `x = y` through a `var` parameter | `x <<= y` | Works for objects, `string`, `seq`, `array`, `Tset` and the scalar cells (in place) |
+| `var found = false` ... `p(found)` (`proc p(b: var bool)`), `var x = 0.0` passed as `var float` | `with var: found = nbool(False)` ... `p(found)`, `with var: x = float64(0.0)` | A Python `bool`/`float` can't be changed through a parameter: a variable passed as `var` is a cell, `nbool` (transpiles to `bool`, `rule:nint`) or `float64`, as `nint` is for `var int`. Object fields of type `bool` are cells already. Elsewhere Nim `bool` stays Python `bool` |
 | `echo a, b` | `echo(a, b)` | Nim semantics: `$` of each argument, no separator (`echo("n=", 3, true)` prints `n=3true`) |
 | signed integer overflow | `a + b`, `a * b`, ... | Raises `OverflowDefect` like Nim with overflow checks on (the default build); off with `-d:danger` (`NIMIC_DEFINES=danger`) or inside `with push("overflowChecks: off"):`. Unsigned types, `+%`/`-%`, shifts and bitwise operations wrap. Array indexes out of bounds raise `IndexDefect` |
 | `isnot`, `notin` | `is not`, `not in` | |

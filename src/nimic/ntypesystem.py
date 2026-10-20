@@ -638,7 +638,34 @@ def _n_value_copy(value):
         return value
     if isinstance(value, (string, seq, Tset, array, _Object)) and callable(getattr(value, "copy", None)):
         return value.copy()
+    if type(value) is tuple:  # an anonymous tuple (Nim `(a, b)`) is a value: its elements are copied
+        return tuple(_n_value_copy(v) for v in value)
     return value
+
+
+def _n_type_name(t: object) -> str:
+    """The nimic spelling of type `t`: its class name, or for a generic alias of a Python type such as
+    the anonymous tuple type `tuple[char, nint]` (whose `__name__` is just "tuple") the full spelling."""
+    args = getattr(t, "__args__", None)
+    if not isinstance(t, type) and isinstance(getattr(t, "__origin__", None), type) and args:
+        return f"{t.__origin__.__name__}[{', '.join(_n_type_name(a) for a in args)}]"
+    return getattr(t, "__name__", str(t))
+
+
+def _n_split_type_args(params: str) -> list[str]:
+    """The arguments of a type spelling's brackets, split at its top-level commas only
+    (`seq[nint], tuple[nint, string]` -> two arguments)."""
+    parts, depth, start = [], 0, 0
+    for i, c in enumerate(params):
+        if c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+        elif c == "," and depth == 0:
+            parts.append(params[start:i].strip())
+            start = i + 1
+    parts.append(params[start:].strip())
+    return parts
 
 
 def _n_dollar(x) -> str:
@@ -1350,7 +1377,7 @@ class NTypeRegistry:
                 base_type = caller_globals[base]
             if base_type is not None:
                 if base == "array":
-                    n_str, _ntype = params.split(",", 1)
+                    n_str, _ntype = _n_split_type_args(params)
                     # eval with caller's globals, so module-level constants are resolved
                     eval_ns = dict(self.types)
                     if caller_globals:
@@ -1366,8 +1393,8 @@ class NTypeRegistry:
                         return self.types[canonic_arr_name]
                     resolved = base_type[(n, self.get_or_eval_type(_ntype.strip(), caller_globals))]
                     return self._ensure_registered(resolved)
-                elif "," in params:
-                    param_types = tuple(self.get_or_eval_type(p.strip(), caller_globals) for p in params.split(","))
+                elif len(_n_split_type_args(params)) > 1:
+                    param_types = tuple(self.get_or_eval_type(p, caller_globals) for p in _n_split_type_args(params))
                     resolved = base_type[param_types]
                     return self._ensure_registered(resolved)
                 else:
@@ -1834,19 +1861,22 @@ def high(obj: object) -> object:
 
 
 class NBool:
-    """ctypes-backed bool — harmonizes with NScalar pattern for struct embedding."""
+    """ctypes-backed bool — harmonizes with NScalar pattern for struct embedding. A field or array
+    slot is a view (`_n_on_struct` / `_n_on_array`), a plain NBool holds its value; both are cells
+    that `<<=` changes in place (a `var bool` parameter)."""
 
     def __init__(self, value=False):
-        self._n_value = bool(value)
+        self._n_cell = bool(value)
 
     def _n_get_value(self):
-        return self._n_value
+        return self._n_cell
 
     def _n_set_value(self, value):
-        if isinstance(value, NBool):
-            self._n_value = value._n_value
-        else:
-            self._n_value = bool(value)
+        self._n_cell = bool(value._n_get_value() if isinstance(value, NBool) else value)
+
+    @property
+    def _n_value(self):
+        return self._n_get_value()
 
     def __int__(self):
         return int(self._n_value)
@@ -1862,52 +1892,53 @@ class NBool:
 
     def __str__(self):
         """Nim `$`: true / false."""
-        return "true" if bool(self._n_get_value()) else "false"
+        return "true" if self._n_value else "false"
 
     def __eq__(self, other):
         if isinstance(other, NBool):
             return self._n_value == other._n_value
         return self._n_value == other
 
+    def __ilshift__(self, other):
+        """Assignment through a `var bool` parameter (`flag <<= True`): changes the caller's cell."""
+        self._n_set_value(other)
+        return self
+
+    def copy(self):
+        """A new cell with this value (`with var: b = a.copy()` before passing `b` as `var`)."""
+        return NBool(self._n_value)
+
+    @classmethod
+    def _n_view(cls, getter, setter, value=None):
+        """A cell reading and writing storage it doesn't own (the instance's accessors replace the
+        class's; the class stays NBool, so dispatch and isinstance see a bool)."""
+        self = cls.__new__(cls)
+        self._n_get_value = getter
+        self._n_set_value = lambda v: setter(bool(v._n_get_value() if isinstance(v, NBool) else v))
+        if value is not None:
+            self._n_set_value(value)
+        return self
+
     @classmethod
     def _n_on_struct(cls, parent_elems, id, value=None):
         """Struct-embedded: reads/writes via ctypes struct field."""
-        self = cls.__new__(cls)
-        # Bind to parent struct field
-        self._n_get_value = lambda: bool(getattr(parent_elems, id))
-        self._n_set_value = lambda v: setattr(parent_elems, id, bool(v._n_value if isinstance(v, NBool) else v))
-        self._n_value = bool(getattr(parent_elems, id))
-        if value is not None:
-            self._n_set_value(value)
-        # Override _n_value property to always read from struct
-        self.__class__ = type('NBool_bound', (NBool,), {
-            '_n_value': property(
-                lambda s: bool(getattr(parent_elems, id)),
-                lambda s, v: setattr(parent_elems, id, bool(v))
-            )
-        })
-        return self
+        return cls._n_view(lambda: bool(getattr(parent_elems, id)),
+                           lambda v: setattr(parent_elems, id, v), value)
 
     @classmethod
     def _n_on_array(cls, parent_elems, index, value=None):
         """Array-embedded: reads/writes via ctypes array slot."""
-        self = cls.__new__(cls)
-        self._n_get_value = lambda: bool(parent_elems[index])
-        self._n_set_value = lambda v: parent_elems.__setitem__(index, bool(v._n_value if isinstance(v, NBool) else v))
-        self._n_value = bool(parent_elems[index])
-        if value is not None:
-            self._n_set_value(value)
-        self.__class__ = type('NBool_bound', (NBool,), {
-            '_n_value': property(
-                lambda s: bool(parent_elems[index]),
-                lambda s, v: parent_elems.__setitem__(index, bool(v))
-            )
-        })
-        return self
+        return cls._n_view(lambda: bool(parent_elems[index]),
+                           lambda v: parent_elems.__setitem__(index, v), value)
 
     @classmethod
     def _n_sizeof(cls):
         return ctypes.sizeof(ctypes.c_bool)
+
+
+# A mutable Nim bool, for a variable passed as `var bool` (Nim `var b = false`: `with var: b = nbool(False)`),
+# as nint is for `var int`; plain Nim bools are Python bools
+nbool = NBool
 
 
 # --- Dispatch Metaclass (DispDict / NMetaClass) ---
@@ -2123,6 +2154,8 @@ def _n_default_value(fc: object) -> object:
     """Nim's zero value for a field / element type `fc` (default(T))."""
     if isinstance(fc, TypeAliasType):  # `type D = dict[str, int]`
         return _n_default_value(fc.__value__)
+    if not isinstance(fc, type) and getattr(fc, '__origin__', None) is tuple and getattr(fc, '__args__', None):
+        return tuple(_n_default_value(a) for a in fc.__args__)  # anonymous tuple type `tuple[char, nint]`
     if not isinstance(fc, type) and isinstance(getattr(fc, '__origin__', None), type):
         return _n_default_value(fc.__origin__)  # generic alias such as dict[str, int]
     if not isinstance(fc, type):
@@ -3413,9 +3446,9 @@ class seq(Ntype):
         if _ntype.__name__ not in DICT_OF_TYPES:
             if hasattr(_ntype, '_n_register_type'):
                 _ntype._n_register_type()
-            else:
+            elif isinstance(_ntype, type):  # not a generic alias: tuple[A, B] is named "tuple"
                 DICT_OF_TYPES[_ntype.__name__] = _ntype
-        class_name = f"seq[{_ntype.__name__}]"
+        class_name = f"seq[{_n_type_name(_ntype)}]"
         _seq = type(class_name, (seq,), {"_n_type": _ntype})
         _seq._n_register_type()
         return _seq
@@ -5642,6 +5675,7 @@ __native_types__ = {
     "ref": ref,
     "typedesc": typedesc,
     "File": File,
+    "tuple": tuple,  # anonymous tuple types: tuple[char, nint] (Nim `(char, int)`)
 }
 
 

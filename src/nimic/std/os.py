@@ -103,6 +103,9 @@ else:
     DirSep = char('/')
     AltSep = char('\\')
 
+# Nim: os.ExeExt, the file extension of executables without its dot
+ExeExt = string("exe") if _os.name == 'nt' else string("")
+
 def getTempDir() -> string:
     """Nim: getTempDir — $TMPDIR, $TEMP, $TMP or $TEMPDIR (POSIX order), else /tmp; with a trailing
     separator."""
@@ -197,22 +200,39 @@ def relativePath(path: string, base: string = string("."), sep: char = DirSep) -
         res = res.replace(_os.sep, str(sep))
     return _n_os_result(res)
 
+def searchExtPos(path: string) -> int:
+    """Nim: os.searchExtPos — the index of the extension's dot in `path`'s last component, -1 if it has
+    none (a leading dot, as in `.bashrc`, starts no extension)."""
+    p = str(path)
+    for i in range(len(p) - 1, -1, -1):
+        if p[i] == ".":
+            return i if i > 0 and p[i - 1] not in (str(DirSep), str(AltSep), ":") else -1
+        if p[i] in (str(DirSep), str(AltSep)):
+            break
+    return -1
+
+
+def _normExt(ext: string) -> string:
+    """Nim: os.normExt — `ext` with a leading dot, "" stays ""."""
+    e = str(ext)
+    return string(e if e == "" or e[0] == "." else "." + e)
+
+
 @dispatch
 def changeFileExt(filename: string, ext: string) -> string:
-    n, _ = os.path.splitext(str(filename))
-    ext_str = str(ext)
-    if not ext_str.startswith('.'):
-        ext_str = '.' + ext_str
-    return string(n + ext_str)
+    """Nim: os.changeFileExt — replaces the extension found by searchExtPos (or adds one); an empty
+    `ext` removes it."""
+    ext_pos = searchExtPos(filename)
+    if ext_pos < 0:
+        return string(str(filename) + str(_normExt(ext)))
+    return string(str(filename)[:ext_pos] + str(_normExt(ext)))
 
 @dispatch
 def addFileExt(filename: string, ext: string) -> string:
-    _, e = os.path.splitext(str(filename))
-    if e: return string(filename)
-    ext_str = str(ext)
-    if not ext_str.startswith('.'):
-        ext_str = '.' + ext_str
-    return string(str(filename) + ext_str)
+    """Nim: os.addFileExt — adds `ext` unless `filename` has an extension; an empty `ext` adds nothing."""
+    if searchExtPos(filename) >= 0:
+        return string(filename)
+    return string(str(filename) + str(_normExt(ext)))
 
 @dispatch
 def removeFile(file: string) -> None:

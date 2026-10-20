@@ -430,13 +430,28 @@ def _nnimony_modules() -> list[str]:
                   if "tools" not in p.relative_to(NNIMONY).parts and p.stem != "__init__")
 
 
+def _without_main_blocks(source: str) -> str:
+    """`source` without its top-level `when isMainModule:` blocks."""
+    kept, skipping = [], False
+    for line in source.splitlines():
+        if line.startswith("when isMainModule:"):
+            skipping = True
+        elif skipping and line.strip() and not line[0].isspace():
+            skipping = False
+        if not skipping:
+            kept.append(line)
+    return "\n".join(kept)
+
+
 def _with_tests(original: str, transpiled: str) -> str | None:
     """The original module with the transpiled module's `when isMainModule:` block appended (its tests),
-    or None if it has none. Imports ncode/pydefs for the nimic helpers the tests use."""
+    or None if it has none. The original's own `when isMainModule:` tests are dropped: the converted
+    module contains them, converted as they are. Imports ncode/pydefs for the nimic helpers the tests use."""
     marker = "\nwhen isMainModule:"
     if marker not in transpiled:
         return None
-    return "import ncode/pydefs\n" + original.rstrip("\n") + "\n" + transpiled[transpiled.index(marker):]
+    return ("import ncode/pydefs\n" + _without_main_blocks(original).rstrip("\n") + "\n"
+            + transpiled[transpiled.index(marker):])
 
 
 def check_nimony() -> None:
