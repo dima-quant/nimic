@@ -37,9 +37,9 @@ def open(*args):
         actual_mode = _binary_map.get(mode, mode)
         try:
             handle = builtins.open(filename, actual_mode)
-            f._handle = handle
-            f._id = id(f)
-            File._registry[f._id] = f
+            f._n_handle = handle
+            f._n_id = id(f)
+            File._n_files[f._n_id] = f
             return True
         except Exception:
             return False
@@ -144,7 +144,7 @@ def set_file_pos(f, pos: int) -> None:
 
 def close(f) -> None:
     """Close file handle."""
-    f_handle = getattr(f, '_handle', f)
+    f_handle = getattr(f, '_n_handle', f)
     if hasattr(f_handle, 'close'):
         f_handle.close()
 
@@ -169,14 +169,14 @@ def _n_write_view(f_handle, s: str) -> None:
 
 def write(f, data) -> None:
     """Nim: write(f, data) — write string or char to file f."""
-    f_handle = getattr(f, '_handle', f)
+    f_handle = getattr(f, '_n_handle', f)
     s = data.data if hasattr(data, 'data') else str(data)
     _n_write_view(f_handle, s)
 
 
 def read_line(f, line=None):
     """Nim: readLine(f, line: var string): bool or readLine(f): string."""
-    f_handle = getattr(f, '_handle', f)
+    f_handle = getattr(f, '_n_handle', f)
     raw = f_handle.readline()
     if not raw:
         if line is not None:
@@ -199,7 +199,7 @@ readLine = read_line
 
 def write_line(f, *args) -> None:
     """Nim: writeLine(f, *args) — write strings followed by newline."""
-    f_handle = getattr(f, '_handle', f)
+    f_handle = getattr(f, '_n_handle', f)
     s = "".join(a.data if hasattr(a, 'data') else str(a) for a in args) + "\n"
     _n_write_view(f_handle, s)
 
@@ -208,7 +208,7 @@ writeLine = write_line
 
 def flush_file(f) -> None:
     """Nim: flushFile(f) — flush file buffer."""
-    f_handle = getattr(f, '_handle', f)
+    f_handle = getattr(f, '_n_handle', f)
     if hasattr(f_handle, 'flush'):
         f_handle.flush()
 

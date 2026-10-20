@@ -19,7 +19,7 @@ from typing import Generator, TypeVar
 
 from nimic.system.ansi_c import c_malloc, c_free
 from nimic import ntypesystem as _ntypesystem
-from nimic.ntypesystem import char, cstring, seq, string, NIntEnum, _n_dollar, ufcs
+from nimic.ntypesystem import char, cstring, seq, string, NIntEnum, _n_dollar, ufcs, _n_default_value, RangeDefect
 
 class _SomeCastClass:
     def __getitem__(self, other_cls: type) -> callable:
@@ -31,7 +31,7 @@ class _SomeCastClass:
         if isinstance(other_cls, TypeVar):
             fun = lambda x: x
         else:
-            fun = lambda x: other_cls.cast(x)
+            fun = lambda x: other_cls._n_cast(x)
         return fun
 
 
@@ -508,7 +508,7 @@ class pragma:
     as is; the pragma only affects the Nim output."""
 
     def __init__(self, p: str):
-        self.pragma = p
+        self._n_pragma = p
 
     def __enter__(self):
         return None
@@ -553,6 +553,14 @@ def substr(s, first: int = 0, last: int | None = None):
     if f <= l:
         return string(s_val[f:l + 1])
     return string("")
+
+
+def chr(x) -> char:
+    """Nim: chr(i) — the char with ordinal i; RangeDefect outside 0..255 (range checks on)."""
+    i = int(x)
+    if not 0 <= i <= 255:
+        raise RangeDefect(f"value out of range: {i} notin 0 .. 255")
+    return char(_builtins.chr(i))
 
 
 def ord(x) -> int:
@@ -787,35 +795,35 @@ class push:
     module-level code executing inside the block. Other pragmas only affect the Nim output."""
 
     def __init__(self, pragma: str):
-        self.pragma = pragma
-        self.checks: dict[str, bool] = {}
+        self._n_pragma = pragma
+        self._n_checks: dict[str, bool] = {}
         for part in pragma.split(","):
             key, _, value = part.partition(":")
             key = _n_ident_normalize(key.strip()).lower()
             on = value.strip().lower() in ("on", "true", "")
             names = _N_CHECK_OPTIONS if key in ("checks", "x") else (key,) if key in _N_CHECK_OPTIONS else ()
             for name in names:
-                self.checks[name] = on
+                self._n_checks[name] = on
 
-    def _off(self) -> list[str]:
-        return [name for name, on in self.checks.items() if not on]
+    def _n_off(self) -> list[str]:
+        return [name for name, on in self._n_checks.items() if not on]
 
     def __enter__(self):
-        self._frame = sys._getframe(1)  # module or proc scope: names defined in the block land in f_locals
-        self._before = dict(self._frame.f_locals)
-        for name in self._off():
+        self._n_frame = sys._getframe(1)  # module or proc scope: names defined in the block land in f_locals
+        self._n_before = dict(self._n_frame.f_locals)
+        for name in self._n_off():
             _ntypesystem._n_push_depth[name] = _ntypesystem._n_push_depth.get(name, 0) + 1
         return self
 
     def __exit__(self, *exc):
-        off = self._off()
+        off = self._n_off()
         for name in off:
             _ntypesystem._n_push_depth[name] -= 1
         codes = set()
-        for key, value in dict(self._frame.f_locals).items():
-            if self._before.get(key) is not value:
+        for key, value in dict(self._n_frame.f_locals).items():
+            if self._n_before.get(key) is not value:
                 _n_collect_codes(value, codes)
-        self._frame = None
+        self._n_frame = None
         for name in off:
             _ntypesystem._n_unchecked_codes.setdefault(name, set()).update(codes)
         return False
@@ -828,7 +836,7 @@ def _n_collect_codes(obj, codes: set) -> None:
         for member in vars(obj).values():
             _n_collect_codes(member, codes)
         return
-    fn = getattr(obj, "_fn", obj)
+    fn = getattr(obj, "_n_fn", obj)
     stack = []
     while fn is not None:  # the function and each function it wraps (@template_expand runs its own code)
         code = getattr(fn, "__code__", None)
@@ -850,6 +858,12 @@ def assign(dest, src) -> None:
     if not hasattr(dest, "__ilshift__"):
         raise TypeError(f"assign: destination of type {type(dest).__name__} cannot be assigned in place")
     dest <<= src
+
+
+def reset(x) -> None:
+    """Nim: reset(x) — x becomes default(typeof(x)), in place like assign. `x` must be a mutable nimic
+    value (Object, string, seq, array, set, integer); an enum is immutable in Python, reset its owner."""
+    assign(x, _n_default_value(type(x)))
 
 
 def include(*names: str) -> None:
@@ -889,18 +903,18 @@ class _BlockBreak(Exception):
 
     def __init__(self, label: str):
         super().__init__(label)
-        self.label = label
+        self._n_label = label
 
 
 class _LabeledBlock:
     def __init__(self, label: str):
-        self.label = label
+        self._n_label = label
 
     def __enter__(self):
         return None
 
     def __exit__(self, exc_type, exc, tb):
-        return isinstance(exc, _BlockBreak) and exc.label == self.label
+        return isinstance(exc, _BlockBreak) and exc._n_label == self._n_label
 
 
 class _Block:

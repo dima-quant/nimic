@@ -105,11 +105,20 @@ Operators & renaming:
   rule:isnot -> write isnot according to Nim syntax
   rule:notin -> write notin according to Nim syntax
   rule:inrange -> inrange(a, b) transpiles as a .. b (Nim inclusive range literal)
-  rule:strformat -> Python % on string operands transpiles as Nim % (format) instead of mod
+  rule:strformat -> Python % transpiles as Nim % (strutils format) instead of mod when the left operand is a string
+    (a literal, string(...) / FormatStr(...), a name declared as string or FormatStr in an enclosing scope, a call of
+    a proc declared `-> string`) or the right one is a list / tuple or a name declared as a sequence of strings
   rule:nilident -> "is None" / "is not None" transpile as == nil / != nil
   rule:keywordescape -> trailing _ stripped from Python keyword clashes (None_ -> None, type_ -> type)
   rule:percentops -> plus_percent(a, b) / a.plus_percent(b) and minus_percent(a, b) / a.minus_percent(b) transpile as a +% b and a -% b; lt_percent, le_percent,
     gt_percent, ge_percent as a <% b, a <=% b, a >% b, a >=% b (comparison precedence)
+  rule:dollarparens -> str(x) as the base of an index or attribute is parenthesized: ($(x))[i], ($(x)).f
+  rule:exceptseveral -> `except (A, B):` transpiles as `except A, B:`
+  rule:caseassign -> a match directly inside `with let:`/`with var:`/`with const:` whose every branch ends by
+    assigning the same name (or with a raise / a call that doesn't return) is that name's case expression:
+    `let x = case s of a: v ...`; the branches' assignments are written as their values
+  rule:namedops -> Nim std operators that Python can't spell are named procs in nimic: std/hashes'
+    mix_hash(h, v) is h !& v, finish_hash(h) is the prefix !$h; system's back(n) is ^n (s[back(1)] is s[^1])
   rule:isinstance -> isinstance(x, T) transpiles as x is T (type query), issubclass(T, X) as T is X
   rule:formatstr -> FormatStr(s) unwraps to string literal s in Nim (where string is FormatStr)
   rule:doblock -> with do: block translates as do: block in Nim
@@ -886,6 +895,8 @@ class _Unparser(NodeVisitor):
         self._in_try_star = False
         self._aliases = {"Object": "object", "NTuple": "tuple"}
         self._tuple_types = set()
+        self._string_names = [set()]  # rule:strformat: names declared as string / FormatStr, per scope
+        self._string_seq_names = [set()]  # rule:strformat: names declared as seq/openArray/array/varargs of string
         self._ref_types = set()
         self._set_types = set()
         self._seq_types = set()
@@ -911,6 +922,7 @@ class _Unparser(NodeVisitor):
         self._keywords_no_with_colon = ["block"]  # rule:dropwith
         self._context_stack = []
         self._match_subjects = []  # rule:matchcase: subjects of the enclosing match statements
+        self._case_assign_values = []  # rule:caseassign: ids of the assignments written as branch values
         self._block_nodes = []
         self._attribute_replace = {"copy": "", "contents": "[]"}
         self._set_low_precedence = ["export"]
@@ -1225,6 +1237,14 @@ class _Unparser(NodeVisitor):
                         self.traverse(body[-1].value)
 
     def visit_Assign(self, node):
+        if isinstance(node.value, Call) and isinstance(node.value.func, Name) and node.value.func.id == "string":
+            # rule:strformat -> a name assigned string(...) is a string
+            self._string_names[-1].update(t.id for t in node.targets if isinstance(t, Name))
+        if self._case_assign_values and id(node) in self._case_assign_values[-1]:
+            # rule:caseassign -> a branch's value
+            self.fill()
+            self.traverse(node.value)
+            return
         if self._is_type_alias(node):
             # rule:typealias -> module-level `Snippet = string` is `type Snippet* = string`
             target = node.targets[0]
@@ -1333,6 +1353,10 @@ class _Unparser(NodeVisitor):
         self.traverse(node.value)
 
     def visit_AnnAssign(self, node):
+        if isinstance(node.target, Name) and self._is_string_annotation(node.annotation):
+            self._string_names[-1].add(node.target.id)  # rule:strformat
+        if isinstance(node.target, Name) and self._is_string_seq_annotation(node.annotation):
+            self._string_seq_names[-1].add(node.target.id)  # rule:strformat
         self.fill()
         set_annotation = isinstance(node.annotation, Set)
         if node.simple and isinstance(node.target, Name) and not set_annotation:
@@ -1478,7 +1502,11 @@ class _Unparser(NodeVisitor):
         self.fill("except*" if self._in_try_star else "except")
         if node.type:
             self.write(" ")
-            self.traverse(node.type)
+            if isinstance(node.type, Tuple):
+                # rule:exceptseveral -> `except (A, B):` is Nim's `except A, B:`
+                self.interleave(lambda: self.write(", "), self.traverse, node.type.elts)
+            else:
+                self.traverse(node.type)
         if node.name:
             self.write(" as ")
             self.write(node.name)
@@ -1671,9 +1699,47 @@ class _Unparser(NodeVisitor):
         with self.block():
             self._traverse_record_items(case.body)
 
+    @staticmethod
+    def _is_string_annotation(ann) -> bool:
+        """rule:strformat -> `string`, `FormatStr`, or `mut @ string` (a var parameter)."""
+        if isinstance(ann, BinOp) and isinstance(ann.op, MatMult):
+            ann = ann.right
+        return isinstance(ann, Name) and ann.id in ("string", "FormatStr")
+
+    @classmethod
+    def _is_string_seq_annotation(cls, ann) -> bool:
+        """rule:strformat -> `seq[string]`, `openArray[string]`, `array[N, string]`, `varargs[string]`."""
+        if isinstance(ann, BinOp) and isinstance(ann.op, MatMult):
+            ann = ann.right
+        if not (isinstance(ann, Subscript) and isinstance(ann.value, Name)
+                and ann.value.id in ("seq", "openArray", "array", "varargs")):
+            return False
+        elt = ann.slice.elts[-1] if isinstance(ann.slice, Tuple) else ann.slice
+        return cls._is_string_annotation(elt)
+
+    def _is_string_name(self, name: str) -> bool:
+        return any(name in names for names in self._string_names)
+
+    def _is_string_operand(self, node) -> bool:
+        """rule:strformat -> a string literal, string(...) / FormatStr(...), a name declared as a string, or a
+        call of a proc declared `-> string` (in this module, before the call)."""
+        if isinstance(node, Constant):
+            return isinstance(node.value, str)
+        if isinstance(node, Name):
+            return self._is_string_name(node.id)
+        return isinstance(node, Call) and isinstance(node.func, Name) and (
+            node.func.id in ("string", "FormatStr") or self._is_string_name(node.func.id + "()"))
+
     def visit_FunctionDef(self, node):
+        if self._is_string_annotation(node.returns):
+            self._string_names[-1].add(node.name + "()")  # rule:strformat: a proc returning a string
         self._scope_depth += 1
+        params = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
+        self._string_names.append({x.arg for x in params if self._is_string_annotation(x.annotation)})
+        self._string_seq_names.append({x.arg for x in params if self._is_string_seq_annotation(x.annotation)})
         self._function_helper(node, "")
+        self._string_names.pop()
+        self._string_seq_names.pop()
         self._scope_depth -= 1
 
     def visit_AsyncFunctionDef(self, node):
@@ -2482,11 +2548,8 @@ class _Unparser(NodeVisitor):
     def visit_BinOp(self, node):
         # rule:strformat -> Python % on string operands transpiles as Nim % (format) instead of mod
         is_str_mod = node.op.__class__.__name__ == "Mod" and (
-            (isinstance(node.left, Constant) and isinstance(node.left.value, str)) or
-            (isinstance(node.left, Call) and isinstance(node.left.func, Name) and node.left.func.id == "string") or
-            (isinstance(node.left, Name) and any(x in node.left.id.lower() for x in ("frmt", "format", "pattern", "tmpl", "f_"))) or
-            isinstance(node.right, (List, Tuple)) or
-            (isinstance(node.right, Name) and any(x in node.right.id.lower() for x in ("args", "params")))
+            self._is_string_operand(node.left) or isinstance(node.right, (List, Tuple)) or
+            isinstance(node.right, Name) and any(node.right.id in names for names in self._string_seq_names)
         )
         if is_str_mod:
             operator = "%"
@@ -2516,7 +2579,11 @@ class _Unparser(NodeVisitor):
         "le_percent": ("<=%", _Precedence.CMP),
         "gt_percent": (">%", _Precedence.CMP),
         "ge_percent": (">=%", _Precedence.CMP),
+        # rule:namedops -> std/hashes; Nim's precedence of `!&` is that of `!`, a comparison
+        "mix_hash": ("!&", _Precedence.CMP),
     }
+    # rule:namedops -> prefix operators spelled as calls
+    prefix_named_ops = {"finish_hash": "!$", "back": "^"}  # back(n): Nim's ^n (BackwardsIndex)
 
     def _write_infix(self, operator, precedence, node, left, right):
         """Emit `left operator right` for a call-spelled binary operator (left-associative),
@@ -2599,6 +2666,13 @@ class _Unparser(NodeVisitor):
             self.write(attr)
 
     def visit_Call(self, node):
+        if isinstance(node.func, Name) and node.func.id in ("str", "$") and self.get_precedence(node) > _Precedence.FACTOR:
+            # rule:dollarparens -> `$` is a prefix operator: as the base of an index or attribute, str(x)[i] and
+            # str(x).f are ($(x))[i] and ($(x)).f
+            self.set_precedence(_Precedence.FACTOR, node)
+            with self.delimit("(", ")"):
+                self.visit_Call(node)
+            return
         self.set_precedence(_Precedence.ATOM, node.func)
         if isinstance(node.func, Name) and node.func.id in self._type_suffixes:
             # rule:literaltypes
@@ -2638,6 +2712,11 @@ class _Unparser(NodeVisitor):
         elif isinstance(node.func, Name) and node.func.id in self.percent_ops and len(node.args) == 2:
             # rule:percentops -> plus_percent(a, b) / minus_percent(a, b) translate to a +% b / a -% b
             self._write_infix(*self.percent_ops[node.func.id], node, node.args[0], node.args[1])
+        elif isinstance(node.func, Name) and node.func.id in self.prefix_named_ops and len(node.args) == 1:
+            # rule:namedops -> finish_hash(h) translates to !$h
+            self.write(self.prefix_named_ops[node.func.id])
+            self.set_precedence(_Precedence.ATOM, node.args[0])
+            self.traverse(node.args[0])
         elif isinstance(node.func, Attribute) and node.func.attr in self.percent_ops and len(node.args) == 1:
             # rule:percentops -> method form a.plus_percent(b) / a.minus_percent(b) (NInteger methods)
             self._write_infix(*self.percent_ops[node.func.attr], node, node.func.value, node.args[0])
@@ -2841,7 +2920,39 @@ class _Unparser(NodeVisitor):
             self.write(":")
             self.traverse(node.step)
 
+    @staticmethod
+    def _case_assign_target(node):
+        """rule:caseassign -> the name every branch of match `node` assigns last (a branch may instead end
+        with a raise or a call that doesn't return, like raiseAssert), with the ids of those assignments;
+        None if the match is an ordinary case statement."""
+        name, assigns = None, set()
+        for case in node.cases:
+            last = case.body[-1]
+            if isinstance(last, Assign) and len(last.targets) == 1 and isinstance(last.targets[0], Name):
+                if name not in (None, last.targets[0].id):
+                    return None
+                name = last.targets[0].id
+                assigns.add(id(last))
+            elif not (isinstance(last, Raise) or isinstance(last, Expr) and isinstance(last.value, Call)):
+                return None
+        return (name, assigns) if name else None
+
     def visit_Match(self, node):
+        # rule:caseassign
+        if self._context_stack and self._context_stack[-1] in ("var", "let", "const") \
+                and (target := self._case_assign_target(node)):
+            name, assigns = target
+            self.fill(self._adjust_name(name, definition=self._scope_depth == 0) + " = ")
+            self._case_assign_values.append(assigns)
+            self.write("case ")
+            self.traverse(node.subject)
+            self._match_subjects.append(node.subject)
+            with self.block(start=""):
+                for case in node.cases:
+                    self.traverse(case)
+            self._match_subjects.pop()
+            self._case_assign_values.pop()
+            return
         # rule:matchcase
         self.fill("case ")
         self.traverse(node.subject)

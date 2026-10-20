@@ -259,11 +259,24 @@ def _n_uses_caller_scope(func_def: ast.FunctionDef, module_globals: dict) -> boo
     return False
 
 
+_n_template_defs: dict = {}  # code object -> the template's parsed FunctionDef (None without source)
+_n_template_caller_scope: dict = {}  # code object -> whether the template uses its caller's variables
+
+
+def _n_template_def(template_func):
+    """The parsed definition of a template, cached by its code object: a template defined inside a proc is
+    decorated on every call of the proc, and its source doesn't change. Expansion copies the nodes."""
+    code = template_func.__code__
+    if code not in _n_template_defs:
+        try:
+            _n_template_defs[code] = ast.parse(textwrap.dedent(inspect.getsource(template_func))).body[0]
+        except (TypeError, OSError, IndexError):
+            _n_template_defs[code] = None
+    return _n_template_defs[code]
+
+
 def template(template_func):
-    try:
-        func_def = ast.parse(textwrap.dedent(inspect.getsource(template_func))).body[0]
-    except (TypeError, OSError, IndexError):
-        func_def = None
+    func_def = _n_template_def(template_func)
     if isinstance(func_def, ast.FunctionDef):
         blocks = _n_block_params(func_def, template_func.__annotations__)
         if blocks:
@@ -278,19 +291,15 @@ def template(template_func):
         is_untyped = True
     # and for templates that use the caller's variables
     if not is_untyped and isinstance(func_def, ast.FunctionDef):
-        is_untyped = _n_uses_caller_scope(func_def, template_func.__globals__)
+        code = template_func.__code__  # cached like the definition: decided on the first application
+        if code not in _n_template_caller_scope:
+            _n_template_caller_scope[code] = _n_uses_caller_scope(func_def, template_func.__globals__)
+        is_untyped = _n_template_caller_scope[code]
     if is_untyped:
         # if the function is an untyped template
-        try:
-            template_source = inspect.getsource(template_func)
-            template_source = textwrap.dedent(template_source)
-            template_ast = ast.parse(template_source)
-        except (TypeError, OSError) as e:
-            raise TypeError(
-                f"Could not get source code for template function '{template_func.__name__}'."
-            ) from e
-
-        template_def_node = template_ast.body[0]
+        if func_def is None:
+            raise TypeError(f"Could not get source code for template function '{template_func.__name__}'.")
+        template_def_node = func_def
         if not isinstance(template_def_node, ast.FunctionDef):
             raise TypeError("The template must be a standard Python function.")
 

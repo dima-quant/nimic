@@ -1,6 +1,6 @@
 """Nim std/parseutils — parsing utility functions."""
 from __future__ import annotations
-from nimic.ntypes import string, nint, char, ch, Tset, mut, ufcs
+from nimic.ntypes import string, nint, char, ch, Tset, mut, ufcs, BiggestInt, uint64
 from .strutils import IdentStartChars, IdentChars, Whitespace
 
 
@@ -80,3 +80,57 @@ def parse_hex(s: string | str, number: mut@nint, start: nint | int = 0, max_len:
     return nint(i - first)
 
 parseHex = parse_hex
+
+
+def _parse_digits(s: str, i: int) -> tuple[int, int]:
+    """Decimal digits at s[i:] with `_` ignored after a digit (Nim's rawParse*): (value, end index)."""
+    value = 0
+    while i < len(s) and s[i] in "0123456789":
+        value = value * 10 + ord(s[i]) - ord("0")
+        i += 1
+        while i < len(s) and s[i] == "_":
+            i += 1
+    return value, i
+
+
+@ufcs(string, aliases=("parseBiggestInt",))
+def parse_biggest_int(s: string | str, number: mut@BiggestInt, start: nint | int = 0) -> nint:
+    """Nim: parseBiggestInt — an optionally signed decimal integer (`_` allowed) at `start`: the number of
+    chars parsed, 0 (number untouched) if there is none; ValueError if out of BiggestInt's range."""
+    text, first = str(s), int(start)
+    i, sign = first, 1
+    if i < len(text) and text[i] in "+-":
+        sign = -1 if text[i] == "-" else 1
+        i += 1
+    if not (i < len(text) and text[i] in "0123456789"):
+        return nint(0)
+    value, i = _parse_digits(text, i)
+    value *= sign
+    if not -(1 << 63) <= value < (1 << 63):
+        raise ValueError("Parsed integer outside of valid range")
+    number <<= BiggestInt(value)
+    return nint(i - first)
+
+
+@ufcs(string, aliases=("parseBiggestUInt",))
+def parse_biggest_uint(s: string | str, number: mut@uint64, start: nint | int = 0) -> nint:
+    """Nim: parseBiggestUInt — an unsigned decimal integer (`_` allowed, a leading `+`) at `start`: the number
+    of chars parsed, 0 (number untouched) if there is none; ValueError for a negative number or above
+    high(BiggestUInt)."""
+    text, first = str(s), int(start)
+    i = first
+    if i + 1 < len(text) and text[i] == "-" and text[i + 1] in "0123456789":
+        raise ValueError("Parsed integer outside of valid range")
+    if i < len(text) and text[i] == "+":
+        i += 1
+    if not (i < len(text) and text[i] in "0123456789"):
+        return nint(0)
+    value, i = _parse_digits(text, i)
+    if value >= 1 << 64:
+        raise ValueError("Parsed integer outside of valid range")
+    number <<= uint64(value)
+    return nint(i - first)
+
+
+parseBiggestInt = parse_biggest_int
+parseBiggestUInt = parse_biggest_uint

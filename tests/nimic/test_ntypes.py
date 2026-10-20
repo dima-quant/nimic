@@ -22,10 +22,12 @@ from nimic.ntypesystem import (BUFFER_REGISTRY, BufferRegistry, DICT_OF_C_TYPES,
 from nimic.std.bitops import fastLog2
 from nimic.std.endians import big_endian32
 from nimic.std.formatfloat import addFloat
+from nimic.std.hashes import Hash, hashIgnoreStyle, mix_hash, finish_hash
+from nimic.std.strutils import parseFloat
 from nimic.std.math import classify, fcNegSubnormal, fcNormal, fcSubnormal, trunc
 from nimic.std.options import Option, none, some
 from nimic.std.os import fileExists, getCurrentDir, getEnv, walkDir
-from nimic.std.parseutils import parse_hex, parse_ident
+from nimic.std.parseutils import parse_hex, parse_ident, parseBiggestInt, parseBiggestUInt
 from nimic.std.strscans import scanf
 from nimic.std.strutils import isUpperAscii, find, nimIdentNormalize, repeat, rfind, strip, toLowerAscii
 from nimic.std.syncio import lines, read_file
@@ -614,8 +616,8 @@ class TestNTypes(unittest.TestCase):
         p = addr(obj)
 
         # Test casting to byte address (uintp/intp)
-        up = uintp.cast(p)
-        ip = intp.cast(p)
+        up = cast[uintp](p)
+        ip = cast[intp](p)
 
         # Validate that properties matched the wrapper address
         self.assertFalse(up.is_nil)
@@ -1070,7 +1072,7 @@ class TestNTypes(unittest.TestCase):
     # --- high() / low() on integer types ---
 
     def test_high_low_signed_integers(self):
-        """high()/low() on signed integer types dispatches via NInteger.first()/last()."""
+        """high()/low() on signed integer types dispatches via NInteger._n_low_bound()/_n_high_bound()."""
         self.assertEqual(int(low(int8)), -128)
         self.assertEqual(int(high(int8)), 127)
         self.assertEqual(int(low(int16)), -32768)
@@ -1157,8 +1159,8 @@ class TestNTypes(unittest.TestCase):
         R = Trange[3, 7]
         ArrType = array[R, int32]
 
-        self.assertEqual(ArrType.first(), 3)
-        self.assertEqual(ArrType.last(), 7)
+        self.assertEqual(low(ArrType), 3)
+        self.assertEqual(high(ArrType), 7)
 
         a = ArrType()
         # Set/get with non-zero indices
@@ -1803,7 +1805,7 @@ class TestNTypes(unittest.TestCase):
         # no UTF-8 guessing on decode: the bytes C3 83 C2 A9 stay four bytes
         self.assertEqual(string("Ã©").data, "Ã©")
         self.assertEqual(string(b"\xc3\xa9").data, "\xc3\xa9")
-        self.assertEqual(cstring(b"\xc3\xa9")._value, b"\xc3\xa9")
+        self.assertEqual(cstring(b"\xc3\xa9")._n_value, b"\xc3\xa9")
 
     def test_cstring_of_string_is_a_view(self):
         """Nim `s.cstring` / `cstring(s)` points into the string's buffer: writes through the cstring
@@ -2154,7 +2156,7 @@ class TestNTypes(unittest.TestCase):
         self.assertIs(d.__globals__, _t_ident.__globals__)
         self.assertIs(d.__code__, _t_ident.__code__)
         d2 = dispatch(d)  # re-dispatching a wrapper (DispDict does this) must not fail ...
-        self.assertIs(d2._fn, _t_ident)  # ... and registers the original function, not the wrapper
+        self.assertIs(d2._n_fn, _t_ident)  # ... and registers the original function, not the wrapper
         self.assertEqual(int(d2(nint(3))), 3)  # no self-dispatch recursion
 
     def test_dispatch_overload_of_explicitly_dispatched_method(self):
@@ -2349,7 +2351,7 @@ class TestNTypes(unittest.TestCase):
             b: int64
         p = _TPadded(a=int8(1), b=int64(7))
         self.assertEqual(ctypes.sizeof(p._n_view), 16)
-        q = _TPadded.cast(p)  # view-backed: fields are bound to the struct memory
+        q = cast[_TPadded](p)  # view-backed: fields are bound to the struct memory
         self.assertEqual(ctypes.addressof(q.b._n_view) - ctypes.addressof(q._n_view), 8)
         self.assertEqual(int(q.b), 7)
         q.b = int64(9)
@@ -3806,6 +3808,295 @@ def addWord(b: mut@Builder, w: string) -> None:
         self.assertFalse(declared("noSuchName"))
         self.assertTrue(declared("system.getMaxMem"))   # Nim's system module: nimic's system procs
         self.assertFalse(declared("system.noSuchProc"))
+
+    def test_hashes_nim_algorithm(self):
+        """std/hashes `!&` (mix_hash), `!$` (finish_hash) and hashIgnoreStyle compute Nim's values (64-bit
+        wrapping, unsigned shifts), so a hash built char by char (the lexer) matches hashIgnoreStyle (idents).
+        Expected values from Nim 2.2."""
+        self.assertEqual(hashIgnoreStyle(string("abracadabra")), -5600162842546114722)
+        self.assertEqual(hashIgnoreStyle(string("aBr_aCa_dAB_ra")), -5600162842546114722)
+        self.assertEqual(hashIgnoreStyle(string("")), 0)
+        self.assertEqual(hashIgnoreStyle(string("Lexer")), 4924223376909363949)
+        h = mix_hash(Hash(0), ord(ch("x")))
+        self.assertEqual(h, 124921)
+        self.assertIsInstance(h, Hash)
+        self.assertEqual(finish_hash(h), 36826228197)
+        self.assertEqual(mix_hash(Hash(0), -1), -288230376151710704)
+        with var:
+            h2: Hash = Hash(0)
+        for c in "lexer":
+            h2 = mix_hash(h2, ord(ch(c)))
+        self.assertEqual(finish_hash(h2), hashIgnoreStyle(string("Lexer")))
+
+    def test_transpile_hash_operators(self):
+        """rule:percentops -> std/hashes' operators spelled as calls: mix_hash(h, v) is `h !& v`,
+        finish_hash(h) is `!$h`."""
+        out = unparse(ast.parse("h = mix_hash(h, ord(c))\nh = finish_hash(h)\nx = finish_hash(mix_hash(0, 1))\n"))[0]
+        self.assertIn("h = h !& ord(c)", out)
+        self.assertIn("h = !$h", out)
+        self.assertIn("x = !$(0 !& 1)", out)
+
+    def test_ashr(self):
+        """Nim: ashr(x, y) — arithmetic shift right of a signed integer, in x's type (values from Nim 2.2)."""
+        self.assertEqual(ashr(int64(-256), 4), -16)
+        self.assertIsInstance(ashr(int64(-256), 4), int64)
+        self.assertEqual(ashr(int8(-128), 1), -64)
+        self.assertIsInstance(ashr(int8(-128), 1), int8)
+        self.assertEqual(ashr(int16(100), 2), 25)
+        self.assertEqual(ashr(int64(0xF0) << 56, 56), -16)
+        self.assertEqual(ashr(int64(0x7F) << 56, 56), 127)
+        self.assertIn("ashr(x shl 56, 56)", unparse(ast.parse("y = ashr(x << 56, 56)\n"))[0])
+
+    def test_reset(self):
+        """Nim: reset(x) — x becomes default(typeof(x)), in place (objects, strings, integers, enums)."""
+        class _TRs(Object):
+            n: int64
+            s: string
+        with var:
+            o = _TRs(n=int64(5), s=string("ab"))
+            alias = o
+            i = int64(7)
+            st = string("xyz")
+        reset(o)
+        self.assertEqual(o.n, 0)
+        self.assertEqual(o.s, string(""))
+        self.assertIs(alias, o)
+        reset(i)
+        self.assertEqual(i, 0)
+        reset(st)
+        self.assertEqual(st, string(""))
+        self.assertIn("reset(o)", unparse(ast.parse("reset(o)\n"))[0])
+
+    def test_backwards_index(self):
+        """Nim: s[^n] — the n-th element from the end; nimic spells ^n as back(n) (rule:namedops). A plain
+        negative index stays an IndexDefect, as in Nim."""
+        with var:
+            s = string("abc")
+            q = seq[int32]([int32(1), int32(2), int32(3)])
+            a = array[3, int32]([int32(4), int32(5), int32(6)])
+        self.assertEqual(s[back(1)], ch("c"))
+        self.assertEqual(s[back(3)], ch("a"))
+        self.assertEqual(q[back(1)], 3)
+        self.assertEqual(a[back(2)], 5)
+        s[back(1)] = ch("z")
+        q[back(1)] = int32(9)
+        a[back(1)] = int32(7)
+        self.assertEqual(s, string("abz"))
+        self.assertEqual(q[2], 9)
+        self.assertEqual(a[2], 7)
+        self.assertEqual(len(openArray(q)), 3)  # not the seq's capacity
+        self.assertEqual(openArray(q)[back(2)], 2)
+        self.assertIsInstance(back(1), BackwardsIndex)
+        with self.assertRaises(IndexDefect):
+            q[back(4)]
+        with self.assertRaises(IndexDefect):
+            a[-1]
+        out = unparse(ast.parse("c = s[back(1)]\nd = s[back(n + 1)]\n"))[0]
+        self.assertIn("c = s[^1]", out)
+        self.assertIn("d = s[^(n + 1)]", out)
+
+    def test_parse_biggest_int_uint_float(self):
+        """std/parseutils parseBiggestInt / parseBiggestUInt and std/strutils parseFloat (values from Nim 2.2):
+        the number of chars parsed, 0 (number untouched) without digits, ValueError out of range."""
+        with var:
+            r = BiggestInt(7)
+            u = uint64(3)
+        self.assertEqual(parseBiggestInt(string("9223372036854775807"), r), 19)
+        self.assertEqual(r, 9223372036854775807)
+        self.assertEqual(parseBiggestInt(string("-2024_05_09"), r), 11)
+        self.assertEqual(r, -20240509)
+        r <<= BiggestInt(7)
+        self.assertEqual(parseBiggestInt(string("abc"), r), 0)
+        self.assertEqual(r, 7)
+        self.assertEqual(parseBiggestInt(string("x12"), r, 1), 2)
+        self.assertEqual(r, 12)
+        self.assertEqual(parseBiggestInt(string("-9223372036854775808"), r), 20)
+        self.assertEqual(r, -9223372036854775808)
+        with self.assertRaises(ValueError):
+            parseBiggestInt(string("9223372036854775808"), r)
+        self.assertEqual(parseBiggestUInt(string("18446744073709551615"), u), 20)
+        self.assertEqual(u, 18446744073709551615)
+        with self.assertRaises(ValueError):
+            parseBiggestUInt(string("18446744073709551616"), u)
+        with self.assertRaises(ValueError):
+            parseBiggestUInt(string("-1"), u)
+        self.assertEqual(parseFloat(string("1_000.5e3")), 1000500.0)
+        self.assertIsInstance(parseFloat(string("0.1")), float64)
+        with self.assertRaises(ValueError):
+            parseFloat(string("x"))
+
+    def test_chr_rangedefect_natural(self):
+        """Nim: chr(i) is a char (RangeDefect above 255); RangeDefect is a Defect, not a ValueError (the lexer
+        catches ValueError before RangeDefect); Natural / Positive and Trange[a, b] annotate range types."""
+        self.assertIsInstance(chr(65), char)
+        self.assertEqual(chr(nint(97)), ch("a"))
+        with self.assertRaises(RangeDefect):
+            chr(256)
+        self.assertTrue(issubclass(RangeDefect, Defect))
+        self.assertFalse(issubclass(RangeDefect, ValueError))
+        out = unparse(ast.parse("def m(chars: Tset[char], p: Trange[0, 4]) -> Natural:\n    pass\n"))[0]
+        self.assertIn("proc m*(chars: set[char], p: range[0 .. 4]): Natural", out)
+
+    def test_transpile_except_several(self):
+        """`except (A, B):` is Nim's `except A, B:`."""
+        out = unparse(ast.parse("try:\n    f()\nexcept (OverflowDefect, RangeDefect):\n    g()\n"))[0]
+        self.assertIn("except OverflowDefect, RangeDefect:", out)
+
+    def test_nintenum_auto_starts_at_zero(self):
+        """A Nim enum's first member is 0: NIntEnum's auto() counts from 0 (and from the previous value),
+        so default(E) and a zeroed object field are the first member."""
+        class _E(NIntEnum):
+            a = auto()
+            b = auto()
+            c = 10
+            d = auto()
+        self.assertEqual([int(_E.a), int(_E.b), int(_E.c), int(_E.d)], [0, 1, 10, 11])
+        self.assertIs(default(_E), _E.a)
+
+        class _O(Object):
+            k: _E
+        self.assertIs(_O().k, _E.a)
+
+    def test_cast_pointer_to_cstring(self):
+        """cast[cstring](addr(buf[i])) is a cstring into the middle of a buffer (Nim's char*): it reads and
+        writes the same memory from offset i (the lexer hands identifiers to getIdent this way)."""
+        with var:
+            s = string("hello world")
+            c = cstring(s)
+        tail = cast[cstring](addr(c[6]))
+        self.assertEqual(str(tail), "world")
+        self.assertEqual(tail[0], ch("w"))
+        tail[0] = ch("W")
+        self.assertEqual(s, string("hello World"))
+        self.assertIn("cast[cstring](addr(c[6]))", unparse(ast.parse("t = cast[cstring](addr(c[6]))\n"))[0])
+
+    def test_succ_pred_char(self):
+        """Nim: succ/pred of a char (`'\\0'..pred(' ')` in the lexer); RangeDefect past '\\xFF' or below '\\0'."""
+        self.assertEqual(pred(ch(" ")), ch("\x1f"))
+        self.assertEqual(succ(ch("a"), 2), ch("c"))
+        self.assertIsInstance(succ(ch("a")), char)
+        self.assertTrue(ch("\x05") in inrange(ch("\0"), pred(ch(" "))))
+        with self.assertRaises(RangeDefect):
+            pred(ch("\0"))
+
+    def test_dollar_of_containers(self):
+        """Nim `$` of a set, seq and array (collectionToString): elements in order (a set by ordinal), strings
+        and chars quoted with Nim's escapes (addQuoted). Expected texts from Nim 2.2."""
+        class _E(NIntEnum):
+            ea = auto()
+            eb = auto()
+            ec = auto()
+        self.assertEqual(str(Tset[_E]({_E.ec, _E.ea})), "{ea, ec}")
+        self.assertEqual(str(Tset[char]({ch("b"), ch("a"), ch("\n"), ch("'")})), "{'\\n', '\\'', 'a', 'b'}")
+        self.assertEqual(str(Tset[_E]()), "{}")
+        self.assertEqual(str(seq[nint]([nint(1), nint(2), nint(3)])), "@[1, 2, 3]")
+        self.assertEqual(str(seq[string]([string('a"b'), string("c")])), '@["a\\"b", "c"]')
+        self.assertEqual(str(array[2, int8]([int8(1), int8(2)])), "[1, 2]")
+        self.assertEqual(str(seq[char]([ch("x"), ch("\t"), ch("\xF0")])), "@['x', '\\t', '\\xF0']")
+        self.assertEqual(str(seq[float64]([float64(1.5), float64(2.0)])), "@[1.5, 2.0]")
+        self.assertEqual(str(seq[nint]()), "@[]")
+
+    def test_addr_of_local_scalar(self):
+        """addr(x) of a local integer/float (Nim: every variable has an address): the scalar gets storage of its
+        own, so a pointer reads and writes it, also reinterpreted (`cast[ptr float32](addr(xi))[]`)."""
+        with var:
+            xi = BiggestInt(0x3F800000)
+        self.assertEqual(cast[ptr[float32]](addr(xi)).contents, 1.0)
+        with var:
+            p = addr(xi)
+        xi += 1
+        self.assertEqual(p.contents, 0x3F800001)
+        p.contents = BiggestInt(7)
+        self.assertEqual(xi, 7)
+        self.assertIsInstance(xi, BiggestInt)
+        with var:
+            f = float64(2.5)
+        self.assertEqual(addr(f).contents, 2.5)
+
+    def test_transpile_strformat_typed_names(self):
+        """rule:strformat -> `%` is Nim's format operator when the left operand is a string: a literal, a
+        string(...) call, or a name declared as string / FormatStr in the scope (parameter, annotated or
+        string(...)-assigned variable); otherwise it is `mod`."""
+        src = textwrap.dedent('''\
+            def f(msg: string, n: nint, m: mut @ string) -> string:
+                with var:
+                    t: string = string("x")
+                    u = string("$1")
+                    k = n % 3
+                a = msg % t
+                b = m % t
+                c = u % t
+                return a
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("a = msg % t", out)
+        self.assertIn("b = m % t", out)
+        self.assertIn("c = u % t", out)
+        self.assertIn("k = n mod 3", out)
+
+    def test_transpile_dollar_as_base(self):
+        """rule:dollarparens -> `$` is a prefix operator: str(x)[a:b] / str(x).len are ($(x))[a..<b] /
+        ($(x)).len, not $(x[...])."""
+        out = unparse(ast.parse("h = str(L.buf)[s:e]\nn = str(x).len\nm = str(x) + y\n"))[0]
+        self.assertIn("h = ($(L.buf))[s..<e]", out)
+        self.assertIn("n = ($(x)).len", out)
+        self.assertIn("m = $(x) + y", out)
+
+    def test_cast_python_number(self):
+        """cast[T](x) of a plain Python number treats it as a Nim literal (int / float64)."""
+        self.assertEqual(cast[uint8](200), 200)
+        self.assertIsInstance(cast[uint8](200), uint8)
+        self.assertEqual(cast[uint8](300), 44)  # the low byte, as Nim on a little-endian machine
+        self.assertEqual(cast[int64](1.0), 0x3FF0000000000000)
+
+    def test_internal_names_dont_collide(self):
+        """nimic's internal hooks are `_n_` names: user enum members and fields may be called first, last,
+        cast, ..., and low/high/cast/inrange still work."""
+        class _E(NStrEnum):
+            first = "a"
+            last = "b"
+            nitems = "c"
+        self.assertIs(low(_E), _E.first)
+        self.assertIs(high(_E), _E.nitems)
+        self.assertEqual(list(inrange(_E.first, _E.last)), [_E.first, _E.last])
+
+        class _O(Object):
+            cast: int32
+            first: int32
+        with var:
+            o = _O(cast=int32(1), first=int32(2))
+        self.assertEqual(o.cast, 1)
+        self.assertEqual(cast[ptr[_O]](addr(o)).contents.first, 2)
+
+    def test_transpile_case_expression(self):
+        """rule:caseassign -> a match inside `with let:`/`with var:` whose every branch ends by assigning the
+        same name (or raises) is that name's Nim case expression: `let x = case s of ...: v`."""
+        src = textwrap.dedent('''\
+            def f(base: Base) -> nint:
+                with let:
+                    match base:
+                        case Base.base2:
+                            bitsPerDigit = 1
+                        case Base.base8:
+                            bitsPerDigit = 3
+                        case _:
+                            raiseAssert(string("unreachable"))
+                return bitsPerDigit
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("  let\n    bitsPerDigit = case base\n      of Base.base2:\n        1\n"
+                      "      of Base.base8:\n        3\n      else:\n        raiseAssert(string(\"unreachable\"))", out)
+        # not every branch assigns the same name: an ordinary case statement
+        src2 = textwrap.dedent('''\
+            with var:
+                match k:
+                    case 1:
+                        a = 1
+                    case _:
+                        b = 2
+            ''')
+        self.assertIn("case k", unparse(ast.parse(src2))[0])
+        self.assertNotIn("= case", unparse(ast.parse(src2))[0])
 
     def test_transpile_private_names(self):
         """rule:localname: a private _x keeps its Nim name x, unexported (procs, overloads of public procs,

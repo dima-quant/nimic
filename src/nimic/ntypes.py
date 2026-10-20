@@ -20,7 +20,7 @@ Contents:
   Reference types      — ref, ptr, mut (SomeRefClass instances)
                          The @ operator returns identity; transpiled to
                          Nim ref/ptr/var annotations.
-  Enum utilities       — NStrEnum with succ/pred/ord/nrange/subset/low/high.
+  Enum utilities       — NStrEnum with succ/pred/ord/subset/low/high.
   Cast & memory        — cast[T](x), sizeof(x), addr(x), unsafeAddr(x).
   Iteration helpers    — fields(obj), fields(obj1, obj2), countdown(a, b).
   Compile-time         — comptime(x), defined("sym"), declared("name"), static.
@@ -55,6 +55,7 @@ from nimic.nsystem import (
     hostOS,
     hostCPU,
     substr,
+    chr,
     ord,
     quit,
     defined,
@@ -77,6 +78,7 @@ from nimic.nsystem import (
     shallowCopy,
     push,
     assign,
+    reset,
     include,
     importExcept,
     importFrom,
@@ -151,8 +153,15 @@ from nimic.ntypesystem import (
     FieldDefect,
     OverflowDefect,
     IndexDefect,
+    RangeDefect,
+    BackwardsIndex,
+    back,
     uncheckedAssign,
 )
+
+# system's range types (Nim: Natural = range[0..high(int)], Positive = range[1..high(int)]); as annotations
+Natural = Trange[0, high(nint)]
+Positive = Trange[1, high(nint)]
 
 
 class untyped:
@@ -387,6 +396,11 @@ def plus_percent(a, b):
     return NInteger._n_lift(a, b).plus_percent(b)
 
 
+def ashr(x, y):
+    """Nim: ashr(x, y) — arithmetic shift right of a signed integer (NInteger.ashr); a plain int is Nim int."""
+    return NInteger._n_lift(x).ashr(y)
+
+
 def minus_percent(a, b):
     """Nim: a -% b — wrapping subtraction. Delegates to NInteger.minus_percent;
     a plain int operand adopts the type of its NInteger peer (else Nim int)."""
@@ -430,10 +444,10 @@ def generic(fn):
     class _GenericWrapper:
         def __init__(self, target):
             _functools.update_wrapper(self, target)
-            self._target = target
+            self._n_target = target
 
         def __call__(self, *args, **kwargs):
-            return self._target(*args, **kwargs)
+            return self._n_target(*args, **kwargs)
 
         def __getitem__(self, types):
             return self

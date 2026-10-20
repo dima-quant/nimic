@@ -78,6 +78,7 @@ Scrutinize every line of the diff against the **Ad Hoc Detection Checklist**:
 5. **Does it duplicate logic?** Are there copy-pasted branches that can be parameterized?
 6. **Does it violate SRP?** Does a single class/function take on foreign responsibilities (e.g. `_Object` knowing about specific AST variant names)?
 7. **Does it swallow exceptions blindly?** Are there `except Exception: None` or broad try/except blocks hiding real bugs?
+8. **Is an internal name prefixed `_n_`?** Methods and fields of nimic classes whose instances are user values (`Object`, scalars, `string`, `cstring`, `seq`, `array`, `Tset`, pointers, enums, `File`, dispatched procs, `push`/`pragma` blocks) that aren't Nim API (protocol hooks like `_n_cast`, `_n_low_bound`, caches, handles) start with `_n_`, so they can't collide with user fields, methods or enum members. Nim API names (`add`, `len`, `incl`, `contents`, `copy`, `succ`, `ord`, ...) and Python protocol names (`__str__`, `_generate_next_value_`, `UserString.data`) keep their names; internal service classes (registries, build profile, inliner visitors) are not user values.
 
 ### Step 3 — Audit Transpiler Changes
 For every modification in `src/nimic/transpiler.py`:
@@ -152,7 +153,7 @@ def high(obj):
     if name in ('int16', 'i16'): return 32767
 ```
 ✅ **PROPER:**
-Define `_n_high` / `first()` / `last()` classmethods on `NInteger` or concrete integer classes. `high(T)` queries `getattr(T, '_n_high', None)` or `T.last()`.
+Define `_n_high` / `_n_low_bound()` / `_n_high_bound()` classmethods on `NInteger` or concrete integer classes. `high(T)` queries `getattr(T, '_n_high', None)` or `T._n_high_bound()`.
 
 ### Pattern 2: `isinstance` Chains for Known Types
 ❌ **BAD:**

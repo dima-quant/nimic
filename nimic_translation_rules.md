@@ -143,6 +143,7 @@ translates to
     sort2 = auto()
     sort3 = auto()
 ```
+`auto()` in a `NIntEnum` counts from 0 like Nim (the first member is 0, each next one more than the previous), so writing the first member `= 0` is not needed; `default(E)` and a zeroed field are the first member.
 An enum with string values (`warnUser = "User"`) is a `NStrEnum`: `$` of an `auto()` member is its name, and members with equal texts (`warnUser = "User", hintUser = "User"`) are distinct members, ordered by declaration.
 
 **Types of one type section.** Consecutive classes are one Nim `type` section (methods are written after it), so a field may name a type declared later in the section (`PType.sym: PSym` before `class PSym`): the field resolves when the later type is defined, with that type's zero value (`nil` for a `@ref`).
@@ -223,7 +224,8 @@ Memory primitives are strongly enforced to mirror Nim.
 | `cast[uint](p) + 4` | `cast[uintp](p) + 4` | `uintp` supports pointer arithmetic in nimic. |
 | `p[]`, `p[] = x` | `p.contents`, `p.contents = x` | Pointer dereferencing |
 | `array[3, float64]([1, 2, 3])`| `array[3, float64]([1.0, 2.0, 3.0])` | Nimic arrays use iterables as initialization payloads. |
-| `addr x` | `addr(x)` | Maps natively using Nimic's variable aliasing mechanics. |
+| `addr x` | `addr(x)` | Maps natively using Nimic's variable aliasing mechanics. A standalone local integer or float gets storage of its own on `addr`, so pointers read and write it (`cast[ptr float32](addr(xi))[]` is `cast[ptr[float32]](addr(xi)).contents`) |
+| `cast[cstring](addr(L.buf[i]))` | `cast[cstring](addr(L.buf[i]))` | A `char*` into the middle of a buffer: a cstring sharing the memory of the string or buffer that contains the address, from there to its end |
 | `unsafeAddr x` | `unsafe_addr(x)` | Equivalent to `addr x` in Nimic logic. |
 
 ## 6. Primitives & Typing
@@ -240,7 +242,14 @@ Because the transpiler is sensitive to Python's internal logic versus Nim's syst
 | `0x9e37...15'u64` | `u64(0x9e37...15)` | Numeric literal types |
 | `'#'` | `ch("#")` | Char literal types |
 | `None` (Nim keyword) | `None_` | Trailing `_` stripped by transpiler for Python keyword clashes (`rule:keywordescape`) |
-| `"format: $1" % [arg]` | `string("format: $1") % [arg]` | String `%` operator transpiles as Nim `%` (formatting), not `mod` (`rule:strformat`) |
+| `"format: $1" % [arg]` | `string("format: $1") % [arg]` | String `%` operator transpiles as Nim `%` (formatting), not `mod` (`rule:strformat`): the left operand is a string literal, `string(...)`/`FormatStr(...)`, a name declared `string`/`FormatStr` (parameter, annotated or `string(...)`-assigned variable, also in an enclosing scope), or a call of a proc declared `-> string`; or the right operand is a list/tuple or a name declared as a seq/openArray/array/varargs of `string` |
+| `chr(i)` | `chr(i)` | nimic's `chr` gives a `char` (Python's builtin gives a `str`); `RangeDefect` outside 0..255 |
+| `succ(c)`, `pred(' ')` (a char) | `succ(c)`, `pred(ch(' '))` | Also for chars; `RangeDefect` past `'\xFF'` or below `'\0'` |
+| `$s` of a set, seq or array | `str(s)` | Nim's text: `{a, b}` (set, in ordinal order), `@[1, 2]` (seq), `[1, 2]` (array); strings and chars quoted with Nim's escapes (`@["a\"b"]`, `{'\n'}`) |
+| `($x)[a..b]`, `($x).len` | `str(x)[a:b + 1]`, `str(x).len` | `rule:dollarparens`: a `str(...)` used as the base of an index or attribute is parenthesized in Nim |
+| `except ValueError, OverflowDefect:` | `except (ValueError, OverflowDefect):` | Several exception types (`rule:exceptseveral`) |
+| `Natural`, `Positive`, `range[0..4]` (parameter/return types) | `Natural`, `Positive`, `Trange[0, 4]` | Range types as annotations; values are not range-checked in Python yet (only `chr` and enum `succ`/`pred` raise `RangeDefect`) |
+| `RangeDefect` | `RangeDefect` | A `Defect`, not a `ValueError`: `except ValueError` doesn't catch it, as in Nim |
 | `readFile(f)` | `read_file(f)` / `readFile(f)` | Reads binary-safe byte buffer into Nimic `string`. |
 | `Path(str)` | `Path(str)` | `from nimic.std.paths import Path`. Supports `/` (`__truediv__`) and `os.PathLike` (`__fspath__`). |
 | `s.skipWhitespace(i)` (UFCS on a std proc) | `s.skipWhitespace(i)` | Works when the Python std shim declares the proc with `@ufcs(string, aliases=("skipWhitespace",))`; std shims must not `setattr` methods onto core types. Python's own `str` methods (`find`, `rfind`, `strip`, …) are never shadowed — call the strutils proc as a function (`rfind(s, c)`) when Nim semantics differ |
@@ -296,12 +305,18 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | `not x` (bitwise) | `~x` | Nim bitwise `not` maps to Python bitwise inversion `~` (`rule:bitwiserename`) |
 | `a +% b` | `plus_percent(a, b)` or `a.plus_percent(b)` | Nim wrapping addition in the operand type's width (`NInteger.plus_percent`; a plain `int` adopts its `NInteger` peer's type, else Nim `int`) (`rule:percentops`) |
 | `a -% b` | `minus_percent(a, b)` or `a.minus_percent(b)` | Nim wrapping subtraction in the operand type's width (`NInteger.minus_percent`) (`rule:percentops`) |
+| `h !& v`, `!$h` (std/hashes) | `mix_hash(h, v)`, `finish_hash(h)` | Nim std operators Python can't spell are named procs that transpile back to the operator (`rule:namedops`); `hashIgnoreStyle` uses the same Nim algorithm, so a hash built with `mix_hash` matches it |
+| `proc `??`*(conf: ConfigRef; ...)` (a custom operator of a converted module) | `def qq(conf: ConfigRef, ...)` | Custom operators defined in converted code get a name in letters (precedent: saturate's `` `|+|` `` is `sat_plus`); the transpiled module defines and calls that name |
+| `s[^1]`, `s[^n]` | `s[back(1)]`, `s[back(n)]` | Index counted from the end (`BackwardsIndex`, `rule:namedops`) for string, seq, array and openArray; a negative index is an `IndexDefect`, as in Nim |
+| `ashr(x, y)` | `ashr(x, y)` | Arithmetic shift right of a signed integer, in `x`'s type (`NInteger.ashr`) |
 | `a div b` | `a // b` | Nim integer division truncated toward zero (native on `NInteger`) |
 | `a mod b` | `a % b` | Nim integer modulo truncated toward zero (native on `NInteger`) |
 | `x is T` | `isinstance(x, T)` | Nim type query translates as `x is T` (`rule:isinstance`) |
 | `cmp(a, b)` | `cmp(a, b)` | Standard three-way comparison `(a > b) - (a < b)` |
 | `FormatStr(s)` | `FormatStr(s)` | Wraps format string for `%` operator; unwraps to string literal in Nim (`rule:formatstr`) |
 | `move x` | `move(x)` | Nim ownership transfer; identity operation in Python runtime |
+| `reset(x)` | `reset(x)` | `x` becomes `default(typeof(x))` in place (Object, string, seq, array, set, integer) |
+| `inc(tok.tokType, 2)` (an enum) | `tok.tokType = succ(tok.tokType, 2)` | Nim's `inc` of an enum is `succ`; an integer's `inc(x, n)` is `x += n` |
 | `shallowCopy(d, s)` | `shallowCopy(d, s)` | Assigns `s` to `d` in place (`d` must be a mutable nimic value) |
 
 ## 8. Exporting and Scope (`rule:writeexport`, `rule:localname`, `rule:modulepath`)
@@ -311,6 +326,7 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | Private names | `_` prefix (operators: `{.private.}`) | Identifiers defined **without** `*` in Nim (procs, templates, types, fields, module variables) are written `_name`; they transpile to `name` without `*` (`rule:localname`). Names starting with `__` or `_<digit>` keep a `local_` prefix. The transpiler rejects a module where dropping the `_` changes meaning (`private_name_collisions`): `_x` and `x` both defined in one scope (except overloaded procs, and `_base = f(base)` for a parameter `base` not used afterwards, i.e. Nim's `let base = f(base)`), or `x` used as a value after a private value `_x` (calls `x(...)` still find the proc in Nim). Rename then, e.g. `_pkgConf` |
 | `import std/tables` | `from nimic.std.tables import *` | Module paths are translated: `nimic.x.y` → `x/y`, with module renaming (`rule:modulepath`) |
 | `import ../options` | `from ..options import *` | Relative imports keep their level: one `../` per extra dot |
+| `msgs.message(...)`, `nimlexbase.EndOfFile` (qualified by module) | `from .msgs import *` plus `from . import msgs`, then `msgs.message(...)` | `from . import m` binds the module name in Python and emits nothing (Nim's `import m` makes `m.x` available). A method of another module's type is called as a method (`nimlexbase.handleCR(L, pos)` is `L.handleCR(pos)`) |
 | `import std/times` | `from nimic.std.times import *` (or `import a, b` of it) | A Python `from m import ...` is a full Nim `import m`: a class comes with its methods, which are procs in Nim |
 | `from std/times import utc, fromUnix` | `importFrom("nimic.std.times", "utc", "fromUnix")` | `rule:importfrom`: Nim's selective import; binds only those names |
 | `import ropes except `%`` | `importExcept(".ropes", "%")` | `rule:importexcept`: the module's public names except the given ones (operators have no Python name) |
@@ -339,6 +355,7 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | `of nkEmpty..pred(nkSym), succ(nkSym)..nkNilLit:` | `case _ if n.kind in inrange(TNodeKind.nkEmpty, pred(TNodeKind.nkSym)) or n.kind in inrange(succ(TNodeKind.nkSym), TNodeKind.nkNilLit):` | Enum ranges likewise |
 | `elif cond:` (branch of a `case`) | `case _ if cond:` | Any other guard is an `elif` branch |
 | `proc p(s: string): Cmd =`<br>&nbsp;&nbsp;`case s`<br>&nbsp;&nbsp;`of "sug": ideSug`<br>&nbsp;&nbsp;`else: ideNone` | `def p(s: string) -> Cmd:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`match s:`<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`case "sug": return Cmd.ideSug`<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`case _: return Cmd.ideNone` | `case` expression as the proc's result (`rule:casereturn`): a body ending with a `match` whose every branch is `return <value>` |
+| `let bitsPerDigit = case base`<br>&nbsp;&nbsp;`of base2: 1`<br>&nbsp;&nbsp;`else: raiseAssert "unreachable"` | `with let:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`match base:`<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`case NumericalBase.base2: bitsPerDigit = 1`<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`case _: raiseAssert(string("unreachable"))` | `case` expression assigned to a variable (`rule:caseassign`): a `match` directly inside `with let:`/`with var:`/`with const:` whose every branch ends by assigning the same name, or with a raise or a call that doesn't return. Also for `var` |
 - **variant types (case objects)** ➔ `Object` with a `match` on the field declared immediately before it
 ```nim
   NodeObj* = object

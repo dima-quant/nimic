@@ -100,6 +100,27 @@ class IndexDefect(Defect, IndexError):
     """Nim: IndexDefect — an index outside the bounds of an array (bound checks on)."""
 
 
+class RangeDefect(Defect):
+    """Nim: RangeDefect — a value outside its range type (range checks on), e.g. chr(256). Not a
+    ValueError: Nim's `except ValueError` doesn't catch it."""
+
+
+class BackwardsIndex(int):
+    """Nim: BackwardsIndex, `^n` — the n-th element counted from the end (s[^1] is the last). Written
+    back(n) in nimic (rule:namedops); string, seq, array and openArray resolve it with _n_from_end."""
+
+
+def back(n) -> BackwardsIndex:
+    """Nim: ^n — an index counted from the end: s[back(1)] is Nim's s[^1] (rule:namedops)."""
+    return BackwardsIndex(int(n))
+
+
+def _n_from_end(index, length: int, first: int = 0):
+    """`index` as a forward index into a container of `length` elements starting at `first`, if it is a
+    BackwardsIndex; any other index is returned unchanged."""
+    return first + length - int(index) if isinstance(index, BackwardsIndex) else index
+
+
 # --- Runtime checks (Nim: overflowChecks, boundChecks, ...) ---
 # Whether a check is on comes from the build profile (nimic.nsystem registers the provider: config
 # options such as `overflow_checks:off`, which `-d:danger` sets) and from `push` regions: code objects
@@ -144,14 +165,14 @@ class _UncheckedAssign:
     assignments inside may change the active branch. Re-entrant (token stack)."""
 
     def __init__(self):
-        self._tokens = []
+        self._n_tokens = []
 
     def __enter__(self):
-        self._tokens.append(_N_UNCHECKED_ASSIGN.set(_N_UNCHECKED_ASSIGN.get() + 1))
+        self._n_tokens.append(_N_UNCHECKED_ASSIGN.set(_N_UNCHECKED_ASSIGN.get() + 1))
         return self
 
     def __exit__(self, *exc):
-        _N_UNCHECKED_ASSIGN.reset(self._tokens.pop())
+        _N_UNCHECKED_ASSIGN.reset(self._n_tokens.pop())
         return False
 
 
@@ -171,14 +192,14 @@ class NilPtr:
     it is initialized as NilPtr("ptr[SomeType]") instead of plain None.
     This allows autorename() to recover the type name for dispatch resolution.
     """
-    __slots__ = ('_type_name',)
+    __slots__ = ('_n_type_name',)
 
     @property
     def is_nil(self) -> bool:
         return True
 
     def __init__(self, type_name: str):
-        self._type_name = type_name
+        self._n_type_name = type_name
 
     def __bool__(self) -> bool:
         return False
@@ -193,7 +214,7 @@ class NilPtr:
         return hash(None)
 
     def __repr__(self) -> str:
-        return f"NilPtr({self._type_name!r})"
+        return f"NilPtr({self._n_type_name!r})"
 
 __resolved__ = {}
 
@@ -372,7 +393,7 @@ def _specialize_generic(fn: callable, T_var: dict[str, str]) -> callable:
 
 def autorename(x: object) -> str:
     if isinstance(x, NilPtr):
-        return x._type_name
+        return x._n_type_name
     if isinstance(x, tuple) and not isinstance(x, NTuple):
         return f"tuple[{', '.join(autorename(elem) for elem in x)}]"
     type_name = type(x).__name__
@@ -633,6 +654,29 @@ def _n_dollar(x) -> str:
     return str(x)
 
 
+def _n_escaped_char(c: str) -> str:
+    """Nim addEscapedChar: the text of a char inside a quoted string or char literal."""
+    escapes = {"\a": "\\a", "\b": "\\b", "\t": "\\t", "\n": "\\n", "\v": "\\v", "\f": "\\f", "\r": "\\c",
+               "\x1b": "\\e", "\\": "\\\\", "'": "\\'", '"': '\\"'}
+    if c in escapes:
+        return escapes[c]
+    return c if 32 <= ord(c) <= 126 else f"\\x{ord(c):02X}"
+
+
+def _n_quoted(x) -> str:
+    """Nim addQuoted: an element of `$` of a collection — strings and chars quoted and escaped, else `$x`."""
+    if isinstance(x, char):
+        return "'" + _n_escaped_char(str(x)) + "'"
+    if isinstance(x, (string, cstring)):
+        return '"' + "".join(_n_escaped_char(c) for c in str(x)) + '"'
+    return _n_dollar(x)
+
+
+def _n_collection_str(prefix: str, items, suffix: str) -> str:
+    """Nim collectionToString: `$` of a set, seq or array."""
+    return prefix + ", ".join(_n_quoted(x) for x in items) + suffix
+
+
 def _n_vararg_type(ann, namespace: dict) -> tuple[str, str | None]:
     """Element type and converter of a `*args` annotation: `T`, or `varargs[T, conv]`."""
     text = ann if isinstance(ann, str) else getattr(ann, "__name__", str(ann))
@@ -678,15 +722,15 @@ class _DispatchedCallable:
 
     def __init__(self, target, orig_fn):
         functools.update_wrapper(self, orig_fn)  # copies __type_params__ (3.12+) and __dict__
-        self._target = target
-        self._fn = orig_fn
+        self._n_target = target
+        self._n_fn = orig_fn
         # not covered by update_wrapper, but read by dispatch() on re-dispatch
         self.__code__ = getattr(orig_fn, "__code__", None)
         self.__defaults__ = getattr(orig_fn, "__defaults__", None)
         self.__globals__ = getattr(orig_fn, "__globals__", {})
 
     def __call__(self, *args, **kwargs):
-        return self._target(*args, **kwargs)
+        return self._n_target(*args, **kwargs)
 
     def __get__(self, instance, owner=None):
         if instance is None:
@@ -696,8 +740,8 @@ class _DispatchedCallable:
     def __getitem__(self, types_param):
         if self.__name__ == "__getitem__":
             if isinstance(types_param, tuple):
-                return self._target(*types_param)
-            return self._target(types_param)
+                return self._n_target(*types_param)
+            return self._n_target(types_param)
         return self
 
 
@@ -782,7 +826,7 @@ def dispatch(fn: callable) -> callable:
     if isinstance(fn, _DispatchedCallable):
         # re-dispatch (e.g. DispDict overloading an explicit @dispatch method): register the
         # original function; registering the wrapper would make it dispatch to itself forever
-        fn = fn._fn
+        fn = fn._n_fn
     fn = _n_named_tuple_result(fn)
     # No kwargs in dispatched functions. Types should match. TODO: Python types should be treated as literals
     # TODO properly remove prefix
@@ -1501,6 +1545,11 @@ class Ntype:
 
 
 class NIntEnum(IntEnum):
+    @staticmethod
+    def _generate_next_value_(name, start, count, last_values):
+        """auto(): a Nim enum counts from 0, each member one more than the previous one."""
+        return last_values[-1] + 1 if last_values else 0
+
     def __str__(self) -> str:
         """Nim `$` of an enum member: its name."""
         return self.name
@@ -1603,25 +1652,25 @@ class NStrEnum(StrEnum):
         cls.__n_indices__ = {val: ind for ind, val in enumerate(cls.__n_members_tuple__)}
 
     @classmethod
-    def first(cls) -> StrEnum:
+    def _n_low_bound(cls) -> StrEnum:
         if cls.__n_members_tuple__ is None:
             cls._n_set_indices()
         return cls.__n_members_tuple__[0]
 
     @classmethod
-    def last(cls) -> StrEnum:
+    def _n_high_bound(cls) -> StrEnum:
         if cls.__n_members_tuple__ is None:
             cls._n_set_indices()
         return cls.__n_members_tuple__[-1]
 
     @classmethod
-    def nitems(cls) -> int:
+    def _n_count(cls) -> int:
         if cls.__n_members_tuple__ is None:
             cls._n_set_indices()
         return len(cls.__n_members_tuple__)
 
     @classmethod
-    def nrange(cls, first: StrEnum, last: StrEnum) -> StrEnum:
+    def _n_range(cls, first: StrEnum, last: StrEnum) -> StrEnum:
         if cls.__n_members_tuple__ is None:
             cls._n_set_indices()
         members = cls.__n_members_tuple__
@@ -1630,7 +1679,7 @@ class NStrEnum(StrEnum):
         last_ind = indices[last]
         return members[first_ind : last_ind + 1]
 
-    def inrange(item, last: StrEnum) -> StrEnum:
+    def _n_inrange(item, last: StrEnum) -> StrEnum:
         cls = item.__class__
         if cls.__n_members_tuple__ is None:
             cls._n_set_indices()
@@ -1728,8 +1777,8 @@ def nord(item) -> int:
 
 
 def inrange(first, last):
-    if hasattr(first, 'inrange'):
-        return first.inrange(last)
+    if hasattr(first, '_n_inrange'):
+        return first._n_inrange(last)
     if isinstance(first, Enum) and isinstance(last, Enum):
         cls = first.__class__
         if hasattr(cls, '_n_members_tuple'):
@@ -1758,14 +1807,14 @@ def low(obj: object) -> object:
         if issubclass(obj, Enum):
             members = list(obj)
             return members[0] if members else 0
-        if hasattr(obj, 'first'):
-            return obj.first()
+        if hasattr(obj, '_n_low_bound'):
+            return obj._n_low_bound()
         if hasattr(obj, '_n_low'):
             return obj._n_low
     if hasattr(obj, '__len__'):
         return 0
-    if hasattr(obj, 'first'):
-        return obj.first()
+    if hasattr(obj, '_n_low_bound'):
+        return obj._n_low_bound()
     return 0
 
 def high(obj: object) -> object:
@@ -1773,14 +1822,14 @@ def high(obj: object) -> object:
         if issubclass(obj, Enum):
             members = list(obj)
             return members[-1] if members else 0
-        if hasattr(obj, 'last'):
-            return obj.last()
+        if hasattr(obj, '_n_high_bound'):
+            return obj._n_high_bound()
         if hasattr(obj, '_n_high'):
             return obj._n_high
     if hasattr(obj, '__len__'):
         return len(obj) - 1
-    if hasattr(obj, 'last'):
-        return obj.last()
+    if hasattr(obj, '_n_high_bound'):
+        return obj._n_high_bound()
     return 0
 
 
@@ -1788,28 +1837,28 @@ class NBool:
     """ctypes-backed bool — harmonizes with NScalar pattern for struct embedding."""
 
     def __init__(self, value=False):
-        self._value = bool(value)
+        self._n_value = bool(value)
 
     def _n_get_value(self):
-        return self._value
+        return self._n_value
 
     def _n_set_value(self, value):
         if isinstance(value, NBool):
-            self._value = value._value
+            self._n_value = value._n_value
         else:
-            self._value = bool(value)
+            self._n_value = bool(value)
 
     def __int__(self):
-        return int(self._value)
+        return int(self._n_value)
 
     def __float__(self):
-        return float(self._value)
+        return float(self._n_value)
 
     def __bool__(self):
-        return self._value
+        return self._n_value
 
     def __repr__(self):
-        return repr(self._value)
+        return repr(self._n_value)
 
     def __str__(self):
         """Nim `$`: true / false."""
@@ -1817,8 +1866,8 @@ class NBool:
 
     def __eq__(self, other):
         if isinstance(other, NBool):
-            return self._value == other._value
-        return self._value == other
+            return self._n_value == other._n_value
+        return self._n_value == other
 
     @classmethod
     def _n_on_struct(cls, parent_elems, id, value=None):
@@ -1826,13 +1875,13 @@ class NBool:
         self = cls.__new__(cls)
         # Bind to parent struct field
         self._n_get_value = lambda: bool(getattr(parent_elems, id))
-        self._n_set_value = lambda v: setattr(parent_elems, id, bool(v._value if isinstance(v, NBool) else v))
-        self._value = bool(getattr(parent_elems, id))
+        self._n_set_value = lambda v: setattr(parent_elems, id, bool(v._n_value if isinstance(v, NBool) else v))
+        self._n_value = bool(getattr(parent_elems, id))
         if value is not None:
             self._n_set_value(value)
-        # Override _value property to always read from struct
+        # Override _n_value property to always read from struct
         self.__class__ = type('NBool_bound', (NBool,), {
-            '_value': property(
+            '_n_value': property(
                 lambda s: bool(getattr(parent_elems, id)),
                 lambda s, v: setattr(parent_elems, id, bool(v))
             )
@@ -1844,12 +1893,12 @@ class NBool:
         """Array-embedded: reads/writes via ctypes array slot."""
         self = cls.__new__(cls)
         self._n_get_value = lambda: bool(parent_elems[index])
-        self._n_set_value = lambda v: parent_elems.__setitem__(index, bool(v._value if isinstance(v, NBool) else v))
-        self._value = bool(parent_elems[index])
+        self._n_set_value = lambda v: parent_elems.__setitem__(index, bool(v._n_value if isinstance(v, NBool) else v))
+        self._n_value = bool(parent_elems[index])
         if value is not None:
             self._n_set_value(value)
         self.__class__ = type('NBool_bound', (NBool,), {
-            '_value': property(
+            '_n_value': property(
                 lambda s: bool(parent_elems[index]),
                 lambda s, v: parent_elems.__setitem__(index, bool(v))
             )
@@ -1934,34 +1983,39 @@ class Trange:
 
         class TNoteKind(Trange[TMsgKind.errUnknown, TMsgKind.errFatal]): pass
 
-    Supports ``low(TNoteKind)``, ``high(TNoteKind)``, and ``nitems()`` for
+    Supports ``low(TNoteKind)``, ``high(TNoteKind)``, and ``_n_count()`` for
     array sizing via ``array[Trange[...], T]``."""
-    _cache: dict = {}
+    _n_cache: dict = {}
 
     def __class_getitem__(cls, params):
         lo, hi = params
         key = (id(lo), id(hi))
-        if key not in cls._cache:
+        if key not in cls._n_cache:
             name = f'Trange[{lo}, {hi}]'
             new_cls = type(name, (cls,), {
                 '_n_low': lo,
                 '_n_high': hi,
             })
-            # Add first/last/nitems so low()/high() from nsystem work
-            new_cls.first = classmethod(lambda c: c._n_low)
-            new_cls.last = classmethod(lambda c: c._n_high)
-            new_cls.nitems = classmethod(
+            # the low()/high() protocol, and the number of values
+            new_cls._n_low_bound = classmethod(lambda c: c._n_low)
+            new_cls._n_high_bound = classmethod(lambda c: c._n_high)
+            new_cls._n_count = classmethod(
                 lambda c: nord(c._n_high) - nord(c._n_low) + 1
             )
-            cls._cache[key] = new_cls
-        return cls._cache[key]
+            cls._n_cache[key] = new_cls
+        return cls._n_cache[key]
 
 
 class Tset(set):
     """Nim's ``set[T]`` for ordinal types. ``Tset[MyEnum]`` returns a proper
     ``set`` subclass that can be instantiated, used in ``isinstance()``, and
     inherited from.  Results are cached so ``Tset[X] is Tset[X]``."""
-    _cache: dict = {}
+    _n_cache: dict = {}
+
+    def __str__(self) -> str:
+        """Nim `$` of a set: the elements in ordinal order, `{a, b}`."""
+        key = lambda x: x._n_byte if isinstance(x, char) else nord(x)
+        return _n_collection_str("{", sorted(self, key=key), "}")
 
     def __init__(self, *items):
         """Nim set constructor `{a, b..c}`: `Tset[T](a, inrange(b, c))` or `Tset[T]({a, inrange(b, c)})`;
@@ -2029,7 +2083,7 @@ class Tset(set):
         return type(self)(set.__and__(self, other))
 
     def __class_getitem__(cls, elem_type):
-        if elem_type not in cls._cache:
+        if elem_type not in cls._n_cache:
             name = f'Tset[{elem_type.__name__}]'
             # Override set operations to preserve the subclass type
             def _make_op(op_name):
@@ -2051,8 +2105,8 @@ class Tset(set):
                 '__mul__': _make_op('__and__'),
                 '__rmul__': _make_op('__and__'),
             })
-            cls._cache[elem_type] = new_cls
-        return cls._cache[elem_type]
+            cls._n_cache[elem_type] = new_cls
+        return cls._n_cache[elem_type]
 
 
 # --- Structured Objects (Object) ---
@@ -2407,7 +2461,7 @@ class _Object(Ntype):
         return instance
 
     @classmethod
-    def cast(cls, instance):
+    def _n_cast(cls, instance):
         """Cast generic memory/object to this Object type."""
         if isinstance(instance, NilPtr) or instance is None:
             return NilPtr(cls.__name__)
@@ -3090,11 +3144,11 @@ class array(Ntype):
             BUFFER_REGISTRY.free(addr)
 
     @classmethod
-    def first(cls):
+    def _n_low_bound(cls):
         return cls._n_first
 
     @classmethod
-    def last(cls):
+    def _n_high_bound(cls):
         return cls._n_first + cls._n_size - 1
 
     @classmethod
@@ -3113,6 +3167,10 @@ class array(Ntype):
     def __len__(self) -> int:
         return self._n_size
 
+    def __str__(self) -> str:
+        """Nim `$` of an array: `[a, b]`, strings and chars quoted."""
+        return _n_collection_str("[", (self[i] for i in range(self._n_first, self._n_first + self._n_size)), "]")
+
     def __iter__(self):
         """Nim: items(a) — the elements in index order."""
         for pos in range(self._n_size):
@@ -3124,7 +3182,7 @@ class array(Ntype):
             raise IndexDefect(f"index {index} not in {self._n_first} .. {self._n_first + self._n_size - 1}")
 
     def __getitem__(self, index: int) -> object:
-        index = self._n_normalize_index(index)
+        index = self._n_normalize_index(_n_from_end(index, self._n_size, self._n_first))
         self._n_check_index(index)
         if self._n_view is not None:
             if hasattr(self, '_n_type') and isinstance(self._n_type, type) and issubclass(self._n_type, (char, NScalar, bool)):
@@ -3135,7 +3193,7 @@ class array(Ntype):
         return self._n_cache[index]
 
     def __setitem__(self, index: int, value: object) -> None:
-        index = self._n_normalize_index(index)
+        index = self._n_normalize_index(_n_from_end(index, self._n_size, self._n_first))
         self._n_check_index(index)
         if self._n_view is None:
             self._n_cache[index] = value
@@ -3174,8 +3232,8 @@ class array(Ntype):
         if isinstance(n, type) and issubclass(n, Enum):
             n_val = len(n)
         elif isinstance(n, type) and issubclass(n, Trange):
-            first_val = int(n.first())
-            n_val = int(n.last()) - int(n.first()) + 1
+            first_val = int(n._n_low_bound())
+            n_val = int(n._n_high_bound()) - int(n._n_low_bound()) + 1
         elif isinstance(n, type) and issubclass(n, NInteger):
             first_val = int(low(n))
             n_val = int(high(n)) - int(low(n)) + 1
@@ -3288,6 +3346,10 @@ class seq(Ntype):
             return len(self._n_list)
         return self.len
 
+    def __str__(self) -> str:
+        """Nim `$` of a seq: `@[a, b]`, strings and chars quoted."""
+        return _n_collection_str("@[", (self[i] for i in range(len(self))), "]")
+
     def _n_resize(self) -> None:
         old_addr = ctypes.addressof(self._n_backing)
         ctypes.resize(self._n_backing, self._n_reserved * self._n_type._n_sizeof())
@@ -3302,7 +3364,9 @@ class seq(Ntype):
         _n_carry_held_fields(self, {i: e for i, e in old_cache.items() if i < self.len})
 
     def __getitem__(self, index: int) -> object:
-        index = int(index)
+        index = int(_n_from_end(index, len(self)))
+        if not 0 <= index < len(self) and _n_check_enabled("boundchecks"):
+            raise IndexDefect(f"index {index} not in 0 .. {len(self) - 1}")
         if self._n_is_list:
             return self._n_list[index]
         if index not in self._n_cache:
@@ -3310,6 +3374,7 @@ class seq(Ntype):
         return self._n_cache[index]
 
     def __setitem__(self, index, value: object) -> None:
+        index = _n_from_end(index, len(self))
         if isinstance(index, slice):
             # Slice assignment: seq[a:b] = array/seq
             start, stop, step = index.indices(self.len if not self._n_is_list else len(self._n_list))
@@ -3518,9 +3583,10 @@ class openArray(Ntype):
             self._n_source = None
 
     def __getitem__(self, index):
-        return self._n_view[index]
+        return self._n_view[_n_from_end(index, len(self))]
 
     def __setitem__(self, index, value):
+        index = _n_from_end(index, len(self))
         if hasattr(value, '_n_addr'):
             self._n_view[index] = value._n_addr
         elif hasattr(value, '_n_get_value'):
@@ -3529,9 +3595,12 @@ class openArray(Ntype):
             self._n_view[index] = value
 
     def __len__(self):
+        """Nim len(openArray): the source's length (a seq's view may have spare capacity)."""
+        src = getattr(self, '_n_source', None)
+        if src is not None and hasattr(src, '__len__'):
+            return len(src)
         if hasattr(self._n_view, '__len__'):
             return len(self._n_view)
-        src = getattr(self, '_n_source', None)
         return src._n_size if hasattr(src, '_n_size') else 0
 
     @classmethod
@@ -3559,24 +3628,24 @@ class File:
     via an id-based registry, so File handles can be passed through
     opaque pointer parameters (e.g. C callback tokens).
     """
-    _registry: dict[int, 'File'] = {}  # id → File instance
+    _n_files: dict[int, 'File'] = {}  # id → File instance
 
-    __slots__ = ('_handle', '_id')
+    __slots__ = ('_n_handle', '_n_id')
 
     def __init__(self, handle=None):
-        self._handle = handle
-        self._id = id(self)
+        self._n_handle = handle
+        self._n_id = id(self)
         if handle is not None:
-            File._registry[self._id] = self
+            File._n_files[self._n_id] = self
 
     def open(self, filename: str, mode: str = "r") -> bool:
         _binary_map = {"w": "wb", "a": "ab", "r+": "r+b", "w+": "w+b", "r": "rb"}
         actual_mode = _binary_map.get(str(mode), str(mode))
         try:
             path = _n_os_arg(filename)
-            self._handle = __builtins__["open"](path, actual_mode) if isinstance(__builtins__, dict) else __builtins__.open(path, actual_mode)
-            self._id = id(self)
-            File._registry[self._id] = self
+            self._n_handle = __builtins__["open"](path, actual_mode) if isinstance(__builtins__, dict) else __builtins__.open(path, actual_mode)
+            self._n_id = id(self)
+            File._n_files[self._n_id] = self
             return True
         except Exception:
             return False
@@ -3584,68 +3653,68 @@ class File:
     # --- delegate file operations to the underlying handle ---
 
     def seek(self, pos, *args):
-        return self._handle.seek(pos, *args)
+        return self._n_handle.seek(pos, *args)
 
     def write(self, data):
-        if hasattr(self._handle, 'mode') and 'b' in self._handle.mode:
+        if hasattr(self._n_handle, 'mode') and 'b' in self._n_handle.mode:
             if isinstance(data, str) or hasattr(data, 'data'):  # str, char, string byte views
                 data = _n_encode_str(data)
-        return self._handle.write(data)
+        return self._n_handle.write(data)
 
     def read(self, *args):
-        return self._handle.read(*args)
+        return self._n_handle.read(*args)
 
     def close(self):
-        File._registry.pop(self._id, None)
-        return self._handle.close()
+        File._n_files.pop(self._n_id, None)
+        return self._n_handle.close()
 
     def flush(self):
-        return self._handle.flush()
+        return self._n_handle.flush()
 
     def __enter__(self):
-        if self._handle is not None and hasattr(self._handle, "__enter__"):
-            self._handle.__enter__()
+        if self._n_handle is not None and hasattr(self._n_handle, "__enter__"):
+            self._n_handle.__enter__()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._handle is not None and hasattr(self._handle, "__exit__"):
-            return self._handle.__exit__(exc_type, exc_val, exc_tb)
+        if self._n_handle is not None and hasattr(self._n_handle, "__exit__"):
+            return self._n_handle.__exit__(exc_type, exc_val, exc_tb)
         self.close()
 
 
     @property
     def buffer(self):
-        return getattr(self._handle, 'buffer', self._handle)
+        return getattr(self._n_handle, 'buffer', self._n_handle)
 
     # --- cast support ---
 
     @classmethod
-    def cast(cls, source):
+    def _n_cast(cls, source):
         """Recover a File from an opaque pointer token.
 
         The pointer's _n_token_id stores the registry key set by
-        pointer.cast(file_instance).
+        pointer._n_cast(file_instance).
         """
         if isinstance(source, File):
             return source
         if isinstance(source, pointer):
             token_id = getattr(source, '_n_token_id', None)
-            if token_id is not None and token_id in cls._registry:
-                return cls._registry[token_id]
+            if token_id is not None and token_id in cls._n_files:
+                return cls._n_files[token_id]
         raise TypeError(f"Cannot cast {type(source)} to File")
 
     def __eq__(self, other):
         if other is None:
-            return self._handle is None
+            return self._n_handle is None
         return NotImplemented
 
     def __ne__(self, other):
         if other is None:
-            return self._handle is not None
+            return self._n_handle is not None
         return NotImplemented
 
     def __repr__(self):
-        return f"File({self._handle!r})"
+        return f"File({self._n_handle!r})"
 
 class byte_buffer(Ntype):
     def __init__(self, backing, _n_view=None):
@@ -3763,7 +3832,7 @@ class pointer(Ntype):
     # --- cast (address-only, no eager _n_ptr_cast) ---
 
     @classmethod
-    def cast(cls, instance):
+    def _n_cast(cls, instance):
         """Cast any pointer/memory to this pointer type.  Address-only — no
         eager object creation.  The content is materialized lazily on first
         ``.contents`` access.
@@ -3786,10 +3855,10 @@ class pointer(Ntype):
         elif hasattr(instance, '_n_view') and instance._n_view is not None:
             result._n_addr = ctypes.addressof(instance._n_view)
             return result
-        elif hasattr(instance, '_id') and hasattr(type(instance), 'cast'):
+        elif hasattr(instance, '_n_id') and hasattr(type(instance), '_n_cast'):
             # Opaque handle (e.g. File) — store token id for recovery
             result._n_addr = 0
-            result._n_token_id = instance._id
+            result._n_token_id = instance._n_id
             return result
         else:
             addr = _resolve_addr(instance)
@@ -3902,6 +3971,8 @@ def _resolve_addr(instance) -> int:
 def addr(x: object) -> pointer:
     """For a variable of type T, addr(x) returns a pointer of type ptr[T],
     such that addr(x).contents is x"""
+    if hasattr(x, '_n_ensure_view'):
+        x._n_ensure_view()  # a standalone scalar gets storage of its own
     if hasattr(x, '_n_slot_addr') and x._n_slot_addr != 0:
         p = ptr[type(x)]()
         p._n_addr = x._n_slot_addr
@@ -3922,7 +3993,7 @@ class ByteAddress(Ntype):
     _n_is_ptr = True
 
     @classmethod
-    def cast(cls, instance):
+    def _n_cast(cls, instance):
         return cls(instance)
 
     @classmethod
@@ -4173,6 +4244,20 @@ class NScalar:
             get_addr=lambda: None,
         )
 
+    def _n_ensure_view(self) -> None:
+        """Gives a standalone scalar ctypes storage of its own (Nim: a local variable has an address), so
+        addr(x) points at it; reads and writes go through that storage from then on."""
+        if self._n_view is not None:
+            return
+        storage = DICT_OF_C_TYPES[type(self).__name__](self._n_get_value())
+        BUFFER_REGISTRY.register(storage)
+        self._n_bind(
+            get_value=lambda: storage.value,
+            set_value=lambda value: setattr(
+                storage, "value", value._n_get_value() if isinstance(value, NScalar) else value),
+            get_addr=lambda: ctypes.addressof(storage),
+        )
+
     def _n_normalize(self, val: object) -> object:
         raise NotImplementedError
 
@@ -4220,8 +4305,10 @@ class NScalar:
         return self
 
     @classmethod
-    def cast(cls, value: NScalar) -> NScalar:
-        return cls.from_bytes(value.to_bytes())
+    def _n_cast(cls, value: NScalar) -> NScalar:
+        if not isinstance(value, NScalar):  # a Python number is a Nim literal: int or float64
+            value = nint(value) if isinstance(value, int) else float64(value)
+        return cls._n_from_bytes(value._n_to_bytes())
 
     @classmethod
     def _n_ptr_cast(cls, value) -> NScalar:
@@ -4536,7 +4623,7 @@ class NFloat(NScalar):
         except (OverflowError, struct.error):
             return float("inf") if val > 0 else float("-inf")
 
-    def to_bytes(self, byteorder=sys.byteorder):
+    def _n_to_bytes(self, byteorder=sys.byteorder):
         if byteorder == "big":
             prefix = ">" + self._n_format
         else:
@@ -4545,7 +4632,7 @@ class NFloat(NScalar):
         return bytes(out)
 
     @classmethod
-    def from_bytes(cls, bytes, byteorder=sys.byteorder):
+    def _n_from_bytes(cls, bytes, byteorder=sys.byteorder):
         if byteorder == "big":
             prefix = ">" + cls._n_format
         else:
@@ -4584,7 +4671,7 @@ class NInteger(NScalar):
         if cls.__bases__[0].__name__ != "NInteger":
             cls._n_register_type()
 
-    def to_bytes(self, length=None, byteorder=sys.byteorder):
+    def _n_to_bytes(self, length=None, byteorder=sys.byteorder):
         if length is None:
             length = (self._n_bits + 7) // 8
 
@@ -4593,7 +4680,7 @@ class NInteger(NScalar):
         )
 
     @classmethod
-    def from_bytes(cls, bytes, byteorder=sys.byteorder, signed=None):
+    def _n_from_bytes(cls, bytes, byteorder=sys.byteorder, signed=None):
         if signed is None:
             signed = cls._n_signed
         val = int.from_bytes(bytes, byteorder=byteorder, signed=signed)
@@ -4630,6 +4717,13 @@ class NInteger(NScalar):
     def minus_percent(self, other):
         """Nim: self -% other — wrapping subtraction in this type's width."""
         return self._n_op(other, operator.sub)
+
+    def ashr(self, y):
+        """Nim: ashr(self, y) — arithmetic shift right, copies of the sign bit shifted in. Nim defines it
+        for signed integers only."""
+        if not self._n_signed:
+            raise TypeError(f"ashr: Nim defines ashr for signed integers only, not {type(self).__name__}")
+        return type(self)(int(self) >> int(y))
 
     # --- Unsigned comparisons (Nim: <%, <=%, >%, >=%) in this type's width ---
     def _n_unsigned_pair(self, other) -> tuple[int, int]:
@@ -4720,7 +4814,7 @@ class NInteger(NScalar):
         return self._n_get_value().__index__()
 
     @classmethod
-    def first(cls):
+    def _n_low_bound(cls):
         """Return the minimum representable value for this integer type."""
         if cls._n_signed:
             return cls(-(1 << (cls._n_bits - 1)))
@@ -4728,7 +4822,7 @@ class NInteger(NScalar):
             return cls(0)
 
     @classmethod
-    def last(cls):
+    def _n_high_bound(cls):
         """Return the maximum representable value for this integer type."""
         if cls._n_signed:
             return cls((1 << (cls._n_bits - 1)) - 1)
@@ -4905,24 +4999,40 @@ class cstring:
         elif isinstance(value, int):
             self._n_view = (ctypes.c_char * value)()  # new_cstring_of_cap(length): zero-filled
         else:
-            self._value = value
+            self._n_value = value
 
     @property
-    def _value(self) -> bytes | None:
+    def _n_value(self) -> bytes | None:
         """The bytes up to the first NUL, None for nil."""
         if self._n_view is None:
             return None
         raw = bytes(self._n_view)
         return raw.split(b'\0', 1)[0]
 
-    @_value.setter
-    def _value(self, value) -> None:
+    @_n_value.setter
+    def _n_value(self, value) -> None:
         """Points the cstring at a new buffer holding a copy of value (None: nil)."""
         if value is None:
             self._n_view = None
             return
         data = value if isinstance(value, bytes) else _n_encode_str(value)
         self._n_view = (ctypes.c_char * len(data)).from_buffer_copy(data)
+
+    @classmethod
+    def _n_cast(cls, source) -> cstring:
+        """Nim cast[cstring](p): a cstring at address p (char*), over the registered buffer that contains
+        it (a string's), from p to the buffer's end; the memory is shared. A nil pointer gives nil."""
+        address = int(source._n_addr if hasattr(source, '_n_addr') else source)
+        inst = cls.__new__(cls)
+        if address == 0:
+            inst._n_view = None
+            return inst
+        buf = BUFFER_REGISTRY.find_buffer_for_address(address)
+        if buf is None:
+            raise ValueError(f"cast[cstring]: address {address:#x} is not inside a nimic buffer")
+        offset = address - ctypes.addressof(buf)
+        inst._n_view = (ctypes.c_char * (ctypes.sizeof(buf) - offset)).from_buffer(buf, offset)
+        return inst
 
     # --- Object field integration ---
 
@@ -4932,16 +5042,16 @@ class cstring:
         inst = cls.__new__(cls)
         if value is not None:
             inst._n_set_value(value)
-            setattr(parent_elems, id, inst._value)
+            setattr(parent_elems, id, inst._n_value)
         else:
-            inst._value = getattr(parent_elems, id)  # c_char_p → bytes or None
+            inst._n_value = getattr(parent_elems, id)  # c_char_p → bytes or None
         return inst
 
     def _n_set_value(self, value):
         if isinstance(value, cstring):
             self._n_view = value._n_view
         else:
-            self._value = value
+            self._n_value = value
 
     @classmethod
     def _n_sizeof(cls) -> int:
@@ -4953,10 +5063,10 @@ class cstring:
         if other is None:
             return self._n_view is None
         if isinstance(other, cstring):
-            return self._value == other._value
+            return self._n_value == other._n_value
         if isinstance(other, (str, bytes)):
             try:
-                return self._value == _n_encode_str(other)
+                return self._n_value == _n_encode_str(other)
             except NimicEncodingError:
                 return False  # chars above 0xFF never equal a byte string
         return NotImplemented
@@ -4969,15 +5079,15 @@ class cstring:
         return self._n_view is not None
 
     def __len__(self):
-        value = self._value
+        value = self._n_value
         return 0 if value is None else len(value)
 
     def __str__(self):
-        value = self._value
+        value = self._n_value
         return "" if value is None else _n_decode_bytes(value)
 
     def __repr__(self):
-        value = self._value
+        value = self._n_value
         return "cstring(nil)" if value is None else f"cstring({value!r})"
 
     def __getitem__(self, index):
@@ -5020,6 +5130,14 @@ class char(str):
         char('A')       — from single-character string
         char('A', addr) — from string indexing with backing address
     """
+    def succ(self, n: int = 1) -> char:
+        """Nim: succ(c, n) / pred(c, n) — the char n ordinals later (earlier for n < 0); RangeDefect outside
+        '\\0'..'\\xFF'."""
+        i = self._n_byte + int(n)
+        if not 0 <= i <= 255:
+            raise RangeDefect(f"value out of range: {i} notin 0 .. 255")
+        return char(i)
+
     def __new__(cls, value=0, addr: int = 0):
         if not isinstance(value, (str, bytes, bytearray)) and hasattr(value, "__index__"):
             value = value.__index__()  # char(x) of any ordinal (uint8, nint, ...)
@@ -5165,7 +5283,7 @@ class string(collections.UserString):
 
     def __setitem__(self, index, value) -> None:
         """Nim `s[i] = c`: writes the char in place (other references to the string see it)."""
-        idx = int(index)
+        idx = int(_n_from_end(index, len(self.data)))
         n = len(self)
         if not 0 <= idx < n:
             if _n_check_enabled("boundchecks"):
@@ -5262,7 +5380,7 @@ class string(collections.UserString):
     def __and__(self, other):
         return string(self.data + str(other))
 
-    def _substitute(self, **kwargs):
+    def _n_substitute(self, **kwargs):
         return string(Template(self.data).substitute(**kwargs))
 
     def __mod__(self, itr):
@@ -5317,6 +5435,7 @@ class string(collections.UserString):
     def __getitem__(self, index):
         if isinstance(index, slice):
             return string(self.data[index])
+        index = _n_from_end(index, len(self.data))
         if hasattr(self, '_n_view') and self._n_view is not None:
             idx = int(index)
             if 0 <= idx < len(self._n_view):

@@ -301,7 +301,7 @@ If the feature is exposed to the user of the nimic DSL, update `nimic_translatio
 ### Example 2: Remediating `high()` / `low()` (core review 2026-10-01)
 
 1. **Tests**: `test_high_low_signed_integers`, `test_high_low_unsigned_integers`, `test_high_low_enum`, `test_high_low_on_seq`, `test_high_low_on_array` added to `tests/nimic/test_ntypes.py` — covering all integer types, enums, and collections.
-2. **Implementation**: dead hardcoded type-name branches removed from `high()` and `low()` in `src/nimic/ntypesystem.py`. The functions now dispatch purely via the `first()`/`last()` classmethods (defined on `NInteger`) and the `_n_high`/`_n_low` protocol (defined on `Trange`), following the Open/Closed and Dependency Inversion principles.
+2. **Implementation**: dead hardcoded type-name branches removed from `high()` and `low()` in `src/nimic/ntypesystem.py`. The functions now dispatch purely via the `_n_low_bound()`/`_n_high_bound()` classmethods (defined on `NInteger`) and the `_n_high`/`_n_low` protocol (defined on `Trange`), following the Open/Closed and Dependency Inversion principles.
 3. **Rule**: not applicable — `high`/`low` are existing builtins, no new user-facing syntax.
 
 ### Anti-Pattern: Skipping Tests

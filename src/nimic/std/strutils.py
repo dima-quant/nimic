@@ -1,6 +1,6 @@
 """Nim std/strutils — string utility functions."""
 from __future__ import annotations
-from nimic.ntypes import dispatch, ufcs, string, char, ch, Tset, nint, NIntEnum, auto
+from nimic.ntypes import dispatch, ufcs, string, char, ch, Tset, nint, NIntEnum, auto, float64
 from nimic.ntypesystem import _n_addf
 
 # Nim strutils.Whitespace (ASCII only: nimic strings are bytes)
@@ -16,6 +16,17 @@ def parse_int(s: str | string) -> int:
     return int(str(s).strip())
 
 parseInt = parse_int
+
+
+def parse_float(s: str | string):
+    """Nim: parseFloat — a float64 from the whole string (`_` between digits allowed); ValueError if it
+    is not one."""
+    try:
+        return float64(float(str(s)))
+    except ValueError:
+        raise ValueError(f"invalid float: {s}") from None
+
+parseFloat = parse_float
 
 
 def normalize(s: str) -> str:
