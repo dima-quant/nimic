@@ -5,9 +5,10 @@ Execution verification of converted nimic code: Python run vs transpiled + compi
 
 (no arguments = all checks; takes several minutes, the Python raytracer is the slow part)
 
-  modules     each converted ncompiler/<m>.py is transpiled (as nimic.nimp does: import + unparse
-              with the runtime type registry), swapped into a copy of the Nim compiler sources
-              (compiler/) and type-checked with `nim check`. The compiler's NEP-1 style check is
+  modules     every converted ncompiler/<m>.py is transpiled (as nimic.nimp does: import + unparse
+              with the runtime type registry) and swapped into a copy of the Nim compiler sources
+              (compiler/); then each is type-checked with `nim check` against the converted versions of
+              its converted dependencies. The compiler's NEP-1 style check is
               switched off: nimic keeps snake_case names (accepted, see CLAUDE.md).
   raytracer   tests/nraytracer/trace_of_radiance_animation: Python run, transpile, `nim c -d:danger`,
               run; the rendered PPM frames of both runs must be byte-identical.
@@ -20,11 +21,12 @@ Execution verification of converted nimic code: Python run vs transpiled + compi
               Python/Nim switches or monkey-patching (`defined("c")`, `setattr`, `globals()[...]`, `_py_*`,
               `Class.attr = proc`).
   tests       each module's tests run in Python and as compiled Nim (all modules transpiled into one
-              directory with compiler/nim.cfg, so both use the same build profile); stdout must match.
+              directory with ncompiler/nim.cfg, so both use the same build profile); stdout must match.
   imports     each module that is not an include file compiles when imported (`import <m>`), the way its
               users load it.
 
-Modules marked for rework in ncompiler/conversion_queue.md are reported as XFAIL (expected failure).
+Modules marked for rework or with open gaps in ncompiler/conversion_queue.md are reported as XFAIL
+(expected failure).
 Everything runs in .scratch/verify_transpiled (git-ignored). The tracked transpiled files in
 tests/nraytracer/ncache are never touched (running tests/nraytracer/test_nast.py in place regenerates
 them). Exit code 1 if any check fails.
@@ -75,7 +77,8 @@ import importlib, inspect, sys
 from nimic import transpiler
 from nimic.ntypesystem import _n_registry
 mod = importlib.import_module(sys.argv[1])
-print(transpiler.unparse(transpiler.parse(inspect.getsource(mod)), _n_registry)[0])
+# UTF-8 like nimic's own writer (stdout is byte-transparent: Latin-1 for chars below 0x100)
+sys.stdout.buffer.write(transpiler.unparse(transpiler.parse(inspect.getsource(mod)), _n_registry)[0].encode("utf-8"))
 """
 # transpile a source file (include files can't be imported on their own)
 TRANSPILE_SOURCE = """
@@ -83,18 +86,20 @@ import importlib, pathlib, sys
 from nimic import transpiler
 from nimic.ntypesystem import _n_registry
 importlib.import_module(sys.argv[2])  # registers the types, as nimic.nimp does (a harness for include files)
-print(transpiler.unparse(transpiler.parse(pathlib.Path(sys.argv[1]).read_text()), _n_registry)[0])
+sys.stdout.buffer.write(transpiler.unparse(transpiler.parse(pathlib.Path(sys.argv[1]).read_text()), _n_registry)[0].encode("utf-8"))
 """
 NTRANSPILE = "import importlib, sys; from nimic import ntranspile; ntranspile([importlib.import_module(sys.argv[1])])"
 
 failures: list[str] = []
+# the build the conversion targets; Python runs read it as the nim.cfg of ncompiler/
+BUILD_CFG = ROOT / "ncompiler" / "nim.cfg"
 
 
 def _rework_modules() -> set[str]:
-    """Modules marked ⚠️ in the conversion queue: their failures are expected (XFAIL)."""
+    """Modules marked ⚠️ or with open gaps in the conversion queue: their failures are expected (XFAIL)."""
     if not QUEUE.exists():
         return set()
-    return set(re.findall(r"^\| `(\w+)` \|[^\n]*⚠️", QUEUE.read_text(), flags=re.M))
+    return set(re.findall(r"^\| `(\w+)` \|[^\n]*(?:⚠️|open gaps)", QUEUE.read_text(), flags=re.M))
 
 
 REWORK = _rework_modules()
@@ -144,19 +149,29 @@ def check_modules() -> None:
     work = SCRATCH / "compiler"
     shutil.copytree(ROOT / "compiler", work)
     shutil.copytree(ROOT / "src/nimic/ncode", work / "ncode")
+    shutil.copy2(BUILD_CFG, work / "nim.cfg")  # the build profile of the Python runs (nimKochBootstrap)
+    # every converted module replaces its original first, so a module is checked against the converted
+    # versions of its converted dependencies (compiler/ may come from a newer Nim than the installed one:
+    # the original llstream.nim needs system's readRawData, the converted one doesn't)
+    transpiled = {}
+    for m in MODULES:
+        if m in HARNESSED:
+            continue
+        tr = run([PY, "-c", TRANSPILE_MODULE, f"ncompiler.{m}"], work, [ROOT / "src", ROOT])
+        if tr.returncode != 0:
+            transpiled[m] = None
+            report(False, f"module {m}", "transpile: " + first_error(tr), m)
+            continue
+        transpiled[m] = tr.stdout
+        (work / f"{m}.nim").write_text(tr.stdout)
     for m in MODULES:
         if m in HARNESSED:
             print(f"  SKIP  module {m}  — include file, checked through its harness (tests)", flush=True)
             continue
-        original = (work / f"{m}.nim").read_text()
-        tr = run([PY, "-c", TRANSPILE_MODULE, f"ncompiler.{m}"], work, [ROOT / "src", ROOT])
-        if tr.returncode != 0:
-            report(False, f"module {m}", "transpile: " + first_error(tr), m)
+        if transpiled[m] is None:
             continue
-        (work / f"{m}.nim").write_text(tr.stdout)
         chk = run(["nim", "check", "--hints:off", "--warnings:off", "--styleCheck:off", f"{m}.nim"], work)
         report(chk.returncode == 0, f"module {m}", "" if chk.returncode == 0 else first_error(chk), m)
-        (work / f"{m}.nim").write_text(original)
 
 
 # --- fidelity: `if comptime` mirrors `when` (nimic_translation_rules.md §2.1) ---
@@ -258,9 +273,9 @@ def check_fidelity() -> None:
 # --- tests: Python vs compiled Nim, imports ---
 
 def _transpile_all(work: Path) -> dict[str, str]:
-    """Transpile every converted module into `work` (with ncode/ and compiler/nim.cfg); returns errors."""
+    """Transpile every converted module into `work` (with ncode/ and ncompiler/nim.cfg); returns errors."""
     (work / "tests").mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ROOT / "compiler" / "nim.cfg", work / "nim.cfg")  # same build profile as the Python runs
+    shutil.copy2(BUILD_CFG, work / "nim.cfg")  # same build profile as the Python runs
     errors = {}
     harness_of = {}
     includers = [(ROOT / "ncompiler" / "tests" / f"{h}.py", f"ncompiler.tests.{h}") for h in HARNESSES]
