@@ -546,6 +546,68 @@ def importFrom(module: str, *names: str) -> None:
             namespace[n] = getattr(mod, n)
 
 
+_n_hooks = ("copy", "sink", "destroy", "wasMoved", "dup", "trace")
+
+
+def hook(name: str):
+    """Nim: a lifetime hook, proc `=copy`(dest: var T; src: T) and the others of _n_hooks (rule:hook). The
+    hook is Nim's: Python copies a value wherever it is stored, also where Nim moves it (a last use), so
+    calling the hook there would differ from Nim (an `{.error.}` copy hook would fail where Nim compiles).
+    The decorated proc stays an ordinary Python function."""
+    if name not in _n_hooks:
+        raise ValueError(f"@hook: unknown lifetime hook {name!r} (one of {', '.join(_n_hooks)})")
+
+    def mark(fn):
+        fn._n_hook = name
+        return fn
+    return mark
+
+
+_n_source_header = _re.compile(r"^#\s*source:\s*([\w.-]+)@([0-9a-fA-F]+):(\S+)\s*$")
+
+
+def _n_original_dir(module_file: str) -> str:
+    """The directory a module's relative compile-time paths resolve against: that of its original source
+    file when its `# /// nimic` header records one (`# source: nimony@<sha>:src/lib/nimversion.nim`), else
+    the module's own. The clone of `<repo>` is `$<REPO>_DIR`, else a directory `<repo>` next to the module
+    or next to one of its parents."""
+    with open(module_file, encoding="utf-8") as f:
+        header = [f.readline() for _ in range(2)]
+    if not header[0].startswith("# /// nimic"):
+        return os.path.dirname(os.path.abspath(module_file))
+    found = _n_source_header.match(header[1])
+    if found is None:
+        return os.path.dirname(os.path.abspath(module_file))
+    repo, _sha, original = found.groups()
+    clone = os.environ.get(f"{repo.upper().replace('-', '_')}_DIR")
+    if clone is None:
+        d = os.path.dirname(os.path.abspath(module_file))
+        while clone is None and d != os.path.dirname(d):
+            if os.path.isdir(os.path.join(d, repo)):
+                clone = os.path.join(d, repo)
+            d = os.path.dirname(d)
+    if clone is None:
+        raise OSError(f"cannot find the {repo} clone of {original} (set {repo.upper()}_DIR)")
+    return os.path.dirname(os.path.join(clone, original))
+
+
+def slurp(filename: str | string) -> string:
+    """Nim: slurp / staticRead — the content of a file, read at compile time (when the module runs in
+    Python) relative to the calling module's original source file (`_n_original_dir`)."""
+    module_file = sys._getframe(1).f_globals.get("__file__")
+    path = str(filename)
+    if module_file is not None and not os.path.isabs(path):
+        path = os.path.normpath(os.path.join(_n_original_dir(module_file), path))  # `..` lexically, as Nim
+    try:
+        with open(path, "rb") as f:
+            return string(f.read())
+    except OSError:
+        raise OSError(f"cannot open file: {filename}") from None
+
+
+staticRead = slurp
+
+
 @ufcs(string)
 def substr(s, first: int = 0, last: int | None = None):
     """Nim: substr — slice string from `first` to `last` (inclusive); also `s.substr(first, last)`."""

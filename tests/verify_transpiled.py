@@ -16,10 +16,10 @@ Execution verification of converted nimic code: Python run vs transpiled + compi
               and as compiled Nim; outputs must be byte-identical to reference.264 / reference.mp4 in
               tests/nraytracer/ncache/build/rendered_test (local, git-ignored inputs: skipped if absent).
 
-  fidelity    nimic_translation_rules_nimony.md §2.1: every `if comptime(X)` of a converted module pairs with a
-              `when X` of the original (only the test guard `__name__ == "__main__"` is unpaired), and no
-              Python/Nim switches or monkey-patching (`defined("c")`, `setattr`, `globals()[...]`, `_py_*`,
-              `Class.attr = proc`).
+  fidelity    nimic_translation_rules_nimony.md §2.1: every `if comptime(X)` of a converted module (ncompiler/,
+              and nnimony/ against the nimony clone) pairs with a `when X` of the original (only the test guard
+              `__name__ == "__main__"` is unpaired), and no Python/Nim switches or monkey-patching
+              (`defined("c")`, `setattr`, `globals()[...]`, `_py_*`, `Class.attr = proc`).
   tests       each module's tests run in Python and as compiled Nim (all modules transpiled into one
               directory with ncompiler/nim.cfg, so both use the same build profile); stdout must match.
   imports     each module that is not an include file compiles when imported (`import <m>`), the way its
@@ -263,9 +263,11 @@ def _monkey_patches(tree: ast.AST) -> list[str]:
 
 def check_fidelity() -> None:
     print("== fidelity: `if comptime` mirrors `when`, no Python/Nim switches", flush=True)
-    for m in MODULES:
-        src = (ROOT / "ncompiler" / f"{m}.py").read_text()
-        nim_path = ROOT / "compiler" / f"{m}.nim"
+    pairs = [(m, ROOT / "ncompiler" / f"{m}.py", ROOT / "compiler" / f"{m}.nim") for m in MODULES]
+    if NIMONY_SRC.is_dir():  # nnimony modules against the pinned clone's originals
+        pairs += [(f"nnimony {key}", NNIMONY / f"{key}.py", NIMONY_SRC / f"{key}.nim") for key in _nnimony_modules()]
+    for m, py_path, nim_path in pairs:
+        src = py_path.read_text()
         tree = ast.parse(src)
         problems = []
         py, nim = Counter(_py_conditions(tree)), Counter(_nim_conditions(nim_path.read_text()) if nim_path.exists() else [])

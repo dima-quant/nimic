@@ -32,6 +32,7 @@ from __future__ import annotations
 import contextlib
 import ctypes as _ctypes  # underscore: not re-exported by `from nimic.ntypes import *`
 from enum import auto
+from typing import Self  # a concept's own type in its signatures (rule:concept)
 
 from nimic.inliner import template, template_expand, do, TemplateBlockError
 
@@ -83,6 +84,9 @@ from nimic.nsystem import (
     include,
     importExcept,
     importFrom,
+    slurp,
+    staticRead,
+    hook,
     pragma,
     emit,
     block,
@@ -92,6 +96,7 @@ from nimic.nsystem import (
 )
 _n_setup_stdio()  # stdio is byte-transparent, like Nim's echo/readLine
 from nimic.ntypesystem import (
+    Concept,
     DICT_OF_TYPES,
     addr,
     unsafe_addr,
@@ -437,6 +442,11 @@ def ge_percent(a, b) -> bool:
 def move(x):
     """Nim: move — move value / transfer ownership."""
     return x
+
+
+def ensureMove(x):
+    """Nim: ensureMove — move, where Nim also rejects the call if it would have to copy."""
+    return move(x)
 
 
 

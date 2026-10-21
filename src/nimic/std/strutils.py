@@ -1,6 +1,6 @@
 """Nim std/strutils — string utility functions."""
 from __future__ import annotations
-from nimic.ntypes import dispatch, ufcs, string, char, ch, Tset, nint, NIntEnum, auto, float64
+from nimic.ntypes import dispatch, ufcs, string, char, ch, Tset, nint, NIntEnum, auto, float64, seq
 from nimic.ntypesystem import _n_addf
 
 # Nim strutils.Whitespace (ASCII only: nimic strings are bytes)
@@ -185,6 +185,55 @@ def split_lines(s: string | str) -> list[string]:
     return lines
 
 splitLines = split_lines
+
+
+def _n_split(s: string, find_sep, sep_len: int, maxsplit: nint) -> seq[string]:
+    """Nim's splitCommon: the parts of s between separators, at most maxsplit splits (-1: all).
+    find_sep(text, start) is the index of the next separator, or -1."""
+    text, parts, start, splits = str(s), [], 0, int(maxsplit)
+    while splits != 0:
+        i = find_sep(text, start)
+        if i < 0:
+            break
+        parts.append(string(text[start:i]))
+        start, splits = i + sep_len, splits - 1
+    parts.append(string(text[start:]))
+    return seq[string](parts)
+
+
+@ufcs(string, python_api=True)
+@dispatch
+def split(s: string, sep: char, maxsplit: nint = -1) -> seq[string]:
+    """Nim: split(s, sep: char) — "a,,b".split(',') is @["a", "", "b"]; "" gives @[""]."""
+    return _n_split(s, lambda text, start: text.find(str(sep), start), 1, maxsplit)
+
+
+@ufcs(string, python_api=True)
+@dispatch
+def split(s: string, sep: string, maxsplit: nint = -1) -> seq[string]:
+    """Nim: split(s, sep: string); an empty sep returns s unsplit."""
+    if len(sep) == 0:
+        return seq[string]([string(s)])
+    return _n_split(s, lambda text, start: text.find(str(sep), start), len(sep), maxsplit)
+
+
+@ufcs(string, python_api=True)
+@dispatch
+def split(s: string, seps: Tset[char], maxsplit: nint = -1) -> seq[string]:
+    """Nim: split(s, seps: set[char]) — each char of seps separates (runs are not merged, unlike
+    Python's str.split()); an empty set returns s unsplit."""
+    chars = {str(c) for c in seps}
+    if not chars:
+        return seq[string]([string(s)])
+    return _n_split(s, lambda text, start: next((i for i in range(start, len(text)) if text[i] in chars), -1),
+                    1, maxsplit)
+
+
+@ufcs(string, python_api=True)
+@dispatch
+def split(s: string) -> seq[string]:
+    """Nim: split(s) — split(s, Whitespace)."""
+    return split(s, Tset[char]({ch(c) for c in Whitespace}))
 
 
 IdentStartChars = Tset[char]({ch(chr(c)) for c in range(ord('a'), ord('z') + 1)} |

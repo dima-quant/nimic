@@ -28,6 +28,8 @@ Type system:
   rule:classdef -> interpret class definition as type (object or tuple, depending on base class)
   rule:classdefseq -> combine consecutive class definitions into one type def.
     Move method definitions outside type definitions
+  rule:concept -> class C(Concept): pass is `C = concept x` (Nim 2 universal); with signatures in the body
+    `C = concept` + `proc ...(x: Self ...)`; a concept as base is `concept of Base`
   rule:typealias -> type alias (also register as alias for dispatch): class Time(float64) -> type Time* = float64
     and the assignment form: a module-level `Snippet = string` (value is a type) -> type Snippet* = string
   rule:typedistinct -> distinct type (decorated with "distinct"): class Time(float64) -> type Time* = distinct float64
@@ -42,6 +44,8 @@ Type system:
 
 Function definitions:
   rule:funcdef -> adjust function definition according to Nim syntax as "proc" (or "func")
+  rule:argdefault -> a parameter default and a named call argument are written with spaces, `bits = -1`
+    (`bits=-1` would read `=-` as one Nim operator)
   rule:funcdefdecorated -> interpret decorators as definitions for "template", "iterator", "converter", "method".
     Other decorators are skipped (@dispatch, @ufcs, @importc: an importc proc's pragma docstring carries
     {.importc.}, and its `pass` body makes it body-less)
@@ -62,6 +66,8 @@ Function definitions:
   rule:funcdefpackedtuple -> unpack tuples with "packed_tuple" in name
   rule:typedtemplate -> drop return from typed template or converter definition
   rule:pragma -> docstring with {.x.} is written as pragma {.x.}, if pragma contains "noSideEffect" func is defined
+  rule:hook -> a def decorated @hook("copy") is the lifetime hook proc `=copy` (also sink, destroy, wasMoved,
+    dup, trace); exported unless its name starts with _
   rule:calltype -> def decorated with "calltype" emit as type alias: Name* = proc(...): T {.pragma.}
 
 Control flow:
@@ -75,6 +81,7 @@ Control flow:
     `case _ if cond:` with any other condition -> `elif cond:`
   rule:uncheckedassign -> with uncheckedAssign: block transpiles as {.cast(uncheckedAssign).}: block
   rule:pragmablock -> with pragma("p"): block transpiles as a pragma block {.p.}: block
+  rule:varpragma -> a variable annotated pragma("p") is `x {.p.} = v`; pragma("p") @ T is `x {.p.}: T = v`
   rule:pragmastmt -> pragma("p") as a statement is the standalone pragma {.p.} ({.feature: "x".},
     {.pragma: name, p1.}, a pragma alias that the routines' docstring pragmas may use)
   rule:inlineif -> write inline if according to Nim syntax
@@ -943,6 +950,7 @@ class _Unparser(NodeVisitor):
         self._enums = ["NIntEnum", "NStrEnum"]
         self._def_decorators = ["template", "iterator", "converter", "method", "calltype"]
         self._declared_classes = set()
+        self._concepts = {"Concept"}  # rule:concept: Concept and the concepts the module defines
 
     def interleave(self, inter, f, seq):
         """Call f on each item in seq, calling inter() in between."""
@@ -1366,6 +1374,20 @@ class _Unparser(NodeVisitor):
         self.write(" " + self.ibinop[node.op.__class__.__name__] + "= ")  # rule:assign
         self.traverse(node.value)
 
+    @staticmethod
+    def _var_pragma(annotation) -> tuple[str, object] | None:
+        """(pragma text, type node or None) of a variable annotation `pragma("p")` / `pragma("p") @ T`."""
+        def pragma_text(n):
+            if (isinstance(n, Call) and isinstance(n.func, Name) and n.func.id == "pragma" and len(n.args) == 1
+                    and not n.keywords and isinstance(n.args[0], Constant) and isinstance(n.args[0].value, str)):
+                return n.args[0].value
+            return None
+        if pragma_text(annotation) is not None:
+            return pragma_text(annotation), None
+        if isinstance(annotation, BinOp) and isinstance(annotation.op, MatMult) and pragma_text(annotation.left):
+            return pragma_text(annotation.left), annotation.right
+        return None
+
     def visit_AnnAssign(self, node):
         if isinstance(node.target, Name) and self._is_string_annotation(node.annotation):
             self._string_names[-1].add(node.target.id)  # rule:strformat
@@ -1383,14 +1405,24 @@ class _Unparser(NodeVisitor):
                 node.target.id = self._adjust_name(target_name, definition=(is_module_level and in_declaration))
         with self.delimit_if("(", ")", not node.simple and isinstance(node.target, Name)):
             self.traverse(node.target)
-        self.write(": ")
-        self.traverse(node.annotation)
+        var_pragma = self._var_pragma(node.annotation)
+        if var_pragma is None:
+            self.write(": ")
+            self.traverse(node.annotation)
+        else:
+            # rule:varpragma -> `x: pragma("cursor") = v` is `x {.cursor.} = v`, `x: pragma("p") @ T` is `x {.p.}: T`
+            text, var_type = var_pragma
+            self.write(" {." + text + ".}")
+            if var_type is not None:
+                self.write(": ")
+                self.traverse(var_type)
         var_declaration = False # rule:varini
         if "var" in self._context_stack:
             # check this is a default class init that should be declared
             # if value is a empty call with the same name as annotation then this is a declaration
             if isinstance(node.value, Call) and len(node.value.args) == 0:
-                var_declaration = isinstance(node.value.func, Name) and node.value.func.id == node.annotation.id
+                var_declaration = (isinstance(node.value.func, Name) and isinstance(node.annotation, Name)
+                                   and node.value.func.id == node.annotation.id)
         if (
             isinstance(node.value, Call)
             and isinstance(node.value.func, Name)
@@ -1552,6 +1584,39 @@ class _Unparser(NodeVisitor):
                 n.id = self._adjust_name(n.id, definition=False)
         return ast.unparse(node)
 
+    def _write_concept(self, node, type_str, body):
+        """rule:concept -> `class Equatable(Concept): pass` is Nim 2's universal `Equatable = concept x`; signatures
+        in the body (`def __lt__(x: Self, y: Self) -> bool: ...`, `{.noSideEffect.}` for a func) are the concept's
+        procs; a concept as base (`class Keyable(Hashable):`) is `concept of Hashable`."""
+        self._concepts.add(node.name)
+        base = node.bases[0].id
+        self.fill(type_str)
+        if hasattr(node, "type_params"):
+            self._type_params_helper(node.type_params)
+        self.write(" = concept")
+        if base != "Concept":
+            self.write(" of " + self._adjust_name(base, definition=False))  # rule:localname
+        signatures = [b for b in (body if isinstance(body, list) else [body]) if isinstance(b, FunctionDef)]
+        if not signatures:
+            if base == "Concept":
+                self.write(" x")
+            return
+        with self.block(start=""):
+            for sig in signatures:
+                _, pragma = self._get_body_and_pragma(sig)
+                items = [x.strip() for x in pragma.split(",")] if pragma else []
+                kind = "func" if "noSideEffect" in items else "proc"
+                items = [x for x in items if x != "noSideEffect"]
+                name = self.dunder_ops.get(sig.name, sig.name)  # rule:funcdefrenamedunder
+                self.fill(f"{kind} {name}")
+                with self.delimit("(", ")"):
+                    self.traverse(sig.args)
+                if sig.returns and not isinstance(sig.returns, Constant):
+                    self.write(": ")
+                    self._write_annotation(sig.returns)
+                if items:
+                    self.write(" {." + ", ".join(items) + ".}")
+
     def visit_ClassDef(self, node):
         self._declared_classes.add(node.name)
         # rule:classdef
@@ -1567,6 +1632,9 @@ class _Unparser(NodeVisitor):
         # rule:pragma
         body, pragma = self._get_body_and_pragma(node)
         type_str = self._adjust_name(node.name) # rule:localname
+        if node.bases and isinstance(node.bases[0], Name) and node.bases[0].id in self._concepts:
+            self._write_concept(node, type_str, body)
+            return
         _pass = isinstance(body[0], Pass) if body else False
         no_attr = (_pass or all(isinstance(b, (FunctionDef, AsyncFunctionDef, Pass)) for b in body)) if body else False # no attributes, i.e. pass or only methods
         # deco in ["ref", "ptr", "distinct"]
@@ -1835,6 +1903,10 @@ class _Unparser(NodeVisitor):
            decl_str = "iterator"
         is_module_level = (self._scope_depth <= 1)
         name_str = self._adjust_name(func_name, definition=is_module_level and not is_private)  # rule:localname
+        hook_name = self._hook_name(node)
+        if hook_name is not None:
+            # rule:hook -> @hook("copy") def _copyMangler(...) is the lifetime hook proc `=copy`
+            name_str = f"`={hook_name}`" + ("*" if name_str.endswith("*") else "")
         # rule:calltype — emit as type alias: Name* = proc(...): T {.pragma.}
         if decl_str == "calltype":
             self.fill(name_str + " = proc")
@@ -1889,6 +1961,15 @@ class _Unparser(NodeVisitor):
                 self._template_tail_returns.pop()
             if case_expr:
                 self._template_tail_returns.pop()
+
+    @staticmethod
+    def _hook_name(node) -> str | None:
+        """The hook of a def decorated @hook("copy") (`copy`), else None."""
+        for d in node.decorator_list:
+            if (isinstance(d, Call) and isinstance(d.func, Name) and d.func.id == "hook" and len(d.args) == 1
+                    and isinstance(d.args[0], Constant) and isinstance(d.args[0].value, str)):
+                return d.args[0].value
+        return None
 
     @staticmethod
     def _case_expression_returns(body) -> set:
@@ -3048,7 +3129,7 @@ class _Unparser(NodeVisitor):
                 self.write(", ")
             self.traverse(a)
             if d and not self._is_block_param_placeholder(a, d):
-                self.write("=")
+                self.write(" = ")  # rule:argdefault
                 self.traverse(d)
             if index == len(node.posonlyargs):
                 self.write(", /")
@@ -3090,7 +3171,7 @@ class _Unparser(NodeVisitor):
                 self.write(", ")
                 self.traverse(a)
                 if d:
-                    self.write("=")
+                    self.write(" = ")  # rule:argdefault
                     self.traverse(d)
 
         # kwargs
@@ -3113,7 +3194,7 @@ class _Unparser(NodeVisitor):
             if self._context_stack and self._context_stack[-1] == "instance":
                 self.write(": ")
             else:
-                self.write("=")
+                self.write(" = ")  # rule:argdefault
         self.traverse(node.value)
 
     def visit_Lambda(self, node):

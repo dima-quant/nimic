@@ -260,6 +260,32 @@ _n_generic_types["SomeInteger"] += ("uint",)
 _n_generic_types["SomeNumber"] = _n_generic_types["SomeInteger"] + _n_generic_types["SomeFloat"]
 
 
+# --- Concepts ---
+
+_n_concepts: dict[str, type] = {}  # concept name -> its class (a bound `[T: Equatable]` names it)
+
+
+class Concept:
+    """Nim: a concept (rule:concept). `class Equatable(Concept): pass` is Nim 2's universal `concept x`;
+    `class Comparable(Concept):` with signatures in its body (`def __lt__(x: Self, y: Self) -> bool: ...`)
+    is a concept of those procs, and `class Keyable(Hashable):` refines a concept (`concept of Hashable`).
+    It is used as a bound: `def f[T: Equatable](x: T)` with @dispatch. Python doesn't check the signatures
+    yet (planned: through the dispatch registry), so every type satisfies a concept in Python; the Nim
+    compiler checks them when the module compiles. A concept has no instances."""
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        _n_concepts[cls.__name__] = cls
+
+    def __new__(cls, *args, **kwargs):
+        raise TypeError(f"concept {cls.__name__} has no instances")
+
+    @classmethod
+    def _n_satisfied_by(cls, type_name: str) -> bool:
+        """Whether the type named type_name satisfies the concept: in Python, every type (see the class)."""
+        return True
+
+
 class _NTypeClass:
     """A Nim type class (SomeInteger, SomeUnsignedInt, ...): `isinstance(x, SomeUnsignedInt)` is Nim's
     `x is SomeUnsignedInt`, by the member type names of _n_generic_types (an integer or float literal is
@@ -620,6 +646,19 @@ def _n_fits_binding(arg_type_name: str, bound_type_name: str) -> bool:
     bound_type_name: the same type, a subtype, or a literal of it (an int literal for a T bound to int)."""
     return (arg_type_name == bound_type_name or _match_subtype(arg_type_name, bound_type_name)
             or _match_converter(arg_type_name, _n_aliases.get(bound_type_name, bound_type_name)))
+
+
+def _n_fits_constraint(type_name: str, constraint: str) -> bool:
+    """Whether a type fits a type parameter's constraint, `[T: c]` (c spelled as in the def): none, `not X`,
+    the type itself, a type class (SomeInteger), or a concept (Concept._n_satisfied_by)."""
+    if not constraint:
+        return True
+    if constraint.startswith("not "):
+        return type_name != constraint[4:].strip()
+    if type_name == constraint or type_name in _n_generic_types.get(constraint, ()):
+        return True
+    concept = _n_concepts.get(constraint)
+    return concept is not None and concept._n_satisfied_by(type_name)
 
 
 def _match_converter(arg_type_name: str, sig_type_name: str) -> bool:
@@ -1130,24 +1169,10 @@ def dispatch(fn: callable) -> callable:
                                 if T_sym in T_var:
                                     if not _n_fits_binding(T_value, T_var[T_sym]):
                                         break
+                                elif _n_fits_constraint(T_value, T_def[T_sym]):
+                                    T_var[T_sym] = T_value
                                 else:
-                                    constraint = T_def[T_sym]
-                                    if len(constraint) == 0:
-                                        T_var[T_sym] = T_value
-                                    elif constraint.startswith("not "):
-                                        excluded = constraint[4:].strip()
-                                        if T_value == excluded:
-                                            break
-                                        T_var[T_sym] = T_value
-                                    elif T_value == constraint:
-                                        T_var[T_sym] = T_value
-                                    elif (
-                                        constraint in _n_generic_types
-                                        and T_value in _n_generic_types[constraint]
-                                    ):
-                                        T_var[T_sym] = T_value
-                                    else:
-                                        break
+                                    break
                                 specificity += 1
                             else:
                                 # Case C: compound type pattern (specificity 2)
@@ -1159,26 +1184,11 @@ def dispatch(fn: callable) -> callable:
                                             if not _n_fits_binding(t_val, T_var[t_sym]):
                                                 conflict = True
                                                 break
+                                        elif _n_fits_constraint(t_val, T_def[t_sym]):
+                                            T_var[t_sym] = t_val
                                         else:
-                                            constraint = T_def[t_sym]
-                                            if len(constraint) == 0:
-                                                T_var[t_sym] = t_val
-                                            elif constraint.startswith("not "):
-                                                excluded = constraint[4:].strip()
-                                                if t_val == excluded:
-                                                    conflict = True
-                                                    break
-                                                T_var[t_sym] = t_val
-                                            elif t_val == constraint:
-                                                T_var[t_sym] = t_val
-                                            elif (
-                                                constraint in _n_generic_types
-                                                and t_val in _n_generic_types[constraint]
-                                            ):
-                                                T_var[t_sym] = t_val
-                                            else:
-                                                conflict = True
-                                                break
+                                            conflict = True
+                                            break
                                     if conflict:
                                         break
                                     specificity += 2
@@ -1278,26 +1288,32 @@ def _n_str_method(fn: callable) -> callable:
     return __str__
 
 
-def ufcs(*classes: type, aliases: tuple = ()) -> callable:
+def ufcs(*classes: type, aliases: tuple = (), python_api: bool = False) -> callable:
     """Nim method-call syntax for a free proc: after `@ufcs(string)` on `def f(s, ...)`,
     `s.f(...)` calls `f(s, ...)`. The proc is installed under its own name and each of
     `aliases` (e.g. the camelCase spelling). An operator (dunder) defined in another module for this
     class is installed even if the class inherits one (Nim: `proc `%`*(f: FormatStr, ...)` next to the
     type alias), and a @dispatch overload extends a method of the class's own; any other attribute the class
-    already has is never shadowed (TypeError); re-registering a name installed by @ufcs (a further @dispatch
+    already has is never shadowed (TypeError); with `python_api=True` the proc replaces a method the class
+    inherits from a Python standard-library base (strutils.split for `UserString.split`, which is Python's
+    split, not Nim's); re-registering a name installed by @ufcs (a further @dispatch
     overload, a module reload) replaces it. Returns the proc unchanged."""
     def install(fn):
         method = _n_str_method(fn) if fn.__name__ == "__str__" else fn
         for cls in classes:
             for name in (fn.__name__, *aliases):
                 operator_override = name.startswith("__") and name.endswith("__") and name not in cls.__dict__
+                owner = next((k for k in cls.__mro__ if name in k.__dict__), None)
+                replaces_python = (python_api and owner is not None
+                                   and owner.__module__.split(".")[0] in sys.stdlib_module_names)
                 own = cls.__dict__.get(name)
                 if (isinstance(fn, _DispatchedCallable) and isinstance(own, types.FunctionType)
                         and (cls, name) not in _n_ufcs_registry):
                     # an overload of a method the class defines (e.g. `==` of two values in the class, a
                     # later `==` with an integer): the method joins the overload set
                     dispatch(own)
-                elif hasattr(cls, name) and (cls, name) not in _n_ufcs_registry and not operator_override:
+                elif (hasattr(cls, name) and (cls, name) not in _n_ufcs_registry and not operator_override
+                      and not replaces_python):
                     raise TypeError(f"@ufcs: {cls.__name__}.{name} already exists; "
                                     f"refusing to shadow it with the free proc {fn.__name__}")
                 _n_ufcs_registry[(cls, name)] = fn
@@ -5752,15 +5768,20 @@ class string(collections.UserString):
             return cls(raw)
         return cls(str(raw))
         
+    def __iter__(self):
+        """Nim: items(s) — the chars s[0 ..< s.len] (not the terminating '\\0', which s[s.len] reads)."""
+        for i in range(len(self.data)):
+            yield self[i]
+
     def __getitem__(self, index):
         if isinstance(index, slice):
             return string(self.data[index])
         index = _n_from_end(index, len(self.data))
         if hasattr(self, '_n_view') and self._n_view is not None:
             idx = int(index)
-            if 0 <= idx < len(self._n_view):
+            if 0 <= idx < min(len(self._n_view), len(self.data)):  # the buffer past len is not the string
                 return char(self._n_view[idx], addr=ctypes.addressof(self._n_view) + idx)
-            elif idx < len(self.data):
+            elif 0 <= idx < len(self.data):
                 return char(self.data[idx], addr=ctypes.addressof(self._n_view) + idx)
         if not isinstance(index, slice) and int(index) >= len(self.data):
             # Nim strings end with '\0': s[s.len] reads it when bound checks are off

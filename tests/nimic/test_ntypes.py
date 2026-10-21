@@ -29,8 +29,9 @@ from nimic.std.options import Option, none, some
 from nimic.std.os import ExeExt, absolutePath, addFileExt, changeFileExt, searchExtPos, fileExists, getCurrentDir, getEnv, walkDir
 from nimic.std.parseutils import parse_hex, parse_ident, parseBiggestInt, parseBiggestUInt
 from nimic.std.strscans import scanf
-from nimic.std.strutils import isUpperAscii, find, nimIdentNormalize, repeat, rfind, strip, toLowerAscii
+from nimic.std.strutils import isUpperAscii, find, nimIdentNormalize, repeat, rfind, split, strip, toLowerAscii
 from nimic.std.syncio import lines, read_file
+from nimic.std.tables import OrderedTable, Table, initOrderedTable, initTable
 from nimic.system.ansi_c import c_free, c_malloc, csize_t
 from nimic.transpiler import unparse, private_name_collisions
 
@@ -2131,6 +2132,11 @@ class TestNTypes(unittest.TestCase):
             @ufcs(string)
             def find(s, sub):
                 return -1
+        # python_api=True replaces only a method inherited from a Python standard-library base (UserString)
+        with self.assertRaises(TypeError):
+            @ufcs(_UBox, python_api=True)
+            def existing(b):
+                return "free"
 
     def test_std_string_procs_use_ufcs(self):
         """std procs used with method syntax in converted code are available on string."""
@@ -3794,13 +3800,22 @@ class TestNTypes(unittest.TestCase):
         h.name.add("b")
         self.assertEqual(str(nm), "a")
 
+    def test_negative_default_and_named_argument(self):
+        """rule:argdefault: `bits = -1` and `f(a = -1)` keep the spaces; `=-` would be one Nim operator."""
+        src = ("from nimic.ntypes import *\n"
+               "def f(sizeHint: nint, bits: nint = -1) -> nint:\n    return bits\n"
+               "def g():\n    f(1, bits=-1)\n")
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("proc f*(sizeHint: int, bits: int = -1): int =", out)
+        self.assertIn("f(1, bits = -1)", out)
+
     def test_set_alias_constructor_is_set_literal(self):
         """A module-level alias `Flags = Tset[F]` constructs sets like Tset: `Flags()` is `{}`,
         `Flags({F.a})` is `{F.a}` (rule:typealias, rule:setlit)."""
         out = unparse(ast.parse("MsgFlags = Tset[MsgFlag]\n"
                                 "def f(flags: MsgFlags = MsgFlags()) -> None:\n"
                                 "    y = MsgFlags({MsgFlag.a})\n"))[0]
-        self.assertIn("proc f*(flags: MsgFlags={}) =", out)
+        self.assertIn("proc f*(flags: MsgFlags = {}) =", out)
         self.assertIn("y = {MsgFlag.a}", out)
 
     def test_object_equality_is_field_wise(self):
@@ -3835,6 +3850,213 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(len(t), 2)  # shared, not copied
         self.assertTrue(t.hasKey(string("b")))
         self.assertIsInstance(newTable[string, nint](), TableRef)
+
+    def test_table_generic_specializations(self):
+        """std/tables: Table[K, V] is a nimic generic object: one registered specialization named as in Nim,
+        so a generic proc over Table[A, B] binds A and B; getOrDefault(k) is default(V); OrderedTable is a
+        Table that keeps insertion order (as every dict)."""
+        self.assertIs(Table[string, nint], Table[string, nint])
+        self.assertEqual(Table[string, nint].__name__, "Table[string, nint]")
+        t = initTable[string, nint]()
+        self.assertIs(type(t), Table[string, nint])
+        t[string("a")] = nint(3)
+
+        @dispatch
+        def _tGetOrQuit[A, B](t: Table[A, B], k: A) -> B:
+            return t[k]
+
+        @dispatch
+        def _tValueIsSeq[A, B](t: Table[A, B]) -> bool:
+            return issubclass(B, seq)
+
+        self.assertEqual(_tGetOrQuit(t, string("a")), 3)
+        self.assertFalse(_tValueIsSeq(t))
+        self.assertTrue(_tValueIsSeq(initTable[string, seq[nint]]()))
+        # getOrDefault: the zero value of V for a missing key, or the given default
+        self.assertEqual(t.getOrDefault(string("x")), 0)
+        self.assertIsInstance(t.getOrDefault(string("x")), nint)
+        self.assertEqual(t.getOrDefault(string("x"), nint(7)), 7)
+        self.assertEqual(t.getOrDefault(string("a")), 3)
+        self.assertEqual(initTable[nint, string]().getOrDefault(1), "")
+        self.assertEqual(len(initTable[string, seq[nint]]().getOrDefault(string("x"))), 0)
+        # OrderedTable: its own specializations, insertion order; not a Table (as in Nim)
+        o = initOrderedTable[string, nint]()
+        self.assertIs(type(o), OrderedTable[string, nint])
+        self.assertNotIsInstance(o, Table)
+        with self.assertRaises(NotImplementedError):
+            _tGetOrQuit(o, string("a"))
+        for k in ("z", "a", "m"):
+            o[string(k)] = nint(1)
+        self.assertEqual([str(k) for k in o._n_dict], ["z", "a", "m"])
+        self.assertEqual(o.getOrDefault(string("q")), 0)
+
+    def test_strutils_split(self):
+        """strutils.split has Nim's results (a seq[string] of strings, runs of separators not merged), also as
+        s.split(...): it replaces Python's UserString.split on string (@ufcs python_api)."""
+        parts = string("foo.3.mymod").split(char("."))
+        self.assertIsInstance(parts, seq)
+        self.assertEqual([str(p) for p in parts], ["foo", "3", "mymod"])
+        self.assertTrue(all(isinstance(p, string) for p in parts))
+        self.assertTrue(all(isinstance(c, char) for c in parts[0]))
+        self.assertEqual([str(p) for p in split(string(""), char(" "))], [""])
+        self.assertEqual([str(p) for p in string("a,,b").split(char(","))], ["a", "", "b"])
+        self.assertEqual([str(p) for p in string("a  b").split()], ["a", "", "b"])  # Python's gives ["a", "b"]
+        self.assertEqual([str(p) for p in string("a,b;c").split(Tset[char](char(","), char(";")))], ["a", "b", "c"])
+        self.assertEqual([str(p) for p in string("a man a plan").split(string("a "))], ["", "man ", "plan"])
+        self.assertEqual([str(p) for p in string("a  largely    spaced").split(string(" "), maxsplit=1)],
+                         ["a", " largely    spaced"])
+        self.assertEqual([str(p) for p in string("unsplit").split(string(""))], ["unsplit"])
+        self.assertEqual([str(p) for p in string("unsplit").split(Tset[char]())], ["unsplit"])
+
+    def test_string_iteration_stops_at_len(self):
+        """for c in s yields s[0 ..< s.len]: not the terminating '\\0' nor the buffer's spare capacity, also
+        after add() gave the string a C buffer and with bound checks off."""
+        s = string("")
+        s.add(string("50.4"))
+        self.assertEqual([str(c) for c in s], ["5", "0", ".", "4"])
+        with push("boundChecks: off"):
+            def _tChars(x: string) -> list:
+                return [str(c) for c in x]
+        self.assertEqual(_tChars(s), ["5", "0", ".", "4"])
+        c = newStringOfCap(16)
+        c.add(char("a"))
+        self.assertEqual([str(ch_) for ch_ in c], ["a"])
+
+    def test_slurp_resolves_against_the_original_source(self):
+        """slurp / staticRead read a file relative to the calling module's original source file: the one its
+        `# /// nimic` header records (`# source: <repo>@<sha>:<path>`), in the clone `$<REPO>_DIR` or a
+        directory `<repo>` next to the module or one of its parents; without a header, the module's own
+        directory. The path doesn't depend on the current directory."""
+        with tempfile.TemporaryDirectory() as root:
+            clone_doc = os.path.join(root, "fakerepo", "doc")
+            os.makedirs(clone_doc)
+            os.makedirs(os.path.join(root, "proj", "pkg", "lib"))
+            with open(os.path.join(clone_doc, "version.md"), "wb") as f:
+                f.write(b"1.2.3 2026-10-21\n")
+            converted = os.path.join(root, "proj", "pkg", "lib", "m.py")
+            with open(converted, "w") as f:
+                f.write("# /// nimic\n# source: fakerepo@0123abcd:src/lib/m.nim\n# ///\n")
+            plain = os.path.join(root, "proj", "pkg", "plain.py")
+            with open(plain, "w") as f:
+                f.write("# a module without a source header\n")
+            with open(os.path.join(root, "proj", "pkg", "data.txt"), "wb") as f:
+                f.write(b"local")
+
+            def run(module_file, code):
+                ns = {"__file__": module_file, "slurp": slurp, "staticRead": staticRead}
+                exec(code, ns)
+                return ns["x"]
+
+            old_cwd = os.getcwd()
+            os.chdir(tempfile.gettempdir())
+            try:
+                self.assertEqual(run(converted, "x = slurp('../../doc/version.md')"), "1.2.3 2026-10-21\n")
+                self.assertIsInstance(run(converted, "x = slurp('../../doc/version.md')"), string)
+                self.assertEqual(run(plain, "x = staticRead('data.txt')"), "local")
+                with self.assertRaises(OSError):
+                    run(plain, "x = slurp('missing.txt')")
+                other = os.path.join(root, "elsewhere")
+                os.makedirs(os.path.join(other, "doc"))
+                with open(os.path.join(other, "doc", "version.md"), "wb") as f:
+                    f.write(b"9.9.9")
+                os.environ["FAKEREPO_DIR"] = other
+                try:
+                    self.assertEqual(run(converted, "x = slurp('../../doc/version.md')"), "9.9.9")
+                finally:
+                    del os.environ["FAKEREPO_DIR"]
+            finally:
+                os.chdir(old_cwd)
+        out = unparse(ast.parse("from nimic.ntypes import *\nwith const:\n    _V = slurp('../../doc/version.md')\n"))[0]
+        self.assertIn('V = slurp("../../doc/version.md")', out)
+
+    def test_variable_pragma(self):
+        """rule:varpragma: a variable annotated `pragma("cursor")` is `entry {.cursor.} = v`; with a type,
+        `pragma("noinit") @ T` is `x {.noinit.}: T = v`. In Python the annotation has no effect (a local's
+        annotation is never evaluated)."""
+        src = ("from nimic.ntypes import *\n"
+               "def f(t: seq[nint]) -> nint:\n"
+               "    with let:\n"
+               "        entry: pragma('cursor') = t\n"
+               "        typed: pragma('cursor') @ seq[nint] = t\n"
+               "    with var:\n"
+               "        x: pragma('noinit') @ nint = nint(0)\n"
+               "        y: nint = nint()\n"
+               "    return len(entry) + len(typed) + x\n"
+               "with var:\n"
+               "    _g: pragma('threadvar') @ nint = 0\n")
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("entry {.cursor.} = t", out)
+        self.assertIn("typed {.cursor.}: seq[int] = t", out)
+        self.assertIn("x {.noinit.}: int = int(0)", out)
+        self.assertIn("    y: int\n", out)  # rule:varini still applies to a plain annotation
+        self.assertIn("g {.threadvar.}: int = 0", out)
+        ns = {}
+        exec("from __future__ import annotations\n" + src, ns)
+        self.assertEqual(ns["f"](seq[nint]([1, 2])), 4)
+
+    def test_lifetime_hook(self):
+        """rule:hook: @hook("copy") on a def is the lifetime hook `=copy` (exported unless the name starts
+        with _); an unknown hook is a ValueError. In Python the proc stays an ordinary function: Python copies
+        where Nim moves, so the hook (an {.error.} one in particular) is Nim's."""
+        src = ("from nimic.ntypes import *\n"
+               "class _THooked(Object):\n    _buf: string\n"
+               "@hook('copy')\n"
+               "def _copyHooked(dest: mut @ _THooked, src: _THooked):\n    \"\"\"{.error.}\"\"\"\n    pass\n"
+               "@hook('destroy')\n"
+               "def destroyHooked(x: _THooked):\n    discard\n")
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("proc `=copy`(dest: var THooked, src: THooked) {.error.}", out)
+        self.assertIn("proc `=destroy`*(x: THooked) =", out)
+
+        @hook("wasMoved")
+        def _tWasMoved(x):
+            return "called"
+        self.assertEqual(_tWasMoved(1), "called")
+        self.assertEqual(_tWasMoved._n_hook, "wasMoved")
+        with self.assertRaises(ValueError):
+            hook("copyy")
+
+    def test_concepts(self):
+        """rule:concept: `class C(Concept): pass` is Nim 2's universal `C = concept x`; signatures in the body are
+        the concept's procs over `Self` (`{.noSideEffect.}`: func); a concept base is nimony's `concept of B`.
+        A concept is a @dispatch bound `[T: C]`; Python doesn't check its signatures yet, so every type fits
+        (Nim checks them). A concept has no instances."""
+        src = ("from nimic.ntypes import *\n"
+               "class _Equatable(Concept):\n    pass\n"
+               "class Hashable(Concept):\n    def hash(x: Self) -> Hash: ...\n"
+               "class Comparable(Concept):\n"
+               "    def __eq__(x: Self, y: Self) -> bool:\n        \"\"\"{.noSideEffect.}\"\"\"\n"
+               "    def __lt__(x: Self, y: Self) -> bool:\n        \"\"\"{.noSideEffect.}\"\"\"\n"
+               "class Keyable(Hashable):\n    def __eq__(a: Self, b: Self) -> bool: ...\n"
+               "class HasDefault(Concept):\n    def default(_: typedesc[Self]) -> Self: ...\n"
+               "def cmp2[T: Comparable](x: T, y: T) -> nint:\n    return 0\n")
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("  Equatable = concept x\n", out)
+        self.assertIn("  Hashable* = concept\n    proc hash(x: Self): Hash\n", out)
+        self.assertIn("  Comparable* = concept\n    func `==`(x: Self, y: Self): bool\n    func `<`(x: Self, y: Self): bool\n", out)
+        self.assertIn("  Keyable* = concept of Hashable\n    proc `==`(a: Self, b: Self): bool\n", out)
+        self.assertIn("  HasDefault* = concept\n    proc default(_: typedesc[Self]): Self\n", out)
+        self.assertIn("proc cmp2*[T: Comparable](x: T, y: T): int =", out)
+        self.assertNotIn("import typing", out)
+
+        class _TComparable(Concept):
+            def __lt__(x: Self, y: Self) -> bool: ...
+
+        @dispatch
+        def _tMin[T: _TComparable](x: T, y: T) -> T:
+            return x if x < y else y
+
+        @dispatch
+        def _tFirst[K: _TComparable, V](t: Table[K, V], k: K) -> V:
+            return t[k]
+
+        self.assertEqual(_tMin(nint(3), nint(2)), 2)
+        self.assertEqual(_tMin(string("b"), string("a")), "a")
+        t = initTable[string, nint]()
+        t[string("k")] = nint(5)
+        self.assertEqual(_tFirst(t, string("k")), 5)
+        with self.assertRaises(TypeError):
+            _TComparable()
 
     def test_selective_import(self):
         """A Python `from m import a` (a class comes with its methods) is a full `import m`; Nim's selective
@@ -4234,7 +4456,7 @@ def addWord(b: mut@Builder, w: string) -> None:
                                       initializerBody: typed = None, other: untyped = None):
                 initializerBody
             ''')
-        self.assertIn("name: string=string(\"\"), initializerBody: typed, other: untyped) =", unparse(ast.parse(src))[0])
+        self.assertIn("name: string = string(\"\"), initializerBody: typed, other: untyped) =", unparse(ast.parse(src))[0])
 
     def test_method_call_syntax_ufcs(self):
         """Nim method-call syntax: `obj.f(args)` calls a proc `f(obj, args)` visible in the caller's scope
@@ -4883,6 +5105,7 @@ def addWord(b: mut@Builder, w: string) -> None:
         test_shallow_copy_assigns_in_place)."""
         obj = [1, 2, 3]
         self.assertIs(move(obj), obj)
+        self.assertIs(ensureMove(obj), obj)  # Nim's compile-time "can move" check has no Python effect
 
     def test_cmp_three_way(self):
         """cmp provides standard three-way comparison (-1, 0, 1)."""
