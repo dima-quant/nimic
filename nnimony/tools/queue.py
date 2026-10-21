@@ -38,6 +38,9 @@ CURRENT = [c for c, _, state in COMPONENTS if state == "current"]
 AGENT_BRIEFS = {
     "brief_lib_first.md": {"lib/stringtrees", "lib/comesfrom", "lib/symparser"},
     "brief_lib_batch2.md": {"models/tags", "lib/tooldirs", "lib/docpaths", "lib/platform"},
+    "brief_lib_batch3.md": {"lib/nifroles", "lib/lineinfos", "lib/stringviews", "lib/bitabs"},
+    "brief_lib_batch4.md": {"lib/compat2", "lib/filelinecache", "lib/treemangler", "lib/nimversion"},
+    "brief_lib_batch5.md": {"models/callconv_tags", "models/nifindex_tags", "models/leng_tags"},
 }
 AGENT = {m: brief for brief, modules in AGENT_BRIEFS.items() for m in modules}
 

@@ -24,43 +24,40 @@
 
 | Module | Size | Std imports (✗ = no nimic shim yet) | Agent |
 |---|---|---|---|
-| `lib/tooldirs` | 1,265 bytes | os, strutils | brief_lib_batch2.md |
-| `lib/stringviews` | 2,238 bytes | hashes |  |
-| `lib/nimversion` | 2,742 bytes | syncio |  |
-| `lib/docpaths` | 3,130 bytes | os, strutils | brief_lib_batch2.md |
-| `lib/compat2` | 3,478 bytes | paths, tables |  |
-| `lib/nifroles` | 3,979 bytes |  |  |
+| `models/callconv_tags` | 921 bytes |  | brief_lib_batch5.md |
+| `lib/nimversion` | 2,742 bytes | syncio | brief_lib_batch4.md |
+| `lib/compat2` | 3,478 bytes | paths, tables | brief_lib_batch4.md |
+| `models/nifindex_tags` | 4,112 bytes |  | brief_lib_batch5.md |
 | `lib/argsfinder` | 4,466 bytes | assertions, os, parseopt ✗, strutils, syncio |  |
-| `lib/treemangler` | 5,308 bytes | assertions, formatfloat, hashes, strutils, syncio, tables |  |
-| `lib/lineinfos` | 5,345 bytes | assertions, hashes |  |
-| `lib/bitabs` | 10,085 bytes | assertions, hashes |  |
+| `lib/treemangler` | 5,308 bytes | assertions, formatfloat, hashes, strutils, syncio, tables | brief_lib_batch4.md |
+| `lib/keymatcher` | 5,934 bytes | assertions, macros ✗ |  |
 | `lib/vfs` | 12,960 bytes | atomics ✗, memfiles ✗, os, posix/posix ✗, syncio, times |  |
-| `models/tags` | 13,811 bytes |  | brief_lib_batch2.md |
-| `lib/platform` | 16,405 bytes | strutils, syncio | brief_lib_batch2.md |
+| `models/leng_tags` | 24,091 bytes |  | brief_lib_batch5.md |
 | `lib/intrinsics` | 80,220 bytes |  |  |
+| `lib/nifcore` | 111,775 bytes | assertions, formatfloat, hashes |  |
 
-## All modules of `src/lib` (4/39 converted)
+## All modules of `src/lib` (12/39 converted)
 
 | Module | Tier | Size | Depends on | Std imports | Status |
 |---|---|---|---|---|---|
 | `lib/argsfinder` | 0 | 4,466 bytes |  | assertions, os, parseopt ✗, strutils, syncio | 🔲 Pending |
-| `lib/bitabs` | 0 | 10,085 bytes |  | assertions, hashes | 🔲 Pending |
+| `lib/bitabs` | 0 | 10,085 bytes |  | assertions, hashes | ✅ Converted |
 | `lib/comesfrom` | 0 | 5,495 bytes |  |  | ✅ Converted |
 | `lib/compat2` | 0 | 3,478 bytes |  | paths, tables | 🔲 Pending |
-| `lib/docpaths` | 0 | 3,130 bytes |  | os, strutils | 🔲 Pending |
+| `lib/docpaths` | 0 | 3,130 bytes |  | os, strutils | ✅ Converted |
 | `lib/intrinsics` | 0 | 80,220 bytes |  |  | 🔲 Pending |
-| `lib/lineinfos` | 0 | 5,345 bytes |  | assertions, hashes | 🔲 Pending |
-| `lib/nifroles` | 0 | 3,979 bytes |  |  | 🔲 Pending |
+| `lib/lineinfos` | 0 | 5,345 bytes |  | assertions, hashes | ✅ Converted |
+| `lib/nifroles` | 0 | 3,979 bytes |  |  | ✅ Converted |
 | `lib/nimversion` | 0 | 2,742 bytes |  | syncio | 🔲 Pending |
-| `lib/platform` | 0 | 16,405 bytes |  | strutils, syncio | 🔲 Pending |
+| `lib/platform` | 0 | 16,405 bytes |  | strutils, syncio | ✅ Converted |
 | `lib/stringtrees` | 0 | 2,963 bytes |  | assertions | ✅ Converted |
-| `lib/stringviews` | 0 | 2,238 bytes |  | hashes | 🔲 Pending |
+| `lib/stringviews` | 0 | 2,238 bytes |  | hashes | ✅ Converted |
 | `lib/symparser` | 0 | 9,123 bytes |  | assertions | ✅ Converted |
 | `lib/tinyhashes` | 0 | 817 bytes |  |  | ✅ Converted |
-| `lib/tooldirs` | 0 | 1,265 bytes |  | os, strutils | 🔲 Pending |
+| `lib/tooldirs` | 0 | 1,265 bytes |  | os, strutils | ✅ Converted |
 | `lib/treemangler` | 0 | 5,308 bytes |  | assertions, formatfloat, hashes, strutils, syncio, tables | 🔲 Pending |
 | `lib/vfs` | 0 | 12,960 bytes |  | atomics ✗, memfiles ✗, os, posix/posix ✗, syncio, times | 🔲 Pending |
-| `models/tags` | 0 | 13,811 bytes |  |  | 🔲 Pending |
+| `models/tags` | 0 | 13,811 bytes |  |  | ✅ Converted |
 | `lib/filelinecache` | 1 | 2,028 bytes | lib/compat2 | hashes, strutils, syncio, tables | 🔲 Pending |
 | `lib/keymatcher` | 1 | 5,934 bytes | lib/stringtrees, lib/stringviews | assertions, macros ✗ | 🔲 Pending |
 | `lib/legacy/nif26reader` | 1 | 13,861 bytes | lib/stringviews, lib/vfs | assertions, memfiles ✗, parseutils | 🔲 Pending |
