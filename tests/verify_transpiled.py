@@ -431,10 +431,10 @@ def _nnimony_modules() -> list[str]:
 
 
 def _without_main_blocks(source: str) -> str:
-    """`source` without its top-level `when isMainModule:` blocks."""
+    """`source` without its top-level `when isMainModule` blocks (also `when isMainModule and ...:`)."""
     kept, skipping = [], False
     for line in source.splitlines():
-        if line.startswith("when isMainModule:"):
+        if line.startswith("when isMainModule ") or line.startswith("when isMainModule:"):
             skipping = True
         elif skipping and line.strip() and not line[0].isspace():
             skipping = False
@@ -447,11 +447,11 @@ def _with_tests(original: str, transpiled: str) -> str | None:
     """The original module with the transpiled module's `when isMainModule:` block appended (its tests),
     or None if it has none. The original's own `when isMainModule:` tests are dropped: the converted
     module contains them, converted as they are. Imports ncode/pydefs for the nimic helpers the tests use."""
-    marker = "\nwhen isMainModule:"
-    if marker not in transpiled:
+    found = re.search(r"\nwhen isMainModule[ :]", transpiled)
+    if found is None:
         return None
     return ("import ncode/pydefs\n" + _without_main_blocks(original).rstrip("\n") + "\n"
-            + transpiled[transpiled.index(marker):])
+            + transpiled[found.start():])
 
 
 def check_nimony() -> None:
@@ -463,6 +463,8 @@ def check_nimony() -> None:
     conv, orig = SCRATCH / "nimony_conv" / "src", SCRATCH / "nimony_orig" / "src"
     shutil.copytree(NIMONY_SRC, conv)
     shutil.copytree(NIMONY_SRC, orig)
+    for base in (conv, orig):  # src/lib/nimversion slurps ../../doc/version.md
+        shutil.copytree(NIMONY_SRC.parent / "doc", base.parent / "doc")
     flags = ["--hints:off", "--warnings:off", "--styleCheck:off", f"--path:{ROOT / 'src/nimic'}"]
     for key in _nnimony_modules():
         module = "nnimony." + key.replace("/", ".")
@@ -474,7 +476,8 @@ def check_nimony() -> None:
         target.write_text(tr.stdout)
         chk = run(["nim", "check", *flags, target.name], target.parent)
         report(chk.returncode == 0, f"nimony module {key}", "" if chk.returncode == 0 else first_error(chk), key)
-        py = run([PY, "-m", module], ROOT, [ROOT / "src", ROOT])
+        # tests run from the nimony checkout, as nimony's own do (filelinecache reads src/lib/...)
+        py = run([PY, "-m", module], NIMONY_SRC.parent, [ROOT / "src", ROOT])
         original = _with_tests((NIMONY_SRC / f"{key}.nim").read_text(), tr.stdout)
         if original is None:
             print(f"  SKIP  nimony tests {key}  — no tests", flush=True)
@@ -491,7 +494,7 @@ def check_nimony() -> None:
             if build.returncode != 0:
                 report(False, f"nimony {what} {key}", "nim c: " + first_error(build), key)
                 continue
-            nim = run([exe], ROOT)
+            nim = run([exe], NIMONY_SRC.parent)
             same = nim.returncode == 0 and py.stdout == nim.stdout
             detail = "" if same else (f"Nim run: exit {nim.returncode}" if nim.returncode else "stdout differs: " + next(
                 (f"py {a!r} / nim {b!r}" for a, b in zip(py.stdout.splitlines(), nim.stdout.splitlines()) if a != b),

@@ -22,7 +22,7 @@ from nimic.ntypesystem import (BUFFER_REGISTRY, _n_routine_pragmas, nord, Buffer
 from nimic.std.bitops import fastLog2
 from nimic.std.endians import big_endian32
 from nimic.std.formatfloat import addFloat
-from nimic.std.hashes import Hash, hashIgnoreStyle, mix_hash, finish_hash
+from nimic.std.hashes import Hash, hashIgnoreStyle, mix_hash, finish_hash, hash as nhash
 from nimic.std.strutils import parseFloat
 from nimic.std.math import classify, fcNegSubnormal, fcNormal, fcSubnormal, trunc
 from nimic.std.options import Option, none, some
@@ -96,6 +96,28 @@ def _tDirtyByAlias():
 @template
 def _tCustomPragma(kind: string):
     """{.pragma.}"""
+
+
+# Nim `BiTableFloat[Id] = distinct BiTable[Id, uint64]` (bitabs): a generic distinct object whose procs
+# convert it to its base; module-level, as the specializations of generic procs run in the module's scope
+class _TGTab[Id, T](Object):
+    _vals: seq[T]
+
+
+@distinct
+class _TGTabF[Id](_TGTab[Id, uint64]):
+    pass
+
+
+@dispatch
+def _tGAdd[Id, T](t: mut @ _TGTab[Id, T], v: T) -> Id:
+    t._vals.add(v)
+    return Id(t._vals.len)
+
+
+@dispatch
+def _tGAdd[Id](t: mut @ _TGTabF[Id], v: float64) -> Id:
+    return _TGTab[Id, uint64](t)._tGAdd(cast[uint64](v))
 
 
 class TestNTypes(unittest.TestCase):
@@ -3452,6 +3474,224 @@ class TestNTypes(unittest.TestCase):
         arr[_TFrom2.c] = 9
         arr[_TFrom2.a] = 1
         self.assertEqual((arr[_TFrom2.a], arr[_TFrom2.b], arr[_TFrom2.c]), (1, 0, 9))
+
+    def test_hash_nim_values(self):
+        """std/hashes `hash` gives Nim's values (the host Nim 2 std/hashes): hashWangYi1 of the ordinal
+        for every integer type, char, bool and enum, of the bits for floats (-0.0 as 0.0), hashFarm for
+        strings and openArray[char], and the mixed element hashes for tuples and other openArrays. The
+        expected values are printed by compiled Nim (Python's own str hash is randomized per process)."""
+        class _THashE(NIntEnum):
+            e0 = auto()
+            e1 = auto()
+            e2 = auto()
+
+        s100 = string("".join(chr(ord("a") + i % 26) for i in range(100)))
+        self.assertEqual([nhash(0), nhash(nint(1)), nhash(nint(-1)), nhash(uint32(5)), nhash(high(uint64))],
+                         [-5940405725068231575, 8641844181895329213, 8231874320669540605,
+                          6628840058955693702, 8231874320669540605])
+        self.assertEqual([nhash(char("a")), nhash(True), nhash(_THashE.e2), nhash(1.5)],
+                         [661948602591176288, 8641844181895329213, 6130242188011939732, 7707678244570155511])
+        self.assertEqual(nhash(-0.0), nhash(0.0))
+        self.assertEqual([nhash(string("")), nhash(string("hello")), nhash(string("abcdefghijklmnopqrst")),
+                          nhash(s100[0:40]), nhash(s100)],
+                         [-7286425919675154353, -5436999610281751320, 7349542659848948094,
+                          4224718273921451922, -3110835528467311390])
+        self.assertEqual(nhash((nint(1), string("a"))), 4503073964935643945)
+        self.assertEqual(nhash(toOpenArray(s100, 2, 11)), nhash(s100[2:12]))
+        self.assertEqual(nhash(toOpenArray(array[3, nint]([1, 2, 3]), 0, 2)), -8042410921291333870)
+
+        @distinct
+        class _THashId(uint32):
+            def hash(a: _THashId) -> Hash:
+                """{.borrow.}"""
+                return nhash(uint32(a))
+
+        self.assertEqual(_THashId(5).hash(), 6628840058955693702)
+
+    def test_to_open_array(self):
+        """Nim system.toOpenArray(x, first, last): positions first..last of a seq, array, string, openArray
+        or ptr UncheckedArray as an openArray view; reads and writes go to x. A range outside x is an
+        IndexDefect; last = first - 1 is the empty view."""
+        s = seq[nint]([10, 20, 30, 40])
+        v = toOpenArray(s, 1, 2)
+        self.assertEqual((len(v), v[0], v[1], list(v)), (2, 20, 30, [20, 30]))
+        v[1] = 33
+        self.assertEqual(s[2], 33)
+        self.assertEqual(len(toOpenArray(s, 2, 1)), 0)
+        with self.assertRaises(IndexDefect):
+            toOpenArray(s, 2, 4)
+        with self.assertRaises(IndexDefect):
+            v[2]
+        st = string("hello")
+        self.assertEqual("".join(str(c) for c in toOpenArray(st, 1, 3)), "ell")
+        self.assertEqual(type(toOpenArray(st, 0, 1)).__name__, "openArray[char]")
+        p = cast[ptr[UncheckedArray[char]]](addr(st[0]))
+        pv = toOpenArray(p, 0, 4)
+        self.assertEqual((len(pv), str(pv[4])), (5, "o"))
+        out = unparse(ast.parse("def f(s: string) -> nint:\n    return hash(toOpenArray(s, 0, s.len - 1))\n"))[0]
+        self.assertIn("hash(toOpenArray(s, 0, s.len - 1))", out)
+
+    def test_swap(self):
+        """Nim system.swap(a, b: var T): both variables change in place (seqs, strings, objects, the
+        scalar cells, fields). A Python literal or enum member can't be a variable: TypeError."""
+        a, b = seq[nint]([1, 2]), seq[nint]([3])
+        swap(a, b)
+        self.assertEqual((list(a), list(b)), ([3], [1, 2]))
+        x, y = string("x"), string("yy")
+        swap(x, y)
+        self.assertEqual((str(x), str(y)), ("yy", "x"))
+        i, j = nint(1), nint(2)
+        swap(i, j)
+        self.assertEqual((i, j), (2, 1))
+
+        class _TSwapHolder(Object):
+            keys: seq[nint]
+
+        h = _TSwapHolder(keys=seq[nint]([7]))
+        n = seq[nint]([0, 0])
+        swap(h.keys, n)
+        self.assertEqual((list(h.keys), list(n)), ([0, 0], [7]))
+        with self.assertRaises(TypeError):
+            swap(1, 2)
+        out = unparse(ast.parse("swap(t._keys, n)\n"))[0]
+        self.assertIn("swap(t.keys, n)", out)
+
+    def test_sink_lent_annotations(self):
+        """Nim `v: sink T` and a `lent T` return: `sink @ T` / `lent @ T`, as `mut @ T` is `var T`.
+        In Python the value is passed and returned as it is; dispatch matches T."""
+        @dispatch
+        def _tSinkAdd(s: mut @ seq[nint], v: sink @ nint) -> nint:
+            s.add(v)
+            return s.len
+
+        @dispatch
+        def _tLentAt(s: seq[nint], i: nint) -> lent @ nint:
+            return s[i]
+
+        s = seq[nint]([])
+        self.assertEqual(_tSinkAdd(s, nint(4)), 1)
+        self.assertEqual(_tLentAt(s, 0), 4)
+        out = unparse(ast.parse(textwrap.dedent('''\
+            def addOrdered(t: mut @ BiTable[Id, T], v: sink @ T) -> Id:
+                return Id(0)
+            def at(t: BiTable[Id, T], i: Id) -> lent @ T:
+                return t.vals[i]
+            ''')))[0]
+        self.assertIn("(t: var BiTable[Id, T], v: sink T): Id", out)
+        self.assertIn("(t: BiTable[Id, T], i: Id): lent T", out)
+
+    def test_block_scope_not_exported(self):
+        """Variables declared in a `block` (labeled or not) are local to it in Nim, also at module
+        level: no export marker (`'export' is only allowed at top level`)."""
+        out = unparse(ast.parse(textwrap.dedent('''\
+            with block("orderedFill"):
+                with var:
+                    a = 1
+            with block:
+                with var:
+                    b = 2
+            with var:
+                c = 3
+            ''')))[0]
+        self.assertIn("block orderedFill:\n  var\n    a = 1", out)
+        self.assertIn("block:\n  var\n    b = 2", out)
+        self.assertIn("var\n  c* = 3", out)
+
+    def test_generic_object_proc_binding(self):
+        """Generic objects with several parameters are named as in Nim (`G[uint32, string]`); a generic
+        proc called with explicit types (`initG[uint32, string]()`, `@generic`) binds them in its body,
+        and a @dispatch generic proc binds its type variables from such an argument, also when a type
+        variable's name occurs in the class name (`T` in `BiTable`)."""
+        class _TBiTable[Id, T](Object):
+            _vals: seq[T]
+            _keys: seq[Id]
+
+        @generic
+        def _tInitBiTable[Id, T]() -> _TBiTable[Id, T]:
+            return _TBiTable[Id, T](_vals=seq[T]([]), _keys=seq[Id]([]))
+
+        @dispatch
+        def _tAdd[Id, T](t: mut @ _TBiTable[Id, T], v: T) -> Id:
+            t._vals.add(v)
+            return Id(t._vals.len)
+
+        @dispatch
+        def _tIsStr[Id, T](t: _TBiTable[Id, T]) -> bool:
+            return issubclass(T, string)
+
+        t = _tInitBiTable[uint32, string]()
+        self.assertEqual(type(t).__name__, "_TBiTable[uint32, string]")
+        self.assertIs(type(t), _TBiTable[uint32, string])
+        self.assertEqual(type(t._keys).__name__, "seq[uint32]")
+        r = _tAdd(t, string("a"))
+        self.assertEqual((r, type(r).__name__), (1, "uint32"))
+        self.assertTrue(_tIsStr(t))
+        self.assertFalse(_tIsStr(_tInitBiTable[uint32, float64]()))
+        with self.assertRaises(NotImplementedError):
+            _tAdd(t, 1.5)
+
+    def test_generic_dispatch_literals(self):
+        """A literal argument of a generic proc takes the type its parameter has or its type variable is
+        bound to, as in Nim: `hasNext(b, 0)` for `index: int`, `add(b, k, 10)` for `val: Val` with Val
+        bound to int by `b`."""
+        class _TLitTab[K, V](Object):
+            _vals: seq[V]
+
+        @dispatch
+        def _tLitAdd[K, V](t: mut @ _TLitTab[K, V], v: V, n: nint) -> nint:
+            t._vals.add(v)
+            return t._vals.len + n
+
+        t = _TLitTab[string, nint](_vals=seq[nint]([]))
+        self.assertEqual(_tLitAdd(t, 10, 0), 1)
+        self.assertEqual(_tLitAdd(t, nint(20), 5), 7)
+        self.assertEqual(list(t._vals), [10, 20])
+
+    def test_container_stores_values(self):
+        """Nim assignment copies values: an array slot (also one without C storage: the element type an
+        unbound type variable) stores a copy of a string or of a mutable scalar (an nint read from another
+        array is a view of that slot), and a Python value stored in a typed array takes its element type."""
+        class _TRefKeys[K](Object):
+            keys: array[3, K]
+
+        r = _TRefKeys[_TRefKeys.__type_params__[0]]()  # K unbound, as in a generic proc without @dispatch
+        self.assertIsNone(r.keys._n_view)
+        s = string("a")
+        r.keys[0] = s
+        s <<= string("b")
+        self.assertEqual(str(r.keys[0]), "a")
+        src = array[2, nint]()
+        src[0] = nint(5)
+        r.keys[1] = src[0]
+        src[0] = nint(7)
+        self.assertEqual(int(r.keys[1]), 5)
+        a = array[2, string]()
+        a[0] = "py"
+        self.assertEqual((str(a[0]), type(a[0]).__name__), ("py", "string"))
+
+    def test_distinct_generic_object(self):
+        """Nim `BiTableFloat[Id] = distinct BiTable[Id, uint64]`: a generic distinct object. Its
+        specializations are distinct (procs of the base don't take them), and a conversion between a
+        distinct object and its base (`BiTable[Id, uint64](t)`, `D(b)`) is a view of the same value,
+        as Nim's l-value conversion: changes through it change the converted variable."""
+        f = _TGTabF[uint32](_TGTab[uint32, uint64](_vals=seq[uint64]([])))
+        self.assertEqual(type(f).__name__, "_TGTabF[uint32]")
+        self.assertEqual(type(f._vals).__name__, "seq[uint64]")
+        self.assertIn("_TGTabF[uint32]", _n_distinct_types)
+        self.assertEqual(_tGAdd(f, 1.5), 1)
+        self.assertEqual(_tGAdd(f, -0.0), 2)
+        self.assertEqual(list(f._vals), [0x3FF8000000000000, 0x8000000000000000])
+
+        class _TBox(Object):
+            v: seq[nint]
+
+        @distinct
+        class _TDBox(_TBox):
+            pass
+
+        d = _TDBox(_TBox(v=seq[nint]([1])))
+        _TBox(d).v.add(2)
+        self.assertEqual(list(d.v), [1, 2])
 
     def test_var_bool_parameter(self):
         """Nim `var bool` (G19): a Python bool can't be changed through a parameter, so the caller's

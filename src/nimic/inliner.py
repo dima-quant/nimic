@@ -503,7 +503,9 @@ def template_expand(target_func):
         new_func = types.FunctionType(new_func.__code__, target_func.__globals__, new_func.__name__,
                                       new_func.__defaults__)
         new_func.__kwdefaults__ = exec_namespace[target_func.__name__].__kwdefaults__
-    return wraps(target_func)(new_func)
+    new_func = wraps(target_func)(new_func)
+    new_func._n_source = new_source_code  # its source: inspect.getsource would give the unexpanded original
+    return new_func
 
 
 if __name__ == "__main__":

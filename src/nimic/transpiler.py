@@ -19,7 +19,8 @@ Formatting:
   rule:nonlocal -> suppress "nonlocal" declarations (Nim closures capture by reference)
 
 Scope qualifiers:
-  rule:dropwith -> drop "with" for "const", "let", "var", "export", "block", "static"
+  rule:dropwith -> drop "with" for "const", "let", "var", "export", "block", "static"; a block or static body
+    is a scope (its variables are not exported, also at module level)
   rule:writeexport -> write no parentheses for "export" by assigning low priority
   feature:subscriptrename -> subscript can be renamed if in keywords_no_with context ("const", "let", "var", "export")
 
@@ -50,6 +51,8 @@ Function definitions:
   rule:funcdefmut -> arguments and return types denoted as "mut@" are mutable in function definition -> "var "
     (also in calltype signatures): def s(self: BProc) -> mut @ Builder -> proc s*(self: BProc): var Builder
   rule:funcdefout -> parameters annotated `out @ T` are Nim `out T` (in Python the same as mut @ T)
+  rule:funcdefsink -> `sink @ T` parameters are Nim `sink T`, `lent @ T` return types `lent T` (in Python the
+    value itself)
   rule:funcdefbody -> no body is written for function definition with "borrow" in pragma, only "pass" or only the
     pragma docstring (`template x() {.pragma.}`)
   rule:funcdefinplace -> remove return ... from dunder defs for binary in-place operators __i...__, first argument is
@@ -2072,7 +2075,9 @@ class _Unparser(NodeVisitor):
             # rule:labeledblock -> with block("name"): body  is  block name: body
             self.fill(f"block {ctx.args[0].value}")
             with self.block():
+                self._scope_depth += 1  # a block is a scope in Nim: its variables are not exported
                 self.traverse(node.body)
+                self._scope_depth -= 1
             return
         if (isinstance(ctx, Call) and isinstance(ctx.func, Name) and ctx.func.id == "push"
                 and len(ctx.args) == 1 and isinstance(ctx.args[0], Constant) and isinstance(ctx.args[0].value, str)):
@@ -2126,8 +2131,12 @@ class _Unparser(NodeVisitor):
             self.write_template_inline(node)
         else:
             self.interleave(lambda: self.write(", "), self.traverse, node.items)
+            # `block:` and `static:` are scopes in Nim: their variables are not exported
+            depth = 1 if name in self._keywords_no_with_colon else 0
             with self.block(extra=self.get_type_comment(node), start=start):
+                self._scope_depth += depth
                 self.traverse(node.body)
+                self._scope_depth -= depth
             if cont_pop:
                 self._context_stack.pop()
 
@@ -3005,12 +3014,15 @@ class _Unparser(NodeVisitor):
             self.write(": ")
             self._write_annotation(node.annotation)
 
+    # the parameter / return type modifiers `<modifier> @ T` and their Nim spelling
+    _type_modifiers = {"mut": "var", "out": "out", "sink": "sink", "lent": "lent"}
+
     def _write_annotation(self, ann):
         """Parameter or return type annotation; `mut @ T` is written as `var T`."""
-        # rule:funcdefmut, check if annotated as mutable "mut @"
+        # rule:funcdefmut, rule:funcdefout, rule:funcdefsink -> `mut @ T`, `out @ T`, `sink @ T`, `lent @ T`
         if isinstance(ann, BinOp) and isinstance(ann.op, MatMult) and \
-            isinstance(ann.left, Name) and ann.left.id in ("mut", "out"):
-            self.write("var " if ann.left.id == "mut" else "out ")  # rule:funcdefmut, rule:funcdefout
+            isinstance(ann.left, Name) and ann.left.id in self._type_modifiers:
+            self.write(self._type_modifiers[ann.left.id] + " ")
             self.traverse(ann.right)
         else:
             self.traverse(ann)

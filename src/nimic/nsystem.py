@@ -791,6 +791,25 @@ def shallowCopy(dest, src) -> None:
     dest <<= src
 
 
+def swap(a, b) -> None:
+    """Nim: swap(a, b: var T) — exchanges the values of two variables, both changed in place like
+    `a <<= b`. They must be mutable nimic values (string, seq, array, set, Object, a field, the scalar
+    cells nint / nbool / float64 / cell(...)); Python cannot rebind a caller's immutable variable."""
+    for x in (a, b):
+        if not hasattr(x, "__ilshift__"):
+            raise TypeError(f"swap: a value of type {type(x).__name__} cannot be changed in place; "
+                            "use a variable (nint(...), nbool(...), cell(...), a string, seq or object)")
+    tmp = a.copy()
+    a <<= b
+    b <<= tmp
+
+
+def toOpenArray(x, first, last):
+    """Nim: toOpenArray(x, first, last) — positions first..last of x (seq, array, string, openArray,
+    ptr UncheckedArray) as an openArray view; reads and writes go to x (openArray._n_slice)."""
+    return _ntypesystem.openArray._n_slice(x, first, last)
+
+
 class push:
     """Nim: {.push pragma.} ... {.pop.} — `with push("overflowChecks: off"):` around a group of procs
     (rule:push emits {.push overflowChecks: off.}, the body unindented, then {.pop.}).

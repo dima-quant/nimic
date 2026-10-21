@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import contextlib
 import ctypes as _ctypes  # underscore: not re-exported by `from nimic.ntypes import *`
-import functools as _functools
 from enum import auto
 
 from nimic.inliner import template, template_expand, do, TemplateBlockError
@@ -76,6 +75,8 @@ from nimic.nsystem import (
     toFloat,
     toInt,
     shallowCopy,
+    swap,
+    toOpenArray,
     push,
     assign,
     reset,
@@ -128,6 +129,7 @@ from nimic.ntypesystem import (
     SomeFloat,
     SomeNumber,
     nord,
+    generic,
     openArray,
     pointer,
     pred,
@@ -135,6 +137,8 @@ from nimic.ntypesystem import (
     ref,
     mut,
     out,
+    sink,
+    lent,
     seq,
     string,
     subset,
@@ -442,17 +446,3 @@ def cmp(x, y) -> int:
     return (x > y) - (x < y)
 
 
-def generic(fn):
-    """Decorator allowing generic functions with 0 args to be subscripted with types in Python, e.g. fn[T, U]()."""
-    class _GenericWrapper:
-        def __init__(self, target):
-            _functools.update_wrapper(self, target)
-            self._n_target = target
-
-        def __call__(self, *args, **kwargs):
-            return self._n_target(*args, **kwargs)
-
-        def __getitem__(self, types):
-            return self
-
-    return _GenericWrapper(fn)

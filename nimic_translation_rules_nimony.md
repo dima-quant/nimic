@@ -67,7 +67,7 @@ Nim variable declarations are mapped to Python context managers to encapsulate s
 | `let x = 5` | `with let: x = 5` | Immutable assignments |
 | `const x = 5` | `with const: x = 5` | Compile-time constants |
 | `var x, y: int` | `with var:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x = nint(0)`<br>&nbsp;&nbsp;&nbsp;&nbsp;`y = nint(0)` | Groups declarations |
-| `var tY: uint16` | `with var:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`_tY = uint16()` | A module-level (or inner-block) variable without `*` is written `_tY`: it transpiles to `tY`, not exported (`rule:localname`); without the `_` it would become the exported global `tY*` |
+| `var tY: uint16` | `with var:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`_tY = uint16()` | A module-level variable without `*` (also one in a module-level `when`) is written `_tY`: it transpiles to `tY`, not exported (`rule:localname`); without the `_` it would become the exported global `tY*`. Variables of a proc, loop or `block` (also `with block("name"):` at module level) are local and keep their names (`rule:dropwith`) |
 
 ## 2. Compile-Time and Metaprogramming (`rule:comptime`, `rule:templateinline`)
 Compile-time metaprogramming relies on function calls or specific decorators. Generic Nim's macro definitions are not supported.
@@ -158,6 +158,8 @@ translates to
 An enum with string values (`warnUser = "User"`) is a `NStrEnum`: `$` of an `auto()` member is its name, and members with equal texts (`warnUser = "User", hintUser = "User"`) are distinct members, ordered by declaration.
 A member with an explicit ordinal and text (`Cdecl = (ord(CdeclTagId), "cdecl")`, the tag models) is written the same way in a `NStrEnum`: `Cdecl = (ord(TagEnum.CdeclTagId), "cdecl")`. Ordinals increase strictly and may leave holes. A member without one is the previous ordinal plus one (`"text"`, `auto()`). `ord`, `E(ordinal)`, comparisons and stored fields use the ordinal, and `succ`/iteration follow the declared members. An `NIntEnum` takes explicit values the same way (`a = 2`). As in Nim, an enum with holes is no ordinal type, so it can't index an array (`TypeError`). An array indexed by an enum spans `ord(low)..ord(high)`.
 
+**Generic distinct objects** `BiTableFloat*[Id] = distinct BiTable[Id, uint64]` ➔ `@distinct class BiTableFloat[Id](BiTable[Id, uint64]): pass`. `BiTableFloat[uint32]` is distinct (procs of `BiTable` don't take it) and derives from `BiTable[uint32, uint64]`. A conversion between a distinct object and its base, or between an object and its base type (`BiTable[Id, uint64](t)`, `BiTableFloat[uint32](b)`), is a view of the same value, as Nim's l-value conversion: `BiTable[Id, uint64](t).getOrIncl(x)` changes `t`. To keep a separate value, `.copy()` it.
+
 **Types of one type section.** Consecutive classes are one Nim `type` section (methods are written after it), so a field may name a type declared later in the section (`PType.sym: PSym` before `class PSym`): the field resolves when the later type is defined, with that type's zero value (`nil` for a `@ref`).
 
 ## 4. Functions and Arguments
@@ -170,6 +172,7 @@ Functions use standard Python `def` definitions but might employ specific decora
 | `proc foo(x: var SomeType)` | `def foo(x: mut@SomeType):` | Assigning new value requires `<<=`, e.g., `x <<= y` (not needed for attributes and array elements). |
 | `proc s(p: BProc): var Builder` | `def s(p: BProc) -> mut@Builder:` | Mutable (`var`) return type, also in `@calltype` signatures (`rule:funcdefmut`). |
 | `proc init(x: out T)` | `def init(x: out@T):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x <<= T(...)` | `out` parameter (`rule:funcdefout`) |
+| `proc addOrdered(t: var B; v: sink T)`, ``proc `[]`(t: B; i: Id): lent T`` | `def addOrdered(t: mut @ B, v: sink @ T)`, `def __getitem__(t: B, i: Id) -> lent @ T` | `sink` parameter and `lent` return type (`rule:funcdefsink`); in Python the value itself |
 | `type InstantiationInfo* = typeof(instantiationInfo())` | `InstantiationInfo = typeof(instantiationInfo())` | `typeof(x)` as a type alias (`rule:typealias`); `instantiationInfo(-2, fullPaths = true)` gives the call site in Python too |
 | `proc canonicalCase(path: var string)` (not exported) | `def _canonicalCase(path: mut@string)` | A private proc or template has a leading `_`. It transpiles to the original Nim name without `*` (`proc canonicalCase(...)`), and Python star imports don't re-export it. A private overload of a public name is written the same way: `def _abs(a: int32)` next to a public `abs` is Nim's private `proc abs(a: int32)`, `_addToHex(uint32)` next to `addToHex(Int128)` |
 | `udata: array[4, uint32]` (a private field) | `_udata: array[4, uint32]` | A private field has a leading `_`, also in constructors and accesses: `Int128(_udata=[...])`, `a._udata[0]` transpile to `Int128(udata: [...])`, `a.udata[0]` |
@@ -203,7 +206,8 @@ Functions use standard Python `def` definitions but might employ specific decora
 | `converter toFloat(x: int): float` | `@converter`<br>`def toFloat(x: nint) -> float:` | Converter functions. |
 | `iterator myIter(x: int): int = yield x` | `def myIter(x: nint) -> nint:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | Iterators are translated to generator functions. |
 | `for (a, b) in pairs:` | `for (a, b) in pairs:` | Tuple unpacking in for-loops; parentheses preserved for Nim (`rule:fortupleunpack`) |
-| `proc foo[T, U](): ...` | `@generic`<br>`def foo[T, U](): ...` | `@generic` decorator allows 0-arg generic functions to be parameterized via `foo[T, U]()` in Python runtime. Transpiler strips `@generic`. |
+| `proc foo[T, U](): ...` | `@generic`<br>`def foo[T, U](): ...` | `@generic`: a generic proc called with explicit types, `foo[T, U]()`; the types bind `T` and `U` in its body (`BiTable[Id, T](...)` creates a `BiTable[uint32, string]`). Transpiler strips `@generic`. |
+| `proc getKeyId[Id, T](t: BiTable[Id, T]; v: T): Id = ... Id(0)` | `@dispatch`<br>`def getKeyId[Id, T](t: BiTable[Id, T], v: T) -> Id:` | Nim instantiates every generic proc. In nimic `@dispatch` binds the type parameters from the arguments (structurally: `BiTable[Id, T]` matches `BiTable[uint32, string]`; a literal argument takes the bound type), so a body using them as values (`Id(0)`, `seq[Id]()`, `issubclass(T, string)`, `sizeof(T)`) needs `@dispatch`. An undecorated generic `def` runs with its type parameters unbound |
 | `(T1, T2)` (tuple type) | `tuple[T1, T2]` | Tuple type annotations in function return or variable types, aliases (`Key = tuple[string, string]`), object fields and seq elements transpile as Nim parenthesized tuple types `(T1, T2)` (`rule:tupletype`). A field defaults to the tuple of its elements' zero values; assigning or adding a tuple copies its value elements |
 
 **Get/Set Operators (`rule:funcdefrenamedunder`)** Nim get/set operators map to Python dunder (magic) methods.
@@ -320,6 +324,7 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | `a +% b` | `plus_percent(a, b)` or `a.plus_percent(b)` | Nim wrapping addition in the operand type's width (`NInteger.plus_percent`; a plain `int` adopts its `NInteger` peer's type, else Nim `int`) (`rule:percentops`) |
 | `a -% b` | `minus_percent(a, b)` or `a.minus_percent(b)` | Nim wrapping subtraction in the operand type's width (`NInteger.minus_percent`) (`rule:percentops`) |
 | `h !& v`, `!$h` (std/hashes) | `mix_hash(h, v)`, `finish_hash(h)` | Nim std operators Python can't spell are named procs that transpile back to the operator (`rule:namedops`); `hashIgnoreStyle` uses the same Nim algorithm, so a hash built with `mix_hash` matches it |
+| `hash(x)` (std/hashes) | `hash(x)` | Nim's values (the host Nim 2 std/hashes): every integer type, char, bool and enum (hashWangYi1 of the ordinal), floats, strings and `openArray[char]` (hashFarm), tuples and other openArrays (the elements mixed). A distinct type borrows it: `return hash(uint32(a))`. Objects, seqs and sets still hash by Python identity (to do) |
 | `proc `??`*(conf: ConfigRef; ...)` (a custom operator of a converted module) | `def qq(conf: ConfigRef, ...)` | Custom operators defined in converted code get a name in letters (precedent: saturate's `` `|+|` `` is `sat_plus`); the transpiled module defines and calls that name |
 | `s[^1]`, `s[^n]` | `s[back(1)]`, `s[back(n)]` | Index counted from the end (`BackwardsIndex`, `rule:namedops`) for string, seq, array and openArray; a negative index is an `IndexDefect`, as in Nim |
 | `ashr(x, y)` | `ashr(x, y)` | Arithmetic shift right of a signed integer, in `x`'s type (`NInteger.ashr`) |
@@ -329,6 +334,8 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | `cmp(a, b)` | `cmp(a, b)` | Standard three-way comparison `(a > b) - (a < b)` |
 | `FormatStr(s)` | `FormatStr(s)` | Wraps format string for `%` operator; unwraps to string literal in Nim (`rule:formatstr`) |
 | `move x` | `move(x)` | Nim ownership transfer; identity operation in Python runtime |
+| `swap(t.keys, n)` | `swap(t._keys, n)` | system `swap`: both variables change in place (string, seq, array, set, object, field, the scalar cells); a Python literal or enum member is no variable (`TypeError`) |
+| `toOpenArray(s, a, b)`, `toOpenArray(p, 0, n - 1)` (`p: ptr UncheckedArray[char]`) | the same | An `openArray[T]` view of positions `a..b` of a seq, array, string, openArray or ptr UncheckedArray; writes go to the source. Out of range: `IndexDefect` |
 | `reset(x)` | `reset(x)` | `x` becomes `default(typeof(x))` in place (Object, string, seq, array, set, integer) |
 | `inc(tok.tokType, 2)` (an enum) | `tok.tokType = succ(tok.tokType, 2)` | Nim's `inc` of an enum is `succ`; an integer's `inc(x, n)` is `x += n` |
 | `shallowCopy(d, s)` | `shallowCopy(d, s)` | Assigns `s` to `d` in place (`d` must be a mutable nimic value) |

@@ -390,7 +390,7 @@ def _specialize_generic(fn: callable, T_var: dict[str, str]) -> callable:
       5. Compiles and executes the new source in the caller's namespace
       6. Returns the newly created concrete function
     """
-    src = ins.getsource(fn)
+    src = getattr(fn, "_n_source", None) or ins.getsource(fn)  # a generated function (template_expand) has its own
     src = textwrap.dedent(src)
     # Remove the @dispatch decorator line(s) from source
     lines = src.split("\n")
@@ -449,6 +449,34 @@ def _specialize_generic(fn: callable, T_var: dict[str, str]) -> callable:
     return specialized_fn
 
 
+class _NGeneric:
+    """@generic: a generic proc called with explicit types, `initBiTable[uint32, string]()`. The types bind
+    its type parameters in its body and annotations (one specialization per types, as Nim instantiates
+    it); a call without types runs it unbound."""
+
+    def __init__(self, fn: callable):
+        functools.update_wrapper(self, fn)
+        self._n_target = fn
+        self._n_instances = {}
+
+    def __call__(self, *args, **kwargs):
+        return self._n_target(*args, **kwargs)
+
+    def __getitem__(self, types) -> callable:
+        names = tuple(_n_type_name(t) for t in (types if isinstance(types, tuple) else (types,)))
+        if names not in self._n_instances:
+            params = [tp.__name__ for tp in getattr(self._n_target, "__type_params__", ())]
+            if len(params) != len(names):
+                raise TypeError(f"{self._n_target.__name__} takes {len(params)} type arguments, got {len(names)}")
+            self._n_instances[names] = _specialize_generic(self._n_target, dict(zip(params, names)))
+        return self._n_instances[names]
+
+
+def generic(fn: callable) -> _NGeneric:
+    """Decorator of a generic proc called with explicit types, fn[T, U]() (transpiler: dropped)."""
+    return _NGeneric(fn)
+
+
 def autorename(x: object) -> str:
     x = _n_uncell(x)  # a cell dispatches as its value
     if isinstance(x, NilPtr):
@@ -464,39 +492,49 @@ def autorename(x: object) -> str:
         return type_name
 
 
-def _match_generic_pattern(sig_type: str, arg_type: str, T_def: dict) -> dict | None:
-    """Try to match arg_type against sig_type containing type variables from T_def.
+def _n_parse_type_spelling(spelling: str) -> tuple[str, list[str]]:
+    """The head and the bracket arguments of a type spelling: `BiTable[Id, T]` -> ("BiTable", ["Id", "T"]),
+    `nint` -> ("nint", [])."""
+    spelling = spelling.strip()
+    start = spelling.find("[")
+    if start < 0 or not spelling.endswith("]"):
+        return spelling, []
+    return spelling[:start].strip(), _n_split_type_args(spelling[start + 1:-1])
 
-    Returns dict of {T_name: resolved_type_name} if match succeeds, None otherwise.
+
+def _match_generic_pattern(sig_type: str, arg_type: str, T_def: dict) -> dict | None:
+    """Match arg_type against sig_type containing type variables from T_def, structurally: a type
+    variable binds a whole argument type, a type class (SomeInteger) matches its members, and other
+    spellings match by head and arguments.
+
+    Returns dict of {T_name: resolved_type_name} if match succeeds, None otherwise (also when sig_type
+    names no type variable).
 
     Example:
         _match_generic_pattern("ptr[UncheckedArray[T]]", "ptr[UncheckedArray[uint8]]", {"T": ""})
         → {"T": "uint8"}
+        _match_generic_pattern("BiTable[Id, T]", "BiTable[uint32, string]", {"Id": "", "T": ""})
+        → {"Id": "uint32", "T": "string"}
     """
-    # Find which T variables appear in this sig_type string
-    t_vars_in_sig = [t for t in T_def if t in sig_type]
-    if not t_vars_in_sig:
-        return None
+    bound: dict = {}
 
-    # Build regex: escape the sig_type, then unescape each T variable
-    # and replace it with a capture group that matches a type name
-    # (including nested brackets like UncheckedArray[uint8])
-    pattern = re.escape(sig_type)
-    for t in t_vars_in_sig:
-        # Replace the escaped T with a capture group
-        pattern = pattern.replace(re.escape(t), r'([A-Za-z_]\w*(?:\[.*?\])?)', 1)
+    def match(sig: str, arg: str) -> bool:
+        sig, arg = sig.strip(), arg.strip()
+        if sig in T_def:
+            if bound.setdefault(sig, arg) != arg:
+                return False
+            return True
+        if sig in _n_generic_types:
+            return _n_aliases.get(arg, arg) in _n_generic_types[sig]
+        sig_head, sig_args = _n_parse_type_spelling(sig)
+        arg_head, arg_args = _n_parse_type_spelling(arg)
+        if not sig_args:
+            return not arg_args and _n_aliases.get(sig, sig) == _n_aliases.get(arg, arg)
+        return (sig_head == arg_head and len(sig_args) == len(arg_args)
+                and all(match(s, a) for s, a in zip(sig_args, arg_args)))
 
-    for gt, members in _n_generic_types.items():
-        if gt in sig_type:
-            gt_pattern = "(?:" + "|".join(re.escape(m) for m in members) + ")"
-            pattern = pattern.replace(re.escape(gt), gt_pattern)
-
-    m = re.fullmatch(pattern, arg_type)
-    if m:
-        result = {}
-        for i, t in enumerate(t_vars_in_sig):
-            result[t] = m.group(i + 1)
-        return result
+    if match(sig_type, arg_type) and bound:
+        return bound
     return None
 
 
@@ -575,6 +613,13 @@ def _match_subtype(arg_type_name: str, sig_type_name: str) -> bool:
         except TypeError:
             return False
     return False
+
+
+def _n_fits_binding(arg_type_name: str, bound_type_name: str) -> bool:
+    """Whether an argument of type arg_type_name can be passed where a type variable is already bound to
+    bound_type_name: the same type, a subtype, or a literal of it (an int literal for a T bound to int)."""
+    return (arg_type_name == bound_type_name or _match_subtype(arg_type_name, bound_type_name)
+            or _match_converter(arg_type_name, _n_aliases.get(bound_type_name, bound_type_name)))
 
 
 def _match_converter(arg_type_name: str, sig_type_name: str) -> bool:
@@ -692,11 +737,12 @@ def _n_union_type_class(ann: str, namespace: dict) -> str:
 
 def _n_value_copy(value):
     """Nim assignment semantics for a field value: value types (string, seq, set, array, non-ref
-    objects) are copied, refs, pointers, procs and scalars are shared."""
+    objects) and the mutable scalars (nint, float64, nbool cells, and the views of an array slot or
+    field they may be) are copied; refs, pointers, procs and immutable values are shared."""
     value = _n_uncell(value)  # a variable's cell stores its value
     if value is None or getattr(type(value), "_n_is_ref", False) or callable(value) and not hasattr(value, "copy"):
         return value
-    if isinstance(value, (string, seq, Tset, array, _Object)) and callable(getattr(value, "copy", None)):
+    if isinstance(value, (string, seq, Tset, array, _Object, NScalar, NBool)) and callable(getattr(value, "copy", None)):
         return value.copy()
     if type(value) is tuple:  # an anonymous tuple (Nim `(a, b)`) is a value: its elements are copied
         return tuple(_n_value_copy(v) for v in value)
@@ -942,7 +988,7 @@ def dispatch(fn: callable) -> callable:
                 _annotations[name] = "untyped"
 
     sig_list = [
-        (_annotations[name].removeprefix("mut @ ").removeprefix("out @ ") if isinstance(_annotations[name], str) else getattr(_annotations[name], '__name__', str(_annotations[name])))
+        (_n_strip_type_modifier(_annotations[name]) if isinstance(_annotations[name], str) else getattr(_annotations[name], '__name__', str(_annotations[name])))
         for name in raw_arg_names
         if name in _annotations
     ]
@@ -1082,7 +1128,7 @@ def dispatch(fn: callable) -> callable:
                                 T_sym = sig_name
                                 T_value = arg_name
                                 if T_sym in T_var:
-                                    if T_var[T_sym] != T_value:
+                                    if not _n_fits_binding(T_value, T_var[T_sym]):
                                         break
                                 else:
                                     constraint = T_def[T_sym]
@@ -1110,7 +1156,7 @@ def dispatch(fn: callable) -> callable:
                                     conflict = False
                                     for t_sym, t_val in matched.items():
                                         if t_sym in T_var:
-                                            if T_var[t_sym] != t_val:
+                                            if not _n_fits_binding(t_val, T_var[t_sym]):
                                                 conflict = True
                                                 break
                                         else:
@@ -1136,7 +1182,8 @@ def dispatch(fn: callable) -> callable:
                                     if conflict:
                                         break
                                     specificity += 2
-                                elif any(_match_subtype(arg_name, s) for s in sig_def[i]):
+                                elif any(_match_subtype(arg_name, s) or _match_converter(arg_name, _n_aliases.get(s, s))
+                                         for s in sig_def[i]):  # as concrete overloads: subtypes, int literals
                                     specificity += 1
                                 else:
                                     break
@@ -1860,6 +1907,10 @@ class NStrEnum(StrEnum):
         return super().__ge__(other)
 
 
+# the enum base classes are types: a parameter `x: NIntEnum` takes any member of an NIntEnum (Nim's `enum`)
+DICT_OF_TYPES["NIntEnum"] = NIntEnum
+DICT_OF_TYPES["NStrEnum"] = NStrEnum
+
 
 class NCell:
     """A variable holding an immutable Python value that has no nimic cell type (an enum member), for
@@ -2516,12 +2567,7 @@ class _Object(Ntype):
         # Build T_name → concrete_name mapping
         T_map = {}
         for tp, concrete in zip(type_params, params):
-            if isinstance(concrete, str):
-                T_map[tp.__name__] = concrete
-            elif hasattr(concrete, '__name__'):
-                T_map[tp.__name__] = concrete.__name__
-            else:
-                T_map[tp.__name__] = str(concrete)
+            T_map[tp.__name__] = concrete if isinstance(concrete, str) else _n_type_name(concrete)
 
         # Cache key
         cache_key = (cls, tuple(T_map.items()))
@@ -2535,10 +2581,16 @@ class _Object(Ntype):
 
         # Create specialized subclass. Registration is deferred until the class is
         # cached, so self-referential fields (links: array[M, Node[K, V]]) resolve to it.
-        suffix = "_".join(T_map.values())
-        specialized_name = f"{cls.__name__}[{suffix}]"
+        specialized_name = f"{cls.__name__}[{', '.join(T_map.values())}]"  # Nim's spelling: G[uint32, string]
         caller_globals = getattr(cls, '_n_caller_globals', {})
-        specialized = type(specialized_name, (cls,), {
+        # a generic base of cls, specialized with cls's type variables (`D[Id](G[Id, uint64])`), is also a
+        # base specialized with these types: D[uint32] derives from G[uint32, uint64]
+        generic_bases = tuple(
+            base._n_generic_origin[tuple(_n_subst_type_vars(a, T_map) for a in base._n_type_args)]
+            for base in cls.__bases__ if '_n_generic_origin' in base.__dict__)
+        specialized = type(specialized_name, (cls,) + tuple(b for b in generic_bases if b not in cls.__mro__), {
+            '_n_generic_origin': cls,
+            '_n_type_args': tuple(T_map.values()),
             '__annotations__': resolved,
             '_n_caller_globals': caller_globals,
             '_n_caller_locals': getattr(cls, '_n_caller_locals', None),
@@ -2547,6 +2599,9 @@ class _Object(Ntype):
         })
         _Object._n_specializations[cache_key] = specialized
         specialized._n_register_type()
+        if cls.__dict__.get('_n_is_distinct'):
+            # BiTableFloat[uint32] of `BiTableFloat[Id] = distinct BiTable[Id, uint64]` is distinct too
+            _n_distinct_types.add(specialized_name)
         return specialized
 
     @classmethod
@@ -2673,6 +2728,10 @@ class _Object(Ntype):
 
     def __init__(self, _n_value: Object | None = None, **kwargs: object) -> None:
         """_n_value is an instance of Object or an object with the same structure or None"""
+        if _n_value is not None and not kwargs and self._n_is_conversion_of(_n_value):
+            # Nim's object conversion `Base(d)`, `Distinct(b)` is an l-value: a view of the same value
+            object.__setattr__(self, '__dict__', _n_value.__dict__)
+            return
         if getattr(type(self), '_n_variant_layout', None) is not None:
             self._n_init_variant(_n_value, kwargs)
             return
@@ -2706,6 +2765,12 @@ class _Object(Ntype):
             if not kwargs:
                 self._n_fields = list(self.__annotations__)
                 self._n_annotations = self.__annotations__
+
+    def _n_is_conversion_of(self, value: object) -> bool:
+        """Whether `type(self)(value)` converts between related object types: one derives from the other
+        (object of, distinct, a distinct generic and its base specialization)."""
+        cls, other = type(self), type(value)
+        return isinstance(value, _Object) and cls is not other and (issubclass(cls, other) or issubclass(other, cls))
 
     # --- object variants (case objects) ---
 
@@ -3373,7 +3438,7 @@ class array(Ntype):
         index = self._n_normalize_index(_n_from_end(index, self._n_size, self._n_first))
         self._n_check_index(index)
         if self._n_view is None:
-            self._n_cache[index] = value
+            self._n_cache[index] = _n_value_copy(value)  # as Nim: values (strings, seqs, objects) copy, refs share
             return
         cached = self._n_cache.get(index)
         if cached is not None and cached is value:
@@ -3384,6 +3449,8 @@ class array(Ntype):
             element._n_set_value(value)
             return
 
+        if not hasattr(value, '_n_get_value') and hasattr(self._n_type, '_n_get_value'):
+            value = self._n_type(value)  # a Python value takes the element type (Nim's `"k" & $i` is a string)
         if hasattr(value, '_n_get_value'):
             val = value._n_get_value()
         else:
@@ -3790,7 +3857,61 @@ class openArray(Ntype):
             if hasattr(_ntype, '_n_register_type'):
                 _ntype._n_register_type()
         class_name = f"openArray[{_ntype.__name__}]"
-        return type(class_name, (openArray,), {"_n_type": _ntype})
+        # one class per element type, registered so dispatch relates it to openArray
+        if class_name not in DICT_OF_TYPES:
+            DICT_OF_TYPES[class_name] = type(class_name, (openArray,), {"_n_type": _ntype})
+        return DICT_OF_TYPES[class_name]
+
+    @classmethod
+    def _n_slice(cls, source, first, last) -> openArray:
+        """Nim toOpenArray(source, first, last): positions first..last of an indexable value (seq,
+        array, string, openArray, ptr UncheckedArray) as an openArray[T] view; reads and writes go
+        to source. A range outside a source with a length is an IndexDefect (first..first-1 is empty)."""
+        first, last = int(first), int(last)
+        if last != first - 1 and hasattr(source, '__len__') and not (0 <= first <= last < len(source)):
+            raise IndexDefect(f"toOpenArray: {first}..{last} out of bounds 0..{len(source) - 1}")
+        item = _n_item_type(type(source))
+        view_cls = openArray[item] if item is not None else openArray
+        return view_cls(_NIndexRange(source, first, last))
+
+
+class _NIndexRange:
+    """Positions first..last of an indexable value as a sequence (the storage of a toOpenArray view):
+    index i is source[first + i]; out of range is an IndexDefect."""
+    __slots__ = ('_n_source', '_n_first', '_n_count')
+
+    def __init__(self, source, first: int, last: int):
+        self._n_source = source
+        self._n_first = first
+        self._n_count = max(last - first + 1, 0)
+
+    def __len__(self) -> int:
+        return self._n_count
+
+    def _n_position(self, index) -> int:
+        index = int(index)
+        if not 0 <= index < self._n_count:
+            raise IndexDefect(f"index {index} not in 0..{self._n_count - 1}")
+        return self._n_first + index
+
+    def __getitem__(self, index):
+        return self._n_source[self._n_position(index)]
+
+    def __setitem__(self, index, value) -> None:
+        self._n_source[self._n_position(index)] = value
+
+
+def _n_item_type(t: type) -> type | None:
+    """The element type of an indexable nimic type: its `_n_item_type` (string, cstring: char), a
+    pointer's contents' element type (ptr UncheckedArray[T] is indexed like the array), else its
+    `_n_type` (seq, array, UncheckedArray, openArray)."""
+    item = getattr(t, '_n_item_type', None)
+    if item is not None:
+        return item
+    contents = getattr(t, '_n_contents_type', None)
+    if contents is not None:
+        return _n_item_type(contents)
+    return getattr(t, '_n_type', None)
 
 
 def calltype(fn):
@@ -4357,6 +4478,19 @@ class _SomeMutClass:
 mut = _SomeMutClass()
 # Nim `out T` parameter (assigned by the proc before use); in Python the same as mut
 out = _SomeMutClass()
+# Nim `sink T` parameter (takes ownership) and `lent T` return type (a borrowed view); in Python the value itself
+sink = _SomeMutClass()
+lent = _SomeMutClass()
+# the spellings of these modifiers in a (string) annotation: `mut @ T`
+_n_type_modifier_prefixes = ("mut @ ", "out @ ", "sink @ ", "lent @ ")
+
+
+def _n_strip_type_modifier(annotation: str) -> str:
+    """The type of an annotation `mut @ T`, `out @ T`, `sink @ T` or `lent @ T`: T."""
+    for prefix in _n_type_modifier_prefixes:
+        if annotation.startswith(prefix):
+            return annotation[len(prefix):]
+    return annotation
 
 
 def determine_common_type(type_a: type, type_b: type) -> type:
@@ -5378,6 +5512,10 @@ class char(str):
         DICT_OF_TYPES[cls.__name__] = cls
         DICT_OF_C_TYPES[cls.__name__] = ctypes.c_char
 
+
+cstring._n_item_type = char  # cstring is defined before char
+
+
 class string(collections.UserString):
     """Nim-compatible string with C-buffer backing to support addr().
 
@@ -5386,6 +5524,7 @@ class string(collections.UserString):
     and s[i] is byte i. A char above 0xFF raises NimicEncodingError; use
     utf8(text) to get the UTF-8 bytes of Unicode text (Nim literal semantics).
     """
+    _n_item_type = char  # indexing a string gives chars (toOpenArray(s, a, b) is an openArray[char])
     
     def __init_subclass__(cls, **kwargs):
         """rule:typealias: `class Snippet(string): pass` is `type Snippet* = string`, so for dispatch it is
