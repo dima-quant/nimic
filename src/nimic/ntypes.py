@@ -162,6 +162,8 @@ from nimic.ntypesystem import (
     NimicEncodingError,
     ufcs,
     _n_default_value,
+    _n_move,
+    _n_was_moved,
     Defect,
     FieldDefect,
     OverflowDefect,
@@ -440,8 +442,13 @@ def ge_percent(a, b) -> bool:
 
 
 def move(x):
-    """Nim: move — move value / transfer ownership."""
-    return x
+    """Nim: move — transfer ownership; a value with lifetime hooks is =wasMoved (ntypesystem._n_move)."""
+    return _n_move(x)
+
+
+def wasMoved(x) -> None:
+    """Nim: wasMoved(x) — the `=wasMoved` hook of x's type, else x becomes default(T)."""
+    _n_was_moved(x)
 
 
 def ensureMove(x):

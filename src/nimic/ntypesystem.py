@@ -781,11 +781,66 @@ def _n_value_copy(value):
     value = _n_uncell(value)  # a variable's cell stores its value
     if value is None or getattr(type(value), "_n_is_ref", False) or callable(value) and not hasattr(value, "copy"):
         return value
+    if getattr(type(value), "_n_move_only", False):
+        return value  # =copy is an error: Nim moves it here (the Nim compiler rejects a real copy)
     if isinstance(value, (string, seq, Tset, array, _Object, NScalar, NBool)) and callable(getattr(value, "copy", None)):
         return value.copy()
     if type(value) is tuple:  # an anonymous tuple (Nim `(a, b)`) is a value: its elements are copied
         return tuple(_n_value_copy(v) for v in value)
     return value
+
+
+# --- Lifetime hooks (ncompiler/proposals/feature_lifetime_hooks_runtime.md) ---
+# A class with hooks (@hook: `=copy`, `=dup`, `=destroy`, `=wasMoved`) has _n_hooks. Its owning objects (made by
+# __init__ or a copy, not views) carry _n_owner_id == id(self); a conversion view shares their __dict__ but not
+# their id. An owner runs `=destroy` when CPython frees it, so one owning object is one Nim value.
+
+_n_hook_errors: list = []  # the failures of `=destroy` hooks (Python only prints exceptions in __del__)
+
+
+def _n_finalize(self) -> None:
+    """__del__ of a class with a `=destroy` hook: run it for an owning object."""
+    if self.__dict__.get("_n_owner_id") != id(self) or sys.is_finalizing():
+        return
+    del self.__dict__["_n_owner_id"]
+    try:
+        type(self)._n_hooks["destroy"](self)
+    except BaseException as e:
+        _n_hook_errors.append(f"=destroy of {type(self).__name__}: {e!r}")
+        raise
+
+
+def _n_register_hook(cls: type, name: str, fn: callable) -> None:
+    """Make fn the `=name` hook of cls (@hook). A `=copy` with {.error.} makes cls move-only."""
+    if not (isinstance(cls, type) and issubclass(cls, _Object)):
+        raise TypeError(f"@hook({name!r}): {getattr(cls, '__name__', cls)!r} is not an object type")
+    hooks = dict(cls.__dict__.get("_n_hooks", {}))
+    hooks[name] = fn
+    cls._n_hooks = hooks
+    if name == "copy" and "error" in _n_routine_pragmas(fn):
+        cls._n_move_only = True
+    if name == "destroy":
+        cls.__del__ = _n_finalize
+
+
+def _n_was_moved(x) -> None:
+    """Nim wasMoved(x): its `=wasMoved` hook, else x becomes default(T) (no `=destroy`, as Nim)."""
+    hooks = getattr(type(x), "_n_hooks", None) or {}
+    if "wasMoved" in hooks:
+        hooks["wasMoved"](x)
+    elif isinstance(x, _Object):
+        x._n_set_value(type(x)())
+
+
+def _n_move(x):
+    """Nim move(x): for a type with hooks, a new owner takes x's fields and x is wasMoved (the count it held
+    moves with the value). Other values are returned as they are (Python doesn't reset them yet)."""
+    if not (isinstance(x, _Object) and getattr(type(x), "_n_hooks", None)):
+        return x
+    result = type(x)()
+    result._n_set_value(x)
+    _n_was_moved(x)
+    return result
 
 
 def _n_type_name(t: object) -> str:
@@ -2664,7 +2719,9 @@ class _Object(Ntype):
         if (layout is not None and name in layout.fields and "_n_discs" in self.__dict__
                 and name not in self.__dict__.get("_n_fields", ())):
             raise FieldDefect(self._n_field_defect_msg(name))
-        if not name.startswith(("__", "_n_")):
+        if not name.startswith(("__", "_n_")) and name not in getattr(type(self), "_n_annotations", ()):
+            # (a declared field not bound yet, e.g. during __init__, is no proc: looking for one would read the
+            # caller's f_locals, whose snapshot keeps every local of that frame alive in Python 3.12)
             # Nim method-call syntax (UFCS): `obj.f(args)` calls the proc `f(obj, args)` visible in the
             # caller's scope (e.g. `builder.addArgumentSeparator()`, `b.addCast(t):` for a template),
             # private procs (`_sdata`) included; dunders and nimic internals (`_n_*`) are never procs
@@ -2748,6 +2805,8 @@ class _Object(Ntype):
             # Nim's object conversion `Base(d)`, `Distinct(b)` is an l-value: a view of the same value
             object.__setattr__(self, '__dict__', _n_value.__dict__)
             return
+        if getattr(type(self), '_n_hooks', None):
+            self.__dict__["_n_owner_id"] = id(self)  # an owning value: `=destroy` runs when it dies
         if getattr(type(self), '_n_variant_layout', None) is not None:
             self._n_init_variant(_n_value, kwargs)
             return
@@ -2755,7 +2814,8 @@ class _Object(Ntype):
         field_types = getattr(self.__class__, '_n_field_types', {})
         # Initialize python-side fields (seq and Object subclasses without ctypes backing)
         for name in python_fields:
-            setattr(self, name, _n_default_value(field_types.get(name)))
+            if name not in kwargs:  # a given field is set below (no default value made and dropped)
+                setattr(self, name, _n_default_value(field_types.get(name)))
 
         _has_c_type = type(self).__name__ in DICT_OF_C_TYPES
         if kwargs:
@@ -3077,13 +3137,36 @@ class _Object(Ntype):
         return self._n_view
 
     def __ilshift__(self, other: Object) -> Object:
+        """Nim `self = other`: the `=copy` hook if the type has one; a move-only value is moved in (its old
+        value destroyed, `other` no longer owns)."""
+        hooks = getattr(type(self), "_n_hooks", None)
+        if hooks and other is not self:
+            if getattr(type(self), "_n_move_only", False):
+                if "destroy" in hooks and self.__dict__.get("_n_owner_id") == id(self):
+                    hooks["destroy"](self)
+                self._n_set_value(other)
+                other.__dict__.pop("_n_owner_id", None)
+                return self
+            if "copy" in hooks:
+                hooks["copy"](self, other)
+                return self
         self._n_set_value(other)
         return self
 
     def copy(self, deep: bool = True) -> Object:
+        """Nim's copy of the value: its `=dup` hook, else a default value given `=copy`, else the fields;
+        TypeError for a move-only type (`=copy` with {.error.})."""
         cls = self.__class__
+        hooks = getattr(cls, "_n_hooks", None) or {}
+        if getattr(cls, "_n_move_only", False):
+            raise TypeError(f"=copy of {cls.__name__} is an error (a move-only type)")
+        if "dup" in hooks:
+            return hooks["dup"](self)
         result = cls()
-        result._n_set_value(self)
+        if "copy" in hooks:
+            hooks["copy"](result, self)
+        else:
+            result._n_set_value(self)
         return result
 
 
@@ -3157,6 +3240,8 @@ class _Object(Ntype):
         def _has_c_backing(field_cls):
             """Check if a field type has ctypes struct backing."""
             c_name = field_cls.__name__
+            if getattr(field_cls, '_n_hooks', None):
+                return False  # a value with hooks is held as its owning object (it dies with the field)
             if c_name in dict_of_c_types:
                 return True
             is_class = isinstance(field_cls, type)
@@ -3563,7 +3648,7 @@ class seq(Ntype):
                 ntype = _n_registry.types[ntype]
                 self._n_type = ntype
             type_name = ntype.__name__ if hasattr(ntype, '__name__') else str(ntype)
-            if (isinstance(ntype, type) and issubclass(ntype, string)) or not hasattr(ntype, '_n_on_array') or getattr(ntype, '_n_is_ref', False) or bool(getattr(ntype, '_n_python_fields', None)):
+            if (isinstance(ntype, type) and issubclass(ntype, string)) or not hasattr(ntype, '_n_on_array') or getattr(ntype, '_n_is_ref', False) or bool(getattr(ntype, '_n_python_fields', None)) or getattr(ntype, '_n_hooks', None):
                 # List-based mode for non-ctypes types (e.g. string, ref types, structs with python fields)
                 self._n_is_list = True
                 self._n_list = list(c_base) if isinstance(c_base, (list, tuple)) else []

@@ -4008,13 +4008,153 @@ class TestNTypes(unittest.TestCase):
         self.assertIn("proc `=copy`(dest: var THooked, src: THooked) {.error.}", out)
         self.assertIn("proc `=destroy`*(x: THooked) =", out)
 
+        class _THookedBox(Object):
+            v: nint
+
         @hook("wasMoved")
-        def _tWasMoved(x):
+        def _tWasMoved(x: mut @ _THookedBox):
+            x.v = nint(-1)
             return "called"
-        self.assertEqual(_tWasMoved(1), "called")
+        self.assertEqual(_tWasMoved(_THookedBox()), "called")  # the hook stays an ordinary proc
         self.assertEqual(_tWasMoved._n_hook, "wasMoved")
+        self.assertIs(_THookedBox._n_hooks["wasMoved"], _tWasMoved)
         with self.assertRaises(ValueError):
             hook("copyy")
+        with self.assertRaises(TypeError):  # hooks belong to object types
+            @hook("destroy")
+            def _tNoType(x: nint):
+                pass
+
+    def test_lifetime_hooks_count_references(self):
+        """Lifetime hooks at run time (ncompiler/proposals/feature_lifetime_hooks_runtime.md): one owning
+        object is one Nim value. A handle counts its owner's references as nifcore's Cursor does: `=dup` /
+        `=copy` add one, `=destroy` (when CPython frees an owning handle) takes one away, move() keeps
+        the count and =wasMoved's the source. Views (casts) and aliases don't count."""
+        @ref
+        class _TOwner(Object):
+            rc: nint
+
+        class _THandle(Object):
+            owner: _TOwner
+            pos: nint
+
+        @hook("destroy")
+        def _tDestroy(x: mut @ _THandle):
+            if x.owner is not None:
+                x.owner.rc -= 1
+
+        @hook("wasMoved")
+        def _tWasMoved(x: mut @ _THandle):
+            x.owner = None
+
+        @hook("copy")
+        def _tCopy(dest: mut @ _THandle, src: _THandle):
+            if dest.owner is not src.owner:
+                _tDestroy(dest)
+                if src.owner is not None:
+                    src.owner.rc += 1
+                dest.owner = src.owner
+            dest.pos = src.pos
+
+        @hook("dup")
+        def _tDup(src: _THandle) -> _THandle:
+            if src.owner is not None:
+                src.owner.rc += 1
+            return _THandle(owner=src.owner, pos=src.pos)
+
+        class _THolder(Object):
+            h: _THandle
+
+        def begin_read(o: _TOwner) -> _THandle:  # nifcore's beginRead: the new handle holds one count
+            o.rc += 1
+            return _THandle(owner=o)
+
+        o = _TOwner()
+        h = begin_read(o)
+        self.assertEqual(o.rc, 1)
+
+        def use_copy():
+            c = h.copy()  # =dup
+            self.assertEqual(o.rc, 2)
+            self.assertIsNot(c, h)
+        use_copy()
+        self.assertEqual(o.rc, 1)  # the copy died at the end of the function
+        alias = h  # an alias is the same value: no count
+        self.assertEqual(o.rc, 1)
+        del alias
+        # stores copy (=dup); the stored handle dies with its container
+        holder = _THolder(h=h)
+        self.assertEqual(o.rc, 2)
+        handles = seq[_THandle]()
+        handles.add(h)
+        self.assertEqual(o.rc, 3)
+        handles.add(begin_read(o))  # a temporary: Nim moves it; Python copies it, and the temporary dies
+        self.assertEqual(o.rc, 4)
+        del handles
+        self.assertEqual(o.rc, 2)
+        holder.h = begin_read(o)  # the old field value dies
+        self.assertEqual(o.rc, 2)
+        del holder
+        self.assertEqual(o.rc, 1)
+        # `a = b` into an existing value: =copy
+        other = _TOwner()
+        g = begin_read(other)
+        g <<= h
+        self.assertEqual((o.rc, other.rc), (2, 0))
+        del g
+        self.assertEqual(o.rc, 1)
+        # move keeps the count and =wasMoved's the source
+        m = move(h)
+        self.assertEqual(o.rc, 1)
+        self.assertIsNone(h.owner)
+        self.assertIs(m.owner, o)
+        del h
+        self.assertEqual(o.rc, 1)  # a moved-from handle destroys nothing
+        # a view doesn't own: a cast of the handle's memory leaves the count alone
+        view = _THandle._n_cast(m)
+        del view
+        self.assertEqual(o.rc, 1)
+        del m
+        self.assertEqual(o.rc, 0)
+
+    def test_lifetime_hooks_move_only(self):
+        """A `=copy` with {.error.} (nifcore's TokenBuf, treemangler's Mangler) makes the type move-only:
+        Nim proves no copy happens, so a store moves (shares) the value and `.copy()` is a TypeError;
+        `a <<= b` moves b in (a's old value destroyed, b no longer owns)."""
+        destroyed = []
+
+        class _TBuf(Object):
+            n: nint
+
+        @hook("copy")
+        def _tNoCopy(dest: mut @ _TBuf, src: _TBuf):
+            """{.error.}"""
+            pass
+
+        @hook("destroy")
+        def _tFree(x: mut @ _TBuf):
+            destroyed.append(int(x.n))
+
+        class _TBufHolder(Object):
+            b: _TBuf
+
+        self.assertTrue(_TBuf._n_move_only)
+        b = _TBuf(n=nint(1))
+        holder = _TBufHolder(b=b)
+        self.assertIs(holder.b, b)  # moved in, not copied
+        with self.assertRaises(TypeError):
+            b.copy()
+        del b
+        self.assertEqual(destroyed, [])  # the holder still has it
+        del holder
+        self.assertEqual(destroyed, [1])
+        a, c = _TBuf(n=nint(2)), _TBuf(n=nint(3))
+        a <<= c
+        self.assertEqual(destroyed, [1, 2])  # a's old value
+        del c
+        self.assertEqual(destroyed, [1, 2])  # c was moved out: it no longer owns
+        del a
+        self.assertEqual(destroyed, [1, 2, 3])
 
     def test_concepts(self):
         """rule:concept: `class C(Concept): pass` is Nim 2's universal `C = concept x`; signatures in the body are

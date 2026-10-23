@@ -550,17 +550,32 @@ _n_hooks = ("copy", "sink", "destroy", "wasMoved", "dup", "trace")
 
 
 def hook(name: str):
-    """Nim: a lifetime hook, proc `=copy`(dest: var T; src: T) and the others of _n_hooks (rule:hook). The
-    hook is Nim's: Python copies a value wherever it is stored, also where Nim moves it (a last use), so
-    calling the hook there would differ from Nim (an `{.error.}` copy hook would fail where Nim compiles).
-    The decorated proc stays an ordinary Python function."""
+    """Nim: a lifetime hook, proc `=copy`(dest: var T; src: T) and the others of _n_hooks (rule:hook). It
+    registers on T (its first parameter's type): T's owning objects run `=destroy` when CPython frees them,
+    `.copy()` / stores run `=dup` / `=copy`, `<<=` runs `=copy`, move() runs `=wasMoved`; a `=copy` with
+    {.error.} makes T move-only (stores move it, `.copy()` raises). See
+    ncompiler/proposals/feature_lifetime_hooks_runtime.md. The proc stays callable."""
     if name not in _n_hooks:
         raise ValueError(f"@hook: unknown lifetime hook {name!r} (one of {', '.join(_n_hooks)})")
 
     def mark(fn):
         fn._n_hook = name
+        _ntypesystem._n_register_hook(_n_hooked_type(fn, sys._getframe(1)), name, fn)
         return fn
     return mark
+
+
+def _n_hooked_type(fn, frame) -> object:
+    """The type a hook belongs to: its first parameter's (`dest: mut @ T`, `src: T`), looked up where the
+    hook is defined (the defining frame's locals, the function's globals, the registered types)."""
+    ann = next((a for k, a in fn.__annotations__.items() if k != "return"), None)
+    if not isinstance(ann, str):
+        return ann
+    ann = _ntypesystem._n_strip_type_modifier(ann.strip())
+    for scope in (frame.f_locals, fn.__globals__, _ntypesystem.DICT_OF_TYPES):
+        if ann in scope:
+            return scope[ann]
+    raise TypeError(f"@hook: unknown type {ann!r} of {fn.__name__}")
 
 
 _n_source_header = _re.compile(r"^#\s*source:\s*([\w.-]+)@([0-9a-fA-F]+):(\S+)\s*$")
