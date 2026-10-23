@@ -61,6 +61,7 @@ from __future__ import annotations
 import __future__
 import annotationlib
 import ast
+import atexit
 import bisect
 import ctypes
 import collections
@@ -70,6 +71,7 @@ import functools
 import inspect as ins
 import linecache
 import operator
+import os
 import re
 import struct
 import sys
@@ -652,15 +654,30 @@ def _n_fits_binding(arg_type_name: str, bound_type_name: str) -> bool:
             or _match_converter(arg_type_name, _n_aliases.get(bound_type_name, bound_type_name)))
 
 
+# Nim's built-in type classes as constraints (`[E: enum]`): a predicate on the argument's class
+_n_type_class_predicates = {
+    "enum": lambda cls: issubclass(cls, Enum),
+    "object": lambda cls: issubclass(cls, _Object) and not getattr(cls, "_n_is_ref", False),
+    "tuple": lambda cls: issubclass(cls, (tuple, NTuple)),
+    "ref": lambda cls: bool(getattr(cls, "_n_is_ref", False)),
+    "ptr": lambda cls: issubclass(cls, pointer),
+}
+
+
 def _n_fits_constraint(type_name: str, constraint: str) -> bool:
     """Whether a type fits a type parameter's constraint, `[T: c]` (c spelled as in the def): none, `not X`,
-    the type itself, a type class (SomeInteger), or a concept (Concept._n_satisfied_by)."""
+    the type itself, a type class (SomeInteger, or Nim's built-in `enum`, `object`, `tuple`, `ref`, `ptr`),
+    or a concept (Concept._n_satisfied_by)."""
     if not constraint:
         return True
     if constraint.startswith("not "):
         return type_name != constraint[4:].strip()
     if type_name == constraint or type_name in _n_generic_types.get(constraint, ()):
         return True
+    predicate = _n_type_class_predicates.get(constraint)
+    if predicate is not None:
+        cls = DICT_OF_TYPES.get(type_name)
+        return isinstance(cls, type) and predicate(cls)
     concept = _n_concepts.get(constraint)
     return concept is not None and concept._n_satisfied_by(type_name)
 
@@ -800,6 +817,20 @@ def _n_value_copy(value):
 # their id. An owner runs `=destroy` when CPython frees it, so one owning object is one Nim value.
 
 _n_hook_errors: list = []  # the failures of `=destroy` hooks (Python only prints exceptions in __del__)
+
+
+def _n_report_hook_errors() -> None:
+    """At exit: a failed `=destroy` hook fails the program (exit status 1), as a failing check would; Python itself
+    only prints an exception raised in __del__ and goes on. Registered on import, so it runs after the program's
+    own atexit handlers."""
+    if _n_hook_errors:
+        sys.stdout.flush()
+        print(f"nimic: {len(_n_hook_errors)} `=destroy` hook(s) failed:", *_n_hook_errors, sep="\n  ", file=sys.stderr)
+        sys.stderr.flush()
+        os._exit(1)
+
+
+atexit.register(_n_report_hook_errors)
 
 
 def _n_finalize(self) -> None:
@@ -1044,6 +1075,9 @@ def _n_register_imported_proc(fn: callable, fn_globals: dict) -> None:
         _n_imported_procs[fn.__name__] = prior
 
 
+_N_BOUND_TAG = "\x00bound:"  # second entry of a bounded type variable's signature element: ("T", tag + bound)
+
+
 def dispatch(fn: callable) -> callable:
     """Decorator implementing Nim-style multi-dispatch based on argument type annotations.
 
@@ -1124,9 +1158,11 @@ def dispatch(fn: callable) -> callable:
     if genericT:
         T_def = {t: _n_union_type_class(c, fn_globals) for t, c in get_type_params(fn).items()}  # `T: A | B` is a type class
         # register T def
-        # expand generic types
+        # expand generic types; a bounded type variable carries its bound, so overloads that differ only in their
+        # bounds (`[T: SomeInteger]` / `[T: SomeFloat]`) are distinct entries
         sigs = tuple(
-            (arg,) if arg not in _n_generic_types else _n_generic_types[arg]
+            (arg, _N_BOUND_TAG + T_def[arg]) if T_def.get(arg) else
+            ((arg,) if arg not in _n_generic_types else _n_generic_types[arg])
             for arg in sig_list
         )
         if fn.__name__ in __dispatch_genericT__:
@@ -1269,7 +1305,7 @@ def dispatch(fn: callable) -> callable:
                     _, best_sig_def, best_T_var = best_match
                     generic_fn = sig_defs[best_sig_def]
                     specialized = _specialize_generic(generic_fn, best_T_var)
-                    targets = [best_T_var.get(d[0], d[0]) if len(d) == 1 else a[0]
+                    targets = [best_T_var.get(d[0], d[0]) if len(d) == 1 or d[-1].startswith(_N_BOUND_TAG) else a[0]
                                for d, a in zip(best_sig_def, fn_sig)]
                     specialized = _n_typed_literals(specialized, targets)
                     if fn.__name__ in __resolved__:
@@ -4604,12 +4640,28 @@ class ByteAddress(Ntype):
                 self._n_view = None
         elif hasattr(x, '_n_view'):
             self._n_view = x._n_view
+        elif isinstance(x, int) or hasattr(x, '__index__'):
+            # an address given as an integer (Nim `cast[uint](0x1000)`); 0 is nil
+            self._n_view = (ctypes.c_char * 1).from_address(int(x)) if int(x) else None
         else:
             self._n_view = x
 
     @property
     def is_nil(self) -> bool:
         return self._n_view is None
+
+    # bit operations on an address (Nim `cast[uint](p) and (sizeof(T).uint - 1)`, an alignment test) give the
+    # integer result, as Nim's uint arithmetic does
+    def __and__(self, other) -> int:
+        return self._n_get_value() & int(other)
+
+    def __or__(self, other) -> int:
+        return self._n_get_value() | int(other)
+
+    def __xor__(self, other) -> int:
+        return self._n_get_value() ^ int(other)
+
+    __rand__, __ror__, __rxor__ = __and__, __or__, __xor__
 
     def __add__(self, offset: int):
         result = self.__class__.__new__(self.__class__)

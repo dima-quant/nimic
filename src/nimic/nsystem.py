@@ -584,6 +584,22 @@ def defined(name: str) -> bool:
     return _n_build_profile().is_defined(name)
 
 
+def compileOption(option: str, arg: str | None = None) -> bool:
+    """Nim: compileOption("assertions") — whether an on/off option is on in the emulated Nim build (the checks
+    and stacktrace / linetrace); compileOption("mm", "orc"), ("gc", ...), ("backend", "c"), ("cc", "clang") —
+    whether a value option has that value. ValueError for another option (Nim: unknown option)."""
+    profile = _n_build_profile()
+    key = option.lower()
+    if arg is None:
+        if key in _N_CHECK_OPTIONS + _N_TRACE_OPTIONS:
+            return profile.check_enabled(key)
+        raise ValueError(f"compileOption: unknown on/off option {option!r}")
+    value = {"mm": profile.mm, "gc": profile.mm, "backend": profile.backend, "cc": profile.cc}.get(key)
+    if value is None and key not in ("mm", "gc", "backend", "cc"):
+        raise ValueError(f"compileOption: unknown option {option!r}")
+    return _n_ident_normalize(str(value or "")).lower() == _n_ident_normalize(arg).lower()
+
+
 def declared(name: str) -> bool:
     """Nim: declared(x) — true if the identifier `x` is declared at this point of the calling module
     (its locals, its globals including star-imports, or builtins). Dotted names resolve attributes:

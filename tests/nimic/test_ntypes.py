@@ -447,6 +447,99 @@ class TestNTypes(unittest.TestCase):
         self.assertTrue(holder.owner == p)
         dealloc(mem)
 
+    def test_pointer_arithmetic_nifcore_patterns(self):
+        """nifcore's address arithmetic: `cast[ptr T](cast[uint](p) + n * sizeof(T).uint)`, the difference of two
+        addresses divided by the element size, an alignment test with `and`, and an address from an integer."""
+        @distinct
+        class _TToken(uint32):
+            pass
+
+        data = cast[ptr[UncheckedArray[_TToken]]](alloc(sizeof(_TToken) * 4))
+        for i in range(3):
+            data[i] = _TToken(7 + 2 * i)
+        p = addr(data[0])
+        q = cast[ptr[_TToken]](cast[uintp](p) + uint(2) * uint(sizeof(_TToken)))
+        self.assertEqual(int(uint32(q.contents)), 11)
+        self.assertEqual(int((cast[uintp](q) - cast[uintp](p)) // uint(sizeof(_TToken))), 2)
+        self.assertEqual(cast[uintp](data) & (uint(sizeof(_TToken)) - uint(1)), 0)  # aligned
+        self.assertEqual(cast[uintp](q) | 0, int(cast[uintp](q)))
+        self.assertEqual(int(uintp(4096)), 4096)
+        self.assertTrue(uintp(0).is_nil)
+        out = unparse(ast.parse("from nimic.ntypes import *\n"
+                                "def f(p: ptr[uint32], data: pointer) -> bool:\n"
+                                "    q = cast[ptr[uint32]](cast[uintp](p) + uint(2) * uint(sizeof(uint32)))\n"
+                                "    return (cast[uintp](data) & (uint(sizeof(uint32)) - uint(1))) == 0\n"))[0]
+        # uintp is ncode/pydefs' `uintp* = uint`; Nim's `and` binds looser than `-`, no parentheses needed
+        self.assertIn("cast[ptr uint32](cast[uintp](p) + uint(2) * uint(sizeof(uint32)))", out)
+        self.assertIn("(cast[uintp](data) and uint(sizeof(uint32)) - uint(1)) == 0", out)
+        dealloc(data)
+
+    def test_builtin_type_class_constraints(self):
+        """Nim's built-in type classes bound a type parameter under @dispatch: `[E: enum]` (nifcore's createTags),
+        `[T: object]`, `[T: ref]`; another type doesn't fit. Overloads that differ only in their bounds are
+        distinct."""
+        class _TClassColor(NIntEnum):
+            red = auto()
+            green = auto()
+
+        class _TClassBox(Object):
+            v: nint
+
+        @ref
+        class _TClassNode(Object):
+            v: nint
+
+        @dispatch
+        def _tCount[E: enum](x: E) -> nint:
+            return nint(len(E))
+
+        @dispatch
+        def _tKind[T: object](x: T) -> string:
+            return string("object")
+
+        @dispatch
+        def _tKind[T: ref](x: T) -> string:
+            return string("ref")
+
+        self.assertEqual(_tCount(_TClassColor.green), 2)
+        with self.assertRaises(NotImplementedError):
+            _tCount(nint(1))
+        self.assertEqual(_tKind(_TClassBox()), "object")
+        self.assertEqual(_tKind(_TClassNode()), "ref")
+
+        # overloads that differ only in their bounds are distinct (the second replaced the first)
+        @dispatch
+        def _tNum[T: SomeInteger](x: T) -> string:
+            return string("int")
+
+        @dispatch
+        def _tNum[T: SomeFloat](x: T) -> string:
+            return string("float")
+
+        self.assertEqual(_tNum(nint(1)), "int")
+        self.assertEqual(_tNum(float64(1.5)), "float")
+        self.assertEqual(_tNum(uint8(3)), "int")
+
+    def test_compile_option(self):
+        """compileOption (nifcore: `const assertionsEnabled = compileOption("assertions")`) answers from the
+        emulated Nim build: on/off checks and traces, and value options (mm, backend, cc); another option is a
+        ValueError. It transpiles as it is written."""
+        _n_set_build_profile(_BuildProfile())  # Nim's defaults, whatever NIMIC_DEFINES says
+        try:
+            self.assertTrue(compileOption("assertions"))
+            self.assertTrue(compileOption("boundChecks"))
+            self.assertTrue(compileOption("mm", "orc"))
+            self.assertFalse(compileOption("mm", "arc"))
+            self.assertTrue(compileOption("backend", "c"))
+            with self.assertRaises(ValueError):
+                compileOption("noSuchOption")
+            with self.assertRaises(ValueError):
+                compileOption("noSuchOption", "x")
+        finally:
+            _n_set_build_profile(None)  # back to the lazily created profile
+        out = unparse(ast.parse("from nimic.ntypes import *\nwith const:\n    _a = compileOption('assertions')\n"))[0]
+        self.assertIn('a = compileOption("assertions")', out)
+
     def test_gc_ref_unref(self):
         """GC_ref(x) keeps x alive while only raw memory refers to it; GC_unref undoes one GC_ref (more
         GC_unrefs than GC_refs is a ValueError: Nim would free a live object)."""
@@ -4307,6 +4400,40 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(o.rc, 1)
         del m
         self.assertEqual(o.rc, 0)
+
+    def test_lifetime_hook_failure_fails_the_program(self):
+        """A `=destroy` hook that raises (Python only prints exceptions in __del__) makes the program exit with
+        status 1 and a report on stderr, after its normal output."""
+        source = textwrap.dedent("""\
+            from __future__ import annotations
+            from nimic.ntypes import *
+
+            class Res(Object):
+                n: nint
+
+            @hook("destroy")
+            def _destroyRes(r: mut @ Res):
+                if r.n == 2:
+                    raise ValueError("cannot release 2")
+
+            def f():
+                with var:
+                    a = Res(n=nint(1))
+                    b = Res(n=nint(2))
+                print("in f")
+
+            f()
+            print("after f")
+            """)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "failing_destroy.py")
+            with open(path, "w") as f:
+                f.write(source)
+            run = subprocess.run([sys.executable, path], capture_output=True, text=True, timeout=60)
+        self.assertEqual(run.returncode, 1, run.stderr[-500:])
+        self.assertEqual(run.stdout.splitlines(), ["in f", "after f"])
+        self.assertIn("1 `=destroy` hook(s) failed", run.stderr)
+        self.assertIn("cannot release 2", run.stderr)
 
     def test_lifetime_hooks_in_arrays(self):
         """An array of values with hooks holds their owning objects (no C storage): a store copies (=dup),

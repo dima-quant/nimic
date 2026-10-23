@@ -70,6 +70,7 @@ from nimic.nsystem import (
     quit,
     defined,
     declared,
+    compileOption,
     echo,
     isNil,
     addInt,
