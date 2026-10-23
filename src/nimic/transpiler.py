@@ -110,7 +110,8 @@ Operators & renaming:
   rule:cell -> cell(x) (a mutable variable of an enum member, for a `var` parameter) is just x
   rule:funcrename -> rename functions "print" to "echo", "str" to "$"
   rule:stringjoin -> replace "f" by "&"
-  rule:literaltypes -> write as type suffix u64(0x9e3779b97f4a7c15) -> 0x9e3779b97f4a7c15'u64
+  rule:literaltypes -> write as type suffix u64(0x9e3779b97f4a7c15) -> 0x9e3779b97f4a7c15'u64; also uint64(c) / uint(c)
+    with a constant above high(int64): 18446744073709551615'u64
   rule:char -> chars written as ch("#") transpile as char literals '#'; so does char("#") (a one-char
     string constant), the spelling where a local named `ch` shadows ch()
   rule:latin1literal -> str literals are byte views: chars 0x80-0xFF emit as \\xNN ("é" -> "\\xE9"),
@@ -2810,6 +2811,12 @@ class _Unparser(NodeVisitor):
                 self.visit_Call(node)
             return
         self.set_precedence(_Precedence.ATOM, node.func)
+        if (isinstance(node.func, Name) and node.func.id in ("uint64", "uint") and len(node.args) == 1
+                and not node.keywords and isinstance(node.args[0], Constant) and type(node.args[0].value) is int
+                and node.args[0].value > 0x7FFFFFFFFFFFFFFF):
+            # rule:literaltypes -> uint64(c) with c above high(int64) is the literal c'u64 (a bare c is out of range)
+            self.write(f"{node.args[0].value}'{'u64' if node.func.id == 'uint64' else 'u'}")
+            return
         if isinstance(node.func, Name) and node.func.id in self._type_suffixes:
             # rule:literaltypes
             self.traverse(node.args[0]) # should be only one argument

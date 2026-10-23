@@ -4587,6 +4587,17 @@ class TestNTypes(unittest.TestCase):
         self.assertNotIn("msgs", out)
         self.assertNotIn("import std\n", out)
 
+    def test_uint64_literal_above_int64(self):
+        """rule:literaltypes: uint64(c) / uint(c) with a constant above high(int64) is c'u64 / c'u (Nim reads a bare
+        c as an int: out of range); smaller constants keep the conversion."""
+        out = unparse(ast.parse("from nimic.ntypes import *\n"
+                                "a = uint64(18446744073709551615)\n"
+                                "b = uint(9223372036854775808)\n"
+                                "c = uint64(5)\n"))[0]
+        self.assertIn("18446744073709551615'u64", out)
+        self.assertIn("9223372036854775808'u", out)
+        self.assertIn("uint64(5)", out)
+
     def test_selective_import(self):
         """A Python `from m import a` (a class comes with its methods) is a full `import m`; Nim's selective
         `from m import a, b` is importFrom("m", "a", "b") (rule:importfrom), which binds only those names."""
