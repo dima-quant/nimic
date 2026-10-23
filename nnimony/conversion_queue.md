@@ -24,16 +24,13 @@
 
 | Module | Size | Std imports (✗ = no nimic shim yet) | Agent |
 |---|---|---|---|
-| `models/callconv_tags` | 921 bytes |  | brief_lib_batch5.md |
-| `models/nifindex_tags` | 4,112 bytes |  | brief_lib_batch5.md |
 | `lib/argsfinder` | 4,466 bytes | assertions, os, parseopt ✗, strutils, syncio |  |
 | `lib/keymatcher` | 5,934 bytes | assertions, macros ✗ |  |
 | `lib/vfs` | 12,960 bytes | atomics ✗, memfiles ✗, os, posix/posix ✗, syncio, times |  |
-| `models/leng_tags` | 24,091 bytes |  | brief_lib_batch5.md |
 | `lib/intrinsics` | 80,220 bytes |  |  |
-| `lib/nifcore` | 111,775 bytes | assertions, formatfloat, hashes |  |
+| `lib/nifcore` | 111,775 bytes | assertions, formatfloat, hashes | brief_lib_batch6.md |
 
-## All modules of `src/lib` (16/39 converted)
+## All modules of `src/lib` (19/39 converted)
 
 | Module | Tier | Size | Depends on | Std imports | Status |
 |---|---|---|---|---|---|
@@ -60,9 +57,9 @@
 | `lib/legacy/nif26reader` | 1 | 13,861 bytes | lib/stringviews, lib/vfs | assertions, memfiles ✗, parseutils | 🔲 Pending |
 | `lib/nifbuilder` | 1 | 16,576 bytes | lib/vfs | assertions, formatfloat, math, strutils, syncio | 🔲 Pending |
 | `lib/nifcore` | 1 | 111,775 bytes | lib/bitabs, lib/lineinfos, lib/nifroles | assertions, formatfloat, hashes | 🔲 Pending |
-| `models/callconv_tags` | 1 | 921 bytes | models/tags |  | 🔲 Pending |
-| `models/leng_tags` | 1 | 24,091 bytes | models/tags |  | 🔲 Pending |
-| `models/nifindex_tags` | 1 | 4,112 bytes | models/tags |  | 🔲 Pending |
+| `models/callconv_tags` | 1 | 921 bytes | models/tags |  | ✅ Converted |
+| `models/leng_tags` | 1 | 24,091 bytes | models/tags |  | ✅ Converted |
+| `models/nifindex_tags` | 1 | 4,112 bytes | models/tags |  | ✅ Converted |
 | `lib/bif` | 2 | 52,325 bytes | lib/compat2, lib/nifcore, lib/vfs | assertions, strutils, syncio, varints ✗ | 🔲 Pending |
 | `lib/htmlbuilder` | 2 | 4,222 bytes | lib/nifbuilder |  | 🔲 Pending |
 | `lib/lengiface` | 2 | 3,852 bytes | lib/nifbuilder, lib/nifcore, lib/vfs | assertions, formatfloat, sha1 ✗, syncio | 🔲 Pending |

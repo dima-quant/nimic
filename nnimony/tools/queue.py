@@ -41,6 +41,7 @@ AGENT_BRIEFS = {
     "brief_lib_batch3.md": {"lib/nifroles", "lib/lineinfos", "lib/stringviews", "lib/bitabs"},
     "brief_lib_batch4.md": {"lib/compat2", "lib/filelinecache", "lib/treemangler", "lib/nimversion"},
     "brief_lib_batch5.md": {"models/callconv_tags", "models/nifindex_tags", "models/leng_tags"},
+    "brief_lib_batch6.md": {"lib/nifcore"},
 }
 AGENT = {m: brief for brief, modules in AGENT_BRIEFS.items() for m in modules}
 
