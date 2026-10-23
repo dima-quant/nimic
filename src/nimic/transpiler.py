@@ -149,7 +149,8 @@ Operators & renaming:
 
 Imports:
   rule:import -> write import from as import, drop from __future__ import ...
-  rule:nodoubleimport -> do not write import module if already imported
+  rule:nodoubleimport -> do not write import module if already imported (also `from nimic.std import m`, which
+    is `import std/m` for qualified use, m.proc)
   rule:labeledblock -> with block("name"): ... is `block name:`; breakBlock("name") is `break name`
   rule:emit -> emit("C code") transpiles as an emit pragma {.emit: <triple-quoted C code>.} (raises if run in Python)
   rule:importexcept -> importExcept("..m", "a", "%") transpiles as `import ../m except a, `%``; in Python it
@@ -205,6 +206,7 @@ The docstring for the original ``ast`` module is given below:
 import argparse
 import ast
 import copy
+import importlib.util
 import inspect
 import keyword as pykeyword
 import re
@@ -952,6 +954,7 @@ class _Unparser(NodeVisitor):
         self._declared_classes = set()
         self._concepts = {"Concept"}  # rule:concept: Concept and the concepts the module defines
         self._hook_procs = {}  # rule:hook: Python name of a @hook proc -> its hook (`copy`)
+        self._import_paths = set()  # rule:import: the Nim paths imported so far
 
     def interleave(self, inter, f, seq):
         """Call f on each item in seq, calling inter() in between."""
@@ -1239,11 +1242,35 @@ class _Unparser(NodeVisitor):
         self.module_names.append(module_name)
         return "../" * max(level - 1, 0) + module_name.replace(".", "/")
 
+    @staticmethod
+    def _is_nimic_package(module_name: str) -> bool:
+        """Whether `module_name` is a package of nimic (nimic.std, nimic.system): its imported names are modules."""
+        if module_name.split(".")[0] != "nimic" or "." not in module_name:
+            return False
+        try:
+            spec = importlib.util.find_spec(module_name)
+        except ModuleNotFoundError:
+            return False
+        return spec is not None and spec.submodule_search_locations is not None
+
     def visit_ImportFrom(self, node):
         # rule:import -> `from m import ...` is `import m` (a class comes with its methods, which are procs
         # in Nim); Nim's selective `from m import a` is importFrom("m", "a") (rule:importfrom)
+        if node.module and not node.level and self._is_nimic_package(node.module):
+            # rule:import -> `from nimic.std import memfiles` (a std module used qualified: memfiles.open) is
+            # `import std/memfiles`, once
+            for alias in node.names:
+                path = self._import_path(f"{node.module}.{alias.name}", 0)
+                if alias.asname:
+                    self.fill(f"import {path} as {alias.asname}")  # `from nimic.std import os as nos`
+                elif path not in self._import_paths:
+                    self._import_paths.add(path)
+                    self.fill("import " + path)
+            return
         if node.module and not node.module in ["__future__"]:
-            self.fill("import " + self._import_path(node.module, node.level or 0))
+            path = self._import_path(node.module, node.level or 0)
+            self._import_paths.add(path)
+            self.fill("import " + path)
         # self.write("import ")
         # self.interleave(lambda: self.write(", "), self.traverse, node.names)
 

@@ -4573,6 +4573,20 @@ class TestNTypes(unittest.TestCase):
         with self.assertRaises(TypeError):
             _TComparable()
 
+    def test_import_module_of_nimic_package(self):
+        """`from nimic.std import memfiles` (a std module used qualified, memfiles.open) is `import std/memfiles`,
+        once even next to `from nimic.std.memfiles import *`; `as` keeps its name; `from . import m` (a sibling)
+        emits nothing, as before."""
+        out = unparse(ast.parse("from nimic.ntypes import *\n"
+                                "from nimic.std.memfiles import *\n"
+                                "from nimic.std import memfiles\n"
+                                "from nimic.std import os as nos\n"
+                                "from . import msgs\n"))[0]
+        self.assertEqual(out.count("import std/memfiles"), 1)
+        self.assertIn("import std/os as nos", out)
+        self.assertNotIn("msgs", out)
+        self.assertNotIn("import std\n", out)
+
     def test_selective_import(self):
         """A Python `from m import a` (a class comes with its methods) is a full `import m`; Nim's selective
         `from m import a, b` is importFrom("m", "a", "b") (rule:importfrom), which binds only those names."""

@@ -70,7 +70,15 @@ Nim variable declarations are mapped to Python context managers to encapsulate s
 | `var tY: uint16` | `with var:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`_tY = uint16()` | A module-level variable without `*` (also one in a module-level `when`) is written `_tY`: it transpiles to `tY`, not exported (`rule:localname`); without the `_` it would become the exported global `tY*`. Variables of a proc, loop or `block` (also `with block("name"):` at module level) are local and keep their names (`rule:dropwith`) |
 
 ## 2. Compile-Time and Metaprogramming (`rule:comptime`, `rule:templateinline`)
-Compile-time metaprogramming relies on function calls or specific decorators. Generic Nim's macro definitions are not supported.
+Compile-time metaprogramming relies on function calls or specific decorators.
+
+**Macros are a legacy feature.** nimony replaces them with compiler plugins, and nimic has no macros:
+- a `macro` definition is not converted;
+- each call of a macro is written out as the code it expands to: plain procs, types and constants, with
+  templates where they keep it readable (a repeated shape, a block template for a `body` parameter);
+- the conversion keeps the macro as a comment where it was defined (its name and what it generates), and the
+  report lists every expanded call;
+- `import std/macros` is dropped when nothing else uses it.
 
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
@@ -358,6 +366,7 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | `import ../options` | `from ..options import *` | Relative imports keep their level: one `../` per extra dot |
 | `msgs.message(...)`, `nimlexbase.EndOfFile` (qualified by module) | `from .msgs import *` plus `from . import msgs`, then `msgs.message(...)` | `from . import m` binds the module name in Python and emits nothing (Nim's `import m` makes `m.x` available). A method of another module's type is called as a method (`nimlexbase.handleCR(L, pos)` is `L.handleCR(pos)`) |
 | `import std/times` | `from nimic.std.times import *` (or `import a, b` of it) | A Python `from m import ...` is a full Nim `import m`: a class comes with its methods, which are procs in Nim |
+| `memfiles.open(p)`, `memfiles.close(mf)` (a std module used qualified, e.g. where `open` would be ambiguous with syncio's) | `from nimic.std.memfiles import *` plus `from nimic.std import memfiles`, then `memfiles.open(p)` | `from nimic.std import m` is `import std/m` (once; `as x` is kept) |
 | `from std/times import utc, fromUnix` | `importFrom("nimic.std.times", "utc", "fromUnix")` | `rule:importfrom`: Nim's selective import; binds only those names |
 | `import ropes except `%`` | `importExcept(".ropes", "%")` | `rule:importexcept`: the module's public names except the given ones (operators have no Python name) |
 
@@ -511,5 +520,5 @@ need them. Until then a converted module writes them faithfully inside their ina
 | polymorphic accessors (`func [](x: C): var E`) | `var T` overloads | planned |
 | `func` is `noSideEffect`, `proc` side-effecting, no inference; `{.cast(noSideEffect).}:` | `func` row | planned |
 | unlabeled `break` leaves only a loop | — | already so: blocks are left with `breakBlock("name")` |
-| compiler plugins | macros (G17) | later |
+| compiler plugins | macros (G17) | macros are legacy: every macro call is written out as the code it expands to (§2), no macro support in nimic. Plugins: later |
 | `range` checked at compile time, no runtime checks | `Natural`/`RangeDefect` rows | to decide (Python can't prove) |

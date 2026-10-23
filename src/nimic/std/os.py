@@ -9,7 +9,7 @@ from sys import stdout, stderr
 import sys
 from io import TextIOWrapper
 from enum import Enum
-from nimic.ntypes import char, string, dispatch, defined, ufcs
+from nimic.ntypes import char, string, seq, dispatch, defined, ufcs
 from nimic.ntypesystem import _n_os_arg, _n_os_result
 
 from nimic.std.syncio import read_file, read_file_bytes, write_buffer, set_file_pos, open
@@ -296,10 +296,114 @@ def lastPathPart(path: string) -> string:
     s = str(path).rstrip('/\\')
     return string(os.path.basename(s))
 
+_N_SAFE_UNIX_CHARS = frozenset("%+-./_:=@0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+
+
+def quoteShellPosix(s: string) -> string:
+    """Nim: quoteShellPosix — s quoted for a POSIX shell: '' when empty, as it is when every char is safe
+    (`%+-./_:=@` and alphanumerics), else in single quotes."""
+    text = str(s)
+    if not text:
+        return string("''")
+    if all(c in _N_SAFE_UNIX_CHARS for c in text):
+        return string(text)
+    return string("'" + text.replace("'", "'\"'\"'") + "'")
+
+
+def quoteShellWindows(s: string) -> string:
+    """Nim: quoteShellWindows — s quoted for the Windows command line (backslashes before a quote doubled)."""
+    text = str(s)
+    needs_quote = not text or " " in text or "\t" in text
+    result = '"' if needs_quote else ""
+    backslash = 0
+    for c in text:
+        if c == "\\":
+            backslash += 1
+            result += c
+        elif c == '"':
+            result += "\\" * backslash + '\\"'
+            backslash = 0
+        else:
+            backslash = 0
+            result += c
+    if needs_quote:
+        result += "\\" * backslash + '"'
+    return string(result)
+
+
 @ufcs(string)
 @dispatch
 def quoteShell(path: string) -> string:
-    return string(_shlex.quote(str(path)))
+    """Nim: quoteShell — quoteShellWindows on Windows, quoteShellPosix elsewhere."""
+    return quoteShellWindows(path) if defined("windows") else quoteShellPosix(path)
+
+
+def quoteShellCommand(args) -> string:
+    """Nim: quoteShellCommand — the args quoted (quoteShell) and joined with spaces."""
+    return string(" ".join(str(quoteShell(string(str(a)))) for a in args))
+
+
+def parseCmdLine(c: string) -> seq[string]:
+    """Nim: parseCmdLine — split a command line into arguments: on POSIX at whitespace, with '...' or "..."
+    taken as they are (no escapes); on Windows by the C runtime's rules (backslashes before quotes)."""
+    text = str(c)
+    result = []
+    i = 0
+    while True:
+        a = []
+        while i < len(text) and text[i] in " \t\n\r":
+            i += 1
+        if i >= len(text):
+            break
+        if defined("windows"):
+            in_quote = False
+            while i < len(text):
+                if text[i] == "\\":
+                    j = i
+                    while j < len(text) and text[j] == "\\":
+                        j += 1
+                    if j < len(text) and text[j] == '"':
+                        a.append("\\" * ((j - i) // 2))
+                        if (j - i) % 2 == 0:
+                            i = j
+                        else:
+                            a.append('"')
+                            i = j + 1
+                    else:
+                        a.append(text[i])
+                        i += 1
+                elif text[i] == '"':
+                    i += 1
+                    if not in_quote:
+                        in_quote = True
+                    elif i < len(text) and text[i] == '"':
+                        a.append(text[i])
+                        i += 1
+                    else:
+                        in_quote = False
+                        break
+                elif text[i] in " \t":
+                    if not in_quote:
+                        break
+                    a.append(text[i])
+                    i += 1
+                else:
+                    a.append(text[i])
+                    i += 1
+        elif text[i] in "'\"":
+            delim = text[i]
+            i += 1
+            while i < len(text) and text[i] != delim:
+                a.append(text[i])
+                i += 1
+            if i < len(text):
+                i += 1
+        else:
+            while i < len(text) and text[i] > " ":
+                a.append(text[i])
+                i += 1
+        result.append(string("".join(a)))
+    return seq[string](result)
 
 @dispatch
 def copyFile(source: string, dest: string) -> None:

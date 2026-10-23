@@ -1210,6 +1210,8 @@ def dispatch(fn: callable) -> callable:
                     return fn_dispatch(*cand, _n_bound=True)
                 except NotImplementedError:
                     pass
+            if fn.__name__ in _n_imported_procs:
+                return _n_imported_procs[fn.__name__](*args, **kwargs)
             raise NotImplementedError(f"Function not defined for keyword signature: {fn.__name__}")
 
         if not bound and not _n_has_arity(fn.__name__, len(args)):
@@ -1356,8 +1358,10 @@ def dispatch(fn: callable) -> callable:
         varargs_call = _n_varargs_call(fn.__name__, args)
         if varargs_call is not None:
             return varargs_call()
-        if fn.__name__ in _n_imported_procs:
-            # no overload of this set matches: the imported proc it extends (system `low`, builtin `abs`)
+        if fn.__name__ in _n_imported_procs and not bound:
+            # no overload of this set matches: the imported proc it extends (system `low`, builtin `abs`). Not
+            # for a call bound to an overload's parameters (its defaults filled in): the caller goes on with the
+            # original arguments
             _n_imported_sigs.add((fn.__name__, fn_sig))
             return _n_imported_procs[fn.__name__](*args)
         sig_str = ", ".join([sig[0] for sig in fn_sig])
@@ -5845,7 +5849,10 @@ class char(str):
     def _n_on_array(cls, parent_elems, index, value=None):
         addr = ctypes.addressof(parent_elems) + index
         if value is not None:
-            parent_elems[index] = ord(value) if isinstance(value, str) else int(value)
+            if isinstance(value, (bytes, bytearray)):  # a char's raw value (UncheckedArray[char] stores pass it)
+                parent_elems[index] = value[0]
+            else:
+                parent_elems[index] = ord(value) if isinstance(value, str) else int(value)
         val = parent_elems[index]
         return cls(val, addr=addr)
 
