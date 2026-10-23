@@ -114,7 +114,7 @@ For modifications in `src/nimic/ntypesystem.py` and `src/nimic/ntypes.py`:
    missed non-compiling transpiler output and a dispatch regression that broke the converters):
    ```bash
    .venv/bin/python tests/verify_transpiled.py            # modules + raytracer + converters, several minutes
-   .venv/bin/python tests/verify_transpiled.py modules    # or a single check: modules | raytracer | converters
+   .venv/bin/python tests/verify_transpiled.py modules    # or a single check: modules | raytracer | converters | nimic | nimony
    ```
    - **modules**: each converted `ncompiler/<m>.py` is transpiled, swapped into a copy of the Nim compiler
      sources (`compiler/`) and must pass `nim check`. NEP-1 naming errors (`--styleCheck`) are accepted:
@@ -124,6 +124,8 @@ For modifications in `src/nimic/ntypesystem.py` and `src/nimic/ntypes.py`:
    - **converters**: `test_converter_ppm_to_h264` / `test_converter_h264_to_mp4` in Python and compiled Nim
      must reproduce `reference.264` / `reference.mp4` byte-for-byte (inputs live in the ignored, local-only
      `tests/nraytracer/ncache/build/rendered_test`, so this check only runs in the main checkout).
+   - **nimic**: every nimic program in `tests/nimic` (a `# /// nimic` header and a `__main__` block, e.g. the
+     nifcore ownership model `nifcore_ownership.py`) runs in Python and as compiled Nim; stdout must match.
    - Pitfalls: never run `tests/nraytracer/test_*.py` (e.g. `test_nast.py`) or `ntranspile` inside the repo
      to check compilation: they regenerate the **tracked** `tests/nraytracer/ncache/*.nim`. The script works
      in `.scratch/verify_transpiled`. Transpile modules the way `nimic.nimp` does (import, then `unparse`

@@ -903,8 +903,10 @@ def importc(fn):
 
 
 def isNil(x: object) -> bool:
-    """Nim: isNil — whether a ref, ptr, pointer, proc or cstring is nil (None or a nil pointer)."""
-    return x is None or isinstance(x, _ntypesystem.NilPtr)
+    """Nim: isNil — whether a ref, ptr, pointer, proc or cstring is nil: None, a NilPtr, or a pointer holding
+    address 0 (an unset ptr field of an object is one)."""
+    return (x is None or isinstance(x, _ntypesystem.NilPtr)
+            or (isinstance(x, _ntypesystem.pointer) and x._n_target_key() == 0))
 
 
 def stackTraceAvailable() -> bool:

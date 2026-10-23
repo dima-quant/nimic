@@ -58,6 +58,8 @@ Architecture (layers from low-level to high-level):
 
 from __future__ import annotations
 
+import __future__
+import annotationlib
 import ast
 import bisect
 import ctypes
@@ -206,7 +208,8 @@ class NilPtr:
         return False
 
     def __eq__(self, other) -> bool:
-        return other is None or isinstance(other, NilPtr)
+        """nil equals nil: None, a NilPtr, or a pointer holding address 0 (and no object)."""
+        return other is None or isinstance(other, NilPtr) or (isinstance(other, pointer) and other._n_target_key() == 0)
 
     def __ne__(self, other) -> bool:
         return not self.__eq__(other)
@@ -2318,11 +2321,66 @@ class _NUnset:
 _N_UNSET = _NUnset()
 
 
+def _n_namespace_annotations(namespace: dict) -> dict:
+    """A class body's annotations as strings, as `from __future__ import annotations` gives them. Without the
+    import, Python 3.14 (PEP 649) keeps only `__annotate_func__` in the namespace: its STRING form, computed
+    once (the function covers the whole body). While it runs, its name lookups reach the namespace's
+    __missing__ (DispDict), which must not run it again."""
+    annotations = dict.get(namespace, "__annotations__")
+    if annotations is not None:
+        return annotations
+    annotate = dict.get(namespace, "__annotate_func__")
+    if annotate is None or getattr(namespace, "_n_annotating", False):
+        return {}
+    cached = getattr(namespace, "_n_annotations_cache", None)
+    if cached is not None:
+        return cached
+    if isinstance(namespace, DispDict):
+        namespace._n_annotating = True
+    try:
+        result = annotationlib.call_annotate_function(annotate, annotationlib.Format.STRING)
+    finally:
+        if isinstance(namespace, DispDict):
+            namespace._n_annotating = False
+    if isinstance(namespace, DispDict):
+        namespace._n_annotations_cache = result
+    return result
+
+
+def _n_body_annotates(frame, key: str) -> bool:
+    """Whether the class body running in `frame` annotates `key` (a field) before its __annotate_func__ exists
+    (Python 3.14 without `from __future__ import annotations` stores it at the end of the body). With the
+    future import the namespace's __annotations__ is complete so far. Without it: the field annotations of
+    the class in its module's source (also those in `match` cases, the variant fields)."""
+    code = frame.f_code
+    if code.co_flags & __future__.annotations.compiler_flag:
+        return False
+    lines = linecache.getlines(code.co_filename)
+    if not lines:
+        return False
+    tree = _n_module_asts.get(code.co_filename)
+    if tree is None:
+        tree = _n_module_asts[code.co_filename] = ast.parse("".join(lines))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == code.co_name and code.co_firstlineno in (
+                node.lineno, *(d.lineno for d in node.decorator_list)):
+            todo, names = list(node.body), set()
+            while todo:
+                stmt = todo.pop()
+                if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                    names.add(stmt.target.id)
+                elif isinstance(stmt, ast.Match):
+                    todo += [s for case in stmt.cases for s in case.body]
+            return key in names
+    return False
+
+
 class DispDict(dict):
     def __missing__(self, key: str):
         # class-body read of an annotated name without a default (`kind: K` then `match kind:`);
         # anything else falls through to globals/builtins (CPython LOAD_NAME honours __missing__)
-        if key in dict.get(self, "__annotations__", {}):
+        if key in _n_namespace_annotations(self) or (
+                not getattr(self, "_n_annotating", False) and _n_body_annotates(sys._getframe(1), key)):
             self._n_unset_read = True
             return _N_UNSET
         raise KeyError(key)
@@ -2346,6 +2404,9 @@ class NMetaClass(type):
         return DispDict()
 
     def __new__(mcs, name: str, bases: tuple, namespace: DispDict, **kwargs):
+        if "__annotations__" not in namespace and "__annotate_func__" in namespace:
+            # a module without `from __future__ import annotations` (Python 3.14): the fields as strings
+            dict.__setitem__(namespace, "__annotations__", _n_namespace_annotations(namespace))
         # set before type.__new__ so __init_subclass__ (type registration) can see them
         if getattr(namespace, "_n_unset_read", False):
             namespace["_n_body_has_case"] = True
@@ -3706,7 +3767,9 @@ class array(Ntype):
 
     @classmethod
     def _n_register_type(cls) -> None:
-        if cls._n_type.__name__ in DICT_OF_C_TYPES:
+        if getattr(cls._n_type, '_n_hooks', None):
+            pass  # elements with lifetime hooks are held as their owning objects (no C storage)
+        elif cls._n_type.__name__ in DICT_OF_C_TYPES:
             DICT_OF_C_TYPES[cls.__name__] = DICT_OF_C_TYPES[cls._n_type.__name__] * cls._n_size
         elif isinstance(cls._n_type, pointer):
             # TODO: is this true for typed pointer?
@@ -3726,7 +3789,7 @@ class array(Ntype):
         """Value assignment (Nim `a = other` through a var parameter): copy all elements in place."""
         if other is self:
             return self
-        if hasattr(self, "_n_view") and hasattr(other, "_n_view"):
+        if getattr(self, "_n_view", None) is not None and getattr(other, "_n_view", None) is not None:
             ctypes.memmove(ctypes.addressof(self._n_view), ctypes.addressof(other._n_view),
                            ctypes.sizeof(self._n_view))
             self._n_cache = {}
@@ -4277,6 +4340,26 @@ class pointer(Ntype):
     def _n_get_value(self):
         """A pointer's value is the address it holds."""
         return self._n_view[0] if self._n_view else self._n_addr
+
+    def _n_target_key(self) -> object:
+        """What the pointer points at, for ==: its address (0: nil), or the object it refers to when it holds
+        no address (a pointer to a Python-held value)."""
+        view = getattr(self, "_n_view", None)
+        address = int((view[0] if view else self._n_addr) or 0)
+        if address == 0 and getattr(self, "_n_contents_cache", None) is not None:
+            return ("object", id(self._n_contents_cache))
+        return address
+
+    def __eq__(self, other) -> bool:
+        """Nim: pointers are equal when they point at the same place (were compared as Python objects)."""
+        if other is None or isinstance(other, NilPtr):
+            return self._n_target_key() == 0
+        if isinstance(other, pointer):
+            return self._n_target_key() == other._n_target_key()
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self._n_target_key())
 
     def _n_set_value(self, address: int):
         """Set the address the pointer points to. Address must be an int."""

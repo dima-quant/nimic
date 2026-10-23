@@ -106,7 +106,12 @@ def _component_lines(component: str) -> int:
 
 
 def write_queue() -> None:
-    head = subprocess.run(["git", "-C", str(NIMONY), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    git = subprocess.run(["git", "-C", str(NIMONY), "rev-parse", "HEAD"], capture_output=True, text=True)
+    head = git.stdout.strip()
+    if git.returncode != 0 or not any((NIMONY / "src" / CURRENT[0]).rglob("*.nim")):
+        # an unreadable clone (missing, or outside a sandbox's reach) would give an empty queue
+        raise SystemExit(f"cannot read the nimony clone at {NIMONY} (set NIMONY_DIR): "
+                         f"{git.stderr.strip() or 'no sources'}; {QUEUE.relative_to(ROOT)} not written")
     lines = ["# nimony → nnimony: Conversion Queue", "",
              "> **Generated** by `python -m nnimony.tools.queue` from the nimony clone at "
              f"`{NIMONY_PIN[:12]}` (pinned in `nnimony/tools/queue.py`). The plan: `ncompiler/conversion_plan.md`."]

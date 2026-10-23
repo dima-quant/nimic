@@ -247,6 +247,7 @@ Memory primitives are strongly enforced to mirror Nim.
 | `cast[int](p) + 4` | `cast[intp](p) + 4` | `intp` supports pointer arithmetic in nimic. |
 | `cast[uint](p) + 4` | `cast[uintp](p) + 4` | `uintp` supports pointer arithmetic in nimic. |
 | `p[]`, `p[] = x` | `p.contents`, `p.contents = x` | Pointer dereferencing |
+| `p == q`, `p != nil`, `p.isNil` | `p == q`, `not isNil(p)` | Pointers compare by where they point: two casts of one address are equal. nil is address 0; an unset `ptr` field is nil |
 | `array[3, float64]([1, 2, 3])`| `array[3, float64]([1.0, 2.0, 3.0])` | Nimic arrays use iterables as initialization payloads. |
 | `addr x` | `addr(x)` | Maps natively using Nimic's variable aliasing mechanics. A standalone local integer or float gets storage of its own on `addr`, so pointers read and write it (`cast[ptr float32](addr(xi))[]` is `cast[ptr[float32]](addr(xi)).contents`) |
 | `cast[cstring](addr(L.buf[i]))` | `cast[cstring](addr(L.buf[i]))` | A `char*` into the middle of a buffer: a cstring sharing the memory of the string or buffer that contains the address, from there to its end **(Nim 2: the Nim 3 version is in §14)** |

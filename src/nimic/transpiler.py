@@ -67,7 +67,7 @@ Function definitions:
   rule:typedtemplate -> drop return from typed template or converter definition
   rule:pragma -> docstring with {.x.} is written as pragma {.x.}, if pragma contains "noSideEffect" func is defined
   rule:hook -> a def decorated @hook("copy") is the lifetime hook proc `=copy` (also sink, destroy, wasMoved,
-    dup, trace); exported unless its name starts with _
+    dup, trace); exported unless its name starts with _; a call by its Python name is `=copy`(...)
   rule:calltype -> def decorated with "calltype" emit as type alias: Name* = proc(...): T {.pragma.}
 
 Control flow:
@@ -951,6 +951,7 @@ class _Unparser(NodeVisitor):
         self._def_decorators = ["template", "iterator", "converter", "method", "calltype"]
         self._declared_classes = set()
         self._concepts = {"Concept"}  # rule:concept: Concept and the concepts the module defines
+        self._hook_procs = {}  # rule:hook: Python name of a @hook proc -> its hook (`copy`)
 
     def interleave(self, inter, f, seq):
         """Call f on each item in seq, calling inter() in between."""
@@ -1141,6 +1142,9 @@ class _Unparser(NodeVisitor):
             self.traverse(node.body)
 
     def visit_Module(self, node):
+        # rule:hook: a call of a hook proc by its Python name (`_destroyCursor(dest)`) is the hook's Nim name
+        self._hook_procs = {fn.name: hook for fn in ast.walk(node)
+                            if isinstance(fn, FunctionDef) and (hook := self._hook_name(fn)) is not None}
         self._type_ignores = {
             ignore.lineno: f"ignore{ignore.tag}"
             for ignore in node.type_ignores
@@ -2357,6 +2361,9 @@ class _Unparser(NodeVisitor):
                 self._write_fstring_inner(node.format_spec, is_format_spec=True)
 
     def visit_Name(self, node):
+        if isinstance(node.ctx, Load) and node.id in self._hook_procs:
+            self.write(f"`={self._hook_procs[node.id]}`")  # rule:hook
+            return
         name = self._adjust_name(node.id, definition=getattr(node, "_is_definition", False)) # rule:localname
         self.write(name)
 

@@ -18,7 +18,7 @@ from nimic.ntypes import *
 from nimic.nsystem import ord as nim_ord, _BuildProfile, _n_set_build_profile
 from nimic.ntypesystem import (BUFFER_REGISTRY, _n_routine_pragmas, nord, BufferRegistry, DICT_OF_C_TYPES, _match_subtype,
                                _n_aliases, _n_distinct_types, _n_from_text, _n_registry, _n_to_text,
-                               char as _char)
+                               NilPtr, char as _char)
 from nimic.std.bitops import fastLog2
 from nimic.std.endians import big_endian32
 from nimic.std.formatfloat import addFloat
@@ -337,6 +337,46 @@ class TestNTypes(unittest.TestCase):
 
         c_free(mem)
 
+    def test_classes_without_future_annotations(self):
+        """A module without `from __future__ import annotations` (Python 3.14, PEP 649: the class body keeps only
+        __annotate_func__) defines the same fields: plain, ptr (nil by default), and a variant object whose body
+        reads its discriminator (`match kind:`)."""
+        source = textwrap.dedent("""\
+            from nimic.ntypes import *
+
+            class Kind(NIntEnum):
+                kA = auto()
+                kB = auto()
+
+            class O(Object):
+                rc: nint
+
+            class T(Object):
+                owner: ptr[O]
+                n: nint
+
+            class V(Object):
+                kind: Kind
+                match kind:
+                    case Kind.kA:
+                        a: nint
+                    case Kind.kB:
+                        b: string
+
+            t = T(n=nint(3))
+            print(int(t.n), isNil(t.owner), sorted(T._n_fields))
+            v = V(kind=Kind.kB, b=string("x"))
+            print(str(v.b), sorted(V._n_fields))
+            """)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "no_future.py")
+            with open(path, "w") as f:
+                f.write(source)
+            run = subprocess.run([sys.executable, path], capture_output=True, text=True, timeout=60)
+        self.assertEqual(run.returncode, 0, run.stderr[-800:])
+        # the same as with the future import (a variant class lists the fields of all its branches)
+        self.assertEqual(run.stdout.splitlines(), ["3 True ['n', 'owner']", "x ['a', 'b', 'kind']"])
+
     def test_nim_allocator(self):
         """Nim's alloc / alloc0 / realloc / dealloc / create / resize (nsystem): blocks of raw memory, seen
         through casts; realloc keeps the content; dealloc of anything but a block's start is a ValueError
@@ -379,6 +419,33 @@ class TestNTypes(unittest.TestCase):
         pairs = resize(pairs, 4)
         self.assertEqual(int(pairs.contents.a), 7)
         dealloc(pairs)
+
+    def test_pointer_equality_and_nil(self):
+        """Pointers compare by where they point (Nim), not as Python objects: two casts of one address are equal
+        (nifcore's `=copy` tests `dest.p != src.p`), nil is address 0, and an unset ptr field (a pointer holding
+        address 0) is nil for isNil and `== None`."""
+        class _TPtrTarget(Object):
+            rc: nint
+
+        class _TPtrHolder(Object):
+            owner: ptr[_TPtrTarget]
+
+        mem = alloc0(sizeof(_TPtrTarget) * 2)
+        p = cast[ptr[_TPtrTarget]](mem)
+        q = cast[ptr[_TPtrTarget]](cast[pointer](p))
+        self.assertTrue(p == q)
+        self.assertFalse(p != q)
+        self.assertEqual(hash(p), hash(q))
+        other = cast[ptr[_TPtrTarget]](addr(cast[ptr[UncheckedArray[_TPtrTarget]]](mem)[1]))
+        self.assertTrue(p != other)
+        holder = _TPtrHolder()
+        self.assertTrue(isNil(holder.owner))
+        self.assertTrue(holder.owner == None)  # noqa: E711 (Nim `== nil`)
+        self.assertTrue(NilPtr("ptr[_TPtrTarget]") == holder.owner)
+        self.assertFalse(isNil(p))
+        holder.owner = p
+        self.assertTrue(holder.owner == p)
+        dealloc(mem)
 
     def test_gc_ref_unref(self):
         """GC_ref(x) keeps x alive while only raw memory refers to it; GC_unref undoes one GC_ref (more
@@ -4240,6 +4307,55 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(o.rc, 1)
         del m
         self.assertEqual(o.rc, 0)
+
+    def test_lifetime_hooks_in_arrays(self):
+        """An array of values with hooks holds their owning objects (no C storage): a store copies (=dup),
+        an overwritten element and the array's elements die with it (=destroy), `a <<= b` copies each."""
+        @ref
+        class _TArrOwner(Object):
+            rc: nint
+
+        class _TArrHandle(Object):
+            owner: _TArrOwner
+
+        @hook("destroy")
+        def _tArrDestroy(x: mut @ _TArrHandle):
+            if x.owner is not None:
+                x.owner.rc -= 1
+
+        @hook("dup")
+        def _tArrDup(src: _TArrHandle) -> _TArrHandle:
+            if src.owner is not None:
+                src.owner.rc += 1
+            return _TArrHandle(owner=src.owner)
+
+        o = _TArrOwner()
+        o.rc += 1
+        h = _TArrHandle(owner=o)
+        handles = array[3, _TArrHandle]()
+        self.assertIsNone(handles._n_view)  # Python-held elements
+        handles[0] = h
+        handles[1] = h
+        self.assertEqual(o.rc, 3)
+        handles[1] = _TArrHandle()  # the overwritten element dies
+        self.assertEqual(o.rc, 2)
+        other = array[3, _TArrHandle]()
+        other <<= handles
+        self.assertEqual(o.rc, 3)
+        del handles, other
+        self.assertEqual(o.rc, 1)
+        del h
+        self.assertEqual(o.rc, 0)
+
+    def test_array_assign_python_held_elements(self):
+        """`a <<= b` of arrays without C storage (here of seqs) copies the elements; it called
+        ctypes.addressof(None)."""
+        a = array[2, seq[nint]]([seq[nint]([1]), seq[nint]([2, 3])])
+        b = array[2, seq[nint]]()
+        b <<= a
+        self.assertEqual(str(b), "[@[1], @[2, 3]]")
+        a[0].add(nint(9))
+        self.assertEqual(str(b), "[@[1], @[2, 3]]")  # a copy
 
     def test_lifetime_hooks_move_only(self):
         """A `=copy` with {.error.} (nifcore's TokenBuf, treemangler's Mangler) makes the type move-only:

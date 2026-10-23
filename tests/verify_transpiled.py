@@ -24,6 +24,9 @@ Execution verification of converted nimic code: Python run vs transpiled + compi
               directory with ncompiler/nim.cfg, so both use the same build profile); stdout must match.
   imports     each module that is not an include file compiles when imported (`import <m>`), the way its
               users load it.
+  nimic       each nimic module of tests/nimic (a `# /// nimic` header and a `__main__` block, e.g. the nifcore
+              ownership model nifcore_ownership.py) runs in Python and as transpiled, compiled Nim; stdout
+              must match.
   nimony      each converted nimony module nnimony/<path>.py is transpiled into a copy of nimony's src/
               (the clone next to the project) and type-checked; its tests run in Python, as the compiled
               transpiled module, and appended to the original nimony module: all three outputs must match.
@@ -388,6 +391,42 @@ def check_raytracer() -> None:
         report(n > 0 and not diff, "raytracer frames Python == Nim", f"{n} frames" + (f", differ: {diff}" if diff else ""))
 
 
+def _nimic_models() -> list[Path]:
+    """tests/nimic modules that are nimic programs: a `# /// nimic` header and a `__main__` block."""
+    return sorted(p for p in (ROOT / "tests/nimic").glob("*.py")
+                  if p.read_text().startswith("# /// nimic") and '__name__ == "__main__"' in p.read_text())
+
+
+def check_nimic() -> None:
+    print("== nimic programs (tests/nimic): Python vs compiled Nim", flush=True)
+    work = SCRATCH / "nimic"
+    work.mkdir(parents=True, exist_ok=True)
+    flags = ["--hints:off", "--warnings:off", "--styleCheck:off", f"--path:{ROOT / 'src/nimic'}"]
+    for path in _nimic_models():
+        module = f"tests.nimic.{path.stem}"
+        py = run([PY, "-m", module], ROOT, [ROOT / "src", ROOT])
+        if py.returncode != 0:
+            report(False, f"nimic {path.stem}", "Python: " + first_error(py))
+            continue
+        tr = run([PY, "-c", TRANSPILE_MODULE, module], ROOT, [ROOT / "src", ROOT])
+        if tr.returncode != 0:
+            report(False, f"nimic {path.stem}", "transpile: " + first_error(tr))
+            continue
+        target = work / f"{path.stem}.nim"
+        target.write_text(tr.stdout)
+        exe = work / f"bin_{path.stem}"
+        build = run(["nim", "c", *flags, f"--nimcache:{work / ('cache_' + path.stem)}", f"-o:{exe}", target.name], work)
+        if build.returncode != 0:
+            report(False, f"nimic {path.stem}", "nim c: " + first_error(build))
+            continue
+        nim = run([exe], work)
+        same = nim.returncode == 0 and py.stdout == nim.stdout
+        detail = "" if same else (f"Nim run: exit {nim.returncode}" if nim.returncode else "stdout differs: " + next(
+            (f"py {a!r} / nim {b!r}" for a, b in zip(py.stdout.splitlines(), nim.stdout.splitlines()) if a != b),
+            "different number of lines"))
+        report(same, f"nimic {path.stem}", detail[:200])
+
+
 def check_converters() -> None:
     print("== ppm -> h264 -> mp4 converters: Python and compiled Nim vs reference files", flush=True)
     inputs = ["animation_00000.ppm", "animation_00001.ppm", "reference.264", "reference.mp4"]
@@ -519,7 +558,8 @@ def link_dist() -> None:
 
 def main() -> int:
     checks = {"modules": check_modules, "fidelity": check_fidelity, "tests": check_tests, "imports": check_imports,
-              "raytracer": check_raytracer, "converters": check_converters, "nimony": check_nimony}
+              "raytracer": check_raytracer, "converters": check_converters, "nimic": check_nimic,
+              "nimony": check_nimony}
     selected = sys.argv[1:] or list(checks)
     unknown = [s for s in selected if s not in checks]
     if unknown:
