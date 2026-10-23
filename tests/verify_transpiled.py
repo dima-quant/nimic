@@ -33,7 +33,8 @@ Execution verification of converted nimic code: Python run vs transpiled + compi
 
 Modules marked for rework or with open gaps in ncompiler/conversion_queue.md are reported as XFAIL
 (expected failure).
-Everything runs in .scratch/verify_transpiled (git-ignored). The tracked transpiled files in
+Everything runs in .scratch/verify_transpiled/run_<pid> (git-ignored; one directory per run, so parallel runs
+don't disturb each other). The tracked transpiled files in
 tests/nraytracer/ncache are never touched (running tests/nraytracer/test_nast.py in place regenerates
 them). Exit code 1 if any check fails.
 """
@@ -53,7 +54,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]  # this script runs from tests/: nimic and ncompiler.tools
 from ncompiler.tools.dependencies import dependencies  # noqa: E402
 from nimic import transpiler  # noqa: E402
-SCRATCH = ROOT / ".scratch" / "verify_transpiled"
+# each run works in a directory of its own: runs in parallel (an agent's and the reviewer's) must not delete
+# each other's files
+SCRATCH_BASE = ROOT / ".scratch" / "verify_transpiled"
+SCRATCH = SCRATCH_BASE / f"run_{os.getpid()}"
 # compiler/ imports nimony and checksums as ../dist/...; they are cloned next to the project at the commits pinned
 # in ncompiler/conversion_plan.md (the snapshot's koch.nim) and linked in as SCRATCH/dist/<name>, which the work
 # directories (SCRATCH/compiler, ...) see as ../dist. The project's own dist/ is nimic's wheel output.
@@ -556,6 +560,17 @@ def link_dist() -> None:
         (SCRATCH / "dist" / name).symlink_to(path)
 
 
+def _remove_finished_runs() -> None:
+    """Delete the run directories of verify_transpiled processes that have ended."""
+    for d in SCRATCH_BASE.glob("run_*"):
+        try:
+            os.kill(int(d.name.removeprefix("run_")), 0)
+        except ProcessLookupError:
+            shutil.rmtree(d, ignore_errors=True)
+        except (ValueError, PermissionError):
+            pass
+
+
 def main() -> int:
     checks = {"modules": check_modules, "fidelity": check_fidelity, "tests": check_tests, "imports": check_imports,
               "raytracer": check_raytracer, "converters": check_converters, "nimic": check_nimic,
@@ -565,6 +580,7 @@ def main() -> int:
     if unknown:
         print(f"unknown check(s): {unknown}; choose from {list(checks)}")
         return 2
+    _remove_finished_runs()
     shutil.rmtree(SCRATCH, ignore_errors=True)
     SCRATCH.mkdir(parents=True)
     link_dist()

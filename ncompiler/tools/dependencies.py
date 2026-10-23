@@ -127,6 +127,30 @@ def _when_active(cond: str) -> bool:
     return True
 
 
+def _branch_active(lines: list[str], j: int, indent: int, keyword: str, cond: str) -> bool:
+    """Whether the `when` / `elif` / `else` branch heading line j (at `indent`) is taken in the default build: its
+    condition holds (an `else` has none) and no earlier branch of its `when` chain is taken. An `if` chain's
+    branches (not compile-time) count as active."""
+    earlier = []
+    if keyword != "when":
+        for k in range(j - 1, -1, -1):
+            line = lines[k]
+            if not line.strip() or len(line) - len(line.lstrip()) > indent:
+                continue
+            if len(line) - len(line.lstrip()) < indent:
+                return True  # no `when` above: not a compile-time chain
+            head = re.match(r"^\s*(when|elif|if)\b\s*(.*?):\s*$", line)
+            if head is None:
+                return True
+            if head.group(1) == "if":
+                return True
+            earlier.append(head.group(2))
+            if head.group(1) == "when":
+                break
+    own = keyword == "else" or _when_active(cond)
+    return own and not any(_when_active(c) for c in earlier)
+
+
 def _inside_inactive_when(lines: list[str], i: int) -> bool:
     """True if line i lies in a `when` branch that is inactive in the default build."""
     indent = len(lines[i]) - len(lines[i].lstrip())
@@ -140,7 +164,7 @@ def _inside_inactive_when(lines: list[str], i: int) -> bool:
         ind = len(line) - len(line.lstrip())
         if ind < indent:
             m = re.match(r"^\s*(when|elif|else)\b\s*(.*?):\s*$", line)
-            if m and m.group(1) == "when" and not _when_active(m.group(2)):
+            if m and not _branch_active(lines, j, ind, m.group(1), m.group(2)):
                 return True
             if not m:
                 return False

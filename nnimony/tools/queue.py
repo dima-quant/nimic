@@ -24,6 +24,9 @@ NIMONY_PIN = "3f56467ab15a46746c4f2b33a904809a2ffa0a12"  # nimony master, 2026-1
 NNIMONY = ROOT / "nnimony"
 QUEUE = NNIMONY / "conversion_queue.md"
 STD_SHIMS = ROOT / "src" / "nimic" / "std"
+# std modules nimic deliberately has no shim for: macros are legacy (nimony replaces them with plugins), a
+# conversion writes each macro call out (nimic_translation_rules_nimony.md §2)
+LEGACY_STD = {"macros": "legacy: expand the calls"}
 
 # components in the order of the plan; the current one is scanned module by module
 COMPONENTS = [
@@ -42,6 +45,7 @@ AGENT_BRIEFS = {
     "brief_lib_batch4.md": {"lib/compat2", "lib/filelinecache", "lib/treemangler", "lib/nimversion"},
     "brief_lib_batch5.md": {"models/callconv_tags", "models/nifindex_tags", "models/leng_tags"},
     "brief_lib_batch6.md": {"lib/nifcore"},
+    "brief_lib_batch7.md": {"lib/argsfinder", "lib/vfs"},
 }
 AGENT = {m: brief for brief, modules in AGENT_BRIEFS.items() for m in modules}
 
@@ -149,7 +153,8 @@ def write_queue() -> None:
 
 
 def _std_list(names: set[str]) -> str:
-    return ", ".join(n if (STD_SHIMS / f"{n}.py").exists() else f"{n} ✗" for n in sorted(names))
+    return ", ".join(n if (STD_SHIMS / f"{n}.py").exists() else f"{n} ({LEGACY_STD[n]})" if n in LEGACY_STD
+                     else f"{n} ✗" for n in sorted(names))
 
 
 def main() -> None:

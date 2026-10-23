@@ -1,4 +1,5 @@
-"""Nim std/times — DateTime, get_time(), and to_unix() for calendar time."""
+"""Nim std/times — Time (a point in time: seconds and nanoseconds since the Unix epoch), DateTime (calendar
+time), Duration, getTime, toUnix, fromUnix, nanosecond, utc / local, format, epochTime."""
 from __future__ import annotations
 import time as _time
 from datetime import datetime as _pydatetime, timezone as _timezone
@@ -40,35 +41,86 @@ class DateTime:
         return f"DateTime(unix={self._unix})"
 
 
-Time = DateTime
+class Time:
+    """Nim Time — a point in time: seconds since the Unix epoch and the nanosecond within the second."""
+
+    __slots__ = ("_seconds", "_nanosecond")
+
+    def __init__(self, seconds: int = 0, nanosecond: int = 0):
+        self._seconds = int(seconds)
+        self._nanosecond = int(nanosecond)
+
+    @property
+    def nanosecond(self) -> int:
+        """Nim: t.nanosecond — the nanoseconds within the second, 0 ..< 1_000_000_000."""
+        return self._nanosecond
+
+    def to_unix(self) -> int:
+        """Nim: toUnix — whole seconds since the Unix epoch."""
+        return self._seconds
+
+    def _n_ns(self) -> int:
+        return self._seconds * 1_000_000_000 + self._nanosecond
+
+    def __sub__(self, other: "Time") -> Duration:
+        return Duration(self._n_ns() - other._n_ns())
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, Time) and self._n_ns() == other._n_ns()
+
+    def __lt__(self, other: "Time") -> bool:
+        return self._n_ns() < other._n_ns()
+
+    def __le__(self, other: "Time") -> bool:
+        return self._n_ns() <= other._n_ns()
+
+    def __hash__(self) -> int:
+        return hash(self._n_ns())
+
+    def __repr__(self) -> str:
+        return f"Time({self._seconds}s, {self._nanosecond}ns)"
 
 
-def get_time() -> DateTime:
-    """Return the current calendar time (Nim: getTime())."""
-    return DateTime(int(_time.time()))
+def _n_time_from_ns(ns: int) -> Time:
+    return Time(ns // 1_000_000_000, ns % 1_000_000_000)
+
+
+def get_time() -> Time:
+    """Nim: getTime — the current time (nanosecond resolution)."""
+    return _n_time_from_ns(_time.time_ns())
 
 getTime = get_time
 
 
-def from_unix(ts: int) -> DateTime:
-    """Return DateTime from unix timestamp in seconds (Nim: fromUnix)."""
-    return DateTime(int(ts))
+def toUnix(t: Time) -> int:
+    """Nim: toUnix — whole seconds since the Unix epoch."""
+    return t.to_unix()
+
+to_unix = toUnix
+
+
+def nanosecond(t: Time) -> int:
+    """Nim: nanosecond(t) — the nanoseconds within the second."""
+    return t.nanosecond
+
+
+def from_unix(ts: int) -> Time:
+    """Nim: fromUnix — the Time of a Unix timestamp in seconds."""
+    return Time(int(ts))
 
 fromUnix = from_unix
 
 
-def utc(dt: DateTime | None = None) -> DateTime:
-    """Return DateTime in UTC (Nim: utc)."""
-    if dt is None:
-        return get_time()
-    return dt
+def utc(t: Time | DateTime | None = None) -> DateTime:
+    """Nim: utc — the DateTime of a Time (now without one)."""
+    if t is None:
+        t = get_time()
+    return DateTime(t.to_unix()) if isinstance(t, Time) else t
 
 
-def local(dt: DateTime | None = None) -> DateTime:
-    """Return DateTime in local time (Nim: local)."""
-    if dt is None:
-        return get_time()
-    return dt
+def local(t: Time | DateTime | None = None) -> DateTime:
+    """Nim: local — the DateTime of a Time in local time (now without one)."""
+    return utc(t)
 
 
 @dispatch
@@ -83,6 +135,12 @@ def format(dt: DateTime, fmt: string) -> string:
     py_fmt = py_fmt.replace("ss", "%S")
     t = _pydatetime.fromtimestamp(dt._unix, tz=_timezone.utc)
     return string(t.strftime(py_fmt))
+
+@dispatch
+def format(t: Time, fmt: string) -> string:
+    """Nim: format(time, f) — the Time formatted as its DateTime (local)."""
+    return format(local(t), fmt)
+
 
 format_time = format
 

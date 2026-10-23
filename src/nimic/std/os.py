@@ -5,12 +5,14 @@ import os as _os
 import pathlib as _pathlib
 import shlex as _shlex
 import shutil as _shutil
+import time as _time
 from sys import stdout, stderr
 import sys
 from io import TextIOWrapper
 from enum import Enum
 from nimic.ntypes import char, string, seq, dispatch, defined, ufcs
 from nimic.ntypesystem import _n_os_arg, _n_os_result
+from nimic.std.times import Time as _NTime
 
 from nimic.std.syncio import read_file, read_file_bytes, write_buffer, set_file_pos, open
 
@@ -336,6 +338,40 @@ def quoteShellWindows(s: string) -> string:
 def quoteShell(path: string) -> string:
     """Nim: quoteShell — quoteShellWindows on Windows, quoteShellPosix elsewhere."""
     return quoteShellWindows(path) if defined("windows") else quoteShellPosix(path)
+
+
+def getLastModificationTime(file: string):
+    """Nim: getLastModificationTime — the file's last modification time (a times.Time, nanoseconds)."""
+    ns = _os.stat(_n_os_arg(file)).st_mtime_ns
+    return _NTime(ns // 1_000_000_000, ns % 1_000_000_000)
+
+
+def moveFile(source: string, dest: string) -> None:
+    """Nim: moveFile — move (rename) source to dest, replacing dest; across file systems a copy and a remove.
+    OSError when it fails."""
+    try:
+        _os.replace(_n_os_arg(source), _n_os_arg(dest))
+    except OSError as e:
+        if e.errno != 18:  # EXDEV: another file system
+            raise
+        _shutil.copy2(_n_os_arg(source), _n_os_arg(dest))
+        _os.remove(_n_os_arg(source))
+
+
+def existsOrCreateDir(dir: string) -> bool:
+    """Nim: existsOrCreateDir — true if dir existed; else it is created (the parent must exist) and false."""
+    try:
+        _os.mkdir(_n_os_arg(dir))
+        return False
+    except FileExistsError:
+        if not _os.path.isdir(_n_os_arg(dir)):
+            raise
+        return True
+
+
+def sleep(milsecs: int) -> None:
+    """Nim: os.sleep — sleep milsecs milliseconds."""
+    _time.sleep(int(milsecs) / 1000)
 
 
 def quoteShellCommand(args) -> string:
