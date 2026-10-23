@@ -38,6 +38,16 @@ from nimic.inliner import template, template_expand, do, TemplateBlockError
 
 from nimic.nsystem import (
     alloc_shared0,
+    alloc,
+    alloc0,
+    realloc,
+    realloc0,
+    dealloc,
+    create,
+    createU,
+    resize,
+    GC_ref,
+    GC_unref,
     dealloc_shared,
     write_bytes,
     cast,

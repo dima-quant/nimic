@@ -240,6 +240,9 @@ Memory primitives are strongly enforced to mirror Nim.
 | `c_malloc(csize_t(size))` | `c_malloc(csize_t(size))` | allocators |
 | `allocShared0(size)` | `alloc_shared0(size)` | shared memory allocator |
 | `deallocShared(p)` | `dealloc_shared(p)` | shared memory deallocator |
+| `alloc(n)`, `alloc0(n)`, `realloc(p, n)`, `realloc0(p, old, n)`, `dealloc(p)`, `create(T, n)`, `createU(T, n)`, `resize(p, n)` | the same names | Nim's allocator: blocks of raw memory seen through casts (`cast[ptr[UncheckedArray[T]]](alloc0(n))`). Python zero-fills `alloc` (Nim doesn't: don't read before writing). `dealloc` of anything but a block's start is a `ValueError` (Nim: undefined behavior); the pointer stays dangling, not nil. `realloc(nil, n)` is `alloc(n)`, `realloc(p, 0)` frees `p` and is nil |
+| `GC_ref(x)`, `GC_unref(x)` | the same names | Keep a ref alive that only raw memory refers to. More `GC_unref`s than `GC_ref`s is a `ValueError` |
+| a `ref` field of an object in raw memory (`owner.pool = b.pool` through `ptr CursorOwnerObj`) | the same | A ref field is nil by default. Every view of the memory (casts, derefs) reads the same ref. Written through a view of `alloc`'d memory, the slot keeps the ref alive until it is overwritten or the block is freed (`realloc` moves it along). `copyMem` copies a ref without keeping it alive, as in Nim; a ref that died behind a slot is a `ReferenceError` |
 | `writeBytes(f, data, 0, len)` | `write_bytes(f, data, 0, len)` | writing bytes to file |
 | `cast[int](p) + 4` | `cast[intp](p) + 4` | `intp` supports pointer arithmetic in nimic. |
 | `cast[uint](p) + 4` | `cast[uintp](p) + 4` | `uintp` supports pointer arithmetic in nimic. |

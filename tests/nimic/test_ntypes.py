@@ -337,6 +337,130 @@ class TestNTypes(unittest.TestCase):
 
         c_free(mem)
 
+    def test_nim_allocator(self):
+        """Nim's alloc / alloc0 / realloc / dealloc / create / resize (nsystem): blocks of raw memory, seen
+        through casts; realloc keeps the content; dealloc of anything but a block's start is a ValueError
+        (Nim: undefined behavior) and leaves the pointer dangling, not nil."""
+        p = alloc0(4 * 4)
+        a = cast[ptr[UncheckedArray[int32]]](p)
+        for i in range(4):
+            self.assertEqual(int(a[i]), 0)
+            a[i] = int32(i + 1)
+        q = realloc(p, 8 * 4)
+        b = cast[ptr[UncheckedArray[int32]]](q)
+        self.assertEqual([int(b[i]) for i in range(8)], [1, 2, 3, 4, 0, 0, 0, 0])
+        with self.assertRaises(ValueError):
+            dealloc(p)  # p was freed by realloc
+        self.assertNotEqual(p._n_addr, 0)  # dangling, not nil
+        r = realloc(q, 2 * 4)
+        c = cast[ptr[UncheckedArray[int32]]](r)
+        self.assertEqual([int(c[i]) for i in range(2)], [1, 2])
+        dealloc(r)
+        with self.assertRaises(ValueError):
+            dealloc(r)
+        inner = alloc(16)
+        with self.assertRaises(ValueError):
+            dealloc(addr(cast[ptr[UncheckedArray[int32]]](inner)[1]))  # not a block's start
+        dealloc(inner)
+        n = realloc(None, 3)  # realloc(nil, n) is alloc(n)
+        self.assertTrue(isNil(realloc(n, 0)))  # realloc(p, 0) frees p
+        dealloc(alloc(0))  # alloc(0) is a block of its own
+        z = realloc0(alloc(2), 2, 6)
+        self.assertEqual([int(cast[ptr[UncheckedArray[uint8]]](z)[i]) for i in range(6)], [0] * 6)
+        dealloc(z)
+
+        class _TPair(Object):
+            a: int32
+            b: int32
+
+        pairs = create(_TPair, 2)
+        pairs.contents.a = int32(7)
+        self.assertEqual(int(cast[ptr[_TPair]](pairs).contents.a), 7)
+        pairs = resize(pairs, 4)
+        self.assertEqual(int(pairs.contents.a), 7)
+        dealloc(pairs)
+
+    def test_gc_ref_unref(self):
+        """GC_ref(x) keeps x alive while only raw memory refers to it; GC_unref undoes one GC_ref (more
+        GC_unrefs than GC_refs is a ValueError: Nim would free a live object)."""
+        import gc
+        import weakref
+
+        @ref
+        class _TPool(Object):
+            n: nint
+
+        pool = _TPool(n=nint(1))
+        alive = weakref.ref(pool)
+        GC_ref(pool)
+        GC_ref(pool)
+        del pool
+        gc.collect()
+        self.assertIsNotNone(alive())
+        GC_unref(alive())
+        self.assertIsNotNone(alive())
+        GC_unref(alive())
+        gc.collect()
+        self.assertIsNone(alive())
+        with self.assertRaises(ValueError):
+            GC_unref(_TPool())
+        GC_ref(None)  # nil: nothing to keep
+        GC_unref(None)
+
+    def test_refs_in_c_storage(self):
+        """A ref field of a ctypes-backed object is nil by default (Nim), and holds a handle in its slot: every
+        view of the memory (casts, derefs) reads the same ref. Written through a view of raw memory (alloc),
+        the slot keeps the ref alive until it is overwritten or the block is freed; realloc moves it along.
+        A slot whose ref died is a ReferenceError (Nim: a dangling ref)."""
+        import gc
+        import weakref
+
+        @ref
+        class _TRefPool(Object):
+            n: nint
+
+        class _TOwnerObj(Object):
+            rc: nint
+            pool: _TRefPool
+
+        self.assertIsNone(_TOwnerObj().pool)
+        self.assertIsNone(default(_TOwnerObj).pool)
+        mem = alloc0(sizeof(_TOwnerObj))
+        cast[ptr[_TOwnerObj]](mem).contents.pool = _TRefPool(n=nint(7))  # only the raw memory refers to it
+        gc.collect()
+        again = cast[ptr[_TOwnerObj]](mem).contents.pool
+        self.assertEqual(int(again.n), 7)
+        self.assertIs(cast[ptr[_TOwnerObj]](mem).contents.pool, again)
+        alive = weakref.ref(again)
+        del again
+        mem = realloc(mem, sizeof(_TOwnerObj) * 2)  # the pin moves with the content
+        gc.collect()
+        self.assertIsNotNone(alive())
+        self.assertIs(cast[ptr[_TOwnerObj]](mem).contents.pool, alive())
+        cast[ptr[_TOwnerObj]](mem).contents.pool = None  # overwriting the slot releases it
+        gc.collect()
+        self.assertIsNone(alive())
+        self.assertIsNone(cast[ptr[_TOwnerObj]](mem).contents.pool)
+        second = _TRefPool(n=nint(8))
+        cast[ptr[_TOwnerObj]](mem).contents.pool = second
+        alive = weakref.ref(second)
+        del second
+        dealloc(mem)  # freeing the block releases its refs
+        gc.collect()
+        self.assertIsNone(alive())
+        # an owning object keeps its refs itself; a view of its memory reads them by handle
+        owner = _TOwnerObj(pool=_TRefPool(n=nint(9)))
+        self.assertEqual(int(cast[ptr[_TOwnerObj]](addr(owner)).contents.pool.n), 9)
+        # a ref that died behind a slot: dangling
+        mem = alloc0(sizeof(_TOwnerObj))
+        holder = _TOwnerObj(pool=_TRefPool(n=nint(1)))
+        copyMem(mem, addr(holder), sizeof(_TOwnerObj))  # raw copy: the handle, no pin (as Nim: no count)
+        del holder
+        gc.collect()
+        with self.assertRaises(ReferenceError):
+            cast[ptr[_TOwnerObj]](mem).contents.pool
+        dealloc(mem)
+
     def test_object_array_cast(self):
         # Simulate memory allocation for Objects
 
@@ -4155,6 +4279,14 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(destroyed, [1, 2])  # c was moved out: it no longer owns
         del a
         self.assertEqual(destroyed, [1, 2, 3])
+        # an owner's own ctypes buffer is released too, as for every Object (_Object.__del__)
+        d = _TBuf(n=nint(4))
+        addr = d.__dict__.get("_n_owned_addr")
+        self.assertIsNotNone(addr)
+        self.assertIn(addr, BUFFER_REGISTRY)
+        del d
+        self.assertNotIn(addr, BUFFER_REGISTRY)
+        self.assertEqual(destroyed, [1, 2, 3, 4])
 
     def test_concepts(self):
         """rule:concept: `class C(Concept): pass` is Nim 2's universal `C = concept x`; signatures in the body are

@@ -74,6 +74,7 @@ import sys
 import textwrap
 import types
 import warnings
+import weakref
 from enum import IntEnum, StrEnum, Enum
 from string import Template
 from typing import Sequence, TypeAliasType
@@ -799,15 +800,18 @@ _n_hook_errors: list = []  # the failures of `=destroy` hooks (Python only print
 
 
 def _n_finalize(self) -> None:
-    """__del__ of a class with a `=destroy` hook: run it for an owning object."""
-    if self.__dict__.get("_n_owner_id") != id(self) or sys.is_finalizing():
-        return
-    del self.__dict__["_n_owner_id"]
+    """__del__ of a class with a `=destroy` hook: run it for an owning object, then release the object's
+    own ctypes buffer as every Object does (_Object.__del__)."""
     try:
-        type(self)._n_hooks["destroy"](self)
-    except BaseException as e:
-        _n_hook_errors.append(f"=destroy of {type(self).__name__}: {e!r}")
-        raise
+        if self.__dict__.get("_n_owner_id") == id(self) and not sys.is_finalizing():
+            del self.__dict__["_n_owner_id"]
+            try:
+                type(self)._n_hooks["destroy"](self)
+            except BaseException as e:
+                _n_hook_errors.append(f"=destroy of {type(self).__name__}: {e!r}")
+                raise
+    finally:
+        _Object.__del__(self)
 
 
 def _n_register_hook(cls: type, name: str, fn: callable) -> None:
@@ -1723,6 +1727,87 @@ class BufferRegistry:
 
 
 BUFFER_REGISTRY = BufferRegistry()
+
+
+# --- Raw memory and refs in C storage ---
+# A ref field of a ctypes-backed object holds a handle in its c_void_p slot: the ref's id, found again through
+# _n_refs_by_handle (weak). So every view of the memory (a cast, a deref, a copy made with copyMem) reads the same
+# ref. An owning object keeps its refs alive in its own __dict__; a ref written through a view of raw memory
+# (alloc, alloc0, realloc) is pinned to its slot, as a Nim field keeps it, until the slot is overwritten or the
+# block is deallocated.
+
+_n_refs_by_handle: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+
+
+def _n_ref_handle(value: object) -> int:
+    """The handle of a ref stored in C memory: 0 for nil, else its id (registered)."""
+    if value is None:
+        return 0
+    _n_refs_by_handle[id(value)] = value
+    return id(value)
+
+
+def _n_ref_from_handle(handle: int | None) -> object:
+    """The ref a C slot's handle names; None for nil; ReferenceError if it died (a dangling ref)."""
+    if not handle:
+        return None
+    ref = _n_refs_by_handle.get(handle)
+    if ref is None:
+        raise ReferenceError(f"dangling ref in C storage (handle {handle:#x}): the object was freed")
+    return ref
+
+
+class _NRawMemory:
+    """The blocks of alloc / alloc0 / realloc (start -> size), sorted for address lookup, with the refs
+    pinned to their slots (slot address -> ref)."""
+
+    def __init__(self):
+        self._starts: list[int] = []
+        self._sizes: dict[int, int] = {}
+        self._pins: dict[int, dict[int, object]] = {}
+
+    def add(self, start: int, size: int) -> None:
+        bisect.insort(self._starts, start)
+        self._sizes[start] = size
+        self._pins[start] = {}
+
+    def remove(self, start: int) -> dict[int, object]:
+        """Forget the block starting at `start` (ValueError if none does); returns its pins."""
+        if start not in self._sizes:
+            raise ValueError(f"dealloc: {start:#x} is not the start of an allocated block")
+        self._starts.pop(bisect.bisect_left(self._starts, start))
+        del self._sizes[start]
+        return self._pins.pop(start)
+
+    def size(self, start: int) -> int:
+        if start not in self._sizes:
+            raise ValueError(f"realloc: {start:#x} is not the start of an allocated block")
+        return self._sizes[start]
+
+    def block_of(self, address: int) -> int | None:
+        """The start of the block containing `address`, or None."""
+        i = bisect.bisect_right(self._starts, address) - 1
+        if i >= 0 and address < self._starts[i] + self._sizes[self._starts[i]]:
+            return self._starts[i]
+        return None
+
+    def pin(self, slot: int, ref: object) -> None:
+        """Keep `ref` alive for the slot at `slot` if it lies in a block (None unpins)."""
+        start = self.block_of(slot)
+        if start is None:
+            return
+        if ref is None:
+            self._pins[start].pop(slot, None)
+        else:
+            self._pins[start][slot] = ref
+
+    def move_pins(self, old_start: int, new_start: int, pins: dict[int, object], size: int) -> None:
+        """realloc: the pins of the old block, at the same offsets in the new one (inside its size)."""
+        self._pins[new_start].update({new_start + (slot - old_start): ref for slot, ref in pins.items()
+                                      if slot - old_start < size})
+
+
+_N_RAW_MEMORY = _NRawMemory()
 
 class Ntype:
     _n_view: object = None  # ctypes view of the memory
@@ -3022,6 +3107,10 @@ class _Object(Ntype):
             # For @ptr classes, sync ptr field addresses back to ctypes struct
             ptr_fields = getattr(self.__class__, '_n_ptr_fields', set())
             if ptr_fields and name in ptr_fields and hasattr(self, '_n_view') and self._n_view is not None:
+                if getattr(self._n_field_types.get(name), '_n_is_ref', False):
+                    self._n_store_ref(name, value)
+                    super().__setattr__(name, value)
+                    return
                 # Store address in ctypes c_void_p field + keep Python reference
                 if isinstance(value, NilPtr) or value is None:
                     setattr(self._n_view, name, 0)
@@ -3085,6 +3174,13 @@ class _Object(Ntype):
         for name in list(self._n_fields):
             self._n_bind_field(name, other)
 
+    def _n_store_ref(self, name: str, value: object) -> None:
+        """Write ref field `name` to the view: the ref's handle in its slot; written through a view of raw
+        memory (not the object's own buffer), the slot also keeps the ref alive (_N_RAW_MEMORY.pin)."""
+        setattr(self._n_view, name, _n_ref_handle(value))
+        if '_n_owned_addr' not in self.__dict__:
+            _N_RAW_MEMORY.pin(ctypes.addressof(self._n_view) + getattr(type(self._n_view), name).offset, value)
+
     def _n_bind_field(self, name: str, other: Object | None) -> None:
         """Bind field `name` to the view (ctypes-side) or set it (python-side), copying the
         value from `other` when given."""
@@ -3127,10 +3223,18 @@ class _Object(Ntype):
             if other is not self:
                 value = _n_value_copy(value)  # Nim assignment copies values (string, seq, objects)
             super(_Object, self).__setattr__(name, value)
+            if (getattr(field_cls, '_n_is_ref', False) and getattr(self, '_n_view', None) is not None
+                    and name in getattr(type(self), '_n_ptr_fields', ())):
+                self._n_store_ref(name, value)
         elif getattr(field_cls, '_n_is_calltype', False):
             super(_Object, self).__setattr__(name, None)
         elif is_class and DICT_OF_TYPES.get('pointer') and issubclass(field_cls, pointer):
             super(_Object, self).__setattr__(name, NilPtr(self._n_annotations.get(name, '')))
+        elif getattr(field_cls, '_n_is_ref', False):
+            # a ref field is nil by default (Nim); a view reads the ref its slot names
+            view = getattr(self, '_n_view', None)
+            handle = getattr(view, name, None) if view is not None and name in getattr(type(self), '_n_ptr_fields', ()) else None
+            super(_Object, self).__setattr__(name, _n_ref_from_handle(handle))
         elif name not in python_fields and field_cls is not None:
             # Non-seq python field with a default constructor
             super(_Object, self).__setattr__(name, field_cls())

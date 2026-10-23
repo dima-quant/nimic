@@ -70,6 +70,108 @@ allocShared0 = alloc_shared0
 deallocShared = dealloc_shared
 
 
+# --- Nim's allocator: alloc, alloc0, realloc, dealloc, create, resize (raw memory, ntypesystem._N_RAW_MEMORY) ---
+
+def _n_address(p) -> int:
+    """The address a pointer value holds (0 for nil)."""
+    if p is None or isinstance(p, _ntypesystem.NilPtr):
+        return 0
+    return int(getattr(p, "_n_addr", 0) or 0)
+
+
+def alloc(size: int) -> _ntypesystem.pointer:
+    """Nim: alloc(size) — a block of `size` bytes, freed with dealloc. Python fills it with zeros (Nim leaves
+    it uninitialized: don't read before writing). alloc(0) is a valid block of its own."""
+    n = int(size)
+    if n < 0:
+        raise ValueError(f"alloc: negative size {n}")
+    buf = (ctypes.c_char * max(n, 1))()
+    start = _ntypesystem.BUFFER_REGISTRY.register(buf)
+    _ntypesystem._N_RAW_MEMORY.add(start, n)
+    return _ntypesystem.pointer(_ntypesystem.byte_buffer(buf))
+
+
+def alloc0(size: int) -> _ntypesystem.pointer:
+    """Nim: alloc0(size) — a zero-filled block of `size` bytes."""
+    return alloc(size)
+
+
+def dealloc(p) -> None:
+    """Nim: dealloc(p) — free a block of alloc / alloc0 / realloc (ValueError for any other address, Nim's
+    undefined behavior); the refs pinned to its slots are released. `p` keeps its address (dangling, as in
+    Nim)."""
+    start = _n_address(p)
+    _ntypesystem._N_RAW_MEMORY.remove(start)
+    _ntypesystem.BUFFER_REGISTRY.free(start)
+
+
+def realloc(p, newSize: int) -> _ntypesystem.pointer:
+    """Nim: realloc(p, newSize) — the block grown or shrunk to newSize bytes, its content kept up to the
+    smaller size (a new address; p is freed). realloc(nil, n) is alloc(n); realloc(p, 0) frees p and is nil."""
+    start = _n_address(p)
+    n = int(newSize)
+    if start == 0:
+        return alloc(n)
+    old_size = _ntypesystem._N_RAW_MEMORY.size(start)
+    if n == 0:
+        dealloc(p)
+        return _ntypesystem.NilPtr("pointer")
+    result = alloc(n)
+    ctypes.memmove(result._n_addr, start, min(old_size, n))
+    pins = _ntypesystem._N_RAW_MEMORY.remove(start)
+    _ntypesystem._N_RAW_MEMORY.move_pins(start, result._n_addr, pins, n)
+    _ntypesystem.BUFFER_REGISTRY.free(start)
+    return result
+
+
+def realloc0(p, oldSize: int, newSize: int) -> _ntypesystem.pointer:
+    """Nim: realloc0(p, oldSize, newSize) — realloc with the bytes after oldSize zeroed."""
+    result = realloc(p, newSize)
+    if int(newSize) > int(oldSize) and _n_address(result):
+        ctypes.memset(result._n_addr + int(oldSize), 0, int(newSize) - int(oldSize))
+    return result
+
+
+def create(T: type, size: int = 1):
+    """Nim: create(T, size = 1) — a zero-filled ptr T to `size` values of T (alloc0)."""
+    return _ntypesystem.ptr[T]._n_cast(alloc0(sizeof(T) * int(size)))
+
+
+def createU(T: type, size: int = 1):
+    """Nim: createU(T, size = 1) — create without zeroing (zero-filled in Python, see alloc)."""
+    return create(T, size)
+
+
+def resize(p, newSize: int):
+    """Nim: resize(p, newSize) — realloc of a ptr T to newSize values of T."""
+    return type(p)._n_cast(realloc(p, sizeof(type(p)._n_contents_type) * int(newSize)))
+
+
+# --- GC_ref / GC_unref: keep a ref alive that only raw memory refers to (nifcore's CursorOwner pools) ---
+
+_n_gc_roots: dict[int, list] = {}  # id(ref) -> [ref, count]
+
+
+def GC_ref(x) -> None:
+    """Nim: GC_ref(x) — one more count keeping x alive (here: a strong reference, released by GC_unref)."""
+    if x is None:
+        return
+    entry = _n_gc_roots.setdefault(id(x), [x, 0])
+    entry[1] += 1
+
+
+def GC_unref(x) -> None:
+    """Nim: GC_unref(x) — undo one GC_ref (ValueError without one: in Nim it would free a live object)."""
+    if x is None:
+        return
+    entry = _n_gc_roots.get(id(x))
+    if entry is None or entry[0] is not x:
+        raise ValueError(f"GC_unref of a {type(x).__name__} without a matching GC_ref")
+    entry[1] -= 1
+    if entry[1] == 0:
+        del _n_gc_roots[id(x)]
+
+
 def write_bytes(f, data, start: int, count: int) -> int:
     """Nim: writeBytes — write count bytes from data starting at offset start to file f.
     Returns number of bytes written."""
