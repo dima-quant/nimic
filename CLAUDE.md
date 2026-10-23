@@ -35,7 +35,7 @@ When module conversion agents translate modules from Nim to Python (`ncompiler/*
 - Temporary or exploratory test scripts must be placed in `tests/scratch/` or `.scratch/`.
 
 ### Python Environment & Tooling
-- Always use the virtual environment Python interpreter: `.venv/bin/python` (Python 3.12+).
+- Always use the virtual environment Python interpreter: `.venv/bin/python` (Python 3.14+).
 - Run unit tests with `unittest`:
   ```bash
   .venv/bin/python -m unittest tests/nimic/test_ntypes.py

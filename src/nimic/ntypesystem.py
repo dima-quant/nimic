@@ -955,6 +955,8 @@ class _DispatchedCallable:
         self.__code__ = getattr(orig_fn, "__code__", None)
         self.__defaults__ = getattr(orig_fn, "__defaults__", None)
         self.__globals__ = getattr(orig_fn, "__globals__", {})
+        # Python 3.14 (PEP 649): update_wrapper copies __annotate__, no longer __annotations__
+        self.__annotations__ = getattr(orig_fn, "__annotations__", {})
 
     def __call__(self, *args, **kwargs):
         return self._n_target(*args, **kwargs)
