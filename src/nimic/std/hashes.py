@@ -3,11 +3,10 @@ import builtins
 import struct
 
 from nimic.ntypesystem import (NIntEnum, NStrEnum, SomeFloat, SomeInteger, _n_item_type, char, cstring, dispatch,
-                               nord, openArray, string)
+                               nint, nord, openArray, string)
 
 
-class Hash(int):
-    pass
+Hash = nint  # Nim: type Hash* = int (an alias: `cast[Hash](x)`, `Hash(0) + 1`, a hash is an int)
 
 
 _MASK64 = (1 << 64) - 1

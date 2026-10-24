@@ -22,6 +22,12 @@ Scope qualifiers:
   rule:dropwith -> drop "with" for "const", "let", "var", "export", "block", "static"; a block or static body
     is a scope (its variables are not exported, also at module level)
   rule:writeexport -> write no parentheses for "export" by assigning low priority
+  rule:looptemplate -> for _ in c.loopInto(): body (a template running its code block in a loop) is the block
+    call c.loopInto(): body, as `with` is for a template running its block once
+  rule:operator -> @operator("+!") def plus_bang(...) is proc `+!`*(...); its calls plus_bang(a, b) / a.plus_bang(b)
+    are a +! b (Nim's precedence of the operator), plus_bang(a) is +!a, a bare plus_bang is `+!`; calls of
+    @operator procs of other modules are found through the registry
+  rule:exportoperator -> an operator in `with export:` is named by its dunder: lineinfos.__eq__ -> lineinfos.`==`
   feature:subscriptrename -> subscript can be renamed if in keywords_no_with context ("const", "let", "var", "export")
 
 Type system:
@@ -111,7 +117,8 @@ Operators & renaming:
   rule:funcrename -> rename functions "print" to "echo", "str" to "$"
   rule:stringjoin -> replace "f" by "&"
   rule:literaltypes -> write as type suffix u64(0x9e3779b97f4a7c15) -> 0x9e3779b97f4a7c15'u64; also uint64(c) / uint(c)
-    with a constant above high(int64): 18446744073709551615'u64
+    with a constant above high(int64): 18446744073709551615'u64; a non-literal argument (u32(i)) raises
+    SyntaxError: a conversion is written uint32(i)
   rule:char -> chars written as ch("#") transpile as char literals '#'; so does char("#") (a one-char
     string constant), the spelling where a local named `ch` shadows ch()
   rule:latin1literal -> str literals are byte views: chars 0x80-0xFF emit as \\xNN ("é" -> "\\xE9"),
@@ -947,6 +954,8 @@ class _Unparser(NodeVisitor):
         self._set_low_precedence = ["export"]
         self._class_def_methods = []
         self._type_suffixes = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"] #, "u", "f", "d"]
+        self._suffix_types = {"i8": "int8", "i16": "int16", "i32": "int32", "i64": "int64", "u8": "uint8",
+                              "u16": "uint16", "u32": "uint32", "u64": "uint64", "f32": "float32", "f64": "float64"}
         self._func_rename = {"print": "echo", "str": "$"}
         self._subscript_rename = {} # if var or let context
         self._const_rename = {"True": "true", "False": "false", "None": "nil"}  # rule:lowercasebool
@@ -955,6 +964,8 @@ class _Unparser(NodeVisitor):
         self._declared_classes = set()
         self._concepts = {"Concept"}  # rule:concept: Concept and the concepts the module defines
         self._hook_procs = {}  # rule:hook: Python name of a @hook proc -> its hook (`copy`)
+        self._block_templates = set()  # rule:looptemplate: names of templates with code blocks
+        self._operator_procs = {}  # rule:operator: Python name of an @operator proc -> its Nim operator (`+!`)
         self._import_paths = set()  # rule:import: the Nim paths imported so far
 
     def interleave(self, inter, f, seq):
@@ -1149,6 +1160,14 @@ class _Unparser(NodeVisitor):
         # rule:hook: a call of a hook proc by its Python name (`_destroyCursor(dest)`) is the hook's Nim name
         self._hook_procs = {fn.name: hook for fn in ast.walk(node)
                             if isinstance(fn, FunctionDef) and (hook := self._hook_name(fn)) is not None}
+        # rule:looptemplate: templates with code blocks, of this module and of the imported ones (the registry)
+        self._block_templates = set(getattr(self._type_registry, "block_templates", None) or ())
+        self._block_templates.update(fn.name for fn in ast.walk(node)
+                                     if isinstance(fn, FunctionDef) and self._is_block_template_def(fn))
+        # rule:operator: @operator("+!") procs of this module and of the imported ones (the registry)
+        self._operator_procs = dict(getattr(self._type_registry, "operators", None) or {})
+        self._operator_procs.update({fn.name: op for fn in ast.walk(node)
+                                     if isinstance(fn, FunctionDef) and (op := self._operator_name(fn)) is not None})
         self._type_ignores = {
             ignore.lineno: f"ignore{ignore.tag}"
             for ignore in node.type_ignores
@@ -1935,6 +1954,10 @@ class _Unparser(NodeVisitor):
            decl_str = "iterator"
         is_module_level = (self._scope_depth <= 1)
         name_str = self._adjust_name(func_name, definition=is_module_level and not is_private)  # rule:localname
+        operator_name = self._operator_name(node)
+        if operator_name is not None:
+            # rule:operator -> @operator("+!") def plus_bang(...) is proc `+!`*(...) (private: def _plus_bang)
+            name_str = f"`{operator_name}`" + ("*" if name_str.endswith("*") else "")
         hook_name = self._hook_name(node)
         if hook_name is not None:
             # rule:hook -> @hook("copy") def _copyMangler(...) is the lifetime hook proc `=copy`
@@ -1999,6 +2022,27 @@ class _Unparser(NodeVisitor):
         """The hook of a def decorated @hook("copy") (`copy`), else None."""
         for d in node.decorator_list:
             if (isinstance(d, Call) and isinstance(d.func, Name) and d.func.id == "hook" and len(d.args) == 1
+                    and isinstance(d.args[0], Constant) and isinstance(d.args[0].value, str)):
+                return d.args[0].value
+        return None
+
+    @staticmethod
+    def _is_block_template_def(fn) -> bool:
+        """An @template whose last parameter is typed/untyped and used as a bare statement (inliner's
+        _n_block_params)."""
+        if not any(isinstance(d, Name) and d.id == "template" for d in fn.decorator_list) or not fn.args.args:
+            return False
+        last = fn.args.args[-1]
+        if not (isinstance(last.annotation, Name) and last.annotation.id in ("typed", "untyped")):
+            return False
+        return any(isinstance(n, (Expr, Return)) and isinstance(n.value, Name) and n.value.id == last.arg
+                   for n in ast.walk(fn))
+
+    @staticmethod
+    def _operator_name(node) -> str | None:
+        """The Nim operator of a def decorated @operator("+!") (`+!`), else None."""
+        for d in node.decorator_list:
+            if (isinstance(d, Call) and isinstance(d.func, Name) and d.func.id == "operator" and len(d.args) == 1
                     and isinstance(d.args[0], Constant) and isinstance(d.args[0].value, str)):
                 return d.args[0].value
         return None
@@ -2078,7 +2122,20 @@ class _Unparser(NodeVisitor):
         self.traverse(node.value)
 
     def visit_For(self, node):
+        if (isinstance(node.target, Name) and node.target.id == "_" and isinstance(node.iter, Call)
+                and not node.orelse and self._is_block_template_call(node.iter)):
+            # rule:looptemplate -> for _ in c.loopInto(): body  is  c.loopInto(): body (a block template
+            # running its block in a loop), written as the `with` form
+            self.visit_With(ast.copy_location(With(items=[withitem(context_expr=node.iter)], body=node.body), node))
+            return
         self._for_helper("for ", node)
+
+    def _is_block_template_call(self, call) -> bool:
+        """A call of a template with code blocks: of this module (an @template whose last parameter is
+        typed/untyped and used as a bare statement) or of an imported one (the registry)."""
+        func = call.func
+        name = func.id if isinstance(func, Name) else func.attr if isinstance(func, Attribute) else None
+        return name in self._block_templates
 
     def visit_AsyncFor(self, node):
         self._for_helper("async for ", node)
@@ -2388,7 +2445,16 @@ class _Unparser(NodeVisitor):
                 self.write(":")
                 self._write_fstring_inner(node.format_spec, is_format_spec=True)
 
+    def _in_export(self) -> bool:
+        return bool(self._context_stack) and self._context_stack[-1] == "export"
+
     def visit_Name(self, node):
+        if self._in_export() and node.id in self.dunder_ops:
+            self.write(self.dunder_ops[node.id])  # rule:exportoperator -> with export: __eq__  is  export `==`
+            return
+        if isinstance(node.ctx, Load) and node.id in self._operator_procs:
+            self.write(f"`{self._operator_procs[node.id]}`")  # rule:operator: the proc as a value
+            return
         if isinstance(node.ctx, Load) and node.id in self._hook_procs:
             self.write(f"`={self._hook_procs[node.id]}`")  # rule:hook
             return
@@ -2722,6 +2788,39 @@ class _Unparser(NodeVisitor):
     # rule:namedops -> prefix operators spelled as calls
     prefix_named_ops = {"finish_hash": "!$", "back": "^"}  # back(n): Nim's ^n (BackwardsIndex)
 
+    @staticmethod
+    def _nim_operator_precedence(op: str):
+        """The precedence of a Nim operator (Nim manual, "Precedence"), as the nearest _Precedence level:
+        an operator ending in `=` (not a comparison) or an arrow `->` / `=>` / `~>` is an assignment-like
+        operator, the lowest; otherwise its first character decides."""
+        if (op.endswith("=") and op not in ("<=", ">=", "==", "!=") and op[0] not in "<>=!") or \
+                (len(op) > 1 and op.endswith(">") and op[-2] in "-=~"):
+            return _Precedence.TEST
+        first = op[0]
+        if first in "$^":
+            return _Precedence.POWER
+        if first in "*%\\/":
+            return _Precedence.TERM
+        if first in "+-~|":
+            return _Precedence.ARITH
+        if first == "&":
+            return _Precedence.SHIFT
+        if first == ".":
+            return _Precedence.BAND
+        if first in "=<>!":
+            return _Precedence.CMP
+        return _Precedence.TEST  # @ : ?
+
+    def _write_operator_call(self, op, node, args):
+        """rule:operator -> an @operator proc called with two arguments is infix, with one prefix."""
+        if len(args) == 2:
+            self._write_infix(op, self._nim_operator_precedence(op), node, args[0], args[1])
+        else:
+            with self.require_parens(_Precedence.FACTOR, node):
+                self.write(op)
+                self.set_precedence(_Precedence.ATOM, args[0])
+                self.traverse(args[0])
+
     def _write_infix(self, operator, precedence, node, left, right):
         """Emit `left operator right` for a call-spelled binary operator (left-associative),
         parenthesized when the surrounding context binds tighter."""
@@ -2794,7 +2893,10 @@ class _Unparser(NodeVisitor):
         # it or add an extra space to get 3 .__abs__().
         if isinstance(node.value, Constant) and isinstance(node.value.value, int):
             self.write(" ")
-        if node.attr in self._attribute_replace:
+        if self._in_export() and node.attr in self.dunder_ops:
+            # rule:exportoperator -> with export: lineinfos.__eq__  is  export lineinfos.`==`
+            self.write("." + self.dunder_ops[node.attr])
+        elif node.attr in self._attribute_replace:
             # rule:deref and rule:copy
             self.write(self._attribute_replace[node.attr])
         else:
@@ -2818,10 +2920,19 @@ class _Unparser(NodeVisitor):
             self.write(f"{node.args[0].value}'{'u64' if node.func.id == 'uint64' else 'u'}")
             return
         if isinstance(node.func, Name) and node.func.id in self._type_suffixes:
-            # rule:literaltypes
-            self.traverse(node.args[0]) # should be only one argument
-            self.write("'")
-            self.traverse(node.func)
+            arg = node.args[0]  # should be only one argument
+            num = arg.operand if isinstance(arg, UnaryOp) and isinstance(arg.op, USub) else arg
+            if isinstance(num, Constant) and type(num.value) in (int, float):
+                # rule:literaltypes -> u32(5) is the literal 5'u32
+                self.traverse(arg)
+                self.write("'")
+                self.traverse(node.func)
+            else:
+                # rule:literaltypes -> a suffix call is a literal only; a conversion is spelled with the type
+                line = f"line {node.lineno}: " if hasattr(node, "lineno") else ""
+                raise SyntaxError(
+                    f"{line}{node.func.id}(...) takes a numeric literal (it is Nim's suffix, 5'{node.func.id}); "
+                    f"write the conversion as {self._suffix_types[node.func.id]}(...)")
         elif isinstance(node.func, Name) and node.func.id == "cell" and len(node.args) == 1 and not node.keywords:
             # rule:cell -> cell(x), the variable of an enum member passed as `var`, is the value x in Nim
             self.traverse(node.args[0])
@@ -2857,6 +2968,14 @@ class _Unparser(NodeVisitor):
             self.traverse(node.args[0])
             self.write(" .. ")
             self.traverse(node.args[1])
+        elif (isinstance(node.func, Name) and node.func.id in self._operator_procs and not node.keywords
+              and len(node.args) in (1, 2)):
+            # rule:operator -> plus_bang(c, 1) is c +! 1, a one-argument call the prefix form
+            self._write_operator_call(self._operator_procs[node.func.id], node, node.args)
+        elif (isinstance(node.func, Attribute) and node.func.attr in self._operator_procs and not node.keywords
+              and len(node.args) <= 1):
+            # rule:operator -> method form c.plus_bang(1) is c +! 1
+            self._write_operator_call(self._operator_procs[node.func.attr], node, [node.func.value, *node.args])
         elif isinstance(node.func, Name) and node.func.id in self.percent_ops and len(node.args) == 2:
             # rule:percentops -> plus_percent(a, b) / minus_percent(a, b) translate to a +% b / a -% b
             self._write_infix(*self.percent_ops[node.func.id], node, node.args[0], node.args[1])

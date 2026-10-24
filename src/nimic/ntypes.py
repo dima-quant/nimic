@@ -98,9 +98,12 @@ from nimic.nsystem import (
     slurp,
     staticRead,
     hook,
+    operator,
+    astToStr,
     pragma,
     emit,
     block,
+    const,
     static,
     breakBlock,
     _n_setup_stdio,
@@ -241,7 +244,6 @@ def default(T: type) -> object:
 discard = None
 
 # compiler hints
-const = contextlib.nullcontext()
 let = contextlib.nullcontext()
 var = contextlib.nullcontext()
 Type = contextlib.nullcontext()

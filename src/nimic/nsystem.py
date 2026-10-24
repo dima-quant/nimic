@@ -4,7 +4,9 @@ import codecs
 import ctypes
 import ctypes.util as _ctypes_util
 import functools as _functools
+import ast as _ast
 import io
+import linecache as _linecache
 import os
 import importlib as _importlib
 import re as _re
@@ -13,6 +15,7 @@ import resource as _resource
 import traceback as _traceback
 import shutil as _shutil
 import sys
+from sys import getrefcount as _sys_getrefcount
 import types as _types
 from enum import StrEnum, auto
 from typing import Generator, TypeVar
@@ -683,6 +686,79 @@ def hook(name: str):
     return mark
 
 
+_n_internal_files = {os.path.dirname(os.path.abspath(__file__))}  # nimic's own frames (dispatch, templates)
+_n_parsed_sources: dict = {}  # source text -> its parsed AST (astToStr)
+
+
+def _n_call_at(frame) -> object:
+    """The ast.Call a frame is executing (Python 3.11+ instruction positions), or None without source."""
+    return _n_node_at(frame, _ast.Call)
+
+
+def _n_node_at(frame, node_type: type) -> object:
+    """The node of `node_type` whose source span is that of the frame's current instruction, or None
+    (no source, or no such node)."""
+    positions = list(frame.f_code.co_positions())
+    if frame.f_lasti // 2 >= len(positions):
+        return None
+    line, end_line, col, end_col = positions[frame.f_lasti // 2]
+    text = "".join(_linecache.getlines(frame.f_code.co_filename))
+    if text not in _n_parsed_sources:  # keyed by the text: a re-expanded or edited source is parsed again
+        try:
+            _n_parsed_sources[text] = _ast.parse(text) if text else None
+        except SyntaxError:
+            _n_parsed_sources[text] = None
+    tree = _n_parsed_sources[text]
+    if tree is None:
+        return None
+    return next((n for n in _ast.walk(tree) if isinstance(n, node_type) and (n.lineno, n.end_lineno, n.col_offset,
+                 n.end_col_offset) == (line, end_line, col, end_col)), None)
+
+
+def astToStr(x: object) -> string:
+    """Nim: astToStr(x) — the source text of the expression `x`; of a template parameter, the text of the
+    argument the template was called with. In Python it is the Python text of that expression (ast.unparse),
+    so it can differ in spelling from Nim's rendering (`cursorTagId(c)` vs `c.cursorTagId`): it is a
+    diagnostic, as in nimony (test messages, `onRaiseQuit`). Without source (code run by exec) it falls back
+    to `$x`. A template expanded inline (@template_expand) gets the text at expansion (inliner)."""
+    frame = sys._getframe(1)
+    call = _n_call_at(frame)
+    if call is None or len(call.args) != 1:
+        return string(str(x))
+    arg = call.args[0]
+    code = frame.f_code
+    params = code.co_varnames[:code.co_argcount + code.co_kwonlyargcount]
+    if isinstance(arg, _ast.Name) and code in _ntypesystem._n_template_codes and arg.id in params:
+        caller = frame.f_back
+        while caller is not None and os.path.dirname(os.path.abspath(caller.f_code.co_filename)) in _n_internal_files:
+            caller = caller.f_back
+        tcall = _n_call_at(caller) if caller is not None else None
+        if tcall is not None:
+            args = ([tcall.func.value] if isinstance(tcall.func, _ast.Attribute) else []) + list(tcall.args)
+            index = params.index(arg.id)
+            node = next((k.value for k in tcall.keywords if k.arg == arg.id),
+                        args[index] if index < len(args) else None)
+            if node is not None:
+                return string(_ast.unparse(node))
+    return string(_ast.unparse(arg))
+
+
+def operator(spelling: str):
+    """Nim: a custom operator, proc `+!`*(c: Cursor; diff: int). A Python name can't spell it, so the proc
+    gets a name in letters and this decorator its Nim spelling: `@operator("+!") def plus_bang(c, diff)`.
+    The transpiler writes the definition as `+!` and every call of `plus_bang` (also from other modules,
+    through the registry) as the operator: `plus_bang(c, 1)` / `c.plus_bang(1)` is `c +! 1`, a one-argument
+    call is the prefix form. In Python the proc stays a normal, callable proc (rule:operator)."""
+    if not spelling or any(ch.isalnum() or ch in "_`'\"()[]{},;" or ch.isspace() for ch in spelling):
+        raise ValueError(f"@operator: {spelling!r} is not a Nim operator")
+
+    def mark(fn):
+        fn._n_operator = spelling
+        _ntypesystem._n_registry.operators[fn.__name__] = spelling
+        return fn
+    return mark
+
+
 def _n_hooked_type(fn, frame) -> object:
     """The type a hook belongs to: its first parameter's (`dest: mut @ T`, `src: T`), looked up where the
     hook is defined (the defining frame's locals, the function's globals, the registered types)."""
@@ -1127,25 +1203,75 @@ class _BlockBreak(Exception):
         self._n_label = label
 
 
-class _LabeledBlock:
-    def __init__(self, label: str):
-        self._n_label = label
+def _n_frame_bindings(frame) -> dict:
+    """name -> id(value) of a frame's variables (a module's globals at module level)."""
+    return {name: id(value) for name, value in frame.f_locals.items()}
+
+
+class _Scope:
+    """The variables a `with` body binds: the frame's names it adds or rebinds (snapshots at enter and exit;
+    nested scopes keep their own snapshots)."""
+
+    def __init__(self) -> None:
+        self._n_stack = []
 
     def __enter__(self):
+        frame = sys._getframe(1)
+        self._n_stack.append((frame, _n_frame_bindings(frame)))
         return None
 
+    def _n_bound(self) -> tuple:
+        """Pop this scope: its frame and the names its body bound, in the frame's order."""
+        frame, before = self._n_stack.pop()
+        return frame, [name for name, value in frame.f_locals.items() if before.get(name) != id(value)]
+
+
+class _Const(_Scope):
+    """Nim `const` section (`with const:`, rule:dropwith). The values it binds are frozen: changing one in
+    place through an alias (`x = C; x += 1`, `x <<= y`, a field store) raises TypeError, as Nim's `var x = C`
+    copies (write `C.copy()`)."""
+
+    def __exit__(self, exc_type, *exc):
+        frame, names = self._n_bound()
+        if exc_type is None:
+            for name in names:
+                value = frame.f_locals[name]
+                if hasattr(value, "_n_freeze"):
+                    value._n_freeze(name)
+        return False
+
+
+def _n_end_lifetimes(frame, names: list) -> None:
+    """A Nim scope ends: the owning values with a `=destroy` hook that its variables hold are destroyed, the
+    last declared first. A value something else still references (returned, bound to an outer variable,
+    stored) escapes the scope, as Nim moves it out; CPython destroys it when it is freed."""
+    for name in reversed(names):
+        value = frame.f_locals.get(name)
+        holders = sum(1 for other in frame.f_locals.values() if other is value)
+        # getrefcount's argument, `value`, and the frame's slots that hold it
+        if _sys_getrefcount(value) <= 2 + holders:
+            _ntypesystem._n_destroy_owned(value)
+
+
+class _LabeledBlock(_Scope):
+    def __init__(self, label: str):
+        super().__init__()
+        self._n_label = label
+
     def __exit__(self, exc_type, exc, tb):
+        frame, names = self._n_bound()
+        _n_end_lifetimes(frame, names)
         return isinstance(exc, _BlockBreak) and exc._n_label == self._n_label
 
 
-class _Block:
+class _Block(_Scope):
     """Nim `block:` (`with block:`, a scope) and `block name:` (`with block("name"):`, rule:dropwith /
-    rule:labeledblock); `breakBlock("name")` leaves the named block (Nim `break name`)."""
-
-    def __enter__(self):
-        return None
+    rule:labeledblock); `breakBlock("name")` leaves the named block (Nim `break name`). At its end the
+    variables it declared end their lifetimes: their `=destroy` hooks run (_n_end_lifetimes)."""
 
     def __exit__(self, *exc):
+        frame, names = self._n_bound()
+        _n_end_lifetimes(frame, names)
         return False
 
     def __call__(self, label: str) -> _LabeledBlock:
@@ -1153,6 +1279,7 @@ class _Block:
 
 
 block = _Block()
+const = _Const()
 
 
 class _Static:

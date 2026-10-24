@@ -1824,6 +1824,141 @@ class TestNTypes(unittest.TestCase):
             raiseAssert("test message")
 
 
+    def test_untyped_parameter_takes_distinct_argument(self):
+        """An `untyped` template parameter takes every argument, a @distinct one too (bitabs' `isFilled`
+        called with a `TagId`); a typed parameter still rejects it."""
+        @distinct
+        class _DId(uint32):
+            pass
+
+        @template
+        def is_filled(x: untyped) -> bool:
+            return uint32(x) != u32(0)
+
+        @dispatch
+        def typed_only(x: uint32) -> bool:
+            return True
+
+        self.assertTrue(is_filled(_DId(u32(3))))
+        self.assertFalse(is_filled(_DId(u32(0))))
+        self.assertTrue(is_filled(u32(1)))
+        self.assertTrue(_match_subtype("_DId", "untyped"))
+        with self.assertRaises(NotImplementedError):
+            typed_only(_DId(u32(3)))
+
+    def test_suffix_call_takes_literal_only(self):
+        """u32(5) / u32(-1) are the literals 5'u32 / -1'u32; u32(x) of a non-literal is rejected (a conversion
+        is written uint32(x)), instead of transpiling to the invalid x'u32."""
+        out = unparse(ast.parse("from nimic.ntypes import *\n"
+                                "def f(i: nint) -> uint32:\n"
+                                "    return u32(5) + u32(-1) + uint32(i) + f32(2.5).u32\n"))[0]
+        self.assertIn("5'u32 + -1'u32 + uint32(i)", out)
+        self.assertIn("2.5'f32", out)
+        for expr in ("u32(i)", "u32(p >> u64(1))", "f64(x.y)"):
+            with self.assertRaises(SyntaxError) as cm:
+                unparse(ast.parse(f"from nimic.ntypes import *\ndef f(i, p, x):\n    return {expr}\n"))
+            self.assertIn("conversion", str(cm.exception))
+        self.assertIn("float64(...)", str(cm.exception))  # the last one, f64(x.y)
+
+    def test_export_of_operator(self):
+        """`with export:` names another module's operator by its dunder: lineinfos.__eq__ is
+        lineinfos.`==` (Nim's `export lineinfos.`==``); other attributes keep their names."""
+        out = unparse(ast.parse("from nimic.ntypes import *\nfrom . import lineinfos\n"
+                                "with export:\n    lineinfos.FileId, lineinfos.__eq__, lineinfos.__str__, lineinfos.hash\n"
+                                "def f(a, b) -> bool:\n    return a.__eq__(b)\n"))[0]
+        self.assertIn("lineinfos.FileId, lineinfos.`==`, lineinfos.`$`, lineinfos.hash", out)
+        self.assertNotIn("a.`==`", out)  # outside `with export:` an attribute keeps its name
+
+    def test_operator_decorator(self):
+        """@operator("+!") gives a letter-named proc its Nim operator: Python calls it by name, the transpiler
+        writes the definition as `+!` and its calls as the operator, with Nim's precedence (first character)
+        and parentheses where needed; a one-argument call is the prefix form; a private proc stays unexported;
+        procs of other modules are found through the registry."""
+        @operator("+!")
+        def plus_bang_t(a: nint, b: nint) -> nint:
+            return a + b
+
+        self.assertEqual(plus_bang_t(nint(1), nint(2)), 3)
+        self.assertEqual(_n_registry.operators["plus_bang_t"], "+!")
+        with self.assertRaises(ValueError):
+            operator("plus")
+        src = ("from nimic.ntypes import *\n"
+               "@operator('+!')\ndef plus_bang(c: nint, diff: nint) -> nint:\n    return c + diff\n"
+               "@operator('!&')\ndef _mix(h: nint, v: nint) -> nint:\n    return h\n"
+               "@operator('$$')\ndef dd(h: nint) -> nint:\n    return h\n"
+               "def g(a: nint) -> nint:\n"
+               "    x = plus_bang(a, 1) * 2\n"
+               "    y = a.plus_bang(plus_bang(1, 2))\n"
+               "    z = _mix(a, 1) == 3\n"
+               "    w = dd(a + 1)\n"
+               "    f = plus_bang\n"
+               "    return plus_bang(x + 1, y)\n")
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("proc `+!`*(c: int, diff: int): int =", out)
+        self.assertIn("proc `!&`(h: int, v: int): int =", out)
+        self.assertIn("x = (a +! 1) * 2", out)
+        self.assertIn("y = a +! (1 +! 2)", out)
+        self.assertIn("z = (a !& 1) == 3", out)
+        self.assertIn("w = $$(a + 1)", out)
+        self.assertIn("f = `+!`", out)
+        self.assertIn("return x + 1 +! y", out)
+        # a call of another module's operator proc: found through the registry passed to unparse
+        out = unparse(ast.parse("from nimic.ntypes import *\ndef h(a: nint) -> nint:\n    return plus_bang_t(a, 2)\n"),
+                      _n_registry)[0]
+        self.assertIn("return a +! 2", out)
+
+    def test_ast_to_str(self):
+        """astToStr(x) is the source text of x; of a template parameter, the text of the call's argument
+        (positional, keyword or method-call form), also in an inline-expanded template. Python spells the
+        expression in Python (a diagnostic, as in nimony); the transpiler keeps Nim's astToStr."""
+        n = nint(5)
+        self.assertEqual(astToStr(n + 2), "n + 2")
+        self.assertIsInstance(astToStr(n), string)
+        self.assertEqual(_tAstText(n * 3, n - 1), "n * 3 / n - 1")
+        self.assertEqual(_tAstText(expected=len("ab"), x=n), "n / len('ab')")
+        self.assertEqual(_tUsesAstText(nint(1)), "n * (2 + 1)")
+        self.assertEqual(_tUsesSetAstText(nint(1)), "n + 1")
+        self.assertIn("result = string('n + 1')", _tUsesSetAstText._n_source)
+        out = unparse(ast.parse("from nimic.ntypes import *\n@template\ndef t(a: untyped) -> string:\n"
+                                "    return astToStr(a)\n"))[0]
+        self.assertIn("astToStr(a)", out)
+
+    def test_dollar_of_distinct_scalar(self):
+        """A `$` (__str__ returning a nimic string) defined on a scalar subclass works with str() and
+        echo, as on Object and enums."""
+        @distinct
+        class _DTag(uint32):
+            def __str__(self) -> string:
+                return string("tag") + string(str(uint32(self)))
+
+        self.assertEqual(str(_DTag(u32(3))), "tag3")
+        self.assertEqual(f"{_DTag(u32(4))}", "tag4")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            echo(_DTag(u32(5)))
+        self.assertEqual(buf.getvalue(), "tag5\n")
+        self.assertEqual(str(u32(7)), "7")  # builtin scalars keep their `$`
+
+    def test_seq_pop(self):
+        """Nim's pop removes the last element and returns it; IndexDefect on an empty seq."""
+        s = seq[nint]([1, 2, 3])
+        x = s.pop()
+        self.assertEqual(x, 3)
+        self.assertEqual(len(s), 2)
+        s.add(9)  # the popped value is not a view into the reused slot
+        self.assertEqual(x, 3)
+        self.assertEqual(s.pop(), 9)
+        names = seq[string]([string("a"), string("b")])
+        self.assertEqual(names.pop(), "b")
+        self.assertEqual(len(names), 1)
+        empty = seq[nint]([])
+        with self.assertRaises(IndexDefect):
+            empty.pop()
+        out = unparse(ast.parse("from nimic.ntypes import *\n"
+                                "def f(s: mut @ seq[nint]) -> nint:\n"
+                                "    return s.pop()\n"))[0]
+        self.assertIn("s.pop()", out)
+
     # ------------------------------------------------------------------ #
     #  Tests for unified type relationships (alias / distinct / inherit)  #
     # ------------------------------------------------------------------ #
@@ -4309,6 +4444,162 @@ class TestNTypes(unittest.TestCase):
             def _tNoType(x: nint):
                 pass
 
+    def test_loop_template(self):
+        """A template that runs its code block in a loop (nifcore's loopInto) is called with `for _ in t():`,
+        one iteration per run of the block. `break` leaves the template's loop and the template finishes
+        (Nim's `break` in the expanded body); `return` and exceptions leave the template where it is. `with`
+        still rejects it (a block run twice). The transpiler writes the block call `t(3):`."""
+        log = []
+
+        @template
+        def loopTo(n: nint, body: untyped):
+            with var:
+                i = 0
+            while i < n:
+                body
+                i += 1
+            log.append(f"end {i}")
+
+        def plain():
+            for _ in loopTo(3):
+                log.append("b")
+
+        def stops():
+            for _ in loopTo(5):
+                log.append("b")
+                if len(log) == 2:
+                    break
+            log.append("after")
+
+        def returns():
+            for _ in loopTo(5):
+                return "r"
+
+        plain()
+        self.assertEqual(log, ["b", "b", "b", "end 3"])
+        log.clear()
+        stops()
+        self.assertEqual(log, ["b", "b", "end 1", "after"])
+        log.clear()
+        self.assertEqual(returns(), "r")
+        with self.assertRaises(ValueError):
+            for _ in loopTo(5):
+                raise ValueError
+        self.assertEqual(log, [])  # neither returns nor exceptions finish the template
+        with self.assertRaises(TemplateBlockError):
+            with loopTo(2):
+                pass
+        out = unparse(ast.parse("from nimic.ntypes import *\n@template\ndef loopTo(n: nint, body: untyped):\n"
+                                "    while n > 0:\n        body\n"
+                                "def f(c: nint):\n    for _ in loopTo(3):\n        echo(1)\n"
+                                "    for _ in c.loopTo():\n        break\n    for _ in range(3):\n        pass\n"))[0]
+        self.assertIn("  loopTo(3):\n    echo(1)", out)
+        self.assertIn("  c.loopTo():\n    break", out)
+        self.assertIn("for _ in range(3):", out)  # other loops are not template calls
+
+    def test_pointer_to_object_is_the_object(self):
+        """Dereferencing a pointer to an object whose address was taken gives that object, also after casts
+        and pointer arithmetic (nifcore's `cast[ptr TokenBuf](unsafeAddr b)[]`): its Python-held fields (a
+        ref, a seq) are the object's, so a store through the pointer is seen by the object."""
+        @ref
+        class _TPRef(Object):
+            n: nint
+
+        class _TPBox(Object):
+            count: nint
+            owner: _TPRef
+            items: seq[nint]
+
+        box = _TPBox(count=nint(1), owner=None, items=seq[nint]([]))
+        through = cast[ptr[_TPBox]](cast[uintp](unsafe_addr(box)))
+        self.assertIs(through.contents, box)
+        through.contents.owner = _TPRef(n=nint(7))
+        through.contents.items.add(nint(3))
+        through.contents.count += 1
+        self.assertEqual((box.owner.n, len(box.items), box.count), (7, 1, 2))
+        self.assertIs(cast[ptr[_TPBox]](addr(box)).contents, box)
+
+    def test_block_ends_lifetimes(self):
+        """`with block:` / `with block("name"):` end the lifetimes of the variables they declare, as Nim's
+        scopes: an owning value with a `=destroy` hook is destroyed at the block's end, the last declared
+        first, once (not again when CPython frees it). A value that escapes the block (returned, bound to an
+        outer variable) is not destroyed there, as Nim moves it out."""
+        log = []
+
+        class _TScoped(Object):
+            tag: nint
+
+        @hook("destroy")
+        def _tScopedDestroy(x: mut @ _TScoped):
+            log.append(int(x.tag))
+
+        def scoped():
+            with block:
+                with var:
+                    a = _TScoped(tag=1)
+                    b = _TScoped(tag=2)
+                log.append(0)
+            log.append(-1)  # after the block: both destroyed, b first
+            with block("named"):
+                with var:
+                    c = _TScoped(tag=3)
+                breakBlock("named")
+            log.append(-2)
+            with var:
+                kept = None
+            with block:
+                with var:
+                    d = _TScoped(tag=4)
+                kept = d  # escapes into an outer variable: not destroyed by the block
+            log.append(-3)
+            with block:
+                with var:
+                    e = _TScoped(tag=5)
+                return e  # returned: not destroyed by the block
+
+        e = scoped()
+        self.assertEqual(log[:6], [0, 2, 1, -1, 3, -2])
+        self.assertNotIn(5, log)
+        self.assertEqual(e.tag, 5)
+        del e
+        self.assertEqual(log.count(5), 1)  # destroyed once, when CPython frees it
+        self.assertEqual(log.count(1) + log.count(2) + log.count(3), 3)  # not again at the proc's end
+
+    def test_const_values_are_frozen(self):
+        """Values bound in `with const:` are frozen: a variable aliasing a constant and changed in place
+        (`x += 1`, `x <<= y`, a field store, an in-place change of a field) raises TypeError naming the
+        constant and `.copy()`, instead of changing the constant. Copies, rebinding and reads work."""
+        class _TCPoint(Object):
+            x: nint
+            y: int32
+
+        with const:
+            _CBits = u32(28)
+            _COrigin = _TCPoint(x=nint(0), y=i32(0))
+        with var:
+            shift = _CBits
+        with self.assertRaises(TypeError) as cm:
+            shift += _CBits
+        self.assertIn("_CBits.copy()", str(cm.exception))
+        self.assertEqual(_CBits, 28)
+        with var:
+            last = _COrigin
+        for change in (lambda: last.__ilshift__(_TCPoint(x=nint(7), y=i32(1))),
+                       lambda: setattr(last, "x", nint(7)),
+                       lambda: last.y.__iadd__(1)):
+            with self.assertRaises(TypeError):
+                change()
+        self.assertEqual((_COrigin.x, _COrigin.y), (0, 0))
+        with var:
+            own = _CBits.copy()
+            mine = _COrigin.copy()
+        own += _CBits
+        mine <<= _TCPoint(x=nint(7), y=i32(1))
+        mine.y += 1
+        self.assertEqual((own, mine.x, mine.y, _CBits, _COrigin.x), (56, 7, 2, 28, 0))
+        shift = shift + 1  # rebinding the variable is no change of the constant
+        self.assertEqual((shift, _CBits), (29, 28))
+
     def test_lifetime_hooks_count_references(self):
         """Lifetime hooks at run time (ncompiler/proposals/feature_lifetime_hooks_runtime.md): one owning
         object is one Nim value. A handle counts its owner's references as nifcore's Cursor does: `=dup` /
@@ -5159,6 +5450,22 @@ def addWord(b: mut@Builder, w: string) -> None:
             h2 = mix_hash(h2, ord(ch(c)))
         self.assertEqual(finish_hash(h2), hashIgnoreStyle(string("Lexer")))
 
+    def test_hash_is_an_int_alias(self):
+        """std/hashes `Hash` is Nim's `type Hash* = int`: an alias of nint, so hashes are nint values,
+        `cast[Hash](x)` reinterprets 64 bits, `Hash(0) + 1` is int arithmetic and a proc taking `Hash` takes
+        an nint (and the reverse)."""
+        self.assertIs(Hash, nint)
+        self.assertIsInstance(nhash(string("abc")), nint)
+        self.assertEqual(cast[Hash](u64(0x9E3779B97F4A7C15)), -7046029254386353131)
+        self.assertEqual(Hash(5) + 1, 6)
+
+        @dispatch
+        def takes_hash(h: Hash) -> nint:
+            return h + 1
+
+        self.assertEqual(takes_hash(nint(41)), 42)
+        self.assertEqual(takes_hash(nhash(string("x"))), nhash(string("x")) + 1)
+
     def test_transpile_hash_operators(self):
         """rule:percentops -> std/hashes' operators spelled as calls: mix_hash(h, v) is `h !& v`,
         finish_hash(h) is `!$h`."""
@@ -6006,6 +6313,36 @@ with push("overflowChecks: off"):
         _tAddImpl()
         return result
 
+
+
+@template
+def _tAstText(x: untyped, expected: untyped) -> string:
+    """A typed template: called as a proc in Python."""
+    return astToStr(x) + string(" / ") + astToStr(expected)
+
+
+@template
+def _tAstTextDirty(x: untyped) -> untyped:
+    """{.dirty.}"""
+    return astToStr(x)
+
+
+@template_expand
+def _tUsesAstText(n: nint) -> string:
+    return _tAstTextDirty(n * (2 + 1))
+
+
+@template
+def _tSetAstText(x: untyped):
+    """{.dirty.}"""
+    result = astToStr(x)
+
+
+@template_expand
+def _tUsesSetAstText(n: nint) -> string:
+    result = string("")
+    _tSetAstText(n + 1)  # expanded inline: astToStr(x) becomes the argument's text at expansion
+    return result
 
 if __name__ == '__main__':
     unittest.main()

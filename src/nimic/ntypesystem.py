@@ -333,6 +333,7 @@ _n_protocol_subtypes: dict = {
 
 # Inlined templates registry shared with nimic.inliner
 _n_templates: dict = {}
+_n_template_codes: set = set()  # code objects of @template procs (astToStr of a template parameter)
 
 # Nim `{.pragma: name, p1, p2.}`: module name -> {alias: the pragma items it stands for}
 _n_pragma_aliases: dict[str, dict[str, list[str]]] = {}
@@ -585,19 +586,21 @@ def _match_subtype(arg_type_name: str, sig_type_name: str) -> bool:
     - arg satisfies a protocol that sig declares (e.g. seq satisfies openArray)
     - arg is a class-hierarchy subtype of sig (inheritance / object-of)
 
+    - sig is `untyped` (any argument, a @distinct one too)
+
     Returns False if:
     - arg is a @distinct type (distinct types only match via converter, not subtype)
     """
     if arg_type_name == sig_type_name:
         return True
-    # Distinct types never match via subtype — only via converter
-    if arg_type_name in _n_distinct_types:
-        return False
     # Resolve aliases to canonical names (e.g. nint → int64, int → int32)
     arg_canonical = _n_aliases.get(arg_type_name, arg_type_name)
     sig_canonical = _n_aliases.get(sig_type_name, sig_type_name)
     if sig_canonical == "untyped":
-        return True
+        return True  # an untyped parameter takes every argument, distinct ones too
+    # Distinct types never match via subtype — only via converter
+    if arg_type_name in _n_distinct_types:
+        return False
     if arg_canonical == sig_canonical:
         return True
     # None (nil in Nim) matches the nilable types only: ref, ptr, pointer, proc
@@ -846,6 +849,24 @@ def _n_finalize(self) -> None:
                 raise
     finally:
         _Object.__del__(self)
+
+
+def _n_destroy_owned(x) -> bool:
+    """Run the `=destroy` hook of an owning value now (a Nim scope ends), so it doesn't run again when CPython
+    frees it. Returns whether it ran (not for views, non-owners or types without the hook)."""
+    hooks = getattr(type(x), "_n_hooks", None)
+    if not (isinstance(x, _Object) and hooks and "destroy" in hooks and x.__dict__.get("_n_owner_id") == id(x)):
+        return False
+    del x.__dict__["_n_owner_id"]
+    hooks["destroy"](x)
+    return True
+
+
+def _n_frozen_setter(name: str) -> callable:
+    def frozen(*_args) -> None:
+        raise TypeError(f"constant `{name}` changed through an alias: a variable bound to a constant needs "
+                        f"its own value, `{name.split('.')[0]}.copy()` (Nim's `var x = {name.split('.')[0]}` copies)")
+    return frozen
 
 
 def _n_register_hook(cls: type, name: str, fn: callable) -> None:
@@ -1580,6 +1601,8 @@ class NTypeRegistry:
     def __init__(self) -> None:
         self.types = {}  # name → Python class
         self.c_types = {}  # name → ctypes struct type
+        self.operators = {}  # Python name of an @operator proc → its Nim spelling (`plus_bang` → `+!`)
+        self.block_templates = set()  # names of templates with code blocks (`for _ in c.loopInto():`)
 
     def _ensure_registered(self, resolved: type) -> type:
         """Register a specialization unless it already is (Object specializations register
@@ -2942,6 +2965,9 @@ class _Object(Ntype):
                 return NilPtr(cls.__name__)
         else:
             address = ctypes.addressof(instance)
+        addressed = _n_addressed_objects.get((address, cls))
+        if addressed is not None:
+            return addressed  # the object whose address was taken: one value, with its Python-held fields
         # Create Object backed by this memory
         class_name = cls.__name__
         if class_name in DICT_OF_C_TYPES:
@@ -3189,7 +3215,22 @@ class _Object(Ntype):
             self._n_fields = list(self.__annotations__)
         self._n_set_value(value)
 
+    def _n_freeze(self, name: str) -> None:
+        """Make this value a constant's (`with const:`): field stores, `<<=` and in-place changes of its
+        fields raise TypeError. A ref is not a value and stays mutable."""
+        if getattr(type(self), "_n_is_ref", False) or "_n_frozen" in self.__dict__:
+            return
+        object.__setattr__(self, "_n_frozen", name)
+        object.__setattr__(self, "_n_set_value", _n_frozen_setter(name))
+        for field in self.__dict__.get("_n_fields", ()):
+            value = self.__dict__.get(field)
+            if hasattr(value, "_n_freeze"):
+                value._n_freeze(f"{name}.{field}")
+
     def __setattr__(self, name: str, value: object) -> None:
+        frozen = self.__dict__.get("_n_frozen")
+        if frozen is not None and name in self.__dict__.get("_n_fields", ()):
+            _n_frozen_setter(f"{frozen}.{name}")()
         layout = type(self).__dict__.get('_n_variant_layout') or getattr(type(self), '_n_variant_layout', None)
         if layout is not None and name in layout.fields and '_n_discs' in self.__dict__:
             self._n_check_variant_access(name, value)
@@ -4045,6 +4086,19 @@ class seq(Ntype):
 
     setLen = set_len
 
+    def pop(self) -> object:
+        """Nim: pop — remove the last element and return it (IndexDefect on an empty seq)."""
+        n = len(self)
+        if n == 0:
+            raise IndexDefect("index -1 not in 0 .. -1")
+        if self._n_is_list:
+            return self._n_list.pop()
+        item = self[n - 1]
+        if not getattr(type(item), "_n_is_ref", False) and callable(getattr(item, "copy", None)):
+            item = item.copy()  # the element's storage is reused by the next add
+        self.set_len(n - 1)
+        return item
+
     def new_seq(self, new_len: int) -> None:
         """Nim: newSeq — allocate and set length (zero-initialized)."""
         if self._n_is_list:
@@ -4600,9 +4654,17 @@ def _resolve_addr(instance) -> int:
     return ctypes.addressof(v)
 
 
+# (address, type) -> the object at that address whose address was taken (addr), weakly: dereferencing any
+# pointer to it (also after casts and pointer arithmetic, `cast[ptr T](unsafeAddr b)[]`) gives the object itself,
+# not a new view whose Python-held fields (refs, pointers, seqs, the fields of hooked types) are its own
+_n_addressed_objects: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+
+
 def addr(x: object) -> pointer:
     """For a variable of type T, addr(x) returns a pointer of type ptr[T],
-    such that addr(x).contents is x"""
+    such that addr(x).contents is x (also through casts of the pointer: _n_addressed_objects)"""
+    if isinstance(x, _Object) and getattr(x, "_n_view", None) is not None:
+        _n_addressed_objects[(ctypes.addressof(x._n_view), type(x))] = x
     if hasattr(x, '_n_ensure_view'):
         x._n_ensure_view()  # a standalone scalar gets storage of its own
     if hasattr(x, '_n_slot_addr') and x._n_slot_addr != 0:
@@ -4877,6 +4939,15 @@ def _n_is_number(x: object) -> bool:
 
 
 class NScalar:
+    def _n_freeze(self, name: str) -> None:
+        """Make this value a constant's (`with const:`): `<<=` and in-place operators raise TypeError."""
+        self._n_set_value = _n_frozen_setter(name)
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        if "__str__" in cls.__dict__:
+            cls.__str__ = _n_str_method(cls.__dict__["__str__"])  # a `$` defined in the class
+
     def _n_bind(
         self, get_value: callable, set_value: callable, get_addr: callable
     ) -> None:
@@ -5253,6 +5324,8 @@ class NScalar:
         return f"<{self._n_type.__name__}: {self._n_get_value()}>"
 
     def __format__(self, format_spec):
+        if not format_spec:
+            return str(self)  # strformat's `{x}` is `$x`: the class's own `$` if it defines one
         return format(self._n_get_value(), format_spec)
 
     def __trunc__(self):
@@ -5273,6 +5346,7 @@ class NFloat(NScalar):
     _n_rank = 10
 
     def __init_subclass__(cls):
+        super().__init_subclass__()
         if cls.__bases__[0].__name__ != "NFloat":
             cls._n_register_type()
 
@@ -5316,6 +5390,7 @@ def _n_trunc_mod(a, b):
 
 class NInteger(NScalar):
     def __init_subclass__(cls):
+        super().__init_subclass__()
         if cls._n_signed:
             _mask = (1 << cls._n_bits) - 1
             offset = 1 << (cls._n_bits - 1)

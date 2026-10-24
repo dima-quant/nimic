@@ -31,13 +31,17 @@ import ast
 import builtins
 import contextvars
 import copy
+import dis
 import inspect
+import linecache
+import sys
 import textwrap
 import types
 import warnings
 from functools import wraps
 
-from nimic.ntypesystem import dispatch, _n_routine_pragmas, _n_templates
+from nimic.ntypesystem import dispatch, _n_registry, _n_routine_pragmas, _n_templates, _n_template_codes
+from nimic.nsystem import _n_node_at
 
 
 class TemplateBlockError(RuntimeError):
@@ -106,10 +110,54 @@ class _BlockTemplateCall:
             return False
         raise TemplateBlockError(f"template {self._name} runs a block twice: not expressible with `with`")
 
+    def __iter__(self):
+        """`for _ in t(args):` — a template that runs its block in a loop (Nim `t(args): body` of a template
+        such as `loopInto`): one iteration per run of the block. A `break` leaves the template's loop and
+        the template finishes (Nim); a `return` or an exception leaves the template where it is (its
+        `finally` clauses run). A `continue` resumes the template after the block (Nim would skip the rest
+        of the template's loop body: the same when nothing follows the block there)."""
+        if self._n_blocks != 1:
+            raise TemplateBlockError(f"template {self._name} takes {self._n_blocks} blocks: `for` gives one")
+        self._entered = True
+        gen = self._gen_fn(*self._args)
+        try:
+            next(gen)
+        except StopIteration:
+            return  # the template didn't run its block
+        while True:
+            try:
+                yield
+            except GeneratorExit:
+                if _n_closed_by_break(sys._getframe(1)):
+                    try:
+                        gen.send(True)
+                    except StopIteration:
+                        return
+                    raise TemplateBlockError(f"template {self._name} runs its block after a `break` "
+                                             "(the block is not in the template's innermost loop)") from None
+                gen.close()
+                raise
+            try:
+                next(gen)
+            except StopIteration:
+                return
+
     def __del__(self):
         if not self._entered:
             warnings.warn(f"block template {self._name} called without `with`: its block never ran",
                           RuntimeWarning, stacklevel=2)
+
+
+def _n_closed_by_break(frame) -> bool:
+    """Whether the `for` loop running in `frame` drops its iterator because of a `break` (not a `return` or
+    an exception): the statement at the current instruction is the `break`, or the iterator is popped and
+    a jump follows. (A `break` inside `try`/`finally` that ends the function compiles like a `return`.)"""
+    if _n_node_at(frame, ast.Break) is not None:
+        return True
+    ops = list(dis.get_instructions(frame.f_code))
+    at = next((i for i, op in enumerate(ops) if op.offset == frame.f_lasti), None)
+    return (at is not None and ops[at].opname in ("POP_TOP", "POP_ITER") and at + 1 < len(ops)
+            and ops[at + 1].opname.startswith("JUMP"))
 
 
 class _DoBlock:
@@ -149,18 +197,33 @@ def _n_block_params(func_def: ast.FunctionDef, annotations: dict) -> list[str]:
 
 
 class _BlockYields(ast.NodeTransformer):
-    """Replace the bare statements `block` (and `return block`) by `yield <block index>`."""
+    """Replace the bare statements `block` (and `return block`) by `yield <block index>`. Inside a loop of
+    the template it is `if (yield <index>): break`: a `break` in the block of `for _ in t():` leaves the
+    template's loop, as Nim's `break` in the expanded body does (_BlockTemplateCall.__iter__ sends True)."""
 
     def __init__(self, blocks: list[str]):
         self.index = {name: i for i, name in enumerate(blocks)}
+        self.loops = 0
 
     def _maybe(self, node):
         if isinstance(node.value, ast.Name) and node.value.id in self.index:
-            return ast.copy_location(ast.Expr(ast.Yield(ast.Constant(self.index[node.value.id]))), node)
+            yield_ = ast.Yield(ast.Constant(self.index[node.value.id]))
+            if self.loops:
+                return ast.copy_location(ast.If(test=yield_, body=[ast.Break()], orelse=[]), node)
+            return ast.copy_location(ast.Expr(yield_), node)
         return node
 
     visit_Expr = _maybe
     visit_Return = _maybe
+
+    def _loop(self, node):
+        self.loops += 1
+        node.body = [self.visit(stmt) for stmt in node.body]
+        self.loops -= 1
+        node.orelse = [self.visit(stmt) for stmt in node.orelse]
+        return node
+
+    visit_While = visit_For = _loop
 
     def visit_FunctionDef(self, node):  # nested procs keep their own statements
         return node
@@ -221,6 +284,7 @@ def _n_make_block_template(template_func, func_def: ast.FunctionDef, blocks: lis
     factory.__doc__ = template_func.__doc__
     factory._n_globals = template_func.__globals__  # dispatch resolves annotations in the template's module
     factory._n_block_params = tuple(blocks)
+    _n_registry.block_templates.add(name)  # the transpiler writes `for _ in t(...):` as `t(...):`
     return factory
 
 
@@ -276,6 +340,7 @@ def _n_template_def(template_func):
 
 
 def template(template_func):
+    _n_template_codes.add(template_func.__code__)  # astToStr(param) in its body names the call's argument
     func_def = _n_template_def(template_func)
     if isinstance(func_def, ast.FunctionDef):
         blocks = _n_block_params(func_def, template_func.__annotations__)
@@ -336,6 +401,15 @@ class _ParameterReplacer(ast.NodeTransformer):
         return node
 
     def visit_Call(self, node):
+        if (isinstance(node.func, ast.Name) and node.func.id == "astToStr" and len(node.args) == 1
+                and isinstance(node.args[0], ast.Name) and node.args[0].id in self.arg_map):
+            # Nim's astToStr of a template parameter: the text of the call's argument (nsystem.astToStr)
+            text = ast.unparse(self.arg_map[node.args[0].id])
+            return ast.copy_location(ast.Call(func=ast.Name(id="string", ctx=ast.Load()),
+                                              args=[ast.Constant(text)], keywords=[]), node)
+        return self._visit_routine_param(node)
+
+    def _visit_routine_param(self, node):
         """A parameter used as a routine in method-call position: with `fun(incl)`, `conf.notes.op(note)`
         is `incl(conf.notes, note)` (Nim method call syntax). Call position (`self(v, result)`) is a
         plain Name and handled by visit_Name."""
@@ -495,7 +569,10 @@ def template_expand(target_func):
     # print("------------------------------------")
 
     exec_namespace = target_func.__globals__.copy()
-    exec(new_source_code, exec_namespace)
+    # the expanded source under a name of its own, so tracebacks and astToStr (call positions) can read it
+    filename = f"<template_expand {target_func.__module__}.{target_func.__qualname__}>"
+    linecache.cache[filename] = (len(new_source_code), None, new_source_code.splitlines(True), filename)
+    exec(compile(new_source_code, filename, "exec"), exec_namespace)
 
     new_func = exec_namespace[target_func.__name__]
     if not new_func.__code__.co_freevars:
