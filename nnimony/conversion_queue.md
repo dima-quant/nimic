@@ -24,21 +24,22 @@
 
 | Module | Size | Std imports (✗ = no nimic shim yet) | Agent |
 |---|---|---|---|
-| `lib/argsfinder` | 4,466 bytes | assertions, os, parseopt, strutils, syncio | brief_lib_batch7.md |
 | `lib/nifcdecl` | 10,477 bytes | assertions |  |
-| `lib/vfs` | 12,960 bytes | atomics, memfiles, os, syncio, times | brief_lib_batch7.md |
-| `lib/intrinsics` | 80,220 bytes |  | brief_lib_batch8.md |
+| `lib/legacy/nif26reader` | 13,861 bytes | assertions, memfiles, parseutils |  |
+| `lib/nifbuilder` | 16,576 bytes | assertions, formatfloat, math, strutils, syncio |  |
+| `lib/nifreader` | 38,779 bytes | assertions, memfiles, parseutils |  |
+| `lib/bif` | 52,325 bytes | assertions, strutils, syncio, varints |  |
 
-## All modules of `src/lib` (20/38 converted, 1 legacy)
+## All modules of `src/lib` (23/38 converted, 1 legacy)
 
 | Module | Tier | Size | Depends on | Std imports | Status |
 |---|---|---|---|---|---|
-| `lib/argsfinder` | 0 | 4,466 bytes |  | assertions, os, parseopt, strutils, syncio | 🔲 Pending |
+| `lib/argsfinder` | 0 | 4,466 bytes |  | assertions, os, parseopt, strutils, syncio | ✅ Converted |
 | `lib/bitabs` | 0 | 10,085 bytes |  | assertions, hashes | ✅ Converted |
 | `lib/comesfrom` | 0 | 5,495 bytes |  |  | ✅ Converted |
 | `lib/compat2` | 0 | 3,478 bytes |  | paths, tables | ✅ Converted |
 | `lib/docpaths` | 0 | 3,130 bytes |  | os, strutils | ✅ Converted |
-| `lib/intrinsics` | 0 | 80,220 bytes |  |  | 🔲 Pending |
+| `lib/intrinsics` | 0 | 80,220 bytes |  |  | ✅ Converted |
 | `lib/lineinfos` | 0 | 5,345 bytes |  | assertions, hashes | ✅ Converted |
 | `lib/nifroles` | 0 | 3,979 bytes |  |  | ✅ Converted |
 | `lib/nimversion` | 0 | 2,742 bytes |  | syncio | ✅ Converted |
@@ -49,7 +50,7 @@
 | `lib/tinyhashes` | 0 | 817 bytes |  |  | ✅ Converted |
 | `lib/tooldirs` | 0 | 1,265 bytes |  | os, strutils | ✅ Converted |
 | `lib/treemangler` | 0 | 5,308 bytes |  | assertions, formatfloat, hashes, strutils, syncio, tables | ✅ Converted |
-| `lib/vfs` | 0 | 12,960 bytes |  | atomics, memfiles, os, syncio, times | 🔲 Pending |
+| `lib/vfs` | 0 | 12,960 bytes |  | atomics, memfiles, os, syncio, times | ✅ Converted |
 | `models/tags` | 0 | 13,811 bytes |  |  | ✅ Converted |
 | `lib/filelinecache` | 1 | 2,028 bytes | lib/compat2 | hashes, strutils, syncio, tables | ✅ Converted |
 | `lib/keymatcher` | 1 | 5,934 bytes | lib/stringtrees, lib/stringviews | assertions, macros (legacy: expand the calls) | ⛔ Legacy: macro machinery (`declareMatcher`), called only by its own tests; macros are legacy |
