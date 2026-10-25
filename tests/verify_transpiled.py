@@ -208,8 +208,6 @@ def _py_conditions(tree: ast.AST) -> list[str]:
     out = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.If, ast.IfExp)) and "comptime(" in ast.unparse(node.test):
-            if "__name__" in ast.unparse(node.test):
-                continue  # test guard (the exception of §2.1)
             if isinstance(node, ast.If):
                 snippet = ast.If(test=node.test, body=[ast.Pass()], orelse=[])
             else:
@@ -217,6 +215,12 @@ def _py_conditions(tree: ast.AST) -> list[str]:
             module = ast.fix_missing_locations(ast.Module(body=[snippet], type_ignores=[]))
             out.extend(_nim_conditions(transpiler.unparse(module)[0]))
     return out
+
+
+def _is_test_guard(cond: str) -> bool:
+    """Exactly `when isMainModule` (Python `__name__ == "__main__"`): a converted module may add its own
+    test block (the exception of §2.1). A compound condition (`isMainModule and ...`) must match a `when`."""
+    return cond == "isMainModule"
 
 
 def _nim_conditions(text: str) -> list[str]:
@@ -238,7 +242,7 @@ def _nim_conditions(text: str) -> list[str]:
         m = (re.match(r"^\s*when\s+(.+?):\s*(\S.*)?$", line)
              or (re.match(r"^\s*elif\s+(.+?):\s*(\S.*)?$", line) if when_chain.get(indent) else None)
              or re.search(r"[=(,]\s*when\s+(.+?):", line))
-        if m and "isMainModule" not in m.group(1):
+        if m and not _is_test_guard(_norm_cond(m.group(1))):
             cond = m.group(1)
             # `x is T` is spelled isinstance(x, T) in nimic
             cond = re.sub(r"(\w+)\s+is\s+(\w+)", r"is(\1,\2)", cond)

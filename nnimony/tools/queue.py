@@ -27,6 +27,10 @@ STD_SHIMS = ROOT / "src" / "nimic" / "std"
 # std modules nimic deliberately has no shim for: macros are legacy (nimony replaces them with plugins), a
 # conversion writes each macro call out (nimic_translation_rules_nimony.md §2)
 LEGACY_STD = {"macros": "legacy: expand the calls"}
+# modules that are not converted, with the reason (decided with the user)
+LEGACY_MODULES = {
+    "lib/keymatcher": "macro machinery (`declareMatcher`), called only by its own tests; macros are legacy",
+}
 
 # components in the order of the plan; the current one is scanned module by module
 COMPONENTS = [
@@ -46,6 +50,7 @@ AGENT_BRIEFS = {
     "brief_lib_batch5.md": {"models/callconv_tags", "models/nifindex_tags", "models/leng_tags"},
     "brief_lib_batch6.md": {"lib/nifcore"},
     "brief_lib_batch7.md": {"lib/argsfinder", "lib/vfs"},
+    "brief_lib_batch8.md": {"lib/intrinsics"},
 }
 AGENT = {m: brief for brief, modules in AGENT_BRIEFS.items() for m in modules}
 
@@ -138,15 +143,19 @@ def write_queue() -> None:
         deps, std, sizes = scan(component)
         tier = tiers(deps)
         done = {k for k in deps if _converted(k)}
-        ready = sorted((k for k in deps if k not in done and deps[k] <= done), key=lambda k: sizes[k])
+        ready = sorted((k for k in deps if k not in done and k not in LEGACY_MODULES and deps[k] <= done),
+                       key=lambda k: sizes[k])
+        legacy = [k for k in deps if k in LEGACY_MODULES]
         lines += ["", f"## Ready to Convert (`src/{component}`)", "",
                   "| Module | Size | Std imports (✗ = no nimic shim yet) | Agent |", "|---|---|---|---|"]
         for k in ready:
             lines.append(f"| `{k}` | {sizes[k]:,} bytes | {_std_list(std[k])} | {AGENT.get(k, '')} |")
-        lines += ["", f"## All modules of `src/{component}` ({len(done)}/{len(deps)} converted)", "",
+        lines += ["", f"## All modules of `src/{component}` ({len(done)}/{len(deps) - len(legacy)} converted"
+                      + (f", {len(legacy)} legacy" if legacy else "") + ")", "",
                   "| Module | Tier | Size | Depends on | Std imports | Status |", "|---|---|---|---|---|---|"]
         for k in sorted(deps, key=lambda k: (tier[k], k)):
-            status = "✅ Converted" if k in done else "🔲 Pending"
+            status = ("✅ Converted" if k in done else f"⛔ Legacy: {LEGACY_MODULES[k]}" if k in LEGACY_MODULES
+                      else "🔲 Pending")
             lines.append(f"| `{k}` | {tier[k]} | {sizes[k]:,} bytes | {', '.join(sorted(deps[k]))} | "
                          f"{_std_list(std[k])} | {status} |")
     QUEUE.write_text("\n".join(lines) + "\n")
