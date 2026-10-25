@@ -6219,6 +6219,75 @@ def addWord(b: mut@Builder, w: string) -> None:
         self.assertEqual(nim("with var:\n    a = array[4, byte]([0, 0, 0, 1])"),
                          "var\n  a*: array[4, byte] = [0, 0, 0, 1]")
         self.assertEqual(nim("f(array[2, float64]([1.0, 2.0]))"), "f(array[2, float64]([float64(1.0), 2.0]))")
+        # where the field or the annotation gives the type, the array is the bare literal, as Nim writes it
+        self.assertEqual(nim("R(p=array[3, K]([K.a, K.b, K.c]), n=1)"), "R(p: [K.a, K.b, K.c], n: 1)")
+        self.assertEqual(nim("R(q=array[2, byte]([1, 2]))"), "R(q: [1, 2])")
+        self.assertEqual(nim('with const:\n    X: array[K, string] = array[K, string]([string("a"), "b"])'),
+                         'const\n  X*: array[K, string] = [string("a"), "b"]')
+        # elsewhere the conversion carries the index type; a numeric first element takes the element type
+        self.assertEqual(nim("f(array[2, int8]([-1, 2]))"), "f(array[2, int8]([int8(-1), 2]))")
+        self.assertEqual(nim("g(x=array[2, byte]([1, 2]))"), "g(x = array[2, byte]([byte(1), 2]))")
+        self.assertEqual(nim("f(array[2, ptr[nint]]([p, q]))"), "f(array[2, ptr int]([p, q]))")
+        self.assertEqual(nim("f(array[2, bool]([True, False]))"), "f(array[2, bool]([true, false]))")
+
+    def test_enum_array_field(self):
+        """An array[N, E] field of a C-backed object (E an NIntEnum): its slots hold the ordinals and a
+        read is the member (enums implement the slot protocol _n_on_array / _n_on_struct)."""
+        class Ek(NIntEnum):
+            ekA = auto()
+            ekB = auto()
+            ekC = auto()
+
+        class Er(Object):
+            p: array[3, Ek]
+            n: nint
+
+        self.assertEqual(Er().p[0], Ek.ekA)  # the default
+        a = array[3, Ek]([Ek.ekB, Ek.ekC, Ek.ekA])
+        r = Er(p=a)  # a constructor copies the array into the field
+        self.assertIs(r.p[1], Ek.ekC)
+        self.assertEqual(str(r.p), "[ekB, ekC, ekA]")
+        self.assertEqual(r.p, a)
+        r.p[0] = Ek.ekC  # a slot store changes the field, not the array it was built from
+        r.p[0] = Ek.ekA
+        self.assertEqual(str(r.p), "[ekA, ekC, ekA]")
+        self.assertEqual(str(a), "[ekB, ekC, ekA]")
+        self.assertEqual(str(r.copy().p), "[ekA, ekC, ekA]")
+        self.assertEqual(str(a.copy()), "[ekB, ekC, ekA]")  # a standalone array copies its slots too
+        self.assertEqual(seq[Ek]([Ek.ekB]), seq[Ek]([Ek.ekB]))
+
+    def test_array_and_seq_equality(self):
+        """Nim `==` of arrays and seqs compares the elements (system.`==`); hash stays independent."""
+        self.assertEqual(array[3, nint]([1, 2, 3]), array[3, nint]([1, 2, 3]))
+        self.assertNotEqual(array[3, nint]([1, 2, 3]), array[3, nint]([1, 2, 4]))
+        self.assertEqual(array[2, string]([string("a"), string("b")]), array[2, string]([string("a"), string("b")]))
+        self.assertEqual(seq[nint]([1, 2]), seq[nint]([1, 2]))
+        self.assertNotEqual(seq[nint]([1, 2]), seq[nint]([1, 2, 3]))
+        self.assertNotEqual(seq[nint]([1, 2]), seq[nint]([2, 1]))
+        self.assertEqual(seq[string]([]), seq[string]([]))
+        self.assertTrue(seq[nint]([1]) != seq[nint]([2]))
+        s = seq[nint]([1])
+        self.assertEqual(len({id(s): s}), 1)  # still hashable (identity), as objects
+
+    def test_enum_field_store_keeps_members_shared(self):
+        """Storing an enum field doesn't attach accessors to the member (a shared singleton): a store into
+        one object never writes the C storage of another holding the same member."""
+        class Fk(NIntEnum):
+            fkA = auto()
+            fkB = auto()
+            fkC = auto()
+
+        class Fr(Object):
+            k: Fk
+            n: nint
+
+        r1, r2 = Fr(k=Fk.fkB), Fr(k=Fk.fkB)
+        r1.k = Fk.fkC
+        self.assertIs(r2.k, Fk.fkB)
+        self.assertEqual(r2._n_view.k, Fk.fkB.ord())
+        self.assertNotIn("_n_set_value", Fk.fkB.__dict__)
+        arr = array[2, Fr]([r1, r2])  # the copy reads the C storage
+        self.assertEqual((arr[0].k, arr[1].k), (Fk.fkC, Fk.fkB))
 
     def test_transpile_unchecked_assign(self):
         """rule:uncheckedassign: `with uncheckedAssign:` is a {.cast(uncheckedAssign).}: block."""

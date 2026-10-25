@@ -125,7 +125,10 @@ Operators & renaming:
     chars above 0xFF raise SyntaxError (use utf8()); applies to f-string literal parts too
   rule:utf8literal -> utf8("é") with a constant argument emits the raw Nim literal "é" (its UTF-8 bytes);
     a non-constant argument stays utf8(x) (identity template in pydefs.nim)
-  rule:array -> add array type to the first array element
+  rule:array -> array[N, T]([a, b]) is the Nim literal [a, b] where a type is given: an object constructor's
+    field (T(f: [a, b])) and a declaration (x: array[N, T] = [a, b], also from `with var: x = array[...](...)`);
+    elsewhere (call arguments, elements, returns) the conversion array[N, T]([a, b]), which keeps the index
+    type, its numeric first element typed: array[2, int8]([int8(-1), 2]); array[I, T]({k: v}) is [k: v]
   rule:isnot -> write isnot according to Nim syntax
   rule:notin -> write notin according to Nim syntax
   rule:inrange -> inrange(a, b) transpiles as a .. b (Nim inclusive range literal)
@@ -1428,6 +1431,15 @@ class _Unparser(NodeVisitor):
         self.traverse(node.value)
 
     @staticmethod
+    def _array_literal(node) -> object | None:
+        """The list of an `array[N, T]([...])` call, or None (rule:array)."""
+        if (isinstance(node, Call) and isinstance(node.func, Subscript) and isinstance(node.func.value, Name)
+                and node.func.value.id == "array" and len(node.args) == 1 and isinstance(node.args[0], List)
+                and not node.keywords):
+            return node.args[0]
+        return None
+
+    @staticmethod
     def _var_pragma(annotation) -> tuple[str, object] | None:
         """(pragma text, type node or None) of a variable annotation `pragma("p")` / `pragma("p") @ T`."""
         def pragma_text(n):
@@ -1486,7 +1498,11 @@ class _Unparser(NodeVisitor):
             self._write_block_body()
         elif node.value and not var_declaration:
             self.write(" = ")
-            self.traverse(node.value)
+            literal = self._array_literal(node.value)
+            if literal is not None and (var_pragma is None or var_pragma[1] is not None):
+                self.traverse(literal)  # rule:array (typed slot), `x: array[N, T] = [...]`
+            else:
+                self.traverse(node.value)
 
     def visit_Return(self, node):
         # rule:templatereturn -> a `return x` in tail position of a template is its value: emit just x
@@ -3085,19 +3101,23 @@ class _Unparser(NodeVisitor):
                     self._context_stack.pop()
                 return
             # independent of the call-context branch above (array[N, T] calls also set func_name)
+            def is_number(e):  # a literal whose Nim type the context gives: 1, -1, 2.5
+                if isinstance(e, UnaryOp) and isinstance(e.op, (USub, UAdd)):
+                    e = e.operand
+                return isinstance(e, Constant) and type(e.value) in (int, float)
             if (
                 isinstance(node.func, Subscript)
+                and isinstance(node.func.value, Name)
+                and node.func.value.id in self._native_type_subscript
+                and isinstance(node.func.slice, Tuple) and len(node.func.slice.elts) == 2
                 and node.args
                 and isinstance(node.args[0], List)
-                and node.func.value.id in self._native_type_subscript
-                and len(node.func.slice.elts) == 2
                 and node.args[0].elts
-                and isinstance(node.args[0].elts[0], Constant)
+                and is_number(node.args[0].elts[0])
             ):
-                # rule:array
-                array_type = node.func.slice.elts[1].id
-                call_node = Call(func=Name(id=array_type), args=[Constant(value=node.args[0].elts[0].value)], keywords=[])
-                node.args[0].elts[0] = call_node
+                # rule:array, array[2, int8]([-1, 2]) -> array[2, int8]([int8(-1), 2])
+                first = node.args[0].elts[0]
+                node.args[0].elts[0] = Call(func=copy.deepcopy(node.func.slice.elts[1]), args=[first], keywords=[])
             self.traverse(node.func)
             with self.delimit("(", ")"):
                 comma = False
@@ -3355,6 +3375,10 @@ class _Unparser(NodeVisitor):
             # rule:instantiation
             if self._context_stack and self._context_stack[-1] == "instance":
                 self.write(": ")
+                literal = self._array_literal(node.value)
+                if literal is not None:
+                    self.traverse(literal)  # rule:array (typed slot), `T(field: [...])`
+                    return
             else:
                 self.write(" = ")  # rule:argdefault
         self.traverse(node.value)

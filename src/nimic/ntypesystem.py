@@ -79,7 +79,7 @@ import textwrap
 import types
 import warnings
 import weakref
-from enum import IntEnum, StrEnum, Enum
+from enum import IntEnum, StrEnum, Enum, nonmember
 from string import Template
 from typing import Sequence, TypeAliasType
 
@@ -2129,22 +2129,23 @@ class NIntEnum(IntEnum):
         cls._n_members_tuple = tuple(cls)
         cls._n_indices = {val: ind for ind, val in enumerate(cls._n_members_tuple)}
 
+    # a C slot (struct field, array element) holds the member's ordinal; reading it gives the member, a
+    # value: containers don't keep a view of the slot, and nothing is attached to the (shared) member
+    _n_value_slot = nonmember(True)
+
     @classmethod
     def _n_on_struct(
         cls, parent_elems: ctypes.Structure, id: str, enum_value: int | None = None
     ) -> NIntEnum:
-        get_value = lambda: getattr(parent_elems, id)
-        set_value = lambda value: setattr(parent_elems, id, value)
         if enum_value is not None:
-            value = int(enum_value)
-        else:
-            value = get_value()
-        inst = cls(value)
-        inst._n_get_value = get_value
-        inst._n_set_value = set_value
+            setattr(parent_elems, id, int(enum_value))
+        return cls(getattr(parent_elems, id))
+
+    @classmethod
+    def _n_on_array(cls, parent_elems: ctypes.Array, index: int, enum_value: int | None = None) -> NIntEnum:
         if enum_value is not None:
-            inst._n_set_value(value)
-        return inst
+            parent_elems[index] = int(enum_value)
+        return cls(parent_elems[index])
 
     @classmethod
     def _n_register_type(cls) -> None:
@@ -3462,8 +3463,6 @@ class _Object(Ntype):
                 if isinstance(attr, bool):
                     super().__setattr__(name, value)
                 elif isinstance(attr, NIntEnum):
-                    if hasattr(attr, "_n_set_value"):
-                        attr._n_set_value(int(value))
                     if hasattr(self, "_n_view") and self._n_view is not None:
                         _val = type(attr)._n_on_struct(self._n_view, name, int(value))
                     else:
@@ -3963,6 +3962,14 @@ class array(Ntype):
         for pos in range(self._n_size):
             yield self[self._n_first + pos]
 
+    def __eq__(self, other) -> bool:
+        """Nim `==` of arrays: equal elements, in order."""
+        if not isinstance(other, array):
+            return NotImplemented
+        return self is other or (len(self) == len(other) and all(a == b for a, b in zip(self, other)))
+
+    __hash__ = object.__hash__  # Nim's `hash` is independent of `==` (as for objects)
+
     def _n_check_index(self, index: int) -> None:
         """Nim raises IndexDefect for an index outside low(a)..high(a)."""
         if not 0 <= index - self._n_first < self._n_size and _n_check_enabled("boundchecks"):
@@ -3972,7 +3979,8 @@ class array(Ntype):
         index = self._n_normalize_index(_n_from_end(index, self._n_size, self._n_first))
         self._n_check_index(index)
         if self._n_view is not None:
-            if hasattr(self, '_n_type') and isinstance(self._n_type, type) and issubclass(self._n_type, (char, NScalar, bool)):
+            if hasattr(self, '_n_type') and isinstance(self._n_type, type) and (
+                    issubclass(self._n_type, (char, NScalar, bool)) or getattr(self._n_type, '_n_value_slot', False)):
                 return self._n_type._n_on_array(self._n_view, index - self._n_first)
             if index not in self._n_cache:
                 self._n_cache[index] = self._n_type._n_on_array(self._n_view, index - self._n_first)
@@ -4002,6 +4010,8 @@ class array(Ntype):
             val = value
 
         self._n_view[index - self._n_first] = val
+        if getattr(self._n_type, '_n_value_slot', False):
+            return  # the slot holds the value itself, no view of it is kept
 
         if index not in self._n_cache or self._n_cache[index] is None:
             if hasattr(self._n_type, '_n_on_array'):
@@ -4094,8 +4104,9 @@ class seq(Ntype):
                 ntype = _n_registry.types[ntype]
                 self._n_type = ntype
             type_name = ntype.__name__ if hasattr(ntype, '__name__') else str(ntype)
-            if (isinstance(ntype, type) and issubclass(ntype, string)) or not hasattr(ntype, '_n_on_array') or getattr(ntype, '_n_is_ref', False) or bool(getattr(ntype, '_n_python_fields', None)) or getattr(ntype, '_n_hooks', None):
-                # List-based mode for non-ctypes types (e.g. string, ref types, structs with python fields)
+            if (isinstance(ntype, type) and issubclass(ntype, string)) or not hasattr(ntype, '_n_on_array') or getattr(ntype, '_n_is_ref', False) or bool(getattr(ntype, '_n_python_fields', None)) or getattr(ntype, '_n_hooks', None) or getattr(ntype, '_n_value_slot', False):
+                # List-based mode for non-ctypes types (e.g. string, ref types, structs with python fields);
+                # value-slot elements (enum members) are held as the values themselves
                 self._n_is_list = True
                 self._n_list = list(c_base) if isinstance(c_base, (list, tuple)) else []
                 return
@@ -4214,6 +4225,14 @@ class seq(Ntype):
         _seq = type(class_name, (seq,), {"_n_type": _ntype})
         _seq._n_register_type()
         return _seq
+
+    def __eq__(self, other) -> bool:
+        """Nim `==` of seqs: the same length and equal elements, in order."""
+        if not isinstance(other, seq):
+            return NotImplemented
+        return self is other or (len(self) == len(other) and all(a == b for a, b in zip(self, other)))
+
+    __hash__ = object.__hash__  # Nim's `hash` is independent of `==` (as for objects)
 
     def _n_coerce(self, value: object) -> object:
         """A tuple literal for a seq of a named tuple type is that tuple (fields in order)."""

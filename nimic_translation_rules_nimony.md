@@ -166,7 +166,7 @@ Classes and objects use standard Python `class` definitions but employ specific 
 | `{'-', '0'..'9'}` | `Tset[char](ch('-'), inrange(ch('0'), ch('9')))` or `Tset[char]({ch('-'), inrange(...)})` | Ranges in a set literal |
 | `@[a, b, c]` | `seq[T]([a, b, c])` or `seq([a, b, c])` | Sequence literal (`rule:seqlit`) |
 | `@[]` | `seq()` or `seq[T]()` | Empty sequence literal (`rule:seqlit`) |
-| `[byte 1, 5]` | `array[2, byte]([1, 5])` | Arrays |
+| `[byte 1, 5]` | `array[2, byte]([1, 5])` | Arrays (`rule:array`). Where the field or the annotation gives the type, the transpiler writes Nim's bare literal: `R(params=array[6, PatKind]([...]))` → `R(params: [...])`, `X: array[E, string] = array[E, string]([...])` → `X: array[E, string] = [...]`. Elsewhere (a call argument, an element, a `return`) it writes the conversion `array[N, T]([...])`, which keeps the index type, with a numeric first element typed (`[int8(-1), 2]`) |
 | `type T = object` with `case kind: K` | `class T(Object):` with `kind: K` + `match kind:` | Object variants, see §11 (`rule:matchcase`) **(Nim 2: the Nim 3 version is in §14)** |
 | `ar: array[1, string] = [0: "some"]` | `ar = array[1, string]({0: string("some")})` | Arrays initialized with a dictionary |
 | `SomeTuple = tuple[x: int, y: float]` | `class SomeTuple(NTuple):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x: nint`<br>&nbsp;&nbsp;&nbsp;&nbsp;`y: float64` | Tuples should be defined as Named Tuple with an alias |
