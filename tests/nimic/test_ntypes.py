@@ -6269,6 +6269,95 @@ def addWord(b: mut@Builder, w: string) -> None:
         s = seq[nint]([1])
         self.assertEqual(len({id(s): s}), 1)  # still hashable (identity), as objects
 
+    def test_move_resets_source(self):
+        """Nim's move(x) leaves x as default(T) (string, seq, array, object, scalars); the result holds the
+        value. A ref is returned as it is: Python can't nil the variable, and the object is shared."""
+        a = string("abc")
+        s = seq[string]()
+        s.add(move(a))
+        self.assertEqual((a, s), (string(""), seq[string]([string("abc")])))
+        q = seq[nint]([1, 2])
+        q2 = move(q)
+        self.assertEqual((len(q), q2), (0, seq[nint]([1, 2])))
+
+        class Mo(Object):
+            s: string
+            n: nint
+        o = Mo(s=string("x"), n=nint(5))
+        o2 = move(o)
+        self.assertEqual((o.s, o.n, o2.s, o2.n), (string(""), 0, string("x"), 5))
+        i = nint(3)
+        j = move(i)
+        self.assertEqual((i, j), (0, 3))
+
+        @ref
+        class Mr(Object):
+            n: nint
+        r = Mr(n=nint(4))
+        self.assertIs(move(r), r)
+        self.assertEqual(r.n, 4)
+
+    def test_catchable_error(self):
+        """Nim's CatchableError: `except CatchableError:` catches the errors nimic raises for Nim's IOError /
+        OSError, ValueError, KeyError, EOFError and its own subclasses, not Defects (nor Python bugs)."""
+        def caught(exc) -> bool:
+            try:
+                raise exc
+            except CatchableError:
+                return True
+            except BaseException:
+                return False
+        for exc in (OSError("x"), IOError("x"), ValueError("x"), KeyError("x"), EOFError("x"),
+                    newException(CatchableError, "x")):
+            self.assertTrue(caught(exc), exc)
+        for exc in (IndexDefect("x"), RangeDefect("x"), AssertionError("x"), AttributeError("x"), TypeError("x")):
+            self.assertFalse(caught(exc), exc)
+
+        class MyError(CatchableError):
+            pass
+        e = newException(MyError, "mine")
+        self.assertTrue(caught(e))
+        self.assertEqual(e.msg, "mine")
+        self.assertTrue(isinstance(e, CatchableError) and isinstance(OSError(), CatchableError))
+        self.assertFalse(isinstance(IndexDefect(), CatchableError))
+        out = unparse(ast.parse("class MyError(CatchableError):\n    pass\ntry:\n    f()\nexcept CatchableError:\n    pass\n"))[0]
+        self.assertIn("MyError* = object of CatchableError", out)
+        self.assertIn("except CatchableError:", out)
+
+    def test_delete(self):
+        """Nim's delete: strutils delete(s, a..b) of a string, system delete(s, i) and sequtils
+        delete(s, a..b) of a seq; the order is kept, an out-of-range slice raises IndexDefect."""
+        a = string("abcde")
+        with self.assertRaises(IndexDefect):
+            a.delete(inrange(4, 5))
+        self.assertEqual(a, string("abcde"))
+        delete(a, inrange(4, 4))
+        self.assertEqual(a, string("abcd"))
+        a.delete(inrange(1, 2))
+        self.assertEqual(a, string("ad"))
+        a.delete(range(1, 1))  # an empty slice (1 ..< 1)
+        self.assertEqual(a, string("ad"))
+        for s in (seq[nint]([1, 2, 3, 4, 5]), seq[string]([string(c) for c in "12345"])):
+            T = s._n_type
+            s.delete(2)
+            self.assertEqual(s, seq[T]([T(x) for x in (1, 2, 4, 5)] if T is nint else [string(x) for x in "1245"]))
+            delete(s, inrange(0, 1))
+            self.assertEqual(len(s), 2)
+            self.assertEqual(str(s[0]), "4")
+            with self.assertRaises(IndexDefect):
+                s.delete(2)
+            with self.assertRaises(IndexDefect):
+                s.delete(inrange(1, 2))
+
+        class Dp(Object):
+            x: nint
+            y: float64
+        ps = seq[Dp]([Dp(x=1), Dp(x=2), Dp(x=3)])
+        first = ps[0]
+        ps.delete(1)
+        self.assertEqual([p.x for p in ps], [1, 3])
+        self.assertIs(ps[0], first)
+
     def test_enum_field_store_keeps_members_shared(self):
         """Storing an enum field doesn't attach accessors to the member (a shared singleton): a store into
         one object never writes the C storage of another holding the same member."""
@@ -6288,6 +6377,167 @@ def addWord(b: mut@Builder, w: string) -> None:
         self.assertNotIn("_n_set_value", Fk.fkB.__dict__)
         arr = array[2, Fr]([r1, r2])  # the copy reads the C storage
         self.assertEqual((arr[0].k, arr[1].k), (Fk.fkC, Fk.fkB))
+
+    def test_transpile_try_expressions(self):
+        """rule:tryassign: a try in `with let:` / `with var:` whose branches all assign one name is that name's
+        try expression; rule:tryreturn: a body ending with a try whose branches all return is one."""
+        def nim(src):
+            return unparse(ast.parse(textwrap.dedent(src)))[0]
+        out = nim('''
+            def f(dir: string) -> string:
+                with let:
+                    try:
+                        expanded = expandFilename(dir)
+                    except:
+                        expanded = dir
+                return expanded
+        ''')
+        self.assertIn("  let\n    expanded = try:\n        expandFilename(dir)\n      except:\n        dir\n", out)
+        out = nim('''
+            def g(p: string) -> int64:
+                try:
+                    with let:
+                        t = getTime()
+                    return toUnix(t)
+                except OSError:
+                    return i64(0)
+        ''')
+        self.assertIn("  try:\n    let\n      t = getTime()\n    toUnix(t)\n  except OSError:\n    0'i64", out)
+        self.assertNotIn("return", out)
+        out = nim('''
+            def h(p: string) -> MemFile:
+                try: return memfiles.open(p)
+                except: quit(string("vfs: open failed: ") + p)
+        ''')
+        self.assertIn("  try:\n    return memfiles.open(p)\n  except:\n    quit(", out)  # a call ends no branch
+        # not a try expression: a branch that doesn't assign / return, or a finally
+        out = nim('''
+            def k(p: string) -> bool:
+                try:
+                    return f(p)
+                finally:
+                    g()
+        ''')
+        self.assertIn("return f(p)", out)
+        out = nim('''
+            with var:
+                try:
+                    x = f()
+                except:
+                    log()
+        ''')
+        self.assertNotIn("= try", out)
+
+    def test_proc_variable(self):
+        """rule:procvar: a def in `with var:` / `with let:` is a variable of the def's proc type, initialized with
+        the def as an anonymous proc; the docstring pragma belongs to the type. Python binds the name to the
+        function, so swapping the proc is an assignment in both languages."""
+        def nim(src):
+            return unparse(ast.parse(textwrap.dedent(src)))[0]
+        out = nim('''
+            with var:
+                def openRelay(path: string, n: nint) -> string:
+                    """{.nimcall.}"""
+                    return path
+            with let:
+                def _now() -> int64:
+                    with var:
+                        x = i64(1)
+                    return x
+        ''')
+        self.assertIn("var\n  openRelay*: proc (path: string, n: int): string {.nimcall.} =\n"
+                      "    proc (path: string, n: int): string =\n      return path\n", out)
+        self.assertIn("let\n  now: proc (): int64 =\n    proc (): int64 =\n      var\n        x = 1'i64\n"
+                      "      return x", out)
+        # inside a proc: a local variable
+        out = nim('''
+            def f():
+                with var:
+                    def cb(x: nint):
+                        echo(x)
+                cb(1)
+        ''')
+        self.assertIn("  var\n    cb: proc (x: int) =\n      proc (x: int) =\n        echo(x)\n  cb(1)", out)
+        # a second def of the name would silently rebind it in Python, but redefines the variable in Nim
+        with self.assertRaises(SyntaxError):
+            nim('''
+                with var:
+                    def r(x: nint): pass
+                with var:
+                    def r(x: nint): pass
+            ''')
+        with self.assertRaises(SyntaxError):
+            nim('''
+                with const:
+                    def r(x: nint): pass
+            ''')
+        # a def in a value block (rule:block) the section's expression expands to is the block's proc
+        out = nim('''
+            def _block():
+                def _count(x: nint) -> nint:
+                    return x
+                return _count(2)
+            with const:
+                two = _block()
+        ''')
+        self.assertIn("proc count(x: int): int =", out)  # `_`: a block's proc is not exported
+        self.assertNotIn(": proc (", out)
+        # Python: the variable holds the function and an assignment swaps it
+        ns = {}
+        exec(textwrap.dedent('''
+            from nimic.ntypes import *
+            with var:
+                def relay(x: nint) -> nint:
+                    return x + 1
+            def use(x: nint) -> nint:
+                return relay(x)
+            before = use(1)
+            relay = lambda x: x * 10
+            after = use(1)
+        '''), ns)
+        self.assertEqual((ns["before"], ns["after"]), (2, 10))
+
+    def test_inline_calltype(self):
+        """rule:calltypeinline: @calltype(inline=True) on a private proc type declares no Nim type; its uses
+        (fields, parameters, casts) are the anonymous proc type. In Python it is a calltype as any other."""
+        def nim(src):
+            return unparse(ast.parse(textwrap.dedent(src)))[0]
+        out = nim('''
+            @calltype(inline=True)
+            def _Cleanup(b: mut @ Blob):
+                """{.nimcall.}"""
+                pass
+
+            class Blob(Object):
+                size: nint
+                _cleanup: _Cleanup
+
+            def initBlob(size: nint, cleanup: _Cleanup = None) -> Blob:
+                return Blob(size=size, _cleanup=cleanup)
+        ''')
+        self.assertNotIn("Cleanup", out)
+        self.assertIn("    cleanup: proc (b: var Blob) {.nimcall.}\n", out)
+        self.assertIn("proc initBlob*(size: int, cleanup: proc (b: var Blob) {.nimcall.} = nil): Blob", out)
+        self.assertTrue(out.lstrip().startswith("type\n  Blob* = object"))
+        with self.assertRaises(SyntaxError):  # an importer would have no type to name
+            nim('''
+                @calltype(inline=True)
+                def Cleanup(b: nint): pass
+            ''')
+        # Python: a calltype, used as a nilable field type
+        ns = {}
+        exec(textwrap.dedent('''
+            from nimic.ntypes import *
+            @calltype(inline=True)
+            def _Hook(x: nint) -> nint: pass
+            class Holder(Object):
+                hook: _Hook
+            h = Holder()
+            empty = h.hook is None
+            h.hook = lambda x: x + 1
+            got = h.hook(1)
+        '''), ns)
+        self.assertEqual((ns["empty"], ns["got"]), (True, 2))
 
     def test_transpile_unchecked_assign(self):
         """rule:uncheckedassign: `with uncheckedAssign:` is a {.cast(uncheckedAssign).}: block."""

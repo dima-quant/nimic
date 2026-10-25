@@ -93,6 +93,28 @@ class Defect(Exception):
     """Nim: Defect — non-catchable-by-convention runtime error."""
 
 
+class _NCatchableError(Exception):
+    """Nim: a CatchableError raised or subclassed as such: newException(CatchableError, msg),
+    `class E(CatchableError)`."""
+
+
+class _NExceptionGroup(tuple):
+    """Nim: CatchableError, the base of the errors Nim code catches (Defects aren't). nimic raises Python's
+    own classes for Nim's IOError / OSError (OSError), ValueError, KeyError and EOFError, which can't get a
+    common base, so CatchableError is the group of them: `except CatchableError:`, isinstance and
+    issubclass match each one (Python takes a tuple there); a subclass `class E(CatchableError)` and a
+    newException(CatchableError, msg) are _NCatchableError, the group's first member."""
+
+    def __mro_entries__(self, bases) -> tuple:
+        return (self[0],)
+
+    def __call__(self, *args) -> BaseException:
+        return self[0](*args)
+
+
+CatchableError = _NExceptionGroup((_NCatchableError, OSError, ValueError, KeyError, EOFError))
+
+
 class FieldDefect(Defect):
     """Nim: FieldDefect — access to a field of an inactive object branch, or a
     discriminator assignment that would change the active branch."""
@@ -1077,13 +1099,20 @@ def _n_was_moved(x) -> None:
 
 
 def _n_move(x):
-    """Nim move(x): for a type with hooks, a new owner takes x's fields and x is wasMoved (the count it held
-    moves with the value). Other values are returned as they are (Python doesn't reset them yet)."""
-    if not (isinstance(x, _Object) and getattr(type(x), "_n_hooks", None)):
+    """Nim move(x): the result holds x's value and x is left as default(T). For a type with hooks a new owner
+    takes x's fields and x is wasMoved (the count it held moves with the value); other values that are
+    assigned in place (string, seq, array, objects, scalars: `copy` and `<<=`) are copied and reset. Refs and
+    immutable Python values (enum members, bool) are returned as they are: Python can't nil or reset the
+    variable, and a ref's object is shared."""
+    if isinstance(x, _Object) and getattr(type(x), "_n_hooks", None):
+        result = type(x)()
+        result._n_set_value(x)
+        _n_was_moved(x)
+        return result
+    if getattr(type(x), "_n_is_ref", False) or not (callable(getattr(x, "copy", None)) and hasattr(x, "__ilshift__")):
         return x
-    result = type(x)()
-    result._n_set_value(x)
-    _n_was_moved(x)
+    result = x.copy()
+    x <<= _n_default_value(type(x))
     return result
 
 
@@ -4088,6 +4117,20 @@ class array(Ntype):
 
 
 
+def _n_delete_bounds(what, length: int) -> tuple[int, int]:
+    """(first, last) of a delete(s, i) / delete(s, a..b) (a slice is a range, inrange(a, b) or a ..< b);
+    IndexDefect as Nim's checks: an index above high(s), a slice not within 0 .. high(s) (an empty one too)."""
+    if isinstance(what, range):
+        first, last = what.start, what.stop - 1
+        if not (0 <= first < length and last < length) and _n_check_enabled("boundchecks"):
+            raise IndexDefect(f"(slice: {first} .. {last}, len: {length})")
+        return first, last
+    i = int(what)
+    if not 0 <= i < length:  # Nim checks a seq index also without bound checks
+        raise IndexDefect(f"index out of bounds: '{i}' < '{length}' failed")
+    return i, i
+
+
 # --- Sequences (seq) ---
 
 
@@ -4301,6 +4344,23 @@ class seq(Ntype):
 
     setLen = set_len
 
+    def delete(self, what) -> None:
+        """Nim: delete(s, i) (system) / delete(s, a..b) (sequtils) — remove the elements, keeping the order of
+        the others (IndexDefect out of range)."""
+        first, last = _n_delete_bounds(what, len(self))
+        if last < first:
+            return
+        if self._n_is_list:
+            del self._n_list[first:last + 1]
+            return
+        count, size = last - first + 1, self._n_type._n_sizeof()
+        base = ctypes.addressof(self._n_view)
+        ctypes.memmove(base + first * size, base + (last + 1) * size, (self.len - last - 1) * size)
+        old_cache = self._n_cache
+        self._n_cache = {i: e for i, e in old_cache.items() if i < first}  # the elements before stay as they are
+        _n_carry_held_fields(self, {i - count: e for i, e in old_cache.items() if i > last})
+        self.len -= count
+
     def pop(self) -> object:
         """Nim: pop — remove the last element and return it (IndexDefect on an empty seq)."""
         n = len(self)
@@ -4493,8 +4553,11 @@ def _n_item_type(t: type) -> type | None:
     return getattr(t, '_n_type', None)
 
 
-def calltype(fn):
-    """Decorator: transpiles to `type Name* = proc(...): T {.pragma.}`"""
+def calltype(fn=None, *, inline: bool = False):
+    """Decorator: transpiles to `type Name* = proc(...): T {.pragma.}`; `@calltype(inline=True)` (a private
+    name) declares no type, its uses are the anonymous proc type `proc (...): T {.pragma.}`."""
+    if fn is None:
+        return lambda f: calltype(f, inline=inline)
     fn._n_is_calltype = True
     DICT_OF_TYPES[fn.__name__] = fn
     return fn
@@ -6284,6 +6347,14 @@ class string(collections.UserString):
     def __fspath__(self) -> str:
         # os re-encodes this text (fsencode) to exactly the string's bytes
         return _n_to_text(self)
+
+    def delete(self, what) -> None:
+        """Nim: strutils delete(s, a..b) — remove the chars of the slice (IndexDefect out of range)."""
+        if not isinstance(what, range):
+            raise TypeError("delete of a string takes a slice, delete(s, inrange(a, b)) (Nim: strutils.delete)")
+        first, last = _n_delete_bounds(what, len(self))
+        if last >= first:
+            self.data = self.data[:first] + self.data[last + 1:]
 
     def setLen(self, new_len: int) -> None:
         nl = int(new_len)

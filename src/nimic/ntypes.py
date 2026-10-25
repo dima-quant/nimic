@@ -179,6 +179,7 @@ from nimic.ntypesystem import (
     _n_move,
     _n_was_moved,
     Defect,
+    CatchableError,
     FieldDefect,
     OverflowDefect,
     IndexDefect,
@@ -401,6 +402,11 @@ def mitems(coll):
 from nimic.system.ansi_c import copy_mem, move_mem, cint, cuint
 copyMem = copy_mem
 moveMem = move_mem
+
+
+def delete(s, what) -> None:
+    """Nim: delete(s, i) / delete(s, a..b) of a seq, delete(s, a..b) of a string (seq.delete, string.delete)."""
+    s.delete(what)
 
 
 def setLen(s, new_len: int) -> None:

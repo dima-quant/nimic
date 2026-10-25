@@ -75,6 +75,10 @@ Function definitions:
   rule:hook -> a def decorated @hook("copy") is the lifetime hook proc `=copy` (also sink, destroy, wasMoved,
     dup, trace); exported unless its name starts with _; a call by its Python name is `=copy`(...)
   rule:calltype -> def decorated with "calltype" emit as type alias: Name* = proc(...): T {.pragma.}
+  rule:calltypeinline -> @calltype(inline=True) def _P(...) declares no type; each use of _P is the
+    anonymous proc type proc (...): T {.pragma.} (a private name only: importers couldn't name it)
+  rule:procvar -> a def in `with var:` / `with let:` is a variable of its proc type initialized with the def as
+    an anonymous proc: var r*: proc (p: T): U {.nimcall.} = proc (p: T): U = body (the pragma is the type's)
 
 Control flow:
   rule:casereturn -> a proc body that ends with a match whose every branch is `return <value>` is a Nim
@@ -144,6 +148,11 @@ Operators & renaming:
   rule:caseassign -> a match directly inside `with let:`/`with var:`/`with const:` whose every branch ends by
     assigning the same name (or with a raise / a call that doesn't return) is that name's case expression:
     `let x = case s of a: v ...`; the branches' assignments are written as their values
+  rule:tryassign -> a try (no else / finally) directly inside `with let:`/`with var:`/`with const:` whose body and
+    handlers all end by assigning the same name (a handler may end with a raise) is that name's try expression:
+    `let x = try: a except: b`; the assignments are written as their values
+  rule:tryreturn -> a proc body that ends with such a try whose branches end with `return <value>` is a Nim try
+    expression as the proc's result (the values without `return`)
   rule:namedops -> Nim std operators that Python can't spell are named procs in nimic: std/hashes'
     mix_hash(h, v) is h !& v, finish_hash(h) is the prefix !$h; system's back(n) is ^n (s[back(1)] is s[^1])
   rule:isinstance -> isinstance(x, T) transpiles as x is T (type query), issubclass(T, X) as T is X
@@ -952,6 +961,9 @@ class _Unparser(NodeVisitor):
         self._keywords_rename = {}
         self._keywords_no_with_colon = ["block", "static"]  # rule:dropwith
         self._context_stack = []
+        self._inline_calltypes = {}  # rule:calltypeinline: name -> def, set per module
+        self._proc_vars = set()  # rule:procvar: (name, scope depth) of the defs in `with var:` / `with let:`
+        self._proc_var_defs = set()  # rule:procvar: ids of the defs written directly in a declaration section
         self._match_subjects = []  # rule:matchcase: subjects of the enclosing match statements
         self._case_assign_values = []  # rule:caseassign: ids of the assignments written as branch values
         self._block_nodes = []
@@ -1106,10 +1118,32 @@ class _Unparser(NodeVisitor):
         return (isinstance(item, Assign) and len(item.targets) == 1 and isinstance(item.targets[0], Name)
                 and self._scope_depth == 0 and not self._context_stack and self._is_type_expr(item.value))
 
+    @staticmethod
+    def _is_inline_calltype(fn) -> bool:
+        """rule:calltypeinline: a def decorated @calltype(inline=True)."""
+        return any(isinstance(d, Call) and isinstance(d.func, Name) and d.func.id == "calltype"
+                   and any(k.arg == "inline" and isinstance(k.value, Constant) and k.value.value is True
+                           for k in d.keywords)
+                   for d in fn.decorator_list)
+
+    def _write_proc_type(self, fn):
+        """The anonymous proc type of a calltype def: proc (p: T): U {.pragma.} (rule:calltypeinline)."""
+        _, pragma = self._get_body_and_pragma(fn)
+        self.write("proc ")
+        with self.delimit("(", ")"):
+            self.traverse(fn.args)
+        if fn.returns and not isinstance(fn.returns, Constant):
+            self.write(": ")
+            self._write_annotation(fn.returns)
+        if pragma:
+            self.write(" {." + pragma + ".}")
+
     def _is_type_def(self, item):
         if isinstance(item, ClassDef) or self._is_type_alias(item):
             return True
         if isinstance(item, (FunctionDef, AsyncFunctionDef)):
+            if self._is_inline_calltype(item):
+                return False  # rule:calltypeinline: no type is declared
             for d in item.decorator_list:
                 if (isinstance(d, Name) and d.id == "calltype") or (isinstance(d, Call) and isinstance(d.func, Name) and d.func.id == "calltype"):
                     return True
@@ -1165,6 +1199,13 @@ class _Unparser(NodeVisitor):
         # rule:hook: a call of a hook proc by its Python name (`_destroyCursor(dest)`) is the hook's Nim name
         self._hook_procs = {fn.name: hook for fn in ast.walk(node)
                             if isinstance(fn, FunctionDef) and (hook := self._hook_name(fn)) is not None}
+        # rule:calltypeinline: @calltype(inline=True) proc types, written as the anonymous proc type at their uses
+        self._inline_calltypes = {fn.name: fn for fn in ast.walk(node)
+                                  if isinstance(fn, FunctionDef) and self._is_inline_calltype(fn)}
+        for name, fn in self._inline_calltypes.items():
+            if not name.startswith("_"):
+                raise SyntaxError(f"line {fn.lineno}: @calltype(inline=True) {name} declares no Nim type, so "
+                                  f"importers couldn't name it: make it private (_{name})")
         # rule:looptemplate: templates with code blocks, of this module and of the imported ones (the registry)
         self._block_templates = set(getattr(self._type_registry, "block_templates", None) or ())
         self._block_templates.update(fn.name for fn in ast.walk(node)
@@ -1581,6 +1622,19 @@ class _Unparser(NodeVisitor):
             self.traverse(node.cause)
 
     def do_visit_try(self, node):
+        # rule:tryassign -> `let x = try: a except: b`: the body one level deeper than the handlers
+        if self._context_stack and self._context_stack[-1] in ("var", "let", "const") \
+                and (target := self._try_assign_target(node)):
+            name, assigns = target
+            self.fill(self._adjust_name(name, definition=self._scope_depth == 1) + " = try")
+            self._case_assign_values.append(assigns)
+            with self.block():
+                with self.block(start=""):
+                    self.traverse(node.body)
+                for ex in node.handlers:
+                    self.traverse(ex)
+            self._case_assign_values.pop()
+            return
         self.fill("try")
         with self.block():
             self.traverse(node.body)
@@ -1930,8 +1984,14 @@ class _Unparser(NodeVisitor):
         if node.name == "_block":
             self._block_nodes.append(node)
             return
+        if self._inline_calltypes.get(node.name) is node:
+            return  # rule:calltypeinline: written at its uses
         # rule:funcdef
-        self.maybe_newline()
+        # rule:procvar: a def written directly in a `with var:` / `with let:` section (not one in a value block
+        # the section's expression expands to) is a variable of the section
+        section = self._context_stack[-1] if id(node) in self._proc_var_defs else None
+        if section not in ("var", "let", "const"):  # `with export:` defs are procs
+            self.maybe_newline()
         decl_str = "proc"
         # rule:funcdefdecorated
         for deco in node.decorator_list:
@@ -1992,6 +2052,28 @@ class _Unparser(NodeVisitor):
                 self.write(" {." + pragma + ".}")
             return
         def_str = fill_suffix + decl_str + " " + name_str
+        if section in ("var", "let", "const"):
+            # rule:procvar -> with var: def r(p: T) -> U: """{.nimcall.}"""; body
+            #   is  var r*: proc (p: T): U {.nimcall.} = proc (p: T): U = body
+            if section == "const":
+                raise SyntaxError(f"line {node.lineno}: a def in `with const:` is not supported, "
+                                  f"use `with let:` for the proc variable {node.name}")
+            if (node.name, self._scope_depth) in self._proc_vars:
+                raise SyntaxError(f"line {node.lineno}: {node.name} is already a proc variable; "
+                                  f"assign the new proc to it instead of redefining it")
+            self._proc_vars.add((node.name, self._scope_depth))
+            self.fill(name_str + ": proc ")
+            with self.delimit("(", ")"):
+                self.traverse(node.args)
+            if node.returns and not isinstance(node.returns, Constant):
+                self.write(": ")
+                self._write_annotation(node.returns)
+            if pragma:
+                self.write(" {." + pragma + ".}")
+            self.write(" =")
+            def_str, pragma = "proc ", ""
+            saved_context, self._context_stack = self._context_stack, []  # the body is not in the section
+            self._indent += 1
         if inplace and isinstance(node.args.args[0].annotation, Name):
             node.args.args[0].annotation.id = "var " + node.args.args[0].annotation.id
         if do_arg_swap:
@@ -2034,6 +2116,9 @@ class _Unparser(NodeVisitor):
                 self._template_tail_returns.pop()
             if case_expr:
                 self._template_tail_returns.pop()
+        if section in ("var", "let"):
+            self._indent -= 1
+            self._context_stack = saved_context
 
     @staticmethod
     def _hook_name(node) -> str | None:
@@ -2069,8 +2154,16 @@ class _Unparser(NodeVisitor):
     def _case_expression_returns(body) -> set:
         """rule:casereturn -> a proc body ending with a match whose every branch is `return <value>` is a
         Nim case expression as the proc's result: the ids of those returns (written as values), or an
-        empty set."""
+        empty set. rule:tryreturn -> likewise a body ending with a try (no else / finally) whose body and
+        handlers each end with `return <value>` (a handler may end with a raise instead)."""
         last = body[-1] if isinstance(body, list) and body else None
+        if isinstance(last, Try):
+            ends = [last.body[-1]] + [h.body[-1] for h in last.handlers]
+            if (last.orelse or last.finalbody or not last.handlers
+                    or not isinstance(ends[0], Return) or ends[0].value is None
+                    or not all(isinstance(e, Raise) or isinstance(e, Return) and e.value is not None for e in ends)):
+                return set()
+            return {id(e) for e in ends if isinstance(e, Return)}
         if not isinstance(last, Match) or not all(
                 len(c.body) == 1 and isinstance(c.body[0], Return) and c.body[0].value is not None
                 for c in last.cases):
@@ -2290,6 +2383,7 @@ class _Unparser(NodeVisitor):
             if name in self._keywords_no_with:
                 self.fill()
                 self._context_stack.append(name)
+                self._proc_var_defs.update(id(x) for x in node.body if isinstance(x, FunctionDef))  # rule:procvar
                 cont_pop = True
                 start = ""
             elif name in self._keywords_no_with_colon:
@@ -2475,6 +2569,9 @@ class _Unparser(NodeVisitor):
             return
         if isinstance(node.ctx, Load) and node.id in self._hook_procs:
             self.write(f"`={self._hook_procs[node.id]}`")  # rule:hook
+            return
+        if isinstance(node.ctx, Load) and node.id in self._inline_calltypes:
+            self._write_proc_type(self._inline_calltypes[node.id])  # rule:calltypeinline
             return
         name = self._adjust_name(node.id, definition=getattr(node, "_is_definition", False)) # rule:localname
         self.write(name)
@@ -3208,6 +3305,24 @@ class _Unparser(NodeVisitor):
         if node.step:
             self.write(":")
             self.traverse(node.step)
+
+    @staticmethod
+    def _try_assign_target(node):
+        """rule:tryassign -> the name that the body and every handler of try `node` (no else / finally)
+        assign last, with the ids of those assignments (a handler may end with a raise instead); None if
+        the try is an ordinary statement."""
+        if node.orelse or node.finalbody or not node.handlers:
+            return None
+        name, assigns = None, set()
+        for i, last in enumerate([node.body[-1]] + [h.body[-1] for h in node.handlers]):
+            if isinstance(last, Assign) and len(last.targets) == 1 and isinstance(last.targets[0], Name):
+                if name not in (None, last.targets[0].id):
+                    return None
+                name = last.targets[0].id
+                assigns.add(id(last))
+            elif i == 0 or not isinstance(last, Raise):
+                return None
+        return name, assigns
 
     @staticmethod
     def _case_assign_target(node):
