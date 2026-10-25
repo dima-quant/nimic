@@ -78,3 +78,7 @@ def ntranspile(args: list[str | types.ModuleType]):
         fname = os.path.join(wdir, k + ".nim")
         with open(fname, "w") as f:
             f.write(v)
+
+# the bindings of nimic modules are checked for the copies Nim's assignment makes (rule:valuecheck)
+from nimic import nsystem as _nsystem
+_nsystem._n_install_value_checks()

@@ -69,6 +69,35 @@ Nim variable declarations are mapped to Python context managers to encapsulate s
 | `var x, y: int` | `with var:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`x = nint(0)`<br>&nbsp;&nbsp;&nbsp;&nbsp;`y = nint(0)` | Groups declarations |
 | `var tY: uint16` | `with var:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`_tY = uint16()` | A module-level variable without `*` (also one in a module-level `when`) is written `_tY`: it transpiles to `tY`, not exported (`rule:localname`); without the `_` it would become the exported global `tY*`. Variables of a proc, loop or `block` (also `with block("name"):` at module level) are local and keep their names (`rule:dropwith`) |
 
+### 1.1 Assignment copies values: `.copy()`, checked (`rule:valuecheck`)
+Nim's assignment copies a value: after `var y = x`, changing `y` leaves `x` alone. Python binds the same object.
+The converted code writes the copy where the difference shows, `y = x.copy()` (the transpiler drops it,
+`rule:copy`), and runs as written: directly, under a debugger, in the REPL. Nimic checks that the copies are there
+(`src/nimic/valuecheck.py`): a missing one whose value is then changed while both locations hold it, so that Python
+and Nim certainly differ, is a `ValueCopyError` naming the binding and the write, with the copy to write.
+
+| Nim | Python (Nimic) | Needs `.copy()` when |
+| --- | --- | --- |
+| `var y = x`, `var y = o.f`, `var y = s[i]`, `y = x` | `with var: y = x.copy()` | a value-type value (object, `seq`, `string`, array, set, scalar, a tuple holding one) and later one of the two names is changed (a store into it, `+=`, a method or a `mut @` argument, a core proc that may change it) while the other is read. Not for refs, pointers, procs, types, Python's immutable values, `with const:` values (frozen: changing one raises `TypeError`), a swap `(a, b) = (b, a)`, or a local's last use (Nim moves it) |
+| `proc f(p: P): T = p.f` | `def f(p: P) -> T: return p.f.copy()` | the proc returns a value it shares (a parameter, a global, a part of one, or a local bound to one): Nim's `-> T` result is a copy. A proc that returns the location declares `-> lent @ T` / `-> mut @ T` (Nim `lent T` / `var T`); a local's own value is moved out (`return result`) |
+| `var y = f(x)` | `with var: y = f(x)` | the result is one of its inputs or a part of one and is changed: a `lent @` / `mut @` result, a template's l-value, a core or std proc's result (`min(a, b)`, `t.getOrDefault(k)`), or a nimic proc returning a parameter's part without `.copy()` (better fixed in the proc, row above) |
+| `o.f = x`, `s[i] = x`, `s.add(x)`, `T(f: x)` | the same | never: stores copy by themselves (`_n_value_copy`) |
+
+- **How it checks.** When a nimic module loads (an import hook only watches it; the main program and the modules
+  that import nimic are watched from their running frames), the syntax marks the bindings that may need a copy and
+  the statements that may change their values; nothing else is checked. A function is analyzed when it first runs.
+  At run time (sys.monitoring, a tool of its own: debuggers and coverage run beside it), a marked binding whose
+  value is a value type that another location still holds (the l-value it was read from, or a part of a call's
+  inputs) is armed in its frame; each marked statement after it compares a fingerprint of the value before and
+  after it. A change while both locations still hold the value is the error: in Nim only one of them changed. A
+  binding that only *may* share (a getter's result only read, a value rebound before the write, a `break` before
+  the write) is not an error. Each site is checked on its first 64 executions (and as many writes), then costs
+  nothing. A site that never runs is not checked: `NIMIC_VALUECHECK_REPORT=<file>` appends the sites that ran,
+  failed and never ran.
+- **Modes** (`NIMIC_VALUECHECK`): `error` (the default), `warn` (printed once per site, the program continues),
+  `lint` (also prints the possible differences: the bindings and `-> T` returns that may need a copy, judged from
+  the syntax and the callees' annotations; most are not real), `off`.
+- **Not checked:** code typed in the REPL or a debugger console, and Python files without the header.
 ## 2. Compile-Time and Metaprogramming (`rule:comptime`, `rule:templateinline`)
 Compile-time metaprogramming relies on function calls or specific decorators.
 
@@ -328,7 +357,7 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | `s[s.len]` | `s[s.len]` | A string is `'\0'`-terminated: with bound checks off (`-d:danger`, `push boundChecks: off`) it reads `'\0'`, otherwise `IndexDefect`. Don't add Python-only bounds guards **(Nim 2: the Nim 3 version is in §14)** |
 | `toFloat(i)`, `toInt(f)` | `toFloat(i)`, `toInt(f)` | system procs |
 | `a == b` (objects, tuples) | `a == b` | Field-wise, as Nim's default `==`; refs compare as references. Object constructors copy value arguments |
-| `x = y` (value type) | `x = y.copy()` | Explicit copy of value types in Python, e.g. to create a mutable copy. `string`, `seq`, `array`, `Tset`, `Object` and the integer types (`nint`, `int64`, `uint8`, ...) have `.copy()`. Values bound in `with const:` are frozen: changing one in place through an alias (`x = C` then `x += 1`, `x <<= y`, a field store) raises `TypeError` naming `C.copy()`. Integers need it when the new variable is changed in place (`b = a.copy()` before `b -= 1` or passing `b` as `var`; Nim's `inc(b)` is `b += 1`), and when the source is changed while the new variable is still used: reading an object field gives a view of it, so `oldBufLen = L.bufLen.copy()` before `L.bufLen = L.bufLen * 2`. A parameter whose default is a Python literal has no `.copy()`: write `pos = nint(pos)`. A proc may return its argument itself (`abs(x)` of a non-negative `Int128`), so `var d = abs(d)` changed in place is `d = abs(d).copy()`, since in-place operators mutate the shared object; assigning an object, `a[i] = obj` and `s.add(v)` copy value fields/elements (strings, seqs, non-ref objects) and share refs, as Nim does |
+| `x = y` (value type) | `x = y.copy()` | Where one of them is changed later while the other is read, and for a proc's `-> T` result that it shares: §1.1, checked (`rule:valuecheck`). `string`, `seq`, `array`, `Tset`, `Object` and the integer types (`nint`, `int64`, `uint8`, ...) have `.copy()`; reading an object field or array slot gives a view of it, so `oldBufLen = L.bufLen.copy()` before `L.bufLen = L.bufLen * 2`. Assigning an object, `a[i] = obj` and `s.add(v)` copy value fields/elements (strings, seqs, non-ref objects) and share refs, as Nim does. Values bound in `with const:` are frozen: changing one in place through an alias (`x = C` then `x += 1`, `x <<= y`, a field store) raises `TypeError` naming `C.copy()` |
 | `x = y` through a `var` parameter | `x <<= y` | Works for objects, `string`, `seq`, `array`, `Tset` and the scalar cells (in place) |
 | `var found = false` ... `p(found)` (`proc p(b: var bool)`), `var x = 0.0` passed as `var float` | `with var: found = nbool(False)` ... `p(found)`, `with var: x = float64(0.0)` | A Python `bool`/`float` can't be changed through a parameter: a variable passed as `var` is a cell, `nbool` (transpiles to `bool`, `rule:nint`) or `float64`, as `nint` is for `var int`. Object fields of type `bool` are cells already. Elsewhere Nim `bool` stays Python `bool` |
 | `var res = osEmbedded` ... `findOS(name, res)` (`proc findOS(name: string; res: var TSystemOS)`) | `with var: res = cell(TSystemOS.osEmbedded)` ... `findOS(name, res)`; the callee assigns `res <<= i` | An enum member is immutable in Python: a variable passed as `var` of an enum type is a `cell` (`rule:cell`: transpiles to the member). It dispatches, compares, indexes arrays, prints and matches as its member, and storing it in a field, seq or array stores the member. `<<=` on a bare member raises `TypeError` instead of shifting. Ints, bools and floats have their own cells (`nint`, `nbool`, `float64`) |

@@ -2,7 +2,7 @@
 
 The tables are generic objects (`class Table[K, V](Object)`): `Table[string, nint]` is one cached,
 registered specialization, so a generic proc over `Table[A, B]` binds A and B from its argument."""
-from nimic.ntypesystem import DICT_OF_TYPES, Object, _n_default_value
+from nimic.ntypesystem import DICT_OF_TYPES, Object, _n_default_value, _n_value_copy
 
 
 class CountTable[T](Object):
@@ -11,6 +11,10 @@ class CountTable[T](Object):
 
     def __str__(self):
         return str(self._n_dict)
+
+    def _n_contents(self):
+        """What the table holds, for a fingerprint (nimic.ntypesystem._n_fingerprint): its entries."""
+        return self._n_dict
 
     def inc(self, _key):
         key = repr(_key)
@@ -73,6 +77,22 @@ class _NTable(Object):
 
     def __str__(self):
         return str(self._n_dict)
+
+    def _n_contents(self):
+        """What the table holds, for a fingerprint (nimic.ntypesystem._n_fingerprint): its entries."""
+        return self._n_dict
+
+    def copy(self, deep: bool = True):
+        """Nim's copy of a table value: its entries, value entries copied and refs shared (`var t2 = t`)."""
+        result = type(self)()
+        result._n_dict = {k: _n_value_copy(v) for k, v in self._n_dict.items()}
+        return result
+
+    def __ilshift__(self, other):
+        """Nim `t = other` into an existing table: replaces its entries by copies of other's."""
+        if other is not self:
+            self._n_dict = {k: _n_value_copy(v) for k, v in other._n_dict.items()}
+        return self
 
 
 class Table[K, V](_NTable):

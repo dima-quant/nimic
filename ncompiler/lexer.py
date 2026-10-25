@@ -1295,7 +1295,7 @@ def _skipMultiLineComment(L: mut @ Lexer, tok: mut @ Token, start: nint,
                 if isDoc:
                     if comptime(not defined("nimpretty")): tok.literal.add(string("\n"))
                     with var:
-                        c = toStrip
+                        c = toStrip.copy()
                     while L.buf[pos] == ch(' ') and c > 0:
                         pos += 1
                         c -= 1

@@ -42,6 +42,7 @@ from functools import wraps
 
 from nimic.ntypesystem import dispatch, _n_registry, _n_routine_pragmas, _n_templates, _n_template_codes
 from nimic.nsystem import _n_node_at
+from nimic import valuecheck
 
 
 class TemplateBlockError(RuntimeError):
@@ -257,6 +258,7 @@ def _n_make_block_template(template_func, func_def: ast.FunctionDef, blocks: lis
     ast.fix_missing_locations(module)
     ast.increment_lineno(module, template_func.__code__.co_firstlineno - 1)
     code = compile(module, inspect.getsourcefile(template_func) or "<template>", "exec")
+    valuecheck.watch(code, module, code.co_filename)  # its bindings are checked (rule:valuecheck)
     if freevars:
         code = next(c for c in code.co_consts if isinstance(c, types.CodeType) and c.co_name == "__n_wrapper")
     gen_code = next(c for c in code.co_consts if isinstance(c, types.CodeType) and c.co_name == gen_def.name)
@@ -572,7 +574,10 @@ def template_expand(target_func):
     # the expanded source under a name of its own, so tracebacks and astToStr (call positions) can read it
     filename = f"<template_expand {target_func.__module__}.{target_func.__qualname__}>"
     linecache.cache[filename] = (len(new_source_code), None, new_source_code.splitlines(True), filename)
-    exec(compile(new_source_code, filename, "exec"), exec_namespace)
+    code = compile(new_source_code, filename, "exec")
+    # its bindings are checked (rule:valuecheck), as its module's are
+    valuecheck.watch(code, new_source_code, filename, valuecheck.is_nimic_file(inspect.getsourcefile(target_func) or ""))
+    exec(code, exec_namespace)
 
     new_func = exec_namespace[target_func.__name__]
     if not new_func.__code__.co_freevars:

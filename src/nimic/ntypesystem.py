@@ -84,6 +84,7 @@ from string import Template
 from typing import Sequence, TypeAliasType
 
 from nimic.nvariants import NCase, NField, NRecord, NVariantLayout, parse_record
+from nimic import valuecheck as _valuecheck
 
 
 # --- Defects and {.cast(uncheckedAssign).} ---
@@ -470,6 +471,7 @@ def _specialize_generic(fn: callable, T_var: dict[str, str]) -> callable:
 
     # Compile in the caller's namespace
     code = compile(tree, ins.getfile(fn), "exec")
+    _valuecheck.watch(code, tree, ins.getfile(fn))  # its bindings are checked (rule:valuecheck)
     # Build namespace with access to the module's globals; registered types only fill names the module
     # lacks, globals and builtins alike (the module's `bool` is Python's bool, DICT_OF_TYPES["bool"] NBool)
     builtin_names = vars(sys.modules["builtins"])
@@ -798,20 +800,203 @@ def _n_union_type_class(ann: str, namespace: dict) -> str:
     return key
 
 
-def _n_value_copy(value):
-    """Nim assignment semantics for a field value: value types (string, seq, set, array, non-ref
-    objects) and the mutable scalars (nint, float64, nbool cells, and the views of an array slot or
-    field they may be) are copied; refs, pointers, procs and immutable values are shared."""
+def _n_assign_copies(value) -> bool:
+    """Whether Nim's assignment copies `value`: value types (string, seq, set, array, non-ref objects) and the
+    mutable scalars (nint, float64, nbool cells, and the views of an array slot or field they may be), and an
+    anonymous tuple holding one; refs, pointers, procs, move-only and immutable values are shared."""
     value = _n_uncell(value)  # a variable's cell stores its value
+    if type(value) is tuple:
+        return any(_n_assign_copies(v) for v in value)
     if value is None or getattr(type(value), "_n_is_ref", False) or callable(value) and not hasattr(value, "copy"):
-        return value
+        return False
     if getattr(type(value), "_n_move_only", False):
-        return value  # =copy is an error: Nim moves it here (the Nim compiler rejects a real copy)
-    if isinstance(value, (string, seq, Tset, array, _Object, NScalar, NBool)) and callable(getattr(value, "copy", None)):
-        return value.copy()
+        return False  # =copy is an error: Nim moves it here (the Nim compiler rejects a real copy)
+    return (isinstance(value, (string, seq, Tset, array, _Object, NScalar, NBool))
+            and callable(getattr(value, "copy", None)))
+
+
+def _n_value_copy(value):
+    """Nim assignment semantics for a field value (_n_assign_copies): a value is copied, anything else shared."""
+    value = _n_uncell(value)
     if type(value) is tuple:  # an anonymous tuple (Nim `(a, b)`) is a value: its elements are copied
         return tuple(_n_value_copy(v) for v in value)
-    return value
+    return value.copy() if _n_assign_copies(value) else value
+
+
+# --- Value bindings checked (rule:valuecheck, nimic.valuecheck): the type system's answers ---
+
+def _n_checked_value(value) -> bool:
+    """Whether a binding of `value` without a copy may differ from Nim: a value Nim's assignment copies
+    (_n_assign_copies) that is not a constant's (frozen: changing it raises TypeError, naming the copy to write)."""
+    return _n_assign_copies(value) and getattr(_n_uncell(value), "_n_frozen", None) is None
+
+
+def _n_is_view(value) -> bool:
+    """Whether `value` is a view of storage it shares: a scalar read from an array slot or a struct field
+    (each read makes a new view of the same memory)."""
+    return isinstance(value, NScalar) and getattr(value, "_n_view", None) is not None
+
+
+def _n_shares_storage(value, obj) -> bool:
+    """Whether `value` is a view into `obj`'s memory: a scalar view whose address lies in the ctypes buffer
+    `obj` is or holds (`_n_view`)."""
+    if not _n_is_view(value):
+        return False
+    buffer = obj if isinstance(obj, ctypes._SimpleCData | ctypes.Array | ctypes.Structure) else getattr(obj, "_n_view", None)
+    if not isinstance(buffer, ctypes._SimpleCData | ctypes.Array | ctypes.Structure):
+        return False
+    start = ctypes.addressof(buffer)
+    return start <= ctypes.addressof(value._n_view) < start + ctypes.sizeof(buffer)
+
+
+def _n_fingerprint(value) -> object:
+    """A plain snapshot of what a value holds, to tell whether a write changed it (two fingerprints compare
+    equal when the value is the same): a scalar's number, a string's text, the items of a seq, array or set, an
+    object's fields (_n_contents); a ref, pointer or proc by its identity (Nim shares them)."""
+    value = _n_uncell(value)
+    if value is None or isinstance(value, (bool, int, float, str, bytes)):
+        return value
+    if isinstance(value, (NScalar, NBool)):
+        return value._n_get_value()
+    if isinstance(value, string):
+        return value.data
+    if isinstance(value, pointer):
+        return ("ptr", value._n_target_key())
+    if getattr(type(value), "_n_is_ref", False) or callable(value) and not hasattr(value, "copy"):
+        return ("ref", id(value))
+    if isinstance(value, Tset):
+        return frozenset(value)
+    if isinstance(value, (tuple, list, seq, array)):
+        return tuple(_n_fingerprint(v) for v in value)
+    if isinstance(value, dict):
+        return tuple((_n_fingerprint(k), _n_fingerprint(v)) for k, v in value.items())
+    contents = getattr(value, "_n_contents", None)
+    if callable(contents):
+        return (type(value), _n_fingerprint(contents()))
+    return ("object", id(value))  # unknown: compares equal to itself, a change of it is not seen
+
+
+_n_overloads: dict = {}  # @dispatch name -> its functions
+_n_alias_results: dict = {}  # code object -> whether its function's result may be shared (cleared by a new overload)
+
+
+def _n_annotation(fn, name: str) -> str | None:
+    """The source text of a function's annotation of `name` (a parameter, "return"), without evaluating it."""
+    try:
+        return annotationlib.get_annotations(fn, format=annotationlib.Format.STRING).get(name)
+    except TypeError:  # not a function with annotations (a builtin)
+        return None
+
+
+# builtins whose result is never an argument or a stored item
+_n_new_value_builtins = frozenset((len, id, hash, isinstance, issubclass, callable, repr, format, ord, chr, hasattr,
+                                   print, sorted))
+
+
+def _n_alias_join(answers) -> bool | str:
+    """The strongest of several _n_result_may_alias answers: True, then INPUTS, then False."""
+    answers = list(answers)
+    return True if True in answers else _valuecheck.INPUTS if _valuecheck.INPUTS in answers else False
+
+
+def _n_result_may_alias(fn, _seen: frozenset = frozenset()) -> bool | str:
+    """Whether a call of `fn` may return a value shared with another location, so a binding of it needs a copy
+    (`y = f(x).copy()`) where it changes. True: an alias result (`mut @ T`, `lent @ T`), or a proc returning a
+    global (or one whose source can't be read). INPUTS (nimic.valuecheck.INPUTS): shared only when the result is
+    one of the call's inputs or a part of one, which the check sees at run time: a template (its body is
+    substituted: `return h.p` is the argument's field), a core or std proc returning a parameter or a part of one
+    (`min(a, b)`, `getOrDefault` a table's entry) or the result of a call it can't resolve, a builtin; a nimic
+    proc's `-> T` result returning a parameter's field without `.copy()` (a getter: Nim copies it). False: a type
+    makes a new value, and so does a proc returning a copy or a value of its own."""
+    if isinstance(fn, type):
+        return False
+    if isinstance(fn, functools.partial):  # a @ufcs proc called as a method
+        return _n_result_may_alias(fn.func, _seen)
+    code = getattr(fn, "__code__", None)
+    if code is None:
+        call = getattr(type(fn), "__call__", None)
+        if isinstance(call, types.FunctionType):  # a callable object: its __call__ decides
+            return _n_result_may_alias(types.MethodType(call, fn), _seen)
+        new = type(fn) is types.BuiltinFunctionType and fn in _n_new_value_builtins
+        return False if new else _valuecheck.INPUTS
+    target = fn.__func__ if isinstance(fn, types.MethodType) else fn
+    # a @dispatch name's overloads decide (its callable shares the first overload's code: a key of its own)
+    key = ("dispatch", target.__name__) if isinstance(target, _DispatchedCallable) else code
+    may = _n_alias_results.get(key)
+    if may is not None:
+        return may
+    if key in _seen:
+        return False  # recursion: the other returns decide
+    if _valuecheck.alias_annotation(_n_annotation(target, "return")):
+        may = True
+    elif isinstance(target, _DispatchedCallable):
+        may = _n_alias_join(_n_result_may_alias(o, _seen | {key})
+                            for o in _n_overloads.get(target.__name__, (target._n_fn,)))
+    else:  # what it returns
+        sources = _valuecheck.returned_sources(code)
+        may = True if sources is None else _n_alias_join(_n_source_may_alias(s, fn, _seen | {key}) for s in sources)
+    _n_alias_results[key] = may
+    return may
+
+
+def _n_source_may_alias(source, fn, seen: frozenset) -> bool | str:
+    """Whether a value `fn` returns (a nimic.valuecheck.Source) may be shared (_n_result_may_alias)."""
+    target = fn.__func__ if isinstance(fn, types.MethodType) else fn
+    code = getattr(target, "__code__", None)
+    if source.kind in ("lvalue", "part"):
+        params = code.co_varnames[:code.co_argcount + code.co_kwonlyargcount + bool(code.co_flags & ins.CO_VARARGS)]
+        # a parameter (a part of it) or a part of a call's result (`splitFile(p).dir`) is an input's, or new;
+        # a global is shared
+        return _valuecheck.INPUTS if source.root is None or source.root in params else True
+    if source.callee is None:
+        return _valuecheck.INPUTS
+    namespace = dict(getattr(target, "__globals__", {}))
+    if isinstance(fn, types.MethodType):  # its receiver (`cls._n_from_bytes` of a classmethod)
+        namespace[code.co_varnames[0]] = fn.__self__
+    closure = getattr(target, "__closure__", None) or ()
+    for name, cell in zip(code.co_freevars, closure):
+        try:
+            namespace[name] = cell.cell_contents  # a closure's variable (`cast[T]` calls `T._n_cast`)
+        except ValueError:  # an empty cell
+            pass
+    try:
+        callee = eval(source.callee, namespace)
+    except Exception:  # a local or a parameter's method (`self._n_dict.get`): its result is an input's, or new
+        return _valuecheck.INPUTS
+    return _n_result_may_alias(callee, seen)
+
+
+def _n_param_mutable(fn, position: int | None, keyword: str | None) -> bool:
+    """Whether a call of `fn` may change its argument at `position` (-1: a bound method's receiver) or
+    `keyword`: a `mut @` (Nim `var`) or template `untyped` parameter, any overload's; an unannotated parameter
+    of code nimic does not analyze (core and std procs) may. Types (constructors store copies), builtins and
+    `*args` (Nim varargs are not `var`) don't."""
+    if isinstance(fn, (type, types.BuiltinFunctionType, types.MethodWrapperType, types.WrapperDescriptorType)):
+        return False
+    if isinstance(fn, functools.partial):  # a @ufcs proc called as a method: its first arguments are bound
+        return _n_param_mutable(fn.func, None if position is None else position + len(fn.args), keyword)
+    if isinstance(fn, types.MethodType):
+        fn, position = fn.__func__, None if position is None else position + 1
+    if isinstance(fn, _DispatchedCallable):
+        return any(_n_param_mutable(o, position, keyword) for o in _n_overloads.get(fn.__name__, (fn._n_fn,)))
+    code = getattr(fn, "__code__", None)
+    if code is None:
+        return True
+    names = code.co_varnames[:code.co_argcount + code.co_kwonlyargcount]
+    if keyword is not None:
+        if keyword not in names:
+            return True  # `**kwargs`
+        name = keyword
+    elif position is None:
+        return True  # `*args` spread over unknown parameters
+    elif position < code.co_argcount:
+        name = names[position]
+    else:
+        return not code.co_flags & ins.CO_VARARGS
+    annotation = _n_annotation(fn, name)
+    if annotation:
+        return _valuecheck.mutable_annotation(annotation)
+    return not _valuecheck.is_nimic_file(code.co_filename)
 
 
 # --- Lifetime hooks (ncompiler/proposals/feature_lifetime_hooks_runtime.md) ---
@@ -1170,6 +1355,8 @@ def dispatch(fn: callable) -> callable:
         entries = __dispatch_varargs__.setdefault(fn.__name__, [])
         entries[:] = [e for e in entries if e[0] != tuple(sig_list)] + [(tuple(sig_list), elem, conv, fn)]
     _n_register_imported_proc(fn, fn_globals)
+    _n_overloads.setdefault(fn.__name__, []).append(fn)  # its callers' value checks read them (rule:valuecheck)
+    _n_alias_results.clear()
     generic = any((arg in _n_generic_types for arg in sig_list))
     genericT = len(fn.__type_params__) > 0
     # register signature
@@ -2794,13 +2981,22 @@ class _Object(Ntype):
             return NotImplemented
         if type(other) is not type(self) or getattr(type(self), "_n_is_ref", False):
             return False
+        names = self._n_active_fields()
+        if names != other._n_active_fields():
+            return False
+        return all(getattr(self, n) == getattr(other, n) for n in names)
+
+    def _n_active_fields(self) -> list:
+        """The fields the value holds, in declaration order: all of them, or a variant's active ones."""
         names = type(self).__dict__.get("_n_fields") or getattr(type(self), "_n_fields", [])
         if getattr(type(self), "_n_variant_layout", None) is not None:
             active = set(self.__dict__.get("_n_fields", names))
-            if active != set(other.__dict__.get("_n_fields", names)):
-                return False
             names = [n for n in names if n in active]
-        return all(getattr(self, n) == getattr(other, n) for n in names)
+        return names
+
+    def _n_contents(self) -> tuple:
+        """What the value holds, for a fingerprint (_n_fingerprint): its active fields' values."""
+        return tuple(getattr(self, n) for n in self._n_active_fields())
 
     __hash__ = object.__hash__  # Nim's `hash` is independent of `==`
 
@@ -4942,6 +5138,7 @@ class NScalar:
     def _n_freeze(self, name: str) -> None:
         """Make this value a constant's (`with const:`): `<<=` and in-place operators raise TypeError."""
         self._n_set_value = _n_frozen_setter(name)
+        self._n_frozen = name
 
     def __init_subclass__(cls, **kwargs) -> None:
         super().__init_subclass__(**kwargs)

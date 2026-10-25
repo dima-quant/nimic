@@ -586,10 +586,10 @@ def nodeTableTestOrSet(t: mut@TNodeTable, key: PNode, val: nint) -> nint:
     # simplified: a linear search by strVal
     for i in range(t.keys.len):
         if t.keys[i] == key.strVal:
-            return t.vals[i]
+            return t.vals[i].copy()
     t.keys.add(key.strVal)
     t.vals.add(val)
-    return val
+    return val.copy()
 
 
 # --- sighashes.nim (subset) ---

@@ -112,6 +112,33 @@ is added to the core.
 4. **Runtime speed.** Python mode is about 9,000 times slower than compiled Nim (`ncompiler/review_lexer.md`).
 5. **G17 as compiler plugins**, later.
 
+## Idea for later: a nimic backend for nimony
+
+A nimony backend, written in Nim, that writes nimic Python from Nim code: the reverse of the transpiler.
+
+- **Uses.**
+  - A round-trip test of the nimic rules: nimic → Nim → nimic over the converted corpus (`ncompiler/`,
+    `nnimony/`, `tests/nimic`, the raytracer) must give back the source in a canonical form; every
+    difference is an ambiguous, lossy or undocumented rule.
+  - Mechanical conversion of nimony (and the pure-Nim std modules), with agents filling only the gaps it
+    reports: none of the agent mistakes the reviews find (dropped comments, workarounds in modules,
+    public private names, renames).
+  - Plugins (the Nim 3 macros): nimic → Nim → NIF → plugin (in nimic, on the converted nifcore /
+    nifreader) → NIF → nimic run by Python, cached by an import hook. Only modules that use plugins pay
+    for it (a nimony binary and a build step).
+- **What it needs first.**
+  - A one-to-one mapping: today `.copy()` (dropped by `rule:copy`), the methods rule, `@dispatch`,
+    `@template_expand`, `mut @`, `cell()` and `nint` vs sized integers carry what Nim leaves to sema, so
+    the backend needs types and scopes (the parsed tree for structure plus sema's side tables), and
+    free choices (`x.f(1)` vs `f(x, 1)`, `with let:` grouping) need a canonical form.
+  - Comments: plain `#` comments are probably lost by the parser; merge them back from the source by
+    line info (the NIF `#…#` decoration may help).
+  - The std: convert only pure-Nim algorithmic modules; keep the Python shims at the system boundary
+    (faster, and system code can't run in Python).
+- **When.** Not during Phase A: the `src/lib` batches still change the rules (batch 6 found 15 core gaps),
+  and a backend built now would freeze today's quirks. Revisit before Phase B / C, where the line counts
+  (7k–50k per component) make a mechanical conversion pay.
+
 ## History
 
 - **2026-10-19: first plan.** It targeted the Nim 2 compiler (`compiler/`), front end first, then nimony's

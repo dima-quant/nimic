@@ -6,6 +6,7 @@ import contextlib
 import ctypes
 import inspect
 import io
+import json
 import math
 import os
 import subprocess
@@ -18,7 +19,8 @@ from nimic.ntypes import *
 from nimic.nsystem import ord as nim_ord, _BuildProfile, _n_set_build_profile
 from nimic.ntypesystem import (BUFFER_REGISTRY, _n_routine_pragmas, nord, BufferRegistry, DICT_OF_C_TYPES, _match_subtype,
                                _n_aliases, _n_distinct_types, _n_from_text, _n_registry, _n_to_text,
-                               NilPtr, char as _char)
+                               NilPtr, char as _char, _n_assign_copies, _n_fingerprint, _n_param_mutable,
+                               _n_result_may_alias)
 from nimic.std.bitops import fastLog2
 from nimic.std.endians import big_endian32
 from nimic.std.formatfloat import addFloat
@@ -34,6 +36,7 @@ from nimic.std.syncio import lines, read_file
 from nimic.std.tables import OrderedTable, Table, initOrderedTable, initTable
 from nimic.system.ansi_c import c_free, c_malloc, csize_t
 from nimic.transpiler import unparse, private_name_collisions
+from nimic import valuecheck
 
 def _n_fwd_proc(a, b):
     """A forward declaration in this module (overloads below)."""
@@ -4518,6 +4521,282 @@ class TestNTypes(unittest.TestCase):
         through.contents.count += 1
         self.assertEqual((box.owner.n, len(box.items), box.count), (7, 1, 2))
         self.assertIs(cast[ptr[_TPBox]](addr(box)).contents, box)
+
+    def test_table_copy(self):
+        """A table's `.copy()` and `<<=` copy its entries (value entries copied, refs shared), as Nim's
+        table assignment; the entries are not object fields, so Object's field copy missed them."""
+        t = initTable[string, seq[nint]]()
+        t[string("a")] = seq[nint]([nint(1)])
+        c = t.copy()
+        self.assertTrue(c.hasKey(string("a")))
+        c[string("a")].add(nint(2))
+        self.assertEqual((len(t[string("a")]), len(c[string("a")])), (1, 2))
+        o = initOrderedTable[string, nint]()
+        o[string("x")] = nint(5)
+        o2 = initOrderedTable[string, nint]()
+        o2 <<= o
+        self.assertEqual(o2[string("x")], 5)
+        o[string("y")] = nint(6)
+        self.assertFalse(o2.hasKey(string("y")))
+
+    def test_value_check_analysis(self):
+        """rule:valuecheck: a binding of an l-value or a call's result without `.copy()` is a site (checked at run
+        time) when one of the two names may change the value while the other is read later: a store, `+=`, a
+        method call, an argument, a closure, a global. A local's last use (Nim moves it), `.copy()`, new values,
+        names never changed, `with let:` names and a swap's targets that are only read are not."""
+        source = textwrap.dedent("""\
+            def f(p: P, q: P) -> P:
+                with var:
+                    a = p
+                    b = p.f
+                    c = g(p)
+                    d = p.copy()
+                    k = 1
+                    m = a + b
+                    n = q
+                    r = q
+                a.x += 1
+                b.add(1)
+                use(c)
+                d.x = 2
+                k += 1
+                m.x = 3
+                echo(n)
+                return r
+
+            def moves(p: P) -> P:
+                with var:
+                    x = h(p)
+                    y = x
+                y.x = 1
+                for i in s:
+                    w = y
+                    w.x = 2
+                with let:
+                    z = p
+                return y
+
+            def captured(p: P):
+                with var:
+                    v = p
+                def inner():
+                    v.x = 1
+                inner()
+            """)
+        source += textwrap.dedent("""\
+
+            def alias(p: mut @ P) -> mut @ T:
+                return p.f
+
+            @template
+            def t(p: P) -> T:
+                return p.f
+
+            def __iadd__(p: P, q: P) -> P:
+                return p
+            """)
+        analysis = valuecheck.analyze(ast.parse(source), "<test>")
+        found = {(site.target, site.sources[0].text) for site in analysis.sites if site.target is not None}
+        # `echo(n)` may change n as far as syntax tells: the run time asks the callee (echo's varargs don't)
+        self.assertEqual(found, {("a", "p"), ("b", "p.f"), ("c", "g(p)"), ("n", "q"), ("w", "y"), ("v", "p")})
+        # a `-> T` proc's return of a value it may share is checked in the proc (its callers bind their own value);
+        # alias results, templates and Python protocol methods are not
+        returns = {(site.line, site.text, tuple(s.text for s in site.sources))
+                   for site in analysis.sites if site.target is None}
+        self.assertEqual(returns, {(18, "r", ("q",)), (30, "y", ("h(p)",))})
+        # what each function returns that may be shared: `r = q` returns the parameter; `moves` returns its own value
+        self.assertEqual([s.text for s in analysis.returns[(1, "f")]], ["q"])
+        self.assertEqual([s.text for s in analysis.returns[(20, "moves")]], ["h(p)"])
+        self.assertTrue(valuecheck.alias_annotation("mut @ T") and valuecheck.alias_annotation("lent@T")
+                        and valuecheck.alias_annotation("untyped") and not valuecheck.alias_annotation("Point"))
+        self.assertTrue(valuecheck.mutable_annotation("mut @ T") and not valuecheck.mutable_annotation("lent @ T"))
+
+    def test_value_check_policy(self):
+        """The type system's answers to the value checks: Nim's assignment copies value types (objects, seqs,
+        strings, scalars, a tuple holding one), not refs, types or Python's immutable values; a call's result may
+        be shared unless its callee is a type, a new-value builtin (`len`) or a nimic proc returning a new value;
+        an argument may be changed through a `mut @` / `untyped` parameter or an unannotated core proc's, not
+        through a type, a builtin or `*args`. A value's fingerprint (`_n_fingerprint`) tells whether a write
+        changed it: equal values have equal fingerprints, refs compare by identity."""
+        class _TVc(Object):
+            x: nint
+
+        @ref
+        class _TVcRef(Object):
+            x: nint
+
+        for value in (_TVc(x=nint(1)), nint(3), string("ab"), seq[nint]([nint(1)]), (1, string("a"))):
+            self.assertTrue(_n_assign_copies(value), value)
+        for value in (_TVcRef(x=nint(1)), 3, "ab", None, _TVc, (1, 2)):
+            self.assertFalse(_n_assign_copies(value), value)
+        self.assertFalse(_n_result_may_alias(_TVc))
+        self.assertFalse(_n_result_may_alias(len))
+        self.assertTrue(_n_result_may_alias(min))
+        @template
+        def _tVcField(o: _TVc) -> nint:  # its body is substituted: the l-value itself
+            return o.x
+
+        @template
+        def _tVcNew(o: _TVc) -> _TVc:
+            return _TVc(x=o.x)
+
+        self.assertTrue(_n_result_may_alias(_tVcField))
+        self.assertFalse(_n_result_may_alias(_tVcNew))
+        self.assertFalse(_n_result_may_alias(cast[int64]))  # a new value of the type
+
+        def plainPython(p: _TVc) -> _TVc:  # not nimic code: may return its argument
+            return p
+
+        def setX(p: mut @ _TVc, x: nint) -> None:
+            p.x = x
+
+        self.assertTrue(_n_result_may_alias(plainPython))
+        self.assertTrue(_n_param_mutable(setX, 0, None))
+        self.assertFalse(_n_param_mutable(setX, 1, None))
+        self.assertFalse(_n_param_mutable(setX, None, "x"))
+        self.assertTrue(_n_param_mutable(setLen, 0, None))  # a core proc, unannotated
+        self.assertFalse(_n_param_mutable(echo, 0, None))  # varargs
+        self.assertFalse(_n_param_mutable(_TVc, 0, None))
+        self.assertFalse(_n_param_mutable(len, 0, None))
+        self.assertTrue(_n_param_mutable(seq[nint]([nint(1)]).add, -1, None))  # a core method's receiver
+
+        class _TVcHolder(Object):
+            v: _TVc
+            items: seq[nint]
+            r: _TVcRef
+            name: string
+
+        holder = _TVcHolder(v=_TVc(x=nint(1)), items=seq[nint]([nint(1)]), r=_TVcRef(x=nint(1)), name=string("a"))
+        before = _n_fingerprint(holder)
+        self.assertEqual(_n_fingerprint(holder.copy()), before)  # an equal value
+        holder.r.x = nint(2)  # a ref's target is not the value's (Nim shares it)
+        self.assertEqual(_n_fingerprint(holder), before)
+        for change in (lambda: setattr(holder.v, "x", nint(5)), lambda: holder.items.add(nint(2)),
+                       lambda: holder.name.add(string("b")), lambda: setattr(holder, "r", _TVcRef(x=nint(2)))):
+            change()
+            self.assertNotEqual(_n_fingerprint(holder), before)
+            before = _n_fingerprint(holder)
+        table = initTable[string, seq[nint]]()
+        table[string("k")] = seq[nint]([nint(1)])
+        before = _n_fingerprint(table)
+        table[string("k")].add(nint(2))
+        self.assertNotEqual(_n_fingerprint(table), before)
+        scalar = nint(1)
+        before = _n_fingerprint(scalar)
+        scalar += 1
+        self.assertNotEqual(_n_fingerprint(scalar), before)
+
+    def test_value_check_program(self):
+        """A nimic program (the `# /// nimic` header) runs as written; its bindings are checked when they run:
+        tests/nimic/value_bindings.py writes each copy Nim's assignment makes and prints what compiled Nim prints
+        (tests/verify_transpiled.py nimic). A missing copy whose value a write then changes while both locations
+        hold it (a certain difference from Nim) is a ValueCopyError naming the binding and the write (main program
+        and imported module), or a warning (NIMIC_VALUECHECK=warn); a binding that only may differ (rebound before
+        the write, a getter's result only read) is not, and NIMIC_VALUECHECK=lint lists it.
+        NIMIC_VALUECHECK_REPORT lists the sites."""
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(root, "src"), root)))
+        env.pop("NIMIC_VALUECHECK", None)
+        run = subprocess.run([sys.executable, os.path.join(root, "tests", "nimic", "value_bindings.py")],
+                             capture_output=True, text=True, env=env, cwd=root)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(run.stdout.splitlines(), [
+            "declared: a.x=1 b.x=2 n=6 same=11 result=101 a.tags=1 tags=2",
+            "core procs: a.x=1 lo=1001 shown=a.x",
+            "std procs: stored=1 entry=2",
+            "re-assigned: a.x=1 c.x=50",
+            "swapped: u.x=1004 w.x=3",
+            "aliases: h.p.x=7 h.name=h s=h! mine=70 seen=80 got=90",
+            "tracked: t.n=1 kept.n=2 copies=1",
+            "moved: last.n=12 copies=1"])
+        with tempfile.TemporaryDirectory() as tmp:  # each of its copies is needed: without them, 13 errors
+            path = os.path.join(tmp, "value_bindings_nocopy.py")
+            with builtins.open(os.path.join(root, "tests", "nimic", "value_bindings.py"), encoding="utf-8") as f:
+                source = f.read()
+            with builtins.open(path, "w", encoding="utf-8") as f:
+                f.write(source.replace(".copy()", ""))
+            nocopy = subprocess.run([sys.executable, path], capture_output=True, text=True,
+                                    env=dict(env, NIMIC_VALUECHECK="warn"))
+            self.assertEqual(nocopy.returncode, 0, nocopy.stderr)
+            self.assertEqual(sum(line.startswith("nimic valuecheck: ") for line in nocopy.stderr.splitlines()), 13,
+                             nocopy.stderr)
+        program = textwrap.dedent("""\
+            # /// nimic
+            #
+            # ///
+            from nimic.ntypes import *
+
+            class P(Object):
+                x: nint
+
+            class H(Object):
+                p: P
+
+            def get(h: H) -> P:
+                return h.p
+
+            def maybe(p: P, fresh: bool):
+                with var:
+                    q = p
+                if fresh:
+                    q = P(x=nint(9))
+                q.x += 1
+                echo(p.x)
+
+            def bump(p: P):
+                with var:
+                    q = p
+                q.x += 1
+                echo(p.x)
+
+            def viaGetter(h: H):
+                with var:
+                    g = get(h)
+                g.x += 1
+                echo(h.p.x)
+
+            if comptime(__name__ == "__main__"):
+                with var:
+                    h = H(p=P(x=nint(1)))
+                echo(get(h).x)
+                maybe(P(x=nint(1)), True)
+                bump(P(x=nint(1)))
+                viaGetter(h)
+            """)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "vc_missing.py")
+            with open(path, "w") as f:
+                f.write(program)
+            failed = subprocess.run([sys.executable, path], capture_output=True, text=True, env=env)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertEqual(failed.stdout, "1\n1\n")  # the possible-only bindings run on
+            self.assertIn("ValueCopyError", failed.stderr)
+            self.assertIn("vc_missing.py:25: `q = p` binds the P that p holds", failed.stderr)
+            self.assertIn("line 26 (`q.x += 1`) changed it while both held it", failed.stderr)
+            self.assertIn("write `q = p.copy()`", failed.stderr)
+            report = os.path.join(tmp, "report.jsonl")
+            warned = subprocess.run([sys.executable, path], capture_output=True, text=True,
+                                    env=dict(env, NIMIC_VALUECHECK="warn", NIMIC_VALUECHECK_REPORT=report))
+            self.assertEqual((warned.returncode, warned.stdout), (0, "1\n1\n2\n2\n"), warned.stderr)
+            self.assertIn("vc_missing.py:31: `g = get(h)` binds the P that an input of get(h) (h) holds",
+                          warned.stderr)
+            self.assertNotIn("(lint)", warned.stderr)
+            with open(report) as f:
+                entry = json.loads(f.read())
+            self.assertEqual([e.rsplit(":", 1)[1] for e in entry["errors"]], ["25", "31"])
+            self.assertEqual((entry["possible"], entry["unchecked"]), ([], []))
+            linted = subprocess.run([sys.executable, path], capture_output=True, text=True,
+                                    env=dict(env, NIMIC_VALUECHECK="lint"))
+            self.assertEqual((linted.returncode, linted.stdout), (0, "1\n1\n2\n2\n"), linted.stderr)
+            for line in ("13: `return h.p`", "17: `q = p`", "25: `q = p`", "31: `g = get(h)`"):
+                self.assertIn(f"nimic valuecheck (lint): {path}:{line}", linted.stderr)
+            # an imported nimic module is checked too (the import hook only watches it), and runs as written
+            imported = subprocess.run([sys.executable, "-c", "import nimic, vc_missing; vc_missing.bump(vc_missing.P())"],
+                                      capture_output=True, text=True, env=dict(env, PYTHONPATH=env["PYTHONPATH"] + os.pathsep + tmp))
+            self.assertIn("ValueCopyError", imported.stderr)
+            off = subprocess.run([sys.executable, path], capture_output=True, text=True,
+                                 env=dict(env, NIMIC_VALUECHECK="off"))
+            self.assertEqual((off.returncode, off.stdout), (0, "1\n1\n2\n2\n"), off.stderr)
 
     def test_block_ends_lifetimes(self):
         """`with block:` / `with block("name"):` end the lifetimes of the variables they declare, as Nim's

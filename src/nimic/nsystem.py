@@ -9,6 +9,8 @@ import io
 import linecache as _linecache
 import os
 import importlib as _importlib
+import importlib.machinery as _machinery
+import importlib.util as _importlib_util
 import re as _re
 import math as _math
 import resource as _resource
@@ -22,6 +24,7 @@ from typing import Generator, TypeVar
 
 from nimic.system.ansi_c import c_malloc, c_free
 from nimic import ntypesystem as _ntypesystem
+from nimic import valuecheck as _valuecheck
 from nimic.ntypesystem import char, cstring, seq, string, NIntEnum, _n_dollar, ufcs, _n_default_value, RangeDefect
 
 class _SomeCastClass:
@@ -1185,7 +1188,58 @@ def include(*names: str) -> None:
             stub.__file__ = path
             stub._n_included_by = namespace.get("__name__")
             sys.modules[qualified] = stub
-        exec(compile(source, path, "exec", dont_inherit=True), namespace)
+        code = compile(source, path, "exec", dont_inherit=True)
+        _valuecheck.watch(code, source, path)  # its bindings are checked (rule:valuecheck)
+        exec(code, namespace)
+
+
+# --- Value bindings checked (rule:valuecheck, nimic.valuecheck) ---
+# A nimic module (a file whose leading comments hold the `# /// nimic` block) runs as written; its bindings that may
+# need a `.copy()` are checked on their first execution. The import hook only watches the module's code (the usual
+# bytecode cache is used); the modules that imported nimic while loading (the main program) are watched from their
+# running frames (_n_install_value_checks).
+
+
+class _NimicLoader(_machinery.SourceFileLoader):
+    """Loads a nimic module as usual, its bindings watched."""
+
+    def exec_module(self, module: _types.ModuleType) -> None:
+        code = self.get_code(module.__name__)
+        _valuecheck.watch(code, _importlib_util.decode_source(self.get_data(self.path)), self.path)
+        exec(code, module.__dict__)
+
+
+class _NimicFinder:
+    """The import hook: a module found on the path whose file has the nimic header loads with _NimicLoader."""
+
+    @staticmethod
+    def find_spec(fullname, path=None, target=None):
+        spec = _machinery.PathFinder.find_spec(fullname, path, target)
+        if (spec is None or type(spec.loader) is not _machinery.SourceFileLoader
+                or not _valuecheck.is_nimic_file(spec.origin)):
+            return None  # the path finder loads it as usual
+        spec.loader = _NimicLoader(fullname, spec.origin)
+        return spec
+
+
+def _n_install_value_checks() -> None:
+    """Called when nimic is first imported: starts the checks (mode NIMIC_VALUECHECK: error, warn, lint, off),
+    installs the import hook and watches the nimic modules being loaded (they imported nimic)."""
+    mode = os.environ.get("NIMIC_VALUECHECK", "error")
+    _valuecheck.install(_valuecheck.Policy(_ntypesystem._n_checked_value, _ntypesystem._n_result_may_alias,
+                                           _ntypesystem._n_param_mutable, _ntypesystem._n_is_view,
+                                           _ntypesystem._n_shares_storage, _ntypesystem._n_fingerprint), mode)
+    if not _valuecheck.installed():
+        return
+    if _NimicFinder not in sys.meta_path:
+        sys.meta_path.insert(sys.meta_path.index(_machinery.PathFinder), _NimicFinder)
+    frame = sys._getframe(1)
+    while frame is not None:
+        path = frame.f_globals.get("__file__") or ""
+        if frame.f_code.co_name == "<module>" and _valuecheck.is_nimic_file(path):
+            with _builtins.open(path, encoding="utf-8") as f:
+                _valuecheck.watch(frame.f_code, f.read(), path)
+        frame = frame.f_back
 
 
 def emit(code: str) -> None:

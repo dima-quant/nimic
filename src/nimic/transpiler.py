@@ -179,6 +179,8 @@ Memory & variables:
     prefix) unexported; the pragma itself is not emitted
   rule:deref -> pointer dereference: ".contents" -> "[]"
   rule:copy -> value types are copied, drop .copy()
+  rule:valuecheck -> not a transpiler rule: the copies Nim's assignment makes are written `.copy()` in Python
+    where the difference shows (dropped, rule:copy) and checked when the code runs (nimic.valuecheck)
   rule:varini -> var initialization call without arguments with the same name as annotation is interpreted as
     declaration ("with var: a: Rng = Rng()" transpiles as "var a: Rng"), e.g. if the type is tuple. Also holds
     without annotation for registered classes or native types as array, openArray, etc. Ref types (registered
