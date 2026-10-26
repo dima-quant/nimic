@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 def raiseAssert(msg: str):
+    """{.noreturn.}"""
     raise AssertionError(msg)
 
 def failedAssertImpl(msg: str):

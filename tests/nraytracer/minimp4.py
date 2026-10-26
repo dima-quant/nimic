@@ -1199,7 +1199,7 @@ def mp4_h26x_write_nal(h: ptr[mp4_h26x_writer_t], nal: ptr[UncheckedArray[uint8]
         _eof = cast[intp](nal) + length
     with var:
         _err = MP4E_STATUS_OK
-        _curNal = nal
+        _curNal = nal.copy()
     while True:
         with var:
             _sizeofNal = nint(0)

@@ -957,7 +957,9 @@ def _shares(source: Source, frame, value) -> bool:
     return _reachable(value, inputs)
 
 
-_LEAVES = (int, float, complex, str, bytes, bool, type(None), types.ModuleType, types.FunctionType,
+# not searched for parts: values without parts, and namespaces (a type is Nim's typedesc, it holds no value; its
+# attributes reach the module's globals, e.g. `_n_caller_globals`)
+_LEAVES = (int, float, complex, str, bytes, bool, type(None), type, types.ModuleType, types.FunctionType,
            types.BuiltinFunctionType, types.MethodType)
 
 

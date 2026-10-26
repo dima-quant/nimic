@@ -15,7 +15,9 @@ Provides two decorators:
                         so `with t(args):` runs the template around the block.
   @template_expand    — rewrites the decorated function's AST, replacing
                         calls to registered templates with the template's
-                        body (parameter names substituted with call args).
+                        body (parameter names substituted with call args),
+                        and `with t(args):` of a block template that uses its
+                        caller's variables with its body around the block.
 
 Internal machinery:
   _ParameterReplacer  — AST NodeTransformer that substitutes parameter
@@ -306,23 +308,49 @@ def _n_declared_locals(func_def: ast.FunctionDef) -> set[str]:
 
 
 def _n_uses_caller_scope(func_def: ast.FunctionDef, module_globals: dict) -> bool:
-    """A statement template (no return type) whose body assigns a name that is not its own, or reads a
-    name that is neither a parameter, its own local, a global of its module nor a builtin. Nim binds
-    such open symbols at the call site, so the template is expanded in the caller (@template_expand)
-    like a {.dirty.} one; this also covers the locals of an enclosing proc."""
+    """A statement template (no return type) whose body assigns a name that is not its own, assigns one of
+    its parameters, or reads a name that is neither a parameter, its own local, a global of its module nor
+    a builtin. Nim binds such open symbols at the call site, and a parameter stands for the call's
+    argument (`template inc(p) = p = ...` assigns the caller's `p`), so the template is expanded in the
+    caller (@template_expand) like a {.dirty.} one; this also covers the locals of an enclosing proc."""
     if func_def.returns is not None:
         return False
     a = func_def.args
-    own = {arg.arg for arg in a.posonlyargs + a.args + a.kwonlyargs} | _n_declared_locals(func_def)
+    params = {arg.arg for arg in a.posonlyargs + a.args + a.kwonlyargs}
+    blocks = set(_n_block_params(func_def, _n_ast_annotations(func_def)))
+    own = params | _n_declared_locals(func_def)
     for stmt in func_def.body:
         for node in ast.walk(stmt):
-            if not isinstance(node, ast.Name) or node.id in own:
+            if not isinstance(node, ast.Name):
+                continue
+            if isinstance(node.ctx, ast.Store) and node.id in params - blocks:
+                return True
+            if node.id in own:
                 continue
             if isinstance(node.ctx, ast.Store):
                 return True
             if node.id not in module_globals and not hasattr(builtins, node.id):
                 return True
     return False
+
+
+def _n_ast_annotations(func_def: ast.FunctionDef) -> dict:
+    """The parameter annotations of a definition, as source text."""
+    return {a.arg: ast.unparse(a.annotation) for a in func_def.args.args if a.annotation is not None}
+
+
+def _n_template_entry(func_def: ast.FunctionDef, blocks=(), module_globals: dict | None = None) -> dict:
+    """What expansion needs of a template: its parameters, their defaults (AST nodes, aligned to the last
+    parameters), its body, its code blocks, and the globals of its module when it is expanded because it
+    uses its caller's scope (checked again at expansion, when the module's later globals are defined)."""
+    return {
+        "params": [arg.arg for arg in func_def.args.args],
+        "defaults": list(func_def.args.defaults),
+        "body_nodes": func_def.body,
+        "blocks": list(blocks),
+        "globals": module_globals,
+        "def": func_def,
+    }
 
 
 _n_template_defs: dict = {}  # code object -> the template's parsed FunctionDef (None without source)
@@ -348,7 +376,14 @@ def template(template_func):
         blocks = _n_block_params(func_def, template_func.__annotations__)
         if blocks:
             # rule: templates with code blocks run around the `with` body (Nim `t(args): block`)
-            return dispatch(_n_make_block_template(template_func, func_def, blocks))
+            factory = dispatch(_n_make_block_template(template_func, func_def, blocks))
+            # one using its caller's variables (or {.dirty.}) is expanded at `with t(args):` in
+            # @template_expand callers, its block spliced in: Nim's {.inject.} locals are the caller's
+            dirty = "dirty" in _n_routine_pragmas(template_func)
+            if dirty or _n_uses_caller_scope(func_def, template_func.__globals__):
+                _n_templates[template_func.__name__] = _n_template_entry(
+                    func_def, blocks, None if dirty else template_func.__globals__)
+            return factory
     is_untyped = (
         "return" in template_func.__annotations__
         and template_func.__annotations__["return"] == "untyped"
@@ -370,13 +405,7 @@ def template(template_func):
         if not isinstance(template_def_node, ast.FunctionDef):
             raise TypeError("The template must be a standard Python function.")
 
-        template_body_nodes = template_def_node.body
-        template_params = [arg.arg for arg in template_def_node.args.args]
-
-        _n_templates[template_func.__name__] = {
-            "params": template_params,
-            "body_nodes": template_body_nodes,
-        }
+        _n_templates[template_func.__name__] = _n_template_entry(template_def_node)
     return dispatch(template_func)
 
 
@@ -439,55 +468,159 @@ class _ReturnResult(ast.NodeTransformer):
     visit_AsyncFunctionDef = visit_Lambda = visit_FunctionDef
 
 
+class _ParamStores(ast.NodeTransformer):
+    """`p = x` in a template body whose parameter `p` is bound to a `mut @` parameter of the caller is
+    `p <<= x`: Nim assigns through the `var` parameter, nimic writes that in place (rules §4)."""
+
+    def __init__(self, names: set[str]):
+        self.names = names
+
+    def visit_Assign(self, node):
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id in self.names:
+            return ast.copy_location(ast.AugAssign(target=node.targets[0], op=ast.LShift(), value=node.value), node)
+        return node
+
+    def visit_FunctionDef(self, node):  # nested procs keep their own statements
+        return node
+
+    visit_AsyncFunctionDef = visit_Lambda = visit_FunctionDef
+
+
+class _BlockSplicer(ast.NodeTransformer):
+    """The bare statements `block` (and `return block`) of a template body replaced by the statements of
+    the call's code blocks (Nim substitutes the block where the template uses it)."""
+
+    def __init__(self, blocks: dict[str, list]):
+        self.blocks = blocks
+
+    def _maybe(self, node):
+        if isinstance(node.value, ast.Name) and node.value.id in self.blocks:
+            return [copy.deepcopy(stmt) for stmt in self.blocks[node.value.id]] or [ast.copy_location(ast.Pass(), node)]
+        return node
+
+    visit_Expr = visit_Return = _maybe
+
+    def visit_FunctionDef(self, node):  # nested procs keep their own statements
+        return node
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+
+def _n_split_blocks(body: list, n_blocks: int, name: str) -> list[list]:
+    """The code blocks of `with t(args):` (the body) and of the `with do:` statements that end it, in order."""
+    blocks = []
+    while True:
+        last = body[-1] if body else None
+        is_do = (isinstance(last, ast.With) and len(last.items) == 1
+                 and isinstance(last.items[0].context_expr, ast.Name) and last.items[0].context_expr.id == "do")
+        if len(blocks) + 1 == n_blocks:
+            if is_do:
+                raise TemplateBlockError(f"template {name} takes {n_blocks} block(s); an extra `with do:` block "
+                                         "was given")
+            blocks.append(body)
+            return blocks
+        if not is_do:
+            raise TemplateBlockError(f"template {name} takes {n_blocks} blocks, {len(blocks) + 1} given "
+                                     "(add `with do:` blocks)")
+        blocks.append(body[:-1])
+        body = last.body
+
+
+_N_MAX_EXPANSION_DEPTH = 64  # templates expanded inside expanded templates (Nim: a recursive template is an error)
+
+
 class _TemplateInliner(ast.NodeTransformer):
     """
     An AST NodeTransformer that walks the syntax tree and replaces calls to a
     specific template function with the body of that function, after substituting
-    its parameters with the call arguments.
+    its parameters with the call arguments. A block template's call `with t(args):` is
+    replaced by its body with the code blocks spliced in. Expanded code is expanded
+    again (templates calling templates).
     """
 
-    def __init__(self, dict_with_templates, module_globals: dict | None = None, caller_has_result: bool = False):
+    def __init__(self, dict_with_templates, module_globals: dict | None = None, caller_has_result: bool = False,
+                 mut_params: set[str] | frozenset = frozenset()):
         self.dict_with_templates = dict_with_templates
         self.module_globals = module_globals or {}
         # a bare `return` of an expanded template returns from the caller: with Nim's `result`
         self.caller_has_result = caller_has_result
+        self.mut_params = mut_params  # the caller's `mut @` / `out @` parameters
+        self._depth = 0
+
+    def _entry(self, call_node, with_blocks: bool):
+        """The registered template a call expands, or None."""
+        if not isinstance(call_node, ast.Call) or not isinstance(call_node.func, ast.Name):
+            return None
+        entry = self.dict_with_templates.get(call_node.func.id)
+        if entry is None or bool(entry.get("blocks")) != with_blocks:
+            return None
+        if entry.get("globals") is not None and not _n_uses_caller_scope(entry["def"], entry["globals"]):
+            return None  # its open names are globals of its module defined after it: a call runs it
+        return entry
+
+    @staticmethod
+    def _bind_arguments(entry, call_node) -> dict:
+        """The call's argument for each (non-block) parameter: positional, keyword, else the default."""
+        name = call_node.func.id
+        blocks = entry.get("blocks", [])
+        params = [p for p in entry["params"] if p not in blocks]
+        defaults = entry.get("defaults", [])
+        default_map = dict(zip(entry["params"][len(entry["params"]) - len(defaults):], defaults))
+        if len(call_node.args) > len(params):
+            raise TypeError(f"{name}() takes {len(params)} positional arguments but {len(call_node.args)} were given.")
+        argument_map = dict(zip(params, call_node.args))
+        for kw in call_node.keywords:
+            if kw.arg not in params or kw.arg in argument_map:
+                raise TypeError(f"{name}() got an unexpected or repeated argument {kw.arg!r}")
+            argument_map[kw.arg] = kw.value
+        for param in params:
+            if param not in argument_map:
+                if param not in default_map:
+                    raise TypeError(f"{name}() missing argument {param!r}")
+                argument_map[param] = copy.deepcopy(default_map[param])
+        return argument_map
+
+    def _expand_again(self, nodes: list, name: str) -> list:
+        """Expand the templates that the expanded statements call."""
+        self._depth += 1
+        if self._depth > _N_MAX_EXPANSION_DEPTH:
+            raise RecursionError(f"template {name} expands itself (Nim: recursive template)")
+        result = []
+        for node in nodes:
+            visited = self.visit(node)
+            if visited is None:
+                continue
+            result.extend(visited if isinstance(visited, list) else [visited])
+        self._depth -= 1
+        return result
+
+    def _substituted_body(self, entry, argument_map: dict) -> list:
+        """A copy of the template's body with its parameters replaced by the call's arguments."""
+        stores = {param for param, arg in argument_map.items()
+                  if isinstance(arg, ast.Name) and arg.id in self.mut_params}
+        parameter_replacer = _ParameterReplacer(argument_map)
+        body = []
+        for body_node in entry["body_nodes"]:
+            node = copy.deepcopy(body_node)
+            if stores:
+                node = _ParamStores(stores).visit(node)
+            node = parameter_replacer.visit(node)
+            if self.caller_has_result:
+                node = _ReturnResult().visit(node)
+            body.append(node)
+        return body
 
     def _inline_call(self, call_node, targets=None):
-        if (
-            not isinstance(call_node.func, ast.Name)
-            or call_node.func.id not in self.dict_with_templates
-        ):
+        entry = self._entry(call_node, with_blocks=False)
+        if entry is None:
             return None
-
-        template_name = call_node.func.id
-        template_params = self.dict_with_templates[template_name]["params"]
-        template_body_nodes = self.dict_with_templates[template_name]["body_nodes"]
-
-        call_args = call_node.args
-        if len(call_args) != len(template_params):
-            raise TypeError(
-                f"{template_name}() takes {len(template_params)} positional arguments "
-                f"but {len(call_args)} were given."
-            )
-
-        argument_map = dict(zip(template_params, call_args))
-        inlined_body = []
-        parameter_replacer = _ParameterReplacer(argument_map)
-        original_body_nodes = [copy.deepcopy(n) for n in template_body_nodes]
-
-        for i, body_node in enumerate(original_body_nodes):
-            transformed_node = parameter_replacer.visit(body_node)
-            if self.caller_has_result:
-                transformed_node = _ReturnResult().visit(transformed_node)
-            if targets is not None and i == len(original_body_nodes) - 1:
-                # Convert final Expr/Return to Assign using original targets
-                if isinstance(transformed_node, ast.Expr):
-                    transformed_node = ast.Assign(targets=targets, value=transformed_node.value)
-                elif isinstance(transformed_node, ast.Return) and transformed_node.value is not None:
-                    transformed_node = ast.Assign(targets=targets, value=transformed_node.value)
-            inlined_body.append(transformed_node)
-
-        return inlined_body
+        inlined_body = self._substituted_body(entry, self._bind_arguments(entry, call_node))
+        if targets is not None and inlined_body:
+            # Convert final Expr/Return to Assign using original targets
+            last = inlined_body[-1]
+            if isinstance(last, ast.Expr) or isinstance(last, ast.Return) and last.value is not None:
+                inlined_body[-1] = ast.Assign(targets=targets, value=last.value)
+        return self._expand_again(inlined_body, call_node.func.id)
 
     def visit_Expr(self, node):
         """
@@ -511,6 +644,19 @@ class _TemplateInliner(ast.NodeTransformer):
         inlined = self._inline_call(node.value, node.targets)
         return inlined if inlined is not None else self.generic_visit(node)
 
+    def visit_With(self, node):
+        """`with t(args):` of a block template using its caller's variables: the template's body with the
+        `with` body (and the `with do:` blocks) in place of its block parameters."""
+        call = node.items[0].context_expr if len(node.items) == 1 and node.items[0].optional_vars is None else None
+        entry = self._entry(call, with_blocks=True)
+        if entry is None:
+            return self.generic_visit(node)
+        name = call.func.id
+        body = self._substituted_body(entry, self._bind_arguments(entry, call))
+        blocks = dict(zip(entry["blocks"], _n_split_blocks(node.body, len(entry["blocks"]), name)))
+        body = [stmt for node_ in body for stmt in _n_as_list(_BlockSplicer(blocks).visit(node_))]
+        return self._expand_again(body, name)
+
     def visit_FunctionDef(self, node):
         # Check if the function is an untyped template
         untyped_template = False
@@ -525,10 +671,21 @@ class _TemplateInliner(ast.NodeTransformer):
                     untyped_template = True
         if not untyped_template:
             return self.generic_visit(node)
-        _n_templates[node.name] = {
-            "params": [arg.arg for arg in node.args.args],
-            "body_nodes": node.body,
-        }
+        _n_templates[node.name] = _n_template_entry(node, _n_block_params(node, _n_ast_annotations(node)))
+
+
+def _n_as_list(node) -> list:
+    return [] if node is None else node if isinstance(node, list) else [node]
+
+
+def _n_mut_params(func_def) -> frozenset:
+    """The parameters of a definition annotated `mut @ T` / `out @ T` (Nim `var T` / `out T`)."""
+    if not isinstance(func_def, ast.FunctionDef):
+        return frozenset()
+    a = func_def.args
+    return frozenset(arg.arg for arg in a.posonlyargs + a.args + a.kwonlyargs
+                     if isinstance(arg.annotation, ast.BinOp) and isinstance(arg.annotation.op, ast.MatMult)
+                     and isinstance(arg.annotation.left, ast.Name) and arg.annotation.left.id in ("mut", "out"))
 
 
 def template_expand(target_func):
@@ -554,7 +711,7 @@ def template_expand(target_func):
     # Transform the target AST by inlining the template.
     has_result = isinstance(func_def_node, ast.FunctionDef) and any(
         isinstance(n, ast.Name) and n.id == "result" and isinstance(n.ctx, ast.Store) for n in ast.walk(func_def_node))
-    inliner = _TemplateInliner(_n_templates, target_func.__globals__, has_result)
+    inliner = _TemplateInliner(_n_templates, target_func.__globals__, has_result, _n_mut_params(func_def_node))
     transformed_ast = inliner.visit(target_ast)
 
     ast.fix_missing_locations(transformed_ast)

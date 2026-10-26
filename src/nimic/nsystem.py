@@ -196,9 +196,9 @@ writeBytes = write_bytes
 
 
 class _NewSeqHelper:
-    """Nim: newSeq[T](n) — create a seq[T] of length n, or newSeq(s, n) — mutate s to length n."""
+    """Nim: newSeq[T](n = 0) — create a seq[T] of length n, or newSeq(s, n) — mutate s to length n."""
     def __getitem__(self, _ntype: type):
-        def _make(n: int):
+        def _make(n: int = 0):
             s = seq[_ntype]()
             s.new_seq(n)
             return s
@@ -883,8 +883,8 @@ def _n_setup_stdio() -> None:
 
 
 def quit(error: int | str = 0) -> None:
-    """Nim: quit(errorcode: int = QuitSuccess) exits with the code; quit(errormsg: string) writes the
-    message and a newline to stderr and exits with QuitFailure."""
+    """{.noreturn.} Nim: quit(errorcode: int = QuitSuccess) exits with the code; quit(errormsg: string) writes
+    the message and a newline to stderr and exits with QuitFailure."""
     if isinstance(error, (str, _ntypesystem.string)):
         sys.stderr.write(str(error) + "\n")
         sys.stderr.flush()

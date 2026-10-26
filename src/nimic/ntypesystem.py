@@ -861,14 +861,26 @@ def _n_value_copy(value):
 
 def _n_checked_value(value) -> bool:
     """Whether a binding of `value` without a copy may differ from Nim: a value Nim's assignment copies
-    (_n_assign_copies) that is not a constant's (frozen: changing it raises TypeError, naming the copy to write)."""
-    return _n_assign_copies(value) and getattr(_n_uncell(value), "_n_frozen", None) is None
+    (_n_assign_copies) that is not a constant's (frozen: changing it raises TypeError, naming the copy to write),
+    or a pointer. Nim copies a pointer's address too, but stores share pointers (_n_assign_copies), so a
+    pointer is only checked: an in-place write (`p <<= q`, a `var` parameter) through a binding of a field's
+    pointer moves the field as well."""
+    unwrapped = _n_uncell(value)
+    return ((_n_assign_copies(value) or isinstance(unwrapped, pointer))
+            and getattr(unwrapped, "_n_frozen", None) is None)
 
 
 def _n_is_view(value) -> bool:
     """Whether `value` is a view of storage it shares: a scalar read from an array slot or a struct field
-    (each read makes a new view of the same memory)."""
+    (each read makes a new view of the same memory), or a pointer bound to such a slot."""
+    if isinstance(value, pointer):
+        return getattr(value, "_n_slot_addr", None) is not None
     return isinstance(value, NScalar) and getattr(value, "_n_view", None) is not None
+
+
+def _n_view_address(value) -> int:
+    """The address of the storage a view (_n_is_view) reads: a pointer's slot, a scalar's ctypes value."""
+    return value._n_slot_addr if isinstance(value, pointer) else ctypes.addressof(value._n_view)
 
 
 def _n_shares_storage(value, obj) -> bool:
@@ -880,7 +892,7 @@ def _n_shares_storage(value, obj) -> bool:
     if not isinstance(buffer, ctypes._SimpleCData | ctypes.Array | ctypes.Structure):
         return False
     start = ctypes.addressof(buffer)
-    return start <= ctypes.addressof(value._n_view) < start + ctypes.sizeof(buffer)
+    return start <= _n_view_address(value) < start + ctypes.sizeof(buffer)
 
 
 def _n_fingerprint(value) -> object:
@@ -1839,6 +1851,12 @@ class NTypeRegistry:
         self.c_types = {}  # name → ctypes struct type
         self.operators = {}  # Python name of an @operator proc → its Nim spelling (`plus_bang` → `+!`)
         self.block_templates = set()  # names of templates with code blocks (`for _ in c.loopInto():`)
+
+    def is_noreturn(self, name: str) -> bool:
+        """Whether the nimic core routine `name` doesn't return: Nim's `{.noreturn.}` in its docstring (system's
+        `quit`, `raiseAssert`), for rule:tryassign."""
+        core = sys.modules.get("nimic.ntypes")
+        return core is not None and "noreturn" in _n_routine_pragmas(getattr(core, name, None))
 
     def _ensure_registered(self, resolved: type) -> type:
         """Register a specialization unless it already is (Object specializations register
@@ -4793,6 +4811,32 @@ class pointer(Ntype):
     def __hash__(self) -> int:
         return hash(self._n_target_key())
 
+    def _n_ordered_addr(self, other) -> tuple[int, int] | None:
+        """The addresses `<` / `<=` compare (nil: 0); None when `other` is no pointer."""
+        if other is None or isinstance(other, NilPtr):
+            return int(self._n_get_value() or 0), 0
+        if isinstance(other, pointer):
+            return int(self._n_get_value() or 0), int(other._n_get_value() or 0)
+        return None
+
+    def __lt__(self, other) -> bool:
+        """Nim `<` of pointers (system: `proc <(x, y: pointer)`): compares the addresses; `>` and `>=` are
+        Nim's templates `y < x` / `y <= x`, here Python's reflected comparisons."""
+        pair = self._n_ordered_addr(other)
+        return NotImplemented if pair is None else pair[0] < pair[1]
+
+    def __le__(self, other) -> bool:
+        pair = self._n_ordered_addr(other)
+        return NotImplemented if pair is None else pair[0] <= pair[1]
+
+    def __gt__(self, other) -> bool:
+        pair = self._n_ordered_addr(other)
+        return NotImplemented if pair is None else pair[0] > pair[1]
+
+    def __ge__(self, other) -> bool:
+        pair = self._n_ordered_addr(other)
+        return NotImplemented if pair is None else pair[0] >= pair[1]
+
     def _n_set_value(self, address: int):
         """Set the address the pointer points to. Address must be an int."""
         self._n_addr = address
@@ -4848,9 +4892,14 @@ class pointer(Ntype):
         return self._n_addr == 0 and self._n_contents_cache is None
 
     def copy(self):
+        """A pointer of its own holding the same address: a slot's current one (another view may have written
+        it), and the File handle a cast pointer stands for (`_n_token_id`)."""
         result = type(self)()
-        result._n_addr = self._n_addr
+        result._n_addr = int(self._n_get_value() or 0)
         result._n_contents_cache = self._n_contents_cache
+        token_id = getattr(self, "_n_token_id", None)
+        if token_id is not None:
+            result._n_token_id = token_id
         return result
 
     # --- cast (address-only, no eager _n_ptr_cast) ---

@@ -20,7 +20,7 @@ from nimic.nsystem import ord as nim_ord, _BuildProfile, _n_set_build_profile
 from nimic.ntypesystem import (BUFFER_REGISTRY, _n_routine_pragmas, nord, BufferRegistry, DICT_OF_C_TYPES, _match_subtype,
                                _n_aliases, _n_distinct_types, _n_from_text, _n_registry, _n_to_text,
                                NilPtr, char as _char, _n_assign_copies, _n_fingerprint, _n_param_mutable,
-                               _n_result_may_alias)
+                               _n_result_may_alias, _n_templates)
 from nimic.std.bitops import fastLog2
 from nimic.std.endians import big_endian32
 from nimic.std.formatfloat import addFloat
@@ -4925,6 +4925,107 @@ class TestNTypes(unittest.TestCase):
                                  env=dict(env, NIMIC_VALUECHECK="off"))
             self.assertEqual((off.returncode, off.stdout), (0, "1\n1\n2\n2\n"), off.stderr)
 
+    def test_value_check_type_holds_no_value(self):
+        """`default(T)` at module level (a test block): its input is the type, Nim's typedesc, which holds no value.
+        valuecheck doesn't search a type's attributes for the bound value (they reach the module's globals, where
+        the variable itself is): changing it through a `mut @` parameter is no ValueCopyError."""
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(root, "src"), root)))
+        env.pop("NIMIC_VALUECHECK", None)
+        program = textwrap.dedent("""\
+            # /// nimic
+            #
+            # ///
+            from nimic.ntypes import *
+
+            class T(Object):
+                a: nint
+
+            def fill(t: mut @ T):
+                t.a = 3
+
+            if comptime(__name__ == "__main__"):
+                with var:
+                    tok = default(T)
+                fill(tok)
+                echo(tok.a)
+            """)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "vc_typedesc.py")
+            with builtins.open(path, "w") as f:
+                f.write(program)
+            run = subprocess.run([sys.executable, path], capture_output=True, text=True, env=env)
+            self.assertEqual((run.returncode, run.stdout), (0, "3\n"), run.stderr)
+
+    def test_value_check_pointer_bindings(self):
+        """A pointer is a value in Nim: `var p = t.p` copies the address. Python binds the field's own pointer
+        (a view of its slot), so an in-place write through the copy (`p <<= q`, or `p` passed to a `var pchar`
+        parameter that assigns it) also moves `t.p`. valuecheck watches pointer bindings like scalar ones: the
+        missing `.copy()` is a ValueCopyError naming the binding and the write. Stores still share pointers;
+        rebinding the name (`p = cast[pchar](...)`, what `inc p` expands to) is no write; with `.copy()` the
+        field keeps its address, and `pointer.copy()` reads the slot's current address."""
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(root, "src"), root)))
+        env.pop("NIMIC_VALUECHECK", None)
+        program = textwrap.dedent("""\
+            # /// nimic
+            #
+            # ///
+            from nimic.ntypes import *
+
+            pchar = ptr[UncheckedArray[char]]
+
+            class View(Object):
+                p: pchar
+                len: nint
+
+            def advance(p: mut @ pchar):
+                p <<= cast[pchar](cast[intp](p) + 1)
+
+            def rebound(v: View) -> char:
+                with var:
+                    p = v.p
+                p = cast[pchar](cast[intp](p) + 2)
+                advance(p)
+                return p[0]
+
+            def copied(v: View) -> char:
+                with var:
+                    p = v.p.copy()
+                advance(p)
+                return p[0]
+
+            def shared(v: View) -> char:
+                with var:
+                    p = v.p
+                advance(p)
+                return p[0]
+
+            if comptime(__name__ == "__main__"):
+                with var:
+                    s = string("abcdef")
+                    v = View(p=cast[pchar](addr(s[0])), len=nint(6))
+                echo(rebound(v), v.p[0])
+                echo(copied(v), v.p[0])
+                v.p <<= cast[pchar](cast[intp](v.p) + 4)
+                echo(v.p.copy()[0])
+                echo(shared(v), v.p[0])
+            """)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "vc_pointer.py")
+            with builtins.open(path, "w") as f:
+                f.write(program)
+            run = subprocess.run([sys.executable, path], capture_output=True, text=True, env=env)
+            self.assertNotEqual(run.returncode, 0)
+            self.assertEqual(run.stdout, "da\nba\ne\n")  # the rebound and copied bindings run on
+            self.assertIn("ValueCopyError", run.stderr)
+            self.assertIn("vc_pointer.py:30: `p = v.p` binds the ptr[UncheckedArray[char]] that v.p holds", run.stderr)
+            self.assertIn("line 31 (`advance(p)`) changed it while both held it", run.stderr)
+            self.assertIn("write `p = v.p.copy()`", run.stderr)
+            fixed = subprocess.run([sys.executable, path], capture_output=True, text=True,
+                                   env=dict(env, NIMIC_VALUECHECK="warn"))
+            self.assertEqual((fixed.returncode, fixed.stdout), (0, "da\nba\ne\nff\n"), fixed.stderr)  # warn runs on: `shared` moved v.p too (Nim prints "fe")
+
     def test_block_ends_lifetimes(self):
         """`with block:` / `with block("name"):` end the lifetimes of the variables they declare, as Nim's
         scopes: an owning value with a `=destroy` hook is destroyed at the block's end, the last declared
@@ -6536,6 +6637,33 @@ def addWord(b: mut@Builder, w: string) -> None:
                 return expanded
         ''')
         self.assertIn("  let\n    expanded = try:\n        expandFilename(dir)\n      except:\n        dir\n", out)
+        out = unparse(ast.parse(textwrap.dedent('''
+            def o(filename: string) -> VfsBlob:
+                with let:
+                    try:
+                        f = vfsOpenMmap(filename)
+                    except:
+                        if comptime(defined("debug")):
+                            writeStackTrace()
+                        quit(string("[Error] cannot open: ") + filename)
+                return f
+        ''')), _n_registry)[0]  # a handler may end with a call of a {.noreturn.} proc: system's quit (the registry)
+        self.assertIn("  let\n    f = try:\n        vfsOpenMmap(filename)\n      except:\n"
+                      "        when defined(debug):\n          writeStackTrace()\n        quit(", out)
+        out = nim('''
+            def fail():
+                \"\"\"{.noinline, noreturn.}\"\"\"
+                quit(string("bad"))
+
+            def p(s: string) -> nint:
+                with let:
+                    try:
+                        n = parseInt(s)
+                    except ValueError:
+                        fail()
+                return n
+        ''')  # or of the module's own (no registry here: system's quit is unknown)
+        self.assertIn("    n = try:\n        parseInt(s)\n      except ValueError:\n        fail()", out)
         out = nim('''
             def g(p: string) -> int64:
                 try:
@@ -6755,6 +6883,55 @@ def addWord(b: mut@Builder, w: string) -> None:
         _tCountDown(nint(2), out)
         self.assertEqual(str(out), "012")
         self.assertEqual(int(_tWrappingAdd(int64(2**63 - 1), int64(1))), -2**63)
+
+    def test_pointer_ordering(self):
+        """Nim's `<` / `<=` of pointers (system) compare the addresses, `>` / `>=` are its templates `y < x` /
+        `y <= x`: a scan `while p < eof`, `cast[pointer](p) >= data` (nifreader); nil is address 0."""
+        with var:
+            s = string("hello")
+            p = cast[ptr[UncheckedArray[char]]](addr(s[0]))
+            q = cast[ptr[UncheckedArray[char]]](cast[intp](p) + 2)
+        self.assertTrue(p < q and p <= q and q > p and q >= p and p <= p and p >= p)
+        self.assertFalse(q < p or q <= p or p > q or p >= q or p < p)
+        data = cast[pointer](p)
+        self.assertTrue(cast[pointer](q) >= data and not (data > cast[pointer](q)))
+        self.assertTrue(p > nil and not (p < nil))
+        with self.assertRaises(TypeError):
+            p < 3
+
+    def test_template_assigns_its_parameter(self):
+        """A statement template assigning its parameter (`template inc(p: pchar; diff = 1) = p = ...`) assigns
+        the call's argument: it is expanded in @template_expand callers, also with a default or keyword argument,
+        for a local, a field (`inc r.p`) and a `mut @` parameter of the caller (assigned in place, `<<=`)."""
+        with var:
+            s = string("abcdef")
+        self.assertEqual(str(_tScanLocal(s)), "a c f")
+        r = _TCur(p=cast[ptr[UncheckedArray[char]]](addr(s[0])))
+        _tAdvanceField(r)
+        self.assertEqual(r.p[0], ch("d"))
+        self.assertEqual(_tViaVarParam(s), ch("c"))
+        self.assertIn("_tIncP", _n_templates)
+
+    def test_block_template_uses_caller_scope(self):
+        """A block template using its caller's variables (nifreader's `useCpuRegisters`: `var p {.inject.} =
+        r.p`, the block, `r.p = p`) is expanded at `with t():` in @template_expand callers: its {.inject.} locals
+        are the block's, and it reads and writes the caller's `r`. A statement template whose body has such a
+        `with` (nifreader's `scanWord`) expands both. Its `break` leaves its loop, as Nim's expanded body."""
+        with var:
+            s = string("ab  cd")
+        r = _TCur(p=cast[ptr[UncheckedArray[char]]](addr(s[0])))
+        r.eof = cast[ptr[UncheckedArray[char]]](cast[intp](r.p) + len(s))
+        self.assertEqual(int(_tSkipWord(r)), 2)
+        self.assertEqual(r.p[0], ch(" "))
+        self.assertEqual(int(_tSkipBlanksThenWord(r)), 2)
+        self.assertEqual(r.p, r.eof)
+        out = unparse(ast.parse(textwrap.dedent(inspect.getsource(_tSkipWord))))[0]
+        self.assertIn("  tUseRegs():\n    while q < eof:", out)  # the transpiled source keeps the call
+
+    def test_new_seq_default_length(self):
+        """Nim's `newSeq[T](len = 0)`: an empty seq without the length."""
+        self.assertEqual(len(newSeq[string]()), 0)
+        self.assertEqual(newSeq[string](), seq[string]())
 
     def test_inrange_chars(self):
         """inrange of chars (Nim 'a'..'z') yields chars: membership and iteration."""
@@ -7084,6 +7261,93 @@ def _tUsesSetAstText(n: nint) -> string:
     result = string("")
     _tSetAstText(n + 1)  # expanded inline: astToStr(x) becomes the argument's text at expansion
     return result
+
+
+class _TCur(Object):
+    p: ptr[UncheckedArray[char]]
+    eof: ptr[UncheckedArray[char]]
+
+
+@template
+def _tIncP(p: ptr[UncheckedArray[char]], diff=1):
+    p = cast[ptr[UncheckedArray[char]]](cast[intp](p) + diff)
+
+
+@template_expand
+def _tScanLocal(s: string) -> string:
+    with var:
+        p = cast[ptr[UncheckedArray[char]]](addr(s[0]))
+        result = string("")
+    result.add(p[0])
+    _tIncP(p, 2)
+    result.add(string(" "))
+    result.add(p[0])
+    _tIncP(p)
+    _tIncP(diff=2, p=p)
+    result.add(string(" "))
+    result.add(p[0])
+    return result
+
+
+@template_expand
+def _tAdvanceField(r: mut @ _TCur):
+    _tIncP(r.p)
+    _tIncP(r.p, 2)
+
+
+@template_expand
+def _tBumpVar(p: mut @ ptr[UncheckedArray[char]]):
+    _tIncP(p)
+
+
+def _tViaVarParam(s: string) -> char:
+    with var:
+        p = cast[ptr[UncheckedArray[char]]](addr(s[0]))
+    _tBumpVar(p)
+    _tBumpVar(p)
+    return p[0]
+
+
+@template
+def _tUseRegs(body: untyped):
+    with var:
+        q: pragma("inject") = r.p
+    with let:
+        eof: pragma("inject") = r.eof
+    body
+    r.p = q
+
+
+@template_expand
+def _tSkipWord(r: mut @ _TCur) -> nint:
+    with var:
+        n = nint(0)
+    with _tUseRegs():
+        while q < eof:
+            if q[0] == ch(" "):
+                break
+            n += 1
+            _tIncP(q)
+    return n
+
+
+@template_expand
+def _tSkipBlanksThenWord(r: mut @ _TCur) -> nint:
+    with var:
+        n = nint(0)
+
+    @template
+    def skipWhile(c: char):
+        with _tUseRegs():
+            while q < eof and q[0] == c:
+                _tIncP(q)
+
+    skipWhile(ch(" "))
+    with _tUseRegs():
+        while q < eof:
+            n += 1
+            _tIncP(q)
+    return n
 
 if __name__ == '__main__':
     unittest.main()

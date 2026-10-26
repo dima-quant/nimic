@@ -266,7 +266,7 @@ def doAssert(cond: bool, msg: str = "") -> None:
         raise AssertionError(msg)
 
 def raiseAssert(msg: str = "") -> None:
-    """Raises an AssertionError with the provided message. Corresponds to Nim raiseAssert."""
+    """{.noreturn.} Raises an AssertionError with the provided message. Corresponds to Nim raiseAssert."""
     raise AssertionError(msg)
 
 #  presense of comptime in "if" expression forces aot evaluation

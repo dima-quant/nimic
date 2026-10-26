@@ -150,7 +150,8 @@ Operators & renaming:
     assigning the same name (or with a raise / a call that doesn't return) is that name's case expression:
     `let x = case s of a: v ...`; the branches' assignments are written as their values
   rule:tryassign -> a try (no else / finally) directly inside `with let:`/`with var:`/`with const:` whose body and
-    handlers all end by assigning the same name (a handler may end with a raise) is that name's try expression:
+    handlers all end by assigning the same name (a handler may end with a raise / a call of a {.noreturn.} proc:
+    `quit`, `raiseAssert`, the module's own) is that name's try expression:
     `let x = try: a except: b`; the assignments are written as their values
   rule:tryreturn -> a proc body that ends with such a try whose branches end with `return <value>` is a Nim try
     expression as the proc's result (the values without `return`)
@@ -986,6 +987,7 @@ class _Unparser(NodeVisitor):
         self._concepts = {"Concept"}  # rule:concept: Concept and the concepts the module defines
         self._hook_procs = {}  # rule:hook: Python name of a @hook proc -> its hook (`copy`)
         self._block_templates = set()  # rule:looptemplate: names of templates with code blocks
+        self._noreturn_procs = set()  # rule:tryassign: names of the module's procs that don't return
         self._operator_procs = {}  # rule:operator: Python name of an @operator proc -> its Nim operator (`+!`)
         self._import_paths = set()  # rule:import: the Nim paths imported so far
 
@@ -1216,6 +1218,9 @@ class _Unparser(NodeVisitor):
         self._block_templates = set(getattr(self._type_registry, "block_templates", None) or ())
         self._block_templates.update(fn.name for fn in ast.walk(node)
                                      if isinstance(fn, FunctionDef) and self._is_block_template_def(fn))
+        # rule:tryassign: the procs of this module that don't return ({.noreturn.}); the core's: the registry
+        self._noreturn_procs = {fn.name for fn in ast.walk(node) if isinstance(fn, FunctionDef)
+                                and "noreturn" in self._pragma_names(fn)}
         # rule:operator: @operator("+!") procs of this module and of the imported ones (the registry)
         self._operator_procs = dict(getattr(self._type_registry, "operators", None) or {})
         self._operator_procs.update({fn.name: op for fn in ast.walk(node)
@@ -3321,11 +3326,25 @@ class _Unparser(NodeVisitor):
             self.write(":")
             self.traverse(node.step)
 
-    @staticmethod
-    def _try_assign_target(node):
+    def _pragma_names(self, fn) -> list[str]:
+        """The names of the pragmas in the docstring of def `fn` (`{.noinline, noreturn.}`)."""
+        doc = self.get_raw_docstring(fn)
+        pragma = self._get_pragma(doc.value) if doc is not None and isinstance(doc.value, str) else ""
+        return [item.split(":", 1)[0].strip() for item in pragma.split(",") if item.strip()]
+
+    def _is_noreturn_call(self, stmt) -> bool:
+        """A statement calling a proc that doesn't return (`quit(...)`): of this module, or of the core."""
+        if not (isinstance(stmt, Expr) and isinstance(stmt.value, Call) and isinstance(stmt.value.func, Name)):
+            return False
+        name = stmt.value.func.id
+        return name in self._noreturn_procs or bool(
+            self._type_registry is not None and getattr(self._type_registry, "is_noreturn", None)
+            and self._type_registry.is_noreturn(name))
+
+    def _try_assign_target(self, node):
         """rule:tryassign -> the name that the body and every handler of try `node` (no else / finally)
-        assign last, with the ids of those assignments (a handler may end with a raise instead); None if
-        the try is an ordinary statement."""
+        assign last, with the ids of those assignments (a handler may end with a raise or a call of a
+        {.noreturn.} proc instead, like `quit`); None if the try is an ordinary statement."""
         if node.orelse or node.finalbody or not node.handlers:
             return None
         name, assigns = None, set()
@@ -3335,7 +3354,7 @@ class _Unparser(NodeVisitor):
                     return None
                 name = last.targets[0].id
                 assigns.add(id(last))
-            elif i == 0 or not isinstance(last, Raise):
+            elif i == 0 or not (isinstance(last, Raise) or self._is_noreturn_call(last)):
                 return None
         return name, assigns
 
