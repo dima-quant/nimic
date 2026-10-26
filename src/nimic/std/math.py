@@ -2,30 +2,27 @@
 from math import *
 import math as _math
 import sys as _sys
-from enum import Enum
+from nimic.ntypes import NIntEnum, auto
 
 
-class FloatClass(Enum):
-    fcNan = "fcNan"
-    fcNegZero = "fcNegZero"
-    fcZero = "fcZero"
-    fcNegInf = "fcNegInf"
-    fcInf = "fcInf"
-    fcNegNormal = "fcNegNormal"
-    fcNormal = "fcNormal"
-    fcNegSubnormal = "fcNegSubnormal"
-    fcSubnormal = "fcSubnormal"
+class FloatClass(NIntEnum):
+    """Describes the class a floating point value belongs to (Nim's members, in Nim's order)."""
+    fcNormal = auto()     # value is an ordinary nonzero floating point value
+    fcSubnormal = auto()  # value is a subnormal (a very small) floating point value
+    fcZero = auto()       # value is zero
+    fcNegZero = auto()    # value is the negative zero
+    fcNan = auto()        # value is Not a Number (NaN)
+    fcInf = auto()        # value is positive infinity
+    fcNegInf = auto()     # value is negative infinity
 
 
-fcNan = FloatClass.fcNan
-fcNegZero = FloatClass.fcNegZero
-fcZero = FloatClass.fcZero
-fcNegInf = FloatClass.fcNegInf
-fcInf = FloatClass.fcInf
-fcNegNormal = FloatClass.fcNegNormal
 fcNormal = FloatClass.fcNormal
-fcNegSubnormal = FloatClass.fcNegSubnormal
 fcSubnormal = FloatClass.fcSubnormal
+fcZero = FloatClass.fcZero
+fcNegZero = FloatClass.fcNegZero
+fcNan = FloatClass.fcNan
+fcInf = FloatClass.fcInf
+fcNegInf = FloatClass.fcNegInf
 
 
 def signbit(x: float) -> bool:
@@ -48,8 +45,8 @@ def classify(x: float) -> FloatClass:
     if fx == 0.0:
         return fcNegZero if signbit(fx) else fcZero
     if abs(fx) < _sys.float_info.min:
-        return fcNegSubnormal if signbit(fx) else fcSubnormal
-    return fcNegNormal if signbit(fx) else fcNormal
+        return fcSubnormal
+    return fcNormal
 
 
 Inf = float("inf")

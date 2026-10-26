@@ -149,6 +149,12 @@ def _n_from_end(index, length: int, first: int = 0):
     return first + length - int(index) if isinstance(index, BackwardsIndex) else index
 
 
+def _n_view_addr(view) -> int:
+    """The address of element 0 of a container's ctypes view: a ctypes array holds its elements, a
+    ctypes pointer (an `UncheckedArray`'s view) points to them."""
+    return ctypes.addressof(view.contents) if isinstance(view, ctypes._Pointer) else ctypes.addressof(view)
+
+
 # --- Runtime checks (Nim: overflowChecks, boundChecks, ...) ---
 # Whether a check is on comes from the build profile (nimic.nsystem registers the provider: config
 # options such as `overflow_checks:off`, which `-d:danger` sets) and from `push` regions: code objects
@@ -719,8 +725,9 @@ def _match_converter(arg_type_name: str, sig_type_name: str) -> bool:
 def _n_resolve_type_aliases(ann: str, namespace: dict) -> str:
     """Resolve module-level type aliases in a string annotation through `namespace`
     (the function's globals): with `Snippet = string; varargs = seq`, the annotation
-    "varargs[Snippet]" becomes "seq[string]". Only names bound to a class with a
-    different __name__ are rewritten; otherwise the annotation is returned unchanged
+    "varargs[Snippet]" becomes "seq[string]", and with `Kind = A | B` (or `type Kind = A | B`) "Kind"
+    becomes the union "A | B", which _n_union_type_class makes a type class. Only names bound to a
+    class with a different __name__ or to a union are rewritten; otherwise the annotation is returned unchanged
     (also for forward references and non-type expressions such as `ptr @ T`).
     Names the type system already knows (aliases such as "static[bool]", generic type
     classes such as SomeInteger, registered types) are kept, and a name only resolves to
@@ -746,6 +753,11 @@ def _n_resolve_type_aliases(ann: str, namespace: dict) -> str:
                     return registered.__name__
                 return n.id
             obj = namespace.get(n.id)
+            if isinstance(obj, TypeAliasType):  # `type LengTagKind = ...`
+                obj = obj.__value__
+            if isinstance(obj, types.UnionType):  # `LengTagKind = LengStmt | LengExpr`: a type class
+                changed = True
+                return " | ".join(m.__name__ for m in obj.__args__)
             if isinstance(obj, type) and obj.__name__ != n.id and obj.__module__ != "builtins":
                 changed = True
                 return obj.__name__
@@ -1268,18 +1280,25 @@ def _n_named_tuple_result(fn: callable) -> callable:
     return named_tuple_result
 
 
-def _n_typed_literals(fn: callable, targets: list) -> callable:
+def _n_typed_literals(fn: callable, targets: list, numbers: bool = True) -> callable:
     """Nim types a number literal by the parameter it is passed to: `f(5)` with `x: BiggestInt` gets an
-    int64. Wraps a resolved overload so Python int/float arguments become the nimic scalar type named
-    at their position (`targets`); other arguments pass unchanged."""
-    convert = {i: DICT_OF_TYPES.get(name) for i, name in enumerate(targets)}
-    convert = {i: cls for i, cls in convert.items() if isinstance(cls, type) and issubclass(cls, NScalar)}
+    int64, and `$x` is a string. Wraps a resolved overload so Python int/float arguments become the
+    nimic scalar type named at their position (`targets`), and Python str arguments (`str(x)`) at a
+    `string` position nimic strings; other arguments pass unchanged. `numbers=False` converts the
+    strings only: a concrete overload, which a Python str resolves to exactly and a Python number not."""
+    convert = {}
+    for i, name in enumerate(targets):
+        cls = DICT_OF_TYPES.get(name)
+        if cls is string:
+            convert[i] = ((str,), cls)
+        elif numbers and isinstance(cls, type) and issubclass(cls, NScalar):
+            convert[i] = ((int, float), cls)
     if not convert:
         return fn
 
     @functools.wraps(fn)
     def typed(*args):
-        return fn(*(convert[i](a) if i in convert and type(a) in (int, float) else a
+        return fn(*(convert[i][1](a) if i in convert and type(a) in convert[i][0] else a
                     for i, a in enumerate(args)))
     return typed
 
@@ -1424,10 +1443,11 @@ def dispatch(fn: callable) -> callable:
         __arg_defaults__.setdefault(fn.__name__, {})[sigs] = arg_defaults
     else:
         sigs = tuple((arg,) for arg in sig_list)
+        typed = _n_typed_literals(fn, sig_list, numbers=False)
         if fn.__name__ in __resolved__:
-            __resolved__[fn.__name__][sigs] = fn
+            __resolved__[fn.__name__][sigs] = typed
         else:
-            __resolved__[fn.__name__] = {sigs: fn}
+            __resolved__[fn.__name__] = {sigs: typed}
         __arg_names__[fn.__name__][sigs] = arg_names
         __arg_defaults__.setdefault(fn.__name__, {})[sigs] = arg_defaults
 
@@ -2125,6 +2145,12 @@ def _n_enum_ilshift(self, other):
                     f"as `var` must be a cell, `with var: x = cell({type(self).__name__}.{self.name})`")
 
 
+def _n_enum_cast(cls, value):
+    """`cast[E](x)`: the member of E whose ordinal is x's bits, x an integer or a member of another enum
+    (nifcdecl's `cast[LengStmt](tagEnum)`); a hole in E's ordinals is a ValueError."""
+    return cls(nord(value) if isinstance(value, Enum) else int(value))
+
+
 class NIntEnum(IntEnum):
     @staticmethod
     def _generate_next_value_(name, start, count, last_values):
@@ -2132,6 +2158,7 @@ class NIntEnum(IntEnum):
         return last_values[-1] + 1 if last_values else 0
 
     __ilshift__ = _n_enum_ilshift
+    _n_cast = classmethod(_n_enum_cast)
 
     def _n_cell(self) -> NCell:
         return NCell(self)
@@ -2216,6 +2243,7 @@ class NStrEnum(StrEnum):
         return name  # Nim: `$` of a member without a string value is its name
 
     __ilshift__ = _n_enum_ilshift
+    _n_cast = classmethod(_n_enum_cast)
 
     def _n_cell(self) -> NCell:
         return NCell(self)
@@ -3260,10 +3288,15 @@ class _Object(Ntype):
         _has_c_type = type(self).__name__ in DICT_OF_C_TYPES
         if kwargs:
             for attribute in kwargs:
-                # Nim object constructors copy values (strings, seqs, objects) and share refs
-                setattr(self, attribute, _n_value_copy(kwargs[attribute]))
-            attributes = list(kwargs.keys())
-            self._n_fields = attributes
+                # Nim object constructors copy values (strings, seqs, objects) and share refs: a store into
+                # a Python-side field copies it by itself (__setattr__)
+                given = kwargs[attribute]
+                setattr(self, attribute, given if self._n_copies_on_store(attribute, given) else _n_value_copy(given))
+            declared = getattr(type(self), '_n_fields', None)
+            if _has_c_type or declared is None or any(a not in declared for a in kwargs):
+                # a struct is set up from the given fields (_n_setup); without one, fields set after
+                # construction (`result.pragmas = n`) are fields too, unless undeclared fields were given
+                self._n_fields = list(kwargs) if _has_c_type else list(dict.fromkeys([*(declared or ()), *kwargs]))
             value = self
         else:
             value = _n_value
@@ -3453,6 +3486,16 @@ class _Object(Ntype):
             if hasattr(value, "_n_freeze"):
                 value._n_freeze(f"{name}.{field}")
 
+    def _n_copies_on_store(self, name: str, value: object) -> bool:
+        """Whether a store of `value` into the field `name` keeps the value on the Python side, so that
+        __setattr__ copies it: a field of an object without a struct, a struct's Python-side field (seq, an
+        object with hooks, a ref), or a string, seq or set (held as Python objects in a struct too). A store
+        into a struct field writes the value into the struct instead (and binds the struct's own views)."""
+        cls = type(self)
+        return name in getattr(cls, '_n_field_types', ()) and (
+            name in getattr(cls, '_n_python_fields', ()) or cls.__name__ not in DICT_OF_C_TYPES
+            or isinstance(value, (string, seq, Tset)))
+
     def __setattr__(self, name: str, value: object) -> None:
         frozen = self.__dict__.get("_n_frozen")
         if frozen is not None and name in self.__dict__.get("_n_fields", ()):
@@ -3460,6 +3503,12 @@ class _Object(Ntype):
         layout = type(self).__dict__.get('_n_variant_layout') or getattr(type(self), '_n_variant_layout', None)
         if layout is not None and name in layout.fields and '_n_discs' in self.__dict__:
             self._n_check_variant_access(name, value)
+        if self._n_copies_on_store(name, value) and self.__dict__.get(name) is not value:
+            # Nim's `o.f = x` copies a value (string, seq, object; =dup / =copy for a type with hooks) and
+            # shares a ref; the result of an in-place `o.f <<= x` is already the field's own value
+            stored = lambda: _n_value_copy(value)
+        else:
+            stored = lambda: value
         attr_exists = (
             hasattr(self, name)
             and hasattr(self, "_n_fields")
@@ -3468,7 +3517,7 @@ class _Object(Ntype):
         if attr_exists:
             python_fields = getattr(self.__class__, '_n_python_fields', set())
             if (python_fields and name in python_fields) or not hasattr(self, '_n_view') or self._n_view is None:
-                super().__setattr__(name, _n_coerce_int_field(type(self), name, value))
+                super().__setattr__(name, _n_coerce_int_field(type(self), name, stored()))
                 return
 
             attr = getattr(self, name)
@@ -3500,11 +3549,11 @@ class _Object(Ntype):
                 elif hasattr(attr, "_n_set_value") and getattr(type(attr), "_n_set_value", None) is not Ntype._n_set_value:
                     attr._n_set_value(value)
                 else:
-                    super().__setattr__(name, value)
+                    super().__setattr__(name, stored())
             else:
-                super().__setattr__(name, _n_coerce_int_field(type(self), name, value))
+                super().__setattr__(name, _n_coerce_int_field(type(self), name, stored()))
         else:
-            super().__setattr__(name, _n_coerce_int_field(type(self), name, value))
+            super().__setattr__(name, _n_coerce_int_field(type(self), name, stored()))
 
     def __getitem__(self, name: str) -> object:
         if name not in self._n_fields:
@@ -3838,6 +3887,14 @@ class NTuple(_Object):
 
 # --- UncheckedArray ---
 
+def _n_uncached_elem(ntype) -> bool:
+    """Whether a container reads its elements of type `ntype` from the slot on every access instead of
+    caching them: scalars and bools are views of the slot, chars and value-slot enums are values read
+    from it (a cached char would keep a stale value once the slot is written through another path)."""
+    return isinstance(ntype, type) and (
+        issubclass(ntype, (char, NScalar, bool)) or getattr(ntype, '_n_value_slot', False))
+
+
 class UncheckedArray(Ntype):
     def __init__(self, data_ptr: ctypes.c_void_p=None) -> None:
         # data_ptr can be a ctypes array (e.g. c_int_Array_1) or a pointer to a structure
@@ -3850,6 +3907,8 @@ class UncheckedArray(Ntype):
 
     def __getitem__(self, _index: int) -> object:
         index = int(_index)
+        if _n_uncached_elem(self._n_type):
+            return self._n_type._n_on_array(self._n_view, index)
         if index not in self._n_cache:
             self._n_cache[index] = self._n_type._n_on_array(self._n_view, index)
         return self._n_cache[index]
@@ -3857,7 +3916,9 @@ class UncheckedArray(Ntype):
     def __setitem__(self, _index: int, _value: object) -> None:
         index = int(_index)
         value = _value._n_get_value()
-        if index not in self._n_cache or self._n_cache[index] is None:
+        if _n_uncached_elem(self._n_type):
+            self._n_type._n_on_array(self._n_view, index, value)
+        elif index not in self._n_cache or self._n_cache[index] is None:
             self._n_cache[index] = self._n_type._n_on_array(self._n_view, index, value)
         elif hasattr(self._n_cache[index], '_n_set_value'):
             self._n_cache[index]._n_set_value(value)
@@ -4008,8 +4069,7 @@ class array(Ntype):
         index = self._n_normalize_index(_n_from_end(index, self._n_size, self._n_first))
         self._n_check_index(index)
         if self._n_view is not None:
-            if hasattr(self, '_n_type') and isinstance(self._n_type, type) and (
-                    issubclass(self._n_type, (char, NScalar, bool)) or getattr(self._n_type, '_n_value_slot', False)):
+            if hasattr(self, '_n_type') and _n_uncached_elem(self._n_type):
                 return self._n_type._n_on_array(self._n_view, index - self._n_first)
             if index not in self._n_cache:
                 self._n_cache[index] = self._n_type._n_on_array(self._n_view, index - self._n_first)
@@ -4853,8 +4913,7 @@ class pointer(Ntype):
         """Array-embedded pointer: reads address from parent's ctypes array slot."""
         self = cls.__new__(cls)
         self._n_contents_cache = None
-        base_addr = ctypes.addressof(parent_elems.contents) if hasattr(parent_elems, 'contents') else ctypes.addressof(parent_elems)
-        self._n_slot_addr = base_addr + index * ctypes.sizeof(parent_elems._type_)
+        self._n_slot_addr = _n_view_addr(parent_elems) + index * ctypes.sizeof(parent_elems._type_)
         c_ptr = ctypes.cast(ctypes.c_void_p(self._n_slot_addr), ctypes.POINTER(ctypes.c_void_p))
         self._n_view = c_ptr
         if value is not None:
@@ -5287,7 +5346,7 @@ class NScalar:
             set_value=lambda _value: parent_elems.__setitem__(
                 id, _value._n_get_value() if isinstance(_value, NScalar) else _value
             ),
-            get_addr=lambda: (ctypes.addressof(parent_elems.contents) if hasattr(parent_elems, 'contents') else ctypes.addressof(parent_elems)) + offset,
+            get_addr=lambda: _n_view_addr(parent_elems) + offset,
         )
         if value is not None:
             self._n_set_value(value)
@@ -6201,7 +6260,7 @@ class char(str):
 
     @classmethod
     def _n_on_array(cls, parent_elems, index, value=None):
-        addr = ctypes.addressof(parent_elems) + index
+        addr = _n_view_addr(parent_elems) + index
         if value is not None:
             if isinstance(value, (bytes, bytearray)):  # a char's raw value (UncheckedArray[char] stores pass it)
                 parent_elems[index] = value[0]

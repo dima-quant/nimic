@@ -26,7 +26,7 @@ from nimic.std.endians import big_endian32
 from nimic.std.formatfloat import addFloat
 from nimic.std.hashes import Hash, hashIgnoreStyle, mix_hash, finish_hash, hash as nhash
 from nimic.std.strutils import parseFloat
-from nimic.std.math import classify, fcNegSubnormal, fcNormal, fcSubnormal, trunc
+from nimic.std.math import FloatClass, classify, fcNormal, fcSubnormal, trunc
 from nimic.std.options import Option, none, some
 from nimic.std.os import ExeExt, absolutePath, addFileExt, changeFileExt, searchExtPos, fileExists, getCurrentDir, getEnv, walkDir
 from nimic.std.parseutils import parse_hex, parse_ident, parseBiggestInt, parseBiggestUInt
@@ -379,6 +379,122 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr[-800:])
         # the same as with the future import (a variant class lists the fields of all its branches)
         self.assertEqual(run.stdout.splitlines(), ["3 True ['n', 'owner']", "x ['a', 'b', 'kind']"])
+
+    def test_unchecked_char_cursor_into_string(self):
+        """A `ptr UncheckedArray[char]` into a string's payload (nifbuilder's write cursor): writes land in
+        the string, a slot written twice reads the second value, `addr(raw[i])` is the address of byte i
+        (copyMem through it), and the string sees all of it after a setLen."""
+        s = string("")
+        s.setLen(8)
+        raw = cast[ptr[UncheckedArray[char]]](addr(s[0]))
+        raw[0] = char('a')
+        self.assertEqual(raw[0], char('a'))
+        raw[0] = char('b')
+        self.assertEqual((raw[0], s[0]), (char('b'), char('b')))
+        src = string("xyz")
+        copyMem(cast[pointer](addr(raw[1])), cast[pointer](addr(src[0])), 3)
+        self.assertEqual((raw[1], raw[2], raw[3]), (char('x'), char('y'), char('z')))
+        raw[2] = char('Y')
+        s.setLen(4)
+        self.assertEqual(s, string("bxYz"))
+
+    def test_dispatch_dollar_argument_is_string(self):
+        """Nim's `$x` is a string: `str(x)` passed to a `string` parameter of a dispatched proc arrives as a
+        nimic string (nifbuilder's `b.put $i`), as a literal arrives as the parameter's scalar type."""
+        @dispatch
+        def _tPutStr(s: string) -> nint:
+            self.assertIsInstance(s, string)
+            return s.len
+
+        @dispatch
+        def _tPutStr(s: string, n: nint) -> nint:
+            return s.len + n
+
+        self.assertEqual(_tPutStr(str(int64(-12345))), 6)
+        self.assertEqual(_tPutStr(str(uint64(999)), 1), 4)
+        self.assertEqual(_tPutStr(string("ab")), 2)
+
+    def test_cast_to_enum(self):
+        """`cast[E](x)` of an integer or of another enum's member is the member of E with that ordinal, for
+        int and string-valued enums with holes (nifcdecl's `cast[LengStmt](tagEnum)`)."""
+        class _TTag(NIntEnum):
+            InvalidTag = 0
+            StmtsTag = 1
+            CallTag = 5
+
+        class _TStmt(NStrEnum):
+            NoStmt = (0, "nostmt")
+            StmtsS = (1, "stmts")
+            CallS = (5, "call")
+
+        self.assertIs(cast[_TTag](uint32(5)), _TTag.CallTag)
+        self.assertIs(cast[_TStmt](_TTag.CallTag), _TStmt.CallS)
+        self.assertIs(cast[_TStmt](uint32(1)), _TStmt.StmtsS)
+        self.assertIs(cast[_TTag](_TStmt.CallS), _TTag.CallTag)
+        with self.assertRaises(ValueError):
+            cast[_TStmt](uint32(3))
+
+    def test_union_type_alias_is_type_class(self):
+        """A module-level `Kind = A | B` (rule:typealias; also `type Kind = A | B`) is a type class: a
+        parameter `expected: Kind` takes a member of A or B (nifcdecl's `LengTagKind`), not of a third
+        enum, and transpiles to `type Kind* = A or B`."""
+        src = ("from nimic.ntypes import *\n"
+               "class _A(NIntEnum):\n"
+               "    a1 = auto()\n"
+               "class _B(NIntEnum):\n"
+               "    b1 = auto()\n"
+               "class _C(NIntEnum):\n"
+               "    c1 = auto()\n"
+               "Kind = _A | _B\n"
+               "type Kind2 = _A | _B\n"
+               "@dispatch\n"
+               "def f(x: nint, expected: Kind) -> string:\n"
+               "    return string('A') if isinstance(expected, _A) else string('B')\n"
+               "@dispatch\n"
+               "def g(expected: Kind2) -> bool:\n"
+               "    return isinstance(expected, Kind2.__value__)\n")
+        ns = {"__name__": "_t_union_alias"}
+        exec(src, ns)
+        self.assertEqual((ns["f"](nint(1), ns["_A"].a1), ns["f"](nint(1), ns["_B"].b1)), (string("A"), string("B")))
+        self.assertTrue(ns["g"](ns["_B"].b1))
+        with self.assertRaises(NotImplementedError):
+            ns["f"](nint(1), ns["_C"].c1)
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("Kind* = A or B", out)
+
+    def test_field_store_copies_value(self):
+        """Nim's `o.f = x` copies a value (rules §1.1: stores copy by themselves): a string, seq or object
+        stored into a field is independent of `x` afterwards, also for a field the constructor didn't name
+        (nifcdecl's `result = TypeDecl(name: n); skip n; result.pragmas = n`), and such a field is one of the
+        object's fields. A ref is shared, and an in-place `o.f <<= x` keeps the field's value."""
+        @ref
+        class _TRefBox(Object):
+            n: nint
+
+        class _TFields(Object):
+            name: string
+            pragmas: string
+            q: seq[nint]
+            r: _TRefBox
+
+        n = string("name")
+        o = _TFields(name=n)
+        n.add(char('!'))
+        o.pragmas = n
+        n.add(char('?'))
+        self.assertEqual((o.name, o.pragmas), (string("name"), string("name!")))
+        self.assertEqual(list(o._n_fields), ["name", "pragmas", "q", "r"])
+        q = seq[nint]([1])
+        o.q = q
+        q.add(nint(2))
+        self.assertEqual(len(o.q), 1)
+        r = _TRefBox()
+        o.r = r
+        self.assertIs(o.r, r)
+        field = o.name
+        o.name <<= string("other")
+        self.assertIs(o.name, field)
+        self.assertEqual(o.name, string("other"))
 
     def test_nim_allocator(self):
         """Nim's alloc / alloc0 / realloc / dealloc / create / resize (nsystem): blocks of raw memory, seen
@@ -2620,11 +2736,16 @@ class TestNTypes(unittest.TestCase):
             scanf(string("x"), string("$q"))
 
     def test_math_classify_subnormals(self):
-        """classify reports subnormal floats like Nim's fcSubnormal / fcNegSubnormal."""
+        """classify is Nim's: FloatClass has Nim's 7 members in Nim's order, and a negative normal or
+        subnormal float is fcNormal / fcSubnormal (only zero and inf have a negative class)."""
         tiny = sys.float_info.min / 2
         self.assertEqual(classify(tiny), fcSubnormal)
-        self.assertEqual(classify(-tiny), fcNegSubnormal)
+        self.assertEqual(classify(-tiny), fcSubnormal)
         self.assertEqual(classify(sys.float_info.min), fcNormal)
+        self.assertEqual(classify(-1.5), fcNormal)
+        self.assertEqual([str(c) for c in FloatClass],
+                         ["fcNormal", "fcSubnormal", "fcZero", "fcNegZero", "fcNan", "fcInf", "fcNegInf"])
+        self.assertEqual(ord(FloatClass.fcNegInf), 6)
 
     def test_dispatched_callable_keeps_function_metadata(self):
         """A @dispatch wrapper exposes __type_params__/__globals__/__code__, so it can be re-dispatched."""
@@ -4393,8 +4514,9 @@ class TestNTypes(unittest.TestCase):
 
     def test_variable_pragma(self):
         """rule:varpragma: a variable annotated `pragma("cursor")` is `entry {.cursor.} = v`; with a type,
-        `pragma("noinit") @ T` is `x {.noinit.}: T = v`. In Python the annotation has no effect (a local's
-        annotation is never evaluated)."""
+        `pragma("noinit") @ T` is `x {.noinit.}: T = v`, and rule:varini makes `x: pragma("noinit") @ T = T()`
+        the declaration `x {.noinit.}: T`, for a subscripted type too. In Python the annotation has no effect
+        (a local's annotation is never evaluated)."""
         src = ("from nimic.ntypes import *\n"
                "def f(t: seq[nint]) -> nint:\n"
                "    with let:\n"
@@ -4403,6 +4525,9 @@ class TestNTypes(unittest.TestCase):
                "    with var:\n"
                "        x: pragma('noinit') @ nint = nint(0)\n"
                "        y: nint = nint()\n"
+               "        buf: pragma('noinit') @ array[12, char] = array[12, char]()\n"
+               "        z: pragma('noinit') @ nint = nint()\n"
+               "    buf[0] = ch('a')\n"
                "    return len(entry) + len(typed) + x\n"
                "with var:\n"
                "    _g: pragma('threadvar') @ nint = 0\n")
@@ -4411,6 +4536,8 @@ class TestNTypes(unittest.TestCase):
         self.assertIn("typed {.cursor.}: seq[int] = t", out)
         self.assertIn("x {.noinit.}: int = int(0)", out)
         self.assertIn("    y: int\n", out)  # rule:varini still applies to a plain annotation
+        self.assertIn("    buf {.noinit.}: array[12, char]\n", out)
+        self.assertIn("    z {.noinit.}: int\n", out)
         self.assertIn("g {.threadvar.}: int = 0", out)
         ns = {}
         exec("from __future__ import annotations\n" + src, ns)
@@ -5156,6 +5283,22 @@ class TestNTypes(unittest.TestCase):
         self.assertIn("import std/os as nos", out)
         self.assertNotIn("msgs", out)
         self.assertNotIn("import std\n", out)
+
+    def test_import_module_of_relative_package(self):
+        """`from ..models import leng_tags, tags` binds module names of a sibling directory (nifcdecl's
+        `export leng_tags`): `import ../models/tags`, nothing for a module a star import already imports,
+        never `import ../models` (a directory)."""
+        out = unparse(ast.parse("from nimic.ntypes import *\n"
+                                "from ..models.leng_tags import *\n"
+                                "from ..models import leng_tags, tags\n"
+                                "from ..options import *\n"
+                                "with export:\n"
+                                "    leng_tags\n"))[0]
+        self.assertEqual(out.count("import ../models/leng_tags"), 1)
+        self.assertIn("import ../models/tags\n", out)
+        self.assertNotIn("import ../models\n", out)
+        self.assertIn("import ../options", out)
+        self.assertIn("export\n  leng_tags", out)
 
     def test_uint64_literal_above_int64(self):
         """rule:literaltypes: uint64(c) / uint(c) with a constant above high(int64) is c'u64 / c'u (Nim reads a bare

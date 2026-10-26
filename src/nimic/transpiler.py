@@ -37,7 +37,8 @@ Type system:
   rule:concept -> class C(Concept): pass is `C = concept x` (Nim 2 universal); with signatures in the body
     `C = concept` + `proc ...(x: Self ...)`; a concept as base is `concept of Base`
   rule:typealias -> type alias (also register as alias for dispatch): class Time(float64) -> type Time* = float64
-    and the assignment form: a module-level `Snippet = string` (value is a type) -> type Snippet* = string
+    and the assignment form: a module-level `Snippet = string` (value is a type) -> type Snippet* = string;
+    a union of known types `K = A | B` is a type class: type K* = A or B
   rule:typedistinct -> distinct type (decorated with "distinct"): class Time(float64) -> type Time* = distinct float64
   rule:annotateself -> if self is not annotated, it will be derived from the class name (as immutable)
   rule:instantiation -> call with capitalized name and named arguments is interpreted as instantiation ("=" -> ":").
@@ -168,7 +169,8 @@ Operators & renaming:
     varargs[string, `$`]); a starred call argument f(a, *args) passes a varargs or seq on: f(a, args)
 
 Imports:
-  rule:import -> write import from as import, drop from __future__ import ...
+  rule:import -> write import from as import, drop from __future__ import ...; a relative `from ..models import m`
+    binds module names: import ../models/m (nothing if a star import already imports it)
   rule:nodoubleimport -> do not write import module if already imported (also `from nimic.std import m`, which
     is `import std/m` for qualified use, m.proc)
   rule:labeledblock -> with block("name"): ... is `block name:`; breakBlock("name") is `break name`
@@ -194,7 +196,9 @@ Memory & variables:
   rule:valuecheck -> not a transpiler rule: the copies Nim's assignment makes are written `.copy()` in Python
     where the difference shows (dropped, rule:copy) and checked when the code runs (nimic.valuecheck)
   rule:varini -> var initialization call without arguments with the same name as annotation is interpreted as
-    declaration ("with var: a: Rng = Rng()" transpiles as "var a: Rng"), e.g. if the type is tuple. Also holds
+    declaration ("with var: a: Rng = Rng()" transpiles as "var a: Rng"), e.g. if the type is tuple; the type may
+    be subscripted or follow a pragma ("buf: pragma('noinit') @ array[12, char] = array[12, char]()" transpiles
+    as "var buf {.noinit.}: array[12, char]"). Also holds
     without annotation for registered classes or native types as array, openArray, etc. Ref types (registered
     with _n_is_ref or decorated @ref in the module) keep the constructor call, since `var x: T` would be nil.
 
@@ -1111,6 +1115,8 @@ class _Unparser(NodeVisitor):
             return node.value.id in self._type_constructors or node.value.id in self._declared_classes
         if isinstance(node, Call) and isinstance(node.func, Name) and node.func.id == "typeof":
             return True  # `T = typeof(expr)`
+        if isinstance(node, BinOp) and isinstance(node.op, BitOr):
+            return self._is_type_expr(node.left) and self._is_type_expr(node.right)  # `K = A | B`, a type class
         return False
 
     def _is_type_alias(self, item) -> bool:
@@ -1333,6 +1339,15 @@ class _Unparser(NodeVisitor):
                     self._import_paths.add(path)
                     self.fill("import " + path)
             return
+        if node.module and node.level and node.names[0].name != "*":
+            # rule:import -> `from ..models import leng_tags` binds the module name (as `from . import m`):
+            # `import ../models/leng_tags`, unless a star import of it is already there
+            for alias in node.names:
+                path = self._import_path(f"{node.module}.{alias.name}", node.level)
+                if path not in self._import_paths:
+                    self._import_paths.add(path)
+                    self.fill("import " + path)
+            return
         if node.module and not node.module in ["__future__"]:
             path = self._import_path(node.module, node.level or 0)
             self._import_paths.add(path)
@@ -1523,12 +1538,12 @@ class _Unparser(NodeVisitor):
                 self.write(": ")
                 self.traverse(var_type)
         var_declaration = False # rule:varini
-        if "var" in self._context_stack:
-            # check this is a default class init that should be declared
-            # if value is a empty call with the same name as annotation then this is a declaration
-            if isinstance(node.value, Call) and len(node.value.args) == 0:
-                var_declaration = (isinstance(node.value.func, Name) and isinstance(node.annotation, Name)
-                                   and node.value.func.id == node.annotation.id)
+        declared_type = node.annotation if var_pragma is None else var_pragma[1]
+        if "var" in self._context_stack and declared_type is not None:
+            # a default init that is a declaration: the value is an empty call of the declared type itself
+            # (`x: T = T()`, `buf: pragma("noinit") @ array[12, char] = array[12, char]()`)
+            if isinstance(node.value, Call) and not node.value.args and not node.value.keywords:
+                var_declaration = ast.dump(node.value.func) == ast.dump(declared_type)
         if (
             isinstance(node.value, Call)
             and isinstance(node.value.func, Name)
