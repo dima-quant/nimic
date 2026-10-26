@@ -27,10 +27,10 @@
 | `lib/lengiface` | 3,852 bytes | assertions, formatfloat, sha1, syncio |  |
 | `lib/htmlbuilder` | 4,222 bytes |  |  |
 | `lib/legacy/nif26reader` | 13,861 bytes | assertions, memfiles, parseutils |  |
-| `lib/nifreader` | 38,779 bytes | assertions, memfiles, parseutils |  |
+| `lib/nifcoreparse` | 26,586 bytes | assertions, math, strutils, syncio |  |
 | `lib/bif` | 52,325 bytes | assertions, strutils, syncio, varints |  |
 
-## All modules of `src/lib` (25/38 converted, 1 legacy)
+## All modules of `src/lib` (26/38 converted, 1 legacy)
 
 | Module | Tier | Size | Depends on | Std imports | Status |
 |---|---|---|---|---|---|
@@ -64,7 +64,7 @@
 | `lib/htmlbuilder` | 2 | 4,222 bytes | lib/nifbuilder |  | 🔲 Pending |
 | `lib/lengiface` | 2 | 3,852 bytes | lib/nifbuilder, lib/nifcore, lib/vfs | assertions, formatfloat, sha1, syncio | 🔲 Pending |
 | `lib/nifcdecl` | 2 | 10,477 bytes | lib/nifcore, models/callconv_tags, models/leng_tags, models/tags | assertions | ✅ Converted |
-| `lib/nifreader` | 2 | 38,779 bytes | lib/nifcore, lib/stringviews, lib/vfs | assertions, memfiles, parseutils | 🔲 Pending |
+| `lib/nifreader` | 2 | 38,779 bytes | lib/nifcore, lib/stringviews, lib/vfs | assertions, memfiles, parseutils | ✅ Converted |
 | `lib/nifcoreparse` | 3 | 26,586 bytes | lib/comesfrom, lib/lineinfos, lib/nifbuilder, lib/nifcore, lib/nifreader, lib/stringviews | assertions, math, strutils, syncio | 🔲 Pending |
 | `lib/foreignmodules` | 4 | 7,572 bytes | lib/bif, lib/nifcore, lib/nifcoreparse, lib/nifreader, lib/stringviews | tables | 🔲 Pending |
 | `lib/nifpools` | 4 | 22,429 bytes | lib/comesfrom, lib/nifcore, lib/nifcoreparse, lib/nifreader, lib/nifroles, lib/vfs, models/tags | assertions | 🔲 Pending |
