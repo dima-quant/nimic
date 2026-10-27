@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import types
 import unittest
 
 from nimic.ntypes import *
@@ -35,7 +36,8 @@ from nimic.std.strutils import isUpperAscii, find, nimIdentNormalize, repeat, rf
 from nimic.std.syncio import lines, read_file
 from nimic.std.tables import OrderedTable, Table, initOrderedTable, initTable
 from nimic.system.ansi_c import c_free, c_malloc, csize_t
-from nimic.transpiler import unparse, private_name_collisions
+from nimic.transpiler import (unparse, private_name_collisions, check_private_names, free_call_overlaps,
+                              check_imported_module)
 from nimic import valuecheck
 
 def _n_fwd_proc(a, b):
@@ -3477,6 +3479,162 @@ class TestNTypes(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             _n_fwd_proc(string("x"), nint(2))  # the forward declaration is no imported proc
 
+    def test_method_call_reaches_the_receiver_types_module(self):
+        """Two imported modules' plain procs of one name are overloads in Nim (nifcore's `addIdent(b: var
+        TokenBuf)`, nifbuilder's `addIdent(b: var Builder)`); the later star import rebinds the name in Python.
+        A method call whose receiver the caller's proc doesn't take reaches the proc of the receiver type's module
+        (also through a base class); a proc that takes the receiver, or isn't annotated, is called as before."""
+        modules = {}
+        for module_name, cls_name in (("_n_mc_core", "Buf"), ("_n_mc_builder", "Bld")):
+            module = types.ModuleType(module_name)
+            exec(textwrap.dedent(f"""
+                from __future__ import annotations
+                from nimic.ntypes import *
+                class {cls_name}(Object):
+                    n: nint
+                def tag(b: mut @ {cls_name}, v: nint) -> string:
+                    return string("{module_name}:") + str(v)
+                """), module.__dict__)
+            modules[module_name] = module
+        sys.modules.update(modules)
+        try:
+            core, builder = modules["_n_mc_core"], modules["_n_mc_builder"]
+            tag = builder.tag  # `from core import *` then `from builder import *`
+
+            class _Sub(core.Buf):
+                pass
+
+            self.assertEqual(core.Buf().tag(1), "_n_mc_core:1")
+            self.assertEqual(builder.Bld().tag(2), "_n_mc_builder:2")
+            self.assertEqual(_Sub().tag(3), "_n_mc_core:3")
+            tag = core.tag  # the other import order
+            self.assertEqual(builder.Bld().tag(4), "_n_mc_builder:4")
+
+            # a @dispatch set of the caller's scope without an overload for the receiver (nifbuilder's addUIntLit)
+            exec(textwrap.dedent("""
+                @dispatch
+                def mcLitProbe(b: mut @ Bld, v: nint) -> string:
+                    return string("builder")
+                @dispatch
+                def mcLitProbe(b: mut @ Bld, v: nint, suffix: string) -> string:
+                    return string("builder suffix")
+                """), builder.__dict__)
+            exec("def mcLitProbe(b: mut @ Buf, v: nint) -> string:\n    return string('core')", core.__dict__)
+            mcLitProbe = builder.mcLitProbe
+            self.assertEqual(core.Buf().mcLitProbe(1), "core")
+            self.assertEqual(builder.Bld().mcLitProbe(1), "builder")
+
+            def tag(b, v):  # not annotated: takes anything
+                return string("local")
+            self.assertEqual(builder.Bld().tag(5), "local")
+        finally:
+            for name in modules:
+                sys.modules.pop(name)
+
+    def test_transpile_rejects_free_calls_of_overlapping_star_imports(self):
+        """rule:methodcall: two star imports binding one name to different procs, one of them plain (nifcore's and
+        nifbuilder's addIdent): a free call `addIdent(b, s)` reaches only the last import's proc in Python, so
+        check_imported_module() rejects it and names the method call; `b.addIdent(s)` passes. Not reported: a
+        name the module defines itself, a local shadowing the proc, a @dispatch set extending the other proc, a
+        qualified call."""
+        modules = {}
+        for module_name, cls_name in (("_n_fc_core", "Buf"), ("_n_fc_builder", "Bld")):
+            module = types.ModuleType(module_name)
+            exec(textwrap.dedent(f"""
+                from __future__ import annotations
+                from nimic.ntypes import *
+                class {cls_name}(Object):
+                    n: nint
+                def addThing(b: mut @ {cls_name}, v: nint):
+                    pass
+                def ownThing(b: mut @ {cls_name}):
+                    pass
+                """), module.__dict__)
+            modules[module_name] = module
+        exec(textwrap.dedent("""
+            def lowProbe(x: nint) -> nint:
+                return x
+            """), modules["_n_fc_core"].__dict__)
+        modules["_n_fc_builder"].__dict__["lowProbe"] = modules["_n_fc_core"].lowProbe  # re-exported: one proc
+        exec("def extProbe(x: nint) -> nint:\n    return x", modules["_n_fc_core"].__dict__)
+        # int128's `low`: a @dispatch set extending the plain proc it imported (calls no overload takes go to it)
+        modules["_n_fc_builder"].__dict__["extProbe"] = modules["_n_fc_core"].extProbe
+        exec("@dispatch\ndef extProbe(x: Bld) -> nint:\n    return nint(0)", modules["_n_fc_builder"].__dict__)
+        source = textwrap.dedent("""
+            from nimic.ntypes import *
+            from _n_fc_core import *
+            from _n_fc_builder import *
+            import _n_fc_core
+            def ownThing(b):
+                pass
+            def f(b: Buf, d: Bld):
+                addThing(b, 1)
+                d.addThing(2)
+                ownThing(b)
+                _n_fc_core.addThing(b, 3)
+                lowProbe(4)
+                extProbe(d)
+            def g(b: Buf, addThing):
+                addThing(b, 5)
+            """)
+        sys.modules.update(modules)
+        try:
+            module = types.ModuleType("_n_fc_user")
+            exec(source, module.__dict__)
+            tree = ast.parse(source)
+            overlaps = free_call_overlaps(tree, module)
+            self.assertEqual([line for line, _ in overlaps], [9])
+            self.assertIn("_n_fc_builder, _n_fc_core", overlaps[0][1])
+            self.assertIn("write b.addThing(...)", overlaps[0][1])
+            with self.assertRaisesRegex(ValueError, "line 9: addThing"):
+                check_imported_module(tree, module)
+            self.assertIn("addThing(b, 1)", unparse(tree)[0])  # unparse() itself doesn't need the module
+        finally:
+            for name in modules:
+                sys.modules.pop(name)
+
+    def test_dispatch_bound_call_keeps_body_errors(self):
+        """A call bound to an overload through its defaults runs that overload; a NotImplementedError of its body
+        (a nested call no overload takes) propagates. It used to be taken for "no overload" and the next binding
+        ran on arguments the body had changed (nifcoreparse.parseFromBuffer: its `thisModule` already moved)."""
+        calls = []
+
+        @dispatch
+        def _n_inner(x: nint) -> nint:
+            return x
+
+        @dispatch
+        def _n_bound(s: string, m: string, size: nint = 100) -> nint:
+            calls.append("first")
+            m.setLen(0)
+            return _n_inner(string("no overload"))
+
+        @dispatch
+        def _n_bound(s: string, m: string, unused: string, size: nint = 100) -> nint:
+            calls.append("second")
+            return nint(len(m))
+
+        with self.assertRaisesRegex(NotImplementedError, "_n_inner"):
+            _n_bound(string("a"), string("t"))
+        self.assertEqual(calls, ["first"])
+        with self.assertRaisesRegex(NotImplementedError, "_n_inner"):
+            _n_bound(string("a"), string("t"), size=nint(4))
+        self.assertEqual(calls, ["first", "first"])
+        self.assertEqual(_n_bound(string("a"), string("tt"), string("u")), 2)
+        with self.assertRaisesRegex(NotImplementedError, "_n_bound"):
+            _n_bound(nint(1), nint(2))
+
+    def test_seq_of_string_stores_nimic_strings(self):
+        """`vals.add $v` written `vals.add(str(v))` (bitabs.getOrInclFromView) stores a nimic string in a
+        seq[string], as an element assignment does; other seqs store a str as given."""
+        s = seq[string]()
+        s.add(str(42))
+        s.add(string("x"))
+        s.setLen(3)
+        s[2] = "y"
+        self.assertEqual([type(x) for x in s], [string, string, string])
+        self.assertEqual(s[0].len, 2)
+
     def test_dispatch_keywords_bind_per_overload_without_shifting(self):
         """A keyword call binds to each overload by its parameter names; a binding whose types fit no
         overload is dropped, not re-filled with another overload's defaults (cbuilderdecls.addProcVar)."""
@@ -5401,6 +5559,16 @@ class TestNTypes(unittest.TestCase):
         self.assertIn("import ../options", out)
         self.assertIn("export\n  leng_tags", out)
 
+    def test_import_module_alias(self):
+        """`from . import nifreader as rd` (nifcoreparse's `import nifreader as rd`, used qualified: rd.next) is
+        `import nifreader as rd`; `from ..lib import vfs as v` keeps its directory."""
+        out = unparse(ast.parse("from nimic.ntypes import *\n"
+                                "from . import nifreader as rd\n"
+                                "from ..lib import vfs as v\n"
+                                "x = rd.EofToken\n"))[0]
+        self.assertIn("import nifreader as rd\n", out)
+        self.assertIn("import ../lib/vfs as v\n", out)
+
     def test_uint64_literal_above_int64(self):
         """rule:literaltypes: uint64(c) / uint(c) with a constant above high(int64) is c'u64 / c'u (Nim reads a bare
         c as an int: out of range); smaller constants keep the conversion."""
@@ -6341,8 +6509,10 @@ def addWord(b: mut@Builder, w: string) -> None:
                     _base = base + 1
                 return base
             '''), ["base is used after _base, which transpiles to base"])
+        tree = ast.parse("with var:\n    x = 1\n    _x = 2\n")
         with self.assertRaises(ValueError):
-            unparse(ast.parse("with var:\n    x = 1\n    _x = 2\n"))
+            check_private_names(tree)
+        unparse(tree)  # unparse() itself only unparses
 
     def test_transpile_defined_declared(self):
         """rule:defined / rule:declared strip the quotes."""

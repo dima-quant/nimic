@@ -42,12 +42,6 @@ def init_int_set() -> IntSet:
 initIntSet = init_int_set
 
 
-def contains_or_incl(s: IntSet, key: nint) -> bool:
-    return s.containsOrIncl(key)
-
-
-containsOrIncl = contains_or_incl
-
 
 def incl(s: IntSet, key: nint) -> None:
     s.incl(key)

@@ -171,7 +171,8 @@ Operators & renaming:
 
 Imports:
   rule:import -> write import from as import, drop from __future__ import ...; a relative `from ..models import m`
-    binds module names: import ../models/m (nothing if a star import already imports it)
+    binds module names: import ../models/m (nothing if a star import already imports it); `from . import m as x`
+    is import m as x
   rule:nodoubleimport -> do not write import module if already imported (also `from nimic.std import m`, which
     is `import std/m` for qualified use, m.proc)
   rule:labeledblock -> with block("name"): ... is `block name:`; breakBlock("name") is `break name`
@@ -187,9 +188,12 @@ Imports:
 Memory & variables:
   rule:dropbrackets -> remove brackets from what follows after "ptr" and "ref"
   rule:localname -> a private name _x transpiles to x (not exported); otherwise add "*" when definition,
-    except for "result". Names starting with __ or _<digit> keep the old local_ prefix. Before transpiling,
-    private_name_collisions() rejects modules where dropping the _ would change meaning (_x and x bound in
+    except for "result". Names starting with __ or _<digit> keep the old local_ prefix. Before unparse(),
+    check_private_names() rejects modules where dropping the _ would change meaning (_x and x bound in
     one scope, or x used after a private value _x shadows it)
+  rule:methodcall -> not a rewrite: check_imported_module() (before unparse(), with the imported module) rejects a free
+    call f(x, ...) of a name that two star imports bind to different procs, one of them plain (Python calls the last
+    import's); write x.f(...)
   rule:privatepragma -> a {.private.} docstring pragma keeps a proc (an operator, which can't take a _
     prefix) unexported; the pragma itself is not emitted
   rule:deref -> pointer dereference: ".contents" -> "[]"
@@ -238,6 +242,7 @@ import inspect
 import keyword as pykeyword
 import re
 import sys
+import types
 import warnings
 from _ast import *
 from collections import deque
@@ -1344,11 +1349,18 @@ class _Unparser(NodeVisitor):
                     self._import_paths.add(path)
                     self.fill("import " + path)
             return
-        if node.module and node.level and node.names[0].name != "*":
+        if node.level and node.names[0].name != "*":
             # rule:import -> `from ..models import leng_tags` binds the module name (as `from . import m`):
-            # `import ../models/leng_tags`, unless a star import of it is already there
+            # `import ../models/leng_tags`, unless a star import of it is already there; `from . import m as x`
+            # is `import m as x` (nifcoreparse's `import nifreader as rd`)
             for alias in node.names:
-                path = self._import_path(f"{node.module}.{alias.name}", node.level)
+                name = f"{node.module}.{alias.name}" if node.module else alias.name
+                if alias.asname:
+                    self.fill(f"import {self._import_path(name, node.level)} as {alias.asname}")
+                    continue
+                if not node.module:
+                    continue  # `from . import m`: the module's star import imports it
+                path = self._import_path(name, node.level)
                 if path not in self._import_paths:
                     self._import_paths.add(path)
                     self.fill("import " + path)
@@ -3733,10 +3745,86 @@ def private_name_collisions(tree):
     return sorted(found)
 
 
-def unparse(ast_obj, type_registry: dict[str, ] | None = None):
-    if collisions := private_name_collisions(ast_obj):  # rule:localname
+def _star_imported_procs(tree, module) -> dict:
+    """The procs the module's star imports bind (`from .nifcore import *`): name -> {id: proc}, one entry per
+    distinct proc. Classes and non-callables are left out."""
+    procs = {}
+    for node in walk(tree):
+        if not (isinstance(node, ImportFrom) and node.names[0].name == "*" and node.module != "__future__"):
+            continue
+        name = importlib.util.resolve_name("." * node.level + (node.module or ""), module.__package__ or "")
+        imported = sys.modules.get(name)
+        if imported is None:
+            continue  # in a branch that didn't run (`if comptime(...)`): it binds nothing in Python
+        public = getattr(imported, "__all__", None) or [n for n in vars(imported) if not n.startswith("_")]
+        for n in public:
+            proc = getattr(imported, n, None)
+            if callable(proc) and not isinstance(proc, type):
+                procs.setdefault(n, {})[id(proc)] = proc
+    return procs
+
+
+def free_call_overlaps(tree, module) -> list:
+    """rule:methodcall: Nim overloads plain procs of one name from two imported modules by type (nifcore's
+    `addIdent(b: var TokenBuf)`, nifbuilder's `addIdent(b: var Builder)`); in Python the later star import binds
+    the name. A method call `b.addIdent(s)` reaches the proc of the receiver type's module, a free call
+    `addIdent(b, s)` only the last import's. Returns (line, message) for each free call of such a name: one that
+    two star imports bind to different procs, at least one of them plain (two @dispatch sets are one overload
+    set; a plain proc a @dispatch set extends belongs to it), and that the module itself doesn't define. A name
+    bound in the calling function shadows the proc. Only the star imports that ran count."""
+    overlaps = {}
+    for n, procs in _star_imported_procs(tree, module).items():
+        extended = {id(getattr(p, "_n_extends", None)) for p in procs.values()}  # int128's low extends system low
+        rest = [p for i, p in procs.items() if i not in extended]
+        if (len(rest) > 1 and any(isinstance(p, types.FunctionType) for p in rest)
+                and id(vars(module).get(n)) in procs):
+            overlaps[n] = rest
+    found = []
+
+    def local_names(fn) -> set:
+        a = fn.args
+        names = {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs + [a.vararg, a.kwarg] if x}
+        for n in walk(fn):
+            if isinstance(n, Name) and isinstance(n.ctx, Store):
+                names.add(n.id)
+            elif isinstance(n, (FunctionDef, AsyncFunctionDef)) and n is not fn:
+                names.add(n.name)
+        return names
+
+    def scan(node, shadowed):
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
+            shadowed = shadowed | local_names(node)
+        if (isinstance(node, Call) and isinstance(node.func, Name) and node.func.id in overlaps
+                and node.func.id not in shadowed):
+            modules = sorted({getattr(p, "__module__", "?") for p in overlaps[node.func.id]})
+            receiver = ast.unparse(node.args[0]) if node.args else "x"
+            found.append((node.lineno, f"{node.func.id}(...) is a proc of {', '.join(modules)}; Nim picks the "
+                                       f"overload by type, Python calls the last star import's: write "
+                                       f"{receiver}.{node.func.id}(...)"))
+        for child in iter_child_nodes(node):
+            scan(child, shadowed)
+
+    scan(tree, frozenset())
+    return sorted(found)
+
+
+def check_private_names(ast_obj) -> None:
+    """rule:localname: rejects a module where dropping the _ of a private name changes meaning. Run before
+    unparse()."""
+    if collisions := private_name_collisions(ast_obj):
         raise ValueError("private names collide with their Nim names (_x transpiles to x):\n" +
                          "\n".join(f"  line {line} [{scope}]: {msg}" for line, scope, msg in collisions))
+
+
+def check_imported_module(ast_obj, module) -> None:
+    """The checks of a module's AST that need the imported module (what its imports bind), run before unparse():
+    rule:methodcall."""
+    if overlaps := free_call_overlaps(ast_obj, module):
+        raise ValueError("free calls of procs that star imports overload:\n" +
+                         "\n".join(f"  line {line}: {msg}" for line, msg in overlaps))
+
+
+def unparse(ast_obj, type_registry: dict[str, ] | None = None):
     unparser = _Unparser(type_registry=type_registry)
     return unparser.visit(ast_obj), unparser.module_names
 

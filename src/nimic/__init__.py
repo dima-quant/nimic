@@ -35,6 +35,8 @@ def nimp(obj: object, srcs: dict, wdir: str=None):
     code_dir = os.path.join(target_dir, "ncode/")
     for meta, code in stream(src):
         if meta == "nimic":
+            transpiler.check_private_names(aast)
+            transpiler.check_imported_module(aast, obj)
             nim_src, modules_names = transpiler.unparse(aast, _n_registry)
             srcs[obj.__name__] = nim_src
             for module_name in modules_names:

@@ -1239,6 +1239,15 @@ def _n_varargs_call(name: str, args: tuple):
     return None
 
 
+class _NoOverload(NotImplementedError):
+    """No overload of a @dispatch set takes the call. `attempt` marks the bound call it answers (None for a
+    call as written)."""
+
+    def __init__(self, message: str, attempt: object = None):
+        super().__init__(message)
+        self.attempt = attempt
+
+
 class _DispatchedCallable:
     """Callable returned by @dispatch: forwards calls to the dispatcher and looks like
     the decorated function (name, annotations, code, type params, globals), so it can
@@ -1257,6 +1266,11 @@ class _DispatchedCallable:
 
     def __call__(self, *args, **kwargs):
         return self._n_target(*args, **kwargs)
+
+    @property
+    def _n_extends(self) -> callable:
+        """The imported proc this overload set extends (calls no overload takes go to it), or None."""
+        return _n_imported_procs.get(self.__name__)
 
     def __get__(self, instance, owner=None):
         if instance is None:
@@ -1467,6 +1481,7 @@ def dispatch(fn: callable) -> callable:
         # a call already bound to one overload's parameters (keywords and defaults filled in): dispatch it
         # as it is; filling defaults again could bind it to another overload with shifted positions
         bound = kwargs.pop("_n_bound", False)
+        attempt = kwargs.pop("_n_attempt", None)
         if kwargs:
             # bind keywords (and defaults) to each overload's parameters, then dispatch positionally
             candidates = _n_bind_overloads(fn.__name__, args, kwargs)
@@ -1475,21 +1490,19 @@ def dispatch(fn: callable) -> callable:
             if not candidates:
                 raise TypeError(f"Invalid keyword arguments for {fn.__name__}")
             for cand in candidates:
-                try:
-                    return fn_dispatch(*cand, _n_bound=True)
-                except NotImplementedError:
-                    pass
+                found, result = bound_call(cand)
+                if found:
+                    return result
             if fn.__name__ in _n_imported_procs:
                 return _n_imported_procs[fn.__name__](*args, **kwargs)
-            raise NotImplementedError(f"Function not defined for keyword signature: {fn.__name__}")
+            raise _NoOverload(f"Function not defined for keyword signature: {fn.__name__}", attempt)
 
         if not bound and not _n_has_arity(fn.__name__, len(args)):
             # no overload takes exactly this many arguments: fill trailing defaults per overload
             for cand in _n_bind_overloads(fn.__name__, args, {}):
-                try:
-                    return fn_dispatch(*cand, _n_bound=True)
-                except NotImplementedError:
-                    pass
+                found, result = bound_call(cand)
+                if found:
+                    return result
 
         sigs = ((autorename(arg),) for arg in args)
         fn_sig = tuple(sigs)
@@ -1603,10 +1616,9 @@ def dispatch(fn: callable) -> callable:
             # overloads of this arity didn't match the types: try overloads whose defaults fill the call
             for cand in _n_bind_overloads(fn.__name__, args, {}):
                 if len(cand) > len(args):
-                    try:
-                        return fn_dispatch(*cand, _n_bound=True)
-                    except NotImplementedError:
-                        pass
+                    found, result = bound_call(cand)
+                    if found:
+                        return result
         if not is_resolved:
             # a registered varargs overload wins over a method of the first argument (e.g. str.format)
             varargs_call = _n_varargs_call(fn.__name__, args)
@@ -1634,9 +1646,19 @@ def dispatch(fn: callable) -> callable:
             _n_imported_sigs.add((fn.__name__, fn_sig))
             return _n_imported_procs[fn.__name__](*args)
         sig_str = ", ".join([sig[0] for sig in fn_sig])
-        raise NotImplementedError(
-            f"Function not defined for signature: {fn.__name__}({sig_str})"
-        )
+        raise _NoOverload(f"Function not defined for signature: {fn.__name__}({sig_str})", attempt)
+
+    def bound_call(cand: tuple) -> tuple:
+        """Dispatches a call bound to one overload's parameters: (False, None) when no overload takes it, so the
+        caller tries the next binding. A NotImplementedError of the called proc's body (a nested call no overload
+        takes) is no such answer: it propagates, and the next binding never runs on arguments the body changed."""
+        attempt = object()
+        try:
+            return True, fn_dispatch(*cand, _n_bound=True, _n_attempt=attempt)
+        except _NoOverload as e:
+            if e.attempt is not attempt:
+                raise
+            return False, None
 
     # for debugging save in visible debugG
     for nm in __resolved__:
@@ -3025,6 +3047,36 @@ def _n_build_c_fields(items: tuple, field_types: dict, python_fields: set, prefi
     return fields, anonymous
 
 
+def _n_first_param_takes(fn: callable, cls: type) -> bool:
+    """Whether a proc's first parameter takes an instance of `cls`: false only when its annotation names a class
+    `cls` isn't a subclass of, for every overload of a @dispatch set. A generic type, a missing annotation or a
+    non-function take anything here (they resolve, or fail, as before)."""
+    if isinstance(fn, _DispatchedCallable):
+        return any(_n_first_param_takes(o, cls) for o in _n_overloads.get(fn.__name__, (fn._n_fn,)))
+    fn = ins.unwrap(fn)  # an overload returning a named tuple is wrapped (_n_named_tuple_result)
+    if not isinstance(fn, types.FunctionType) or not fn.__code__.co_argcount:
+        return True
+    annotation = fn.__annotations__.get(fn.__code__.co_varnames[0])
+    if isinstance(annotation, str):
+        annotation = fn.__globals__.get(_n_strip_type_modifier(annotation).strip())
+    return not isinstance(annotation, type) or issubclass(cls, annotation)
+
+
+def _n_method_call_proc(name: str, proc: callable, cls: type) -> callable:
+    """Nim resolves `x.f(args)` among every visible `f`. Two imported modules' plain procs of one name are
+    overloads (nifcore's `addIdent(b: var TokenBuf)`, nifbuilder's `addIdent(b: var Builder)`), but in Python
+    the later star import rebinds the name. When the caller's proc doesn't take the receiver, the call reaches
+    the proc `name` of the module defining the receiver's class (or a base class) that does: a proc the methods
+    rule would make a method of the type, but for a later definition it uses. Otherwise the caller's proc."""
+    if _n_first_param_takes(proc, cls):
+        return proc
+    for base in cls.__mro__:
+        own = getattr(sys.modules.get(base.__module__), name, None)
+        if callable(own) and not isinstance(own, type) and _n_first_param_takes(own, cls):
+            return own
+    return proc
+
+
 def _n_coerce_int_field(cls: type, name: str, value: object) -> object:
     """A plain int stored in a Python-side integer field becomes the field's declared type (a
     mutable NInteger, so the field can be passed as `var int`)."""
@@ -3214,7 +3266,7 @@ class _Object(Ntype):
             if frame is not None:
                 proc = frame.f_locals.get(name, frame.f_globals.get(name))
                 if callable(proc) and not isinstance(proc, type):
-                    return functools.partial(proc, self)
+                    return functools.partial(_n_method_call_proc(name, proc, type(self)), self)
         raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
     @property
@@ -4356,11 +4408,14 @@ class seq(Ntype):
     __hash__ = object.__hash__  # Nim's `hash` is independent of `==` (as for objects)
 
     def _n_coerce(self, value: object) -> object:
-        """A tuple literal for a seq of a named tuple type is that tuple (fields in order)."""
+        """A tuple literal for a seq of a named tuple type is that tuple (fields in order); a Python str stored
+        in a seq[string] is a nimic string (`vals.add $v` written `vals.add(str(v))`)."""
         elem = getattr(self, "_n_type", None)
         if (type(value) is tuple and isinstance(elem, type) and issubclass(elem, NTuple)
                 and len(value) == len(elem._n_fields)):
             return elem(**dict(zip(elem._n_fields, value)))
+        if type(value) is str and elem is string:
+            return string(value)
         return value
 
     def add(self, value: object) -> None:

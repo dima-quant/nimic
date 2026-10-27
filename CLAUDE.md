@@ -225,6 +225,10 @@ Check explicit type capabilities: `None if getattr(self._n_type, "_n_is_ref", Fa
 | **I — Interface Segregation** | Do not force irrelevant protocols onto types. Only ordinal types implement `_n_high`/`_n_low`; only sized containers implement `__len__`. |
 | **D — Dependency Inversion** | High-level builtins and transpiler rules depend on abstractions (protocols, AST categories), never on concrete type identities or application module data structures. |
 
+### Orthogonality
+
+Closely related to Single Responsibility: prefer self-contained, independent components with a single, well-defined purpose, so a change to one doesn't ripple into the others. Keep a component separate unless sharing an implementation brings a real benefit (performance, shared code such as one AST walk). Example: `transpiler.unparse()` only unparses. The checks that walk the AST on their own (`check_private_names`, `check_imported_module`, which needs the imported module) are separate functions that callers (`nimp`, `tests/verify_transpiled.py`) run before `unparse()`, so `unparse()` takes no inputs it doesn't use.
+
 ---
 
 ## 6. Core Feature & Remediation Protocol
