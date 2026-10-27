@@ -38,7 +38,7 @@ def main_animation_ppm():
         aspect_ratio = 16.0 / 9.0
         image_width = 5 #512
         image_height = int32(image_width / aspect_ratio)
-        samples_per_pixel = 100
+        samples_per_pixel = 10
         gamma_correction = 2.2
         max_depth = 50
 
