@@ -190,10 +190,10 @@ Memory & variables:
   rule:localname -> a private name _x transpiles to x (not exported); otherwise add "*" when definition,
     except for "result". Names starting with __ or _<digit> keep the old local_ prefix. Before unparse(),
     check_private_names() rejects modules where dropping the _ would change meaning (_x and x bound in
-    one scope, or x used after a private value _x shadows it)
+    one scope, or x used after a private value _x shadows it); a nimic module is checked at import too
   rule:methodcall -> not a rewrite: check_imported_module() (before unparse(), with the imported module) rejects a free
     call f(x, ...) of a name that two star imports bind to different procs, one of them plain (Python calls the last
-    import's); write x.f(...)
+    import's); write x.f(...). A nimic module is checked once its imports have run too
   rule:privatepragma -> a {.private.} docstring pragma keeps a proc (an operator, which can't take a _
     prefix) unexported; the pragma itself is not emitted
   rule:deref -> pointer dereference: ".contents" -> "[]"
@@ -3808,20 +3808,24 @@ def free_call_overlaps(tree, module) -> list:
     return sorted(found)
 
 
-def check_private_names(ast_obj) -> None:
+def _located(file: str, line: int) -> str:
+    return f"{file}:{line}" if file else f"line {line}"
+
+
+def check_private_names(ast_obj, file: str = "") -> None:
     """rule:localname: rejects a module where dropping the _ of a private name changes meaning. Run before
-    unparse()."""
+    unparse(), and when a nimic module is imported (nimic.nsystem); `file` locates the lines in the message."""
     if collisions := private_name_collisions(ast_obj):
         raise ValueError("private names collide with their Nim names (_x transpiles to x):\n" +
-                         "\n".join(f"  line {line} [{scope}]: {msg}" for line, scope, msg in collisions))
+                         "\n".join(f"  {_located(file, line)} [{scope}]: {msg}" for line, scope, msg in collisions))
 
 
-def check_imported_module(ast_obj, module) -> None:
-    """The checks of a module's AST that need the imported module (what its imports bind), run before unparse():
-    rule:methodcall."""
+def check_imported_module(ast_obj, module, file: str = "") -> None:
+    """The checks of a module's AST that need the imported module (what its imports bind), run before unparse(),
+    and when a nimic module's imports have run (nimic.nsystem): rule:methodcall."""
     if overlaps := free_call_overlaps(ast_obj, module):
         raise ValueError("free calls of procs that star imports overload:\n" +
-                         "\n".join(f"  line {line}: {msg}" for line, msg in overlaps))
+                         "\n".join(f"  {_located(file, line)}: {msg}" for line, msg in overlaps))
 
 
 def unparse(ast_obj, type_registry: dict[str, ] | None = None):

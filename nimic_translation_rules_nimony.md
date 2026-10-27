@@ -83,6 +83,7 @@ and Nim certainly differ, is a `ValueCopyError` naming the binding and the write
 | `var p = t.data.p` (a pointer) ... `decodeEscape(p)` (`p: var pchar`) | `with var: p = t.data.p.copy()` | A pointer is a value too: the copy is needed when the binding is then assigned in place (`p <<= q`, a `mut @` argument), which would move the field as well. Rebinding (`p = cast[pchar](...)`, what `inc p` expands to) needs none. Stores (field, `seq.add`) share pointers. Checked like the other values |
 | `var y = f(x)` | `with var: y = f(x)` | the result is one of its inputs or a part of one and is changed: a `lent @` / `mut @` result, a template's l-value, a core or std proc's result (`min(a, b)`, `t.getOrDefault(k)`), or a nimic proc returning a parameter's part without `.copy()` (better fixed in the proc, row above) |
 | `o.f = x`, `s[i] = x`, `s.add(x)`, `T(f: x)` | the same | never: stores copy by themselves (`_n_value_copy`) |
+| `f(x)` with `proc f(buf: sink string)` that moves `buf` (`ensureMove(buf)`, `move`, `wasMoved`) | `f(x.copy())` | `x` is not at its last use: a local read again later, a borrowed (non-`sink`) parameter, a global. Nim moves only a last use and copies otherwise; Python passes the object, and the callee's move empties the caller's. Passing a local at its last use or a `sink` parameter on needs none. Checked when the move runs: a caller up the chain still holding the value in a location it reads again is a `ValueCopyError` naming the call where Nim copies |
 
 - **How it checks.** When a nimic module loads (an import hook only watches it; the main program and the modules
   that import nimic are watched from their running frames), the syntax marks the bindings that may need a copy and
@@ -99,6 +100,10 @@ and Nim certainly differ, is a `ValueCopyError` naming the binding and the write
   `lint` (also prints the possible differences: the bindings and `-> T` returns that may need a copy, judged from
   the syntax and the callees' annotations; most are not real), `off`.
 - **Not checked:** code typed in the REPL or a debugger console, and Python files without the header.
+- **The transpiler's source checks run too** (in every mode, `off` included): a module whose private names collide
+  with their Nim names (`rule:localname`) is rejected before it runs, and a free call of a proc its star imports
+  overload (`rule:methodcall`) once its imports have run (before its next line, so before a main block). The error
+  gives the file and line, as `nimp` does when transpiling.
 ## 2. Compile-Time and Metaprogramming (`rule:comptime`, `rule:templateinline`)
 Compile-time metaprogramming relies on function calls or specific decorators.
 
@@ -159,6 +164,7 @@ Classes and objects use standard Python `class` definitions but employ specific 
 | `type SomeType = object of BaseType` | `class SomeType(BaseType):` | Object inheritance via RootObj. Automatically inherits all fields from `BaseType` in MRO order. Supports subtype polymorphism in `@dispatch`. |
 | `type SomeType = ptr object` | `@ptr class SomeType(Object):` | class definition should be decorated by `@ptr` for pointer types |
 | `SomeType(x: 1, y: 2)` | `SomeType(x=1, y=2)` | Object instantiation |
+| `type T = object`<br>&nbsp;&nbsp;&nbsp;&nbsp;`k: int = 5` | `class T(Object):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`k: nint = nint(5)` | Field defaults (Nim 2), also in a variant's branches: each new value gets its own copy of a default it isn't given (`T()`, `T(s=...)`, `default(T)`, `reset`, a nested object field); a copy or conversion takes the source's fields, and zeroed memory (`cast`, `alloc0`) has none. `= None` is no default (a nil ref, a legacy dummy discriminator default) |
 | `type Time* = float64` | `Time = float64` or `class Time(float64): pass` | Type Alias. Bidirectionally interchangeable with the target type in `@dispatch`. |
 | `type range[warnMin .. hintMax]` | `class MyRange(Trange[warnMin, hintMax]): pass` | Range subtyping definition (`rule:trange`) |
 | `type set[TNoteKind]` | `class MySet(Tset[TNoteKind]): pass` | Sets of ordinal types definition |

@@ -40,6 +40,7 @@ from typing import Callable, Mapping
 class NField:
     name: str
     annotation: str  # annotation source text (ast.unparse)
+    default: str | None = None  # the default value's source text (`k: nint = nint(5)`), None without one
 
 
 @dataclass(frozen=True)
@@ -139,7 +140,9 @@ def _parse_items(body: list[ast.stmt], cls_name: str, *, top_level: bool) -> tup
     items: list = []
     for stmt in body:
         if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
-            items.append(NField(stmt.target.id, ast.unparse(stmt.annotation)))
+            no_default = stmt.value is None or isinstance(stmt.value, ast.Constant) and stmt.value.value is None
+            items.append(NField(stmt.target.id, ast.unparse(stmt.annotation),  # (`= None`: a legacy dummy)
+                                None if no_default else ast.unparse(stmt.value)))
         elif isinstance(stmt, ast.Match):
             subject = stmt.subject
             prev = items[-1] if items else None

@@ -3593,6 +3593,105 @@ class TestNTypes(unittest.TestCase):
             for name in modules:
                 sys.modules.pop(name)
 
+    def test_object_field_defaults(self):
+        """Nim 2 object field defaults (`k: int = 5`): each new value gets its own copy (they used to stay on the
+        class: a struct field read 0, and every instance shared one default object). Given fields, copies and
+        conversions don't take them; nested struct objects, inherited and generic fields, `default(T)`, `reset` and
+        a variant's branches (the class body runs only one `match` branch) do; a legacy `= None` stays nil."""
+        class FdK(NIntEnum):
+            a = auto()
+            b = auto()
+
+        class FdT(Object):
+            k: nint = nint(5)
+            s: string = string("ab")
+            q: seq[nint]
+
+        class FdH(Object):
+            t: FdT
+            z: nint = nint(3)
+
+        class FdD(FdT):
+            m: nint = nint(8)
+
+        class FdG[X](Object):
+            v: X
+            w: nint = nint(7)
+
+        class FdV(Object):
+            name: string = string("v")
+            kind: FdK = FdK.b
+            match kind:
+                case FdK.a:
+                    x: nint = nint(11)
+                case FdK.b:
+                    y: nint = nint(22)
+
+        t1, t2 = FdT(), FdT(k=nint(1))
+        self.assertEqual((t1.k, t1.s, len(t1.q), t2.k, t2.s), (5, "ab", 0, 1, "ab"))
+        self.assertIsNot(t1.s, t2.s)
+        self.assertNotIn("k", FdT.__dict__)
+        t1.k += 1
+        t1.s.add("c")
+        self.assertEqual((t1.k, t1.s, FdT().k, FdT().s), (6, "abc", 5, "ab"))
+        self.assertEqual((t1.copy().k, FdT(t1).k), (6, 6))
+        h = FdH()
+        self.assertEqual((h.t.k, h.t.s, h.z, default(FdH).t.k), (5, "ab", 3, 5))
+        self.assertEqual(FdH(t=FdT(k=nint(9))).t.k, 9)
+        self.assertEqual((FdD().k, FdD().m), (5, 8))
+        self.assertEqual(FdG[nint]().w, 7)
+        reset(t1)
+        self.assertEqual((t1.k, t1.s), (5, "ab"))
+        v, w = FdV(), FdV(kind=FdK.a)
+        self.assertEqual((v.kind, v.name, v.y, w.kind, w.x, w.name), (FdK.b, "v", 22, FdK.a, 11, "v"))
+        self.assertEqual(FdV(kind=FdK.a, x=nint(1)).x, 1)
+
+    def test_source_checks_run_at_import(self):
+        """The transpiler's source checks run when a nimic module runs, as the main program or imported, in every
+        NIMIC_VALUECHECK mode: Python finds what transpiling would reject. rule:localname before the module runs;
+        rule:methodcall once its imports have run (before the next line, so before its main block), also for a
+        module with no line after its imports. The messages give the file and line."""
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        header = "# /// nimic\n#\n# ///\nfrom nimic.ntypes import *\n"
+        files = {
+            "sc_core.py": header + "class Buf(Object):\n    n: nint\ndef addThing(b: mut @ Buf, v: nint):\n    b.n += v\n",
+            "sc_builder.py": header + "class Bld(Object):\n    n: nint\ndef addThing(b: mut @ Bld, v: nint):\n    b.n -= v\n",
+            "sc_free.py": header + "from sc_core import *\nfrom sc_builder import *\n"
+                                   "if comptime(__name__ == '__main__'):\n    echo('ran')\n    addThing(Buf(), nint(1))\n",
+            "sc_method.py": header + "from sc_core import *\nfrom sc_builder import *\n"
+                                     "if comptime(__name__ == '__main__'):\n    b = Buf()\n    b.addThing(nint(1))\n"
+                                     "    echo(b.n)\n",
+            # nothing after its imports
+            "sc_lib.py": header + "def use(b):\n    addThing(b, nint(1))\nfrom sc_core import *\nfrom sc_builder import *\n",
+            "sc_private.py": header + "_x = nint(1)\nx = nint(2)\necho('ran')\n",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, text in files.items():
+                with open(os.path.join(tmp, name), "w") as f:
+                    f.write(text)
+            env = dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(root, "src"), root, tmp)))
+
+            def run(args, mode="error"):
+                return subprocess.run([sys.executable, *args], capture_output=True, text=True, cwd=tmp,
+                                      env=dict(env, NIMIC_VALUECHECK=mode))
+
+            for mode in ("error", "off"):
+                free = run([os.path.join(tmp, "sc_free.py")], mode)
+                self.assertEqual((free.stdout, free.returncode != 0), ("", True), free.stderr)
+                self.assertIn(f"{os.path.join(tmp, 'sc_free.py')}:9: addThing(...) is a proc of sc_builder, "
+                              f"sc_core", free.stderr)
+                private = run([os.path.join(tmp, "sc_private.py")], mode)
+                self.assertEqual(private.stdout, "", private.stderr)
+                self.assertIn(f"{os.path.join(tmp, 'sc_private.py')}:5 [module]: _x and x are both defined",
+                              private.stderr)
+            method = run([os.path.join(tmp, "sc_method.py")])
+            self.assertEqual((method.returncode, method.stdout), (0, "1\n"), method.stderr)
+            imported = run(["-c", "import nimic, sc_free"])
+            self.assertIn("sc_free.py:9: addThing(...)", imported.stderr)
+            lib = run(["-c", "import nimic, sc_lib; print('imported')"])  # checked once it ran
+            self.assertEqual(lib.stdout, "", lib.stderr)
+            self.assertIn("sc_lib.py:6: addThing(...)", lib.stderr)
+
     def test_dispatch_bound_call_keeps_body_errors(self):
         """A call bound to an overload through its defaults runs that overload; a NotImplementedError of its body
         (a nested call no overload takes) propagates. It used to be taken for "no overload" and the next binding
@@ -5082,6 +5181,92 @@ class TestNTypes(unittest.TestCase):
             off = subprocess.run([sys.executable, path], capture_output=True, text=True,
                                  env=dict(env, NIMIC_VALUECHECK="off"))
             self.assertEqual((off.returncode, off.stdout), (0, "1\n1\n2\n2\n"), off.stderr)
+
+    def test_value_check_sink_moved_out(self):
+        """A proc that moves its `sink @` parameter (`ensureMove(buf)`) empties the caller's object in Python. Nim
+        moves the argument only at its last use, and copies it otherwise: a ValueCopyError when a caller up the chain
+        still holds the value in a location it reads again (a local read later, a global), naming the call where Nim
+        copies (where the first borrowed parameter or live location passes it) and the copy to write. Passing a copy,
+        a local at its last use or a `sink` parameter on is no error (nifcoreparse's `openFromBuffer(input.copy())`)."""
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(root, "src"), root)))
+        program = textwrap.dedent("""\
+            # /// nimic
+            #
+            # ///
+            from nimic.ntypes import *
+
+            class Reader(Object):
+                buf: string
+
+            def openFromBuffer(buf: sink @ string) -> Reader:
+                return Reader(buf=ensureMove(buf))
+
+            def parse(input: string) -> nint:
+                with var:
+                    r = openFromBuffer(input)
+                return len(r.buf)
+
+            def parseCopy(input: string) -> nint:
+                with var:
+                    r = openFromBuffer(input.copy())
+                return len(r.buf)
+
+            def passOn(s: sink @ string) -> nint:
+                r = openFromBuffer(s)
+                return len(r.buf)
+
+            def lastUse() -> nint:
+                with var:
+                    s = string("local")
+                return passOn(s)
+
+            def liveLocal() -> nint:
+                with var:
+                    s = string("abc")
+                r = openFromBuffer(s)
+                echo(s)
+                return len(r.buf)
+
+            def main(case: string):
+                with var:
+                    text = string("hello")
+                if case == "copy":
+                    echo(parseCopy(text), text, lastUse(), passOn(string("tmp")))
+                elif case == "live":
+                    echo(liveLocal())
+                else:
+                    echo(parse(text), text)
+
+            if comptime(__name__ == "__main__"):
+                import sys
+                main(string(sys.argv[1]))
+            """)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "vc_sink.py")
+            with open(path, "w") as f:
+                f.write(program)
+
+            def run(case, mode="error"):
+                return subprocess.run([sys.executable, path, case], capture_output=True, text=True,
+                                      env=dict(env, NIMIC_VALUECHECK=mode))
+
+            fine = run("copy")
+            self.assertEqual((fine.returncode, fine.stdout), (0, "5hello53\n"), fine.stderr)
+            borrowed = run("parse")
+            self.assertIn("ValueCopyError", borrowed.stderr)
+            self.assertIn(f"{path}:10: `return Reader(buf=ensureMove(buf))` empties the string that `text` still "
+                          f"holds at {path}:46", borrowed.stderr)
+            self.assertIn(f"Nim copies its argument at {path}:14 (`r = openFromBuffer(input)`), where `input` is a "
+                          f"borrowed parameter there", borrowed.stderr)
+            self.assertIn("pass `input.copy()` in that call", borrowed.stderr)
+            live = run("live")
+            self.assertIn("where `s` is read again at line 35", live.stderr)
+            warned = run("parse", "warn")
+            self.assertEqual((warned.returncode, warned.stdout), (0, "5\n"), warned.stderr)  # Python emptied it
+            self.assertIn("nimic valuecheck: ", warned.stderr)
+            off = run("parse", "off")
+            self.assertEqual((off.returncode, off.stderr), (0, ""))
 
     def test_value_check_type_holds_no_value(self):
         """`default(T)` at module level (a test block): its input is the type, Nim's typedesc, which holds no value.

@@ -15,7 +15,10 @@ the copies are there, without changing the code (it runs as written, under a deb
   system) is armed in its frame; then each statement that may change the value (the analysis lists them) is
   watched: if it changed the value (a fingerprint before and after) while both locations still hold it, Python
   and Nim now certainly differ, and ValueCopyError names the binding, the write and the copy to write. A binding
-  whose sharing is only possible (a getter's result, a value no write changes) is not an error.
+  whose sharing is only possible (a getter's result, a value no write changes) is not an error;
+- when a proc moves its `sink @` parameter (`check_move`, called by `move`, `ensureMove`, `wasMoved`): a caller up the
+  chain that still holds the value in a location it reads again sees it emptied, where Nim copied the argument
+  (ValueCopyError naming the call where Nim copies).
 
 The mode is NIMIC_VALUECHECK: `error` (the default), `warn` (printed once per site), `lint` (also prints the
 possible differences: the bindings and `-> T` returns that may need a copy, from the syntax and the callees'
@@ -25,6 +28,7 @@ import ast
 import atexit
 import dis
 import json
+import linecache
 import os
 import sys
 import types
@@ -68,6 +72,11 @@ def mutable_annotation(text: str | None) -> bool:
         return False
     text = text.replace(" ", "")
     return text.startswith("mut@") or text in ("untyped", "typed")
+
+
+def sink_annotation(text: str | None) -> bool:
+    """A parameter annotation that takes ownership of the argument: `sink @ T` (Nim `sink T`)."""
+    return bool(text) and text.replace(" ", "").startswith("sink@")
 
 
 def is_template_decorator(decorator: ast.expr) -> bool:
@@ -618,6 +627,7 @@ _base_events: dict = {}  # code -> its local events while none of its frames is 
 _armed: dict = {}  # id(frame) -> _Armed
 _armed_codes: dict = {}  # code -> the number of its armed frames (LINE events on while there is one)
 _unwind_watched = False
+_line_hooks: dict = {}  # code -> (line, callback): at_line
 
 
 class _Armed:
@@ -642,12 +652,13 @@ def installed() -> bool:
 
 
 def install(policy: Policy, mode: str = "error") -> None:
-    """Starts checking (sys.monitoring, a tool of its own: a debugger or coverage tool runs beside it)."""
+    """Starts checking (sys.monitoring, a tool of its own: a debugger or coverage tool runs beside it). Mode `off`
+    watches no bindings; the tool still runs the line hooks (`at_line`)."""
     global _policy, _mode, _tool
     if mode not in MODES:
         raise ValueError(f"NIMIC_VALUECHECK={mode!r}: one of {', '.join(MODES)}")
     _policy, _mode = policy, mode
-    if _tool is not None or mode == "off":
+    if _tool is not None:
         return
     monitoring = sys.monitoring
     for tool in (4, 3):
@@ -666,14 +677,14 @@ def install(policy: Policy, mode: str = "error") -> None:
     atexit.register(_report_at_exit)
 
 
-def watch(code, source: str | ast.AST, file: str, nimic: bool | None = None) -> None:
+def watch(code, source: str | ast.AST, file: str, nimic: bool | None = None) -> ast.AST | None:
     """Checks the sites of a nimic module's code (`source` is its text or tree): its module-level code now, each
     function (nested code objects) when it first runs (PY_START). `nimic` tells whether it is nimic code when
-    `file` can't (generated code); by default the file's header."""
+    `file` can't (generated code); by default the file's header. Returns the tree, None when nothing is watched."""
     if nimic is not None:
         _nimic_files[file] = nimic  # generated code (`<template_expand ...>`): its procs are nimic procs
-    if _tool is None or not is_nimic_file(file):
-        return
+    if _tool is None or _mode == "off" or not is_nimic_file(file):
+        return None
     tree = ast.parse(source, file) if isinstance(source, str) else source
     if (isinstance(source, str) or file.startswith("<")) and file not in _indexes:
         _trees[file] = tree  # the module's own tree (a specialized generic's is not the file's)
@@ -688,6 +699,25 @@ def watch(code, source: str | ast.AST, file: str, nimic: bool | None = None) -> 
         if func is not None and current not in _lazy:
             _lazy[current] = (file, func)
             sys.monitoring.set_local_events(_tool, current, sys.monitoring.events.PY_START)
+    return tree
+
+
+def at_line(code, line: int, callback: Callable) -> None:
+    """Runs `callback()` once, when a frame of `code` starts a line at or after `line` (a module's code after its
+    imports, nimic.nsystem: rule:methodcall), or at `run_line_hook`. Without the tool, only `run_line_hook` runs
+    it."""
+    _line_hooks[code] = (line, callback)
+    if _tool is not None:
+        _set_events(code)
+
+
+def run_line_hook(code) -> None:
+    """Runs `code`'s `at_line` callback now, unless it ran (no line at or after its line ran)."""
+    hook = _line_hooks.pop(code, None)
+    if hook is not None:
+        if _tool is not None:
+            _set_events(code)
+        hook[1]()
 
 
 def _on_start(code, offset):
@@ -749,6 +779,8 @@ def _set_events(code) -> None:
     events = _base_events.get(code, 0)
     if _armed_codes.get(code):
         events |= sys.monitoring.events.LINE | sys.monitoring.events.PY_RETURN
+    if code in _line_hooks:
+        events |= sys.monitoring.events.LINE
     sys.monitoring.set_local_events(_tool, code, 0)
     sys.monitoring.set_local_events(_tool, code, events)
 
@@ -830,7 +862,11 @@ def _armed_entry(frame) -> _Armed | None:
 
 
 def _on_line(code, line):
-    _at_line(sys._getframe(1), code, line)
+    frame = sys._getframe(1)
+    hook = _line_hooks.get(code)
+    if hook is not None and line >= hook[0]:
+        run_line_hook(code)
+    _at_line(frame, code, line)
     return None  # (another frame of this code may be armed)
 
 
@@ -927,6 +963,148 @@ def _compare(write: _Write, frame) -> None:
                f"{held} holds, and line {mutation.line} (`{mutation.text}`) changed it while both held it: Nim's "
                f"assignment copies the value, so in Nim only one of them changed; write "
                f"`{site.target} = {site.text}.copy()`{callee}")
+    if _mode == "error":
+        raise ValueCopyError(message)
+    print(f"nimic valuecheck: {message}", file=sys.stderr)
+
+
+# --- sink parameters moved out (rule:valuecheck) ---
+# Nim passes an argument to a `sink` parameter by moving it when the call is its last use (a local the caller doesn't
+# read again, or a `sink` parameter passed on), and by copying it otherwise (the caller reads it later, a borrowed
+# parameter, a global). Python passes the object: a callee that moves its `sink` parameter (`move`, `ensureMove`,
+# `wasMoved`) empties the caller's value, where Nim emptied a copy.
+
+_RUNTIME_DIR = os.path.dirname(os.path.abspath(__file__)) + os.sep
+_sink_params: dict = {}  # code -> the names of its `sink @` parameters
+_code_instructions: dict = {}  # code -> (its instructions, {offset: index})
+_reads_after: dict = {}  # (code, offset, name) -> the line of a later read of the local, or None
+_moves_reported: set = set()
+_LOADS = frozenset(("LOAD_FAST", "LOAD_FAST_CHECK", "LOAD_FAST_BORROW", "LOAD_FAST_LOAD_FAST",
+                    "LOAD_FAST_BORROW_LOAD_FAST_BORROW"))
+_LOCAL_STORES = frozenset(("STORE_FAST", "STORE_FAST_STORE_FAST", "STORE_FAST_MAYBE_NULL", "DELETE_FAST"))
+_JUMPS = frozenset(("JUMP_FORWARD", "JUMP_BACKWARD", "JUMP_BACKWARD_NO_INTERRUPT", "JUMP", "JUMP_NO_INTERRUPT"))
+_EXITS = frozenset(("RETURN_VALUE", "RAISE_VARARGS", "RERAISE"))
+
+
+def _user_frame(frame):
+    """The first frame from `frame` up that runs program code, not nimic's runtime (dispatch, `move`)."""
+    while frame is not None and frame.f_code.co_filename.startswith(_RUNTIME_DIR) \
+            and not is_nimic_file(frame.f_code.co_filename):
+        frame = frame.f_back
+    return frame
+
+
+def _sinks(code) -> frozenset:
+    if code not in _sink_params:
+        names = frozenset()
+        if is_nimic_file(code.co_filename):
+            func = _index(code.co_filename).functions.get((code.co_firstlineno, code.co_name))
+            if func is not None:
+                a = func.args
+                names = frozenset(p.arg for p in (*a.posonlyargs, *a.args, *a.kwonlyargs)
+                                  if p.annotation is not None and sink_annotation(ast.unparse(p.annotation)))
+        _sink_params[code] = names
+    return _sink_params[code]
+
+
+def _read_after(code, offset: int, name: str) -> int | None:
+    """The line of a read of the local `name` on a path from the instruction after `offset` (a call running) on
+    which it isn't bound again first, or None: whether the call is its last use (exception handlers left out)."""
+    key = (code, offset, name)
+    if key not in _reads_after:
+        if code not in _code_instructions:
+            instructions = list(dis.get_instructions(code))
+            _code_instructions[code] = (instructions, {ins.offset: i for i, ins in enumerate(instructions)})
+        instructions, index = _code_instructions[code]
+        found, seen = None, set()
+        stack = [index[offset] + 1] if offset in index else []
+        while stack and found is None:
+            i = stack.pop()
+            if i in seen or i >= len(instructions):
+                continue
+            seen.add(i)
+            ins = instructions[i]
+            names = ins.argval if isinstance(ins.argval, tuple) else (ins.argval,)
+            if ins.opname == "STORE_FAST_LOAD_FAST":  # (stored, then loaded)
+                if names[0] == name:
+                    continue
+                if names[1] == name:
+                    found = ins.line_number
+                    continue
+            elif ins.opname in _LOADS and name in names:
+                found = ins.line_number
+                continue
+            elif ins.opname in _LOCAL_STORES and name in names:
+                continue
+            if ins.opname in _EXITS:
+                continue
+            if ins.jump_target is not None:
+                stack.append(index[ins.jump_target])
+                if ins.opname in _JUMPS:
+                    continue
+            stack.append(i + 1)
+        _reads_after[key] = found
+    return _reads_after[key]
+
+
+def _parameters(code) -> tuple:
+    return code.co_varnames[:code.co_argcount + code.co_kwonlyargcount]
+
+
+def check_move(value) -> None:
+    """`move(p)`, `ensureMove(p)` or `wasMoved(p)` (called by nimic's runtime) is about to empty `value`. When `p` is
+    a `sink @` parameter of the proc moving it, its argument came from the callers: a caller up the chain whose live
+    location still holds `value` (a variable it reads again, a global) sees it emptied, where Nim copied the argument
+    at the first call that isn't its last use (ValueCopyError naming that call and the copy to write)."""
+    if _mode == "off":
+        return
+    frame = _user_frame(sys._getframe(1))
+    if frame is None or not _sinks(frame.f_code):
+        return
+    param = next((n for n in _sinks(frame.f_code) if frame.f_locals.get(n) is value), None)
+    if param is None:
+        return
+    mover, copy_at, caller = frame, None, _user_frame(frame.f_back)
+    while caller is not None and is_nimic_file(caller.f_code.co_filename):
+        code = caller.f_code
+        module_level = code.co_name == "<module>"
+        holders = [n for n, v in caller.f_locals.items() if v is value]
+        if not holders and not module_level:
+            holders = [n for n, v in caller.f_globals.items() if v is value]
+            module_level = bool(holders)
+        if not holders:
+            return  # a temporary (`f(s.copy())`, a call's result): nobody else holds it
+        line = None if module_level else next(
+            (r for n in holders if n in code.co_varnames and (r := _read_after(code, caller.f_lasti, n))), None)
+        params = [n for n in holders if n in _parameters(code)] if not module_level else []
+        if copy_at is None:
+            if module_level:
+                copy_at = (caller, holders[0], f"`{holders[0]}` is a global")
+            elif line is not None:
+                copy_at = (caller, holders[0], f"`{holders[0]}` is read again at line {line}")
+            elif any(n not in _sinks(code) for n in params):
+                name = next(n for n in params if n not in _sinks(code))
+                copy_at = (caller, name, f"`{name}` is a borrowed parameter there")
+        if module_level or line is not None:
+            _report_move(mover, param, value, copy_at, caller, holders[0])
+            return
+        if not params:
+            return  # an owned local at its last use: Nim moved it too
+        caller = _user_frame(caller.f_back)
+
+
+def _report_move(mover, param: str, value, copy_at: tuple, observer, holder: str) -> None:
+    copy_frame, copied, why = copy_at
+    key = (mover.f_code, mover.f_lasti, copy_frame.f_code, copy_frame.f_lasti)
+    if key in _moves_reported:
+        return
+    _moves_reported.add(key)
+    where = lambda f: f"{f.f_code.co_filename}:{f.f_lineno}"
+    text = lambda f: linecache.getline(f.f_code.co_filename, f.f_lineno).strip()
+    message = (f"{where(mover)}: `{text(mover)}` empties the {type(value).__name__} that `{holder}` still holds at "
+               f"{where(observer)}: `{param}` is a `sink` parameter, and Nim copies its argument at "
+               f"{where(copy_frame)} (`{text(copy_frame)}`), where {why}, so in Nim `{holder}` keeps its value; "
+               f"pass `{copied}.copy()` in that call")
     if _mode == "error":
         raise ValueCopyError(message)
     print(f"nimic valuecheck: {message}", file=sys.stderr)

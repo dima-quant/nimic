@@ -33,7 +33,7 @@ def main():
         mp4File = open(mp4Path, fmWrite)
     initialize(muxer, mp4File, int32(Width), int32(Height))
     writeMP4_from(muxer, tmp264)
-    close(muxer)
+    muxer.close()
     mp4File.close()
 
     print(f"Reference MP4 written to {mp4Path}")

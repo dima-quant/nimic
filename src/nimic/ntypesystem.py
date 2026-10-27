@@ -1115,6 +1115,12 @@ def _n_register_hook(cls: type, name: str, fn: callable) -> None:
 
 def _n_was_moved(x) -> None:
     """Nim wasMoved(x): its `=wasMoved` hook, else x becomes default(T) (no `=destroy`, as Nim)."""
+    _valuecheck.check_move(x)
+    _n_reset_moved(x)
+
+
+def _n_reset_moved(x) -> None:
+    """wasMoved(x) without the check (_n_move checked it)."""
     hooks = getattr(type(x), "_n_hooks", None) or {}
     if "wasMoved" in hooks:
         hooks["wasMoved"](x)
@@ -1129,12 +1135,14 @@ def _n_move(x):
     immutable Python values (enum members, bool) are returned as they are: Python can't nil or reset the
     variable, and a ref's object is shared."""
     if isinstance(x, _Object) and getattr(type(x), "_n_hooks", None):
+        _valuecheck.check_move(x)  # (a `sink` parameter's argument the caller still holds)
         result = type(x)()
         result._n_set_value(x)
-        _n_was_moved(x)
+        _n_reset_moved(x)
         return result
     if getattr(type(x), "_n_is_ref", False) or not (callable(getattr(x, "copy", None)) and hasattr(x, "__ilshift__")):
         return x
+    _valuecheck.check_move(x)
     result = x.copy()
     x <<= _n_default_value(type(x))
     return result
@@ -3099,6 +3107,7 @@ def _n_nim_operator(obj: object, name: str, a: object, b: object) -> object:
 class _Object(Ntype):
     # Cache for specialized generic classes
     _n_specializations = {}
+    _n_field_defaults = {}  # Nim 2 field defaults (_n_take_field_defaults)
 
     def __eq__(self, other) -> bool:
         """Nim `==` of objects and tuples: the same type and equal fields (the active ones of a
@@ -3384,12 +3393,62 @@ class _Object(Ntype):
             if not kwargs:
                 self._n_fields = list(self.__annotations__)
                 self._n_annotations = self.__annotations__
+        if _n_value is None and type(self)._n_defaults_plan():
+            self._n_apply_defaults(kwargs)
 
     def _n_is_conversion_of(self, value: object) -> bool:
         """Whether `type(self)(value)` converts between related object types: one derives from the other
         (object of, distinct, a distinct generic and its base specialization)."""
         cls, other = type(self), type(value)
         return isinstance(value, _Object) and cls is not other and (issubclass(cls, other) or issubclass(other, cls))
+
+    @classmethod
+    def _n_take_field_defaults(cls) -> None:
+        """Nim 2 object field defaults (`k: int = 5`): the values the class body gives its fields, with the bases'
+        (cls._n_field_defaults). They leave the class, whose attribute would be read (and changed in place) as every
+        instance's field; each new value gets a copy (_n_apply_defaults). The class body runs only one branch of a
+        variant's `match`: the other branches' defaults are evaluated from the record. A `= None` stays: a nil ref,
+        or a legacy dummy discriminator default."""
+        defaults = {}
+        for base in reversed(cls.__mro__[1:]):
+            defaults.update(base.__dict__.get("_n_field_defaults", {}))
+        for name in getattr(cls, "__annotations__", {}):
+            if cls.__dict__.get(name) is not None:
+                defaults[name] = cls.__dict__[name]
+                delattr(cls, name)
+        record = cls.__dict__.get("_n_record")
+        if record is not None and record.is_variant:
+            for name, field in record.all_fields().items():
+                if field.default is not None and name not in defaults:
+                    value = eval(field.default, cls._n_caller_globals, getattr(cls, "_n_caller_locals", None))
+                    if value is not None:
+                        defaults[name] = value
+        cls._n_field_defaults = defaults
+
+    @classmethod
+    def _n_defaults_plan(cls) -> tuple:
+        """What a new value sets after its zero fields: (name, the default to copy) for each field with a default,
+        and (name, None) for each struct field of an object type with defaults (a view of the zeroed struct memory,
+        which gets them in place). A field held as a Python object is made by its type's constructor, with them."""
+        plan = cls.__dict__.get("_n_defaults")
+        if plan is None:
+            python_fields = getattr(cls, "_n_python_fields", ())
+            nested = tuple((name, None) for name, ft in getattr(cls, "_n_field_types", {}).items()
+                           if name not in cls._n_field_defaults and name not in python_fields
+                           and isinstance(ft, type) and issubclass(ft, _Object) and ft._n_defaults_plan())
+            plan = cls._n_defaults = tuple(cls._n_field_defaults.items()) + nested
+        return plan
+
+    def _n_apply_defaults(self, given: dict | tuple = ()) -> None:
+        """Sets the field defaults (_n_defaults_plan) of the fields not `given` (a variant: of its active fields)."""
+        active = self._n_active_fields() if type(self)._n_variant_layout is not None else None
+        for name, default in type(self)._n_defaults_plan():
+            if name in given or active is not None and name not in active:
+                continue
+            if default is None:
+                getattr(self, name)._n_apply_defaults()
+            else:
+                setattr(self, name, default if self._n_copies_on_store(name, default) else _n_value_copy(default))
 
     # --- object variants (case objects) ---
 
@@ -3403,7 +3462,8 @@ class _Object(Ntype):
             discs = dict(_n_value._n_discs) if '_n_discs' in getattr(_n_value, '__dict__', {}) else \
                 {d: getattr(_n_value, d) for d in layout.discriminators}
         else:
-            discs = {d: kwargs[d] if d in kwargs else _n_default_value(field_types.get(d))
+            defaults = cls._n_field_defaults
+            discs = {d: kwargs[d] if d in kwargs else defaults[d] if d in defaults else _n_default_value(field_types.get(d))
                      for d in layout.discriminators}
         active = layout.active_fields(discs)
         set_attr = super(_Object, self).__setattr__
@@ -3434,6 +3494,8 @@ class _Object(Ntype):
                 setattr(self, name, _n_value_copy(kwargs[name]))
             elif source is not None and name not in layout.discriminators:
                 setattr(self, name, getattr(source, name))
+        if source is None and cls._n_defaults_plan():
+            self._n_apply_defaults((*kwargs, *layout.discriminators))
 
     def _n_typed_disc(self, name: str, raw: object) -> object:
         """A discriminator value as its declared type (an enum member rather than an int)."""
@@ -3924,6 +3986,7 @@ class Object(_Object, metaclass=NMetaClass):
         if "_n_caller_globals" not in cls.__dict__:
             cls._n_caller_globals = sys._getframe(1).f_globals
         cls._n_build_record()  # generic classes too: specializations map its annotations
+        cls._n_take_field_defaults()
         if cls.__dict__.get("_n_defer_register"):
             return  # specialization: __class_getitem__ registers it once it is cached
         type_params = getattr(cls, '__type_params__', ())

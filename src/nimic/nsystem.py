@@ -25,6 +25,7 @@ from typing import Generator, TypeVar
 from nimic.system.ansi_c import c_malloc, c_free
 from nimic import ntypesystem as _ntypesystem
 from nimic import valuecheck as _valuecheck
+from nimic import transpiler as _transpiler
 from nimic.ntypesystem import char, cstring, seq, string, NIntEnum, _n_dollar, ufcs, _n_default_value, RangeDefect
 
 class _SomeCastClass:
@@ -1189,24 +1190,54 @@ def include(*names: str) -> None:
             stub._n_included_by = namespace.get("__name__")
             sys.modules[qualified] = stub
         code = compile(source, path, "exec", dont_inherit=True)
-        _valuecheck.watch(code, source, path)  # its bindings are checked (rule:valuecheck)
+        tree = _valuecheck.watch(code, source, path) or _ast.parse(source, path)  # rule:valuecheck
+        _transpiler.check_private_names(tree, path)
         exec(code, namespace)
+        _transpiler.check_imported_module(tree, sys.modules[namespace["__name__"]], path)
 
 
-# --- Value bindings checked (rule:valuecheck, nimic.valuecheck) ---
+# --- Nimic modules checked at import and run time (rule:valuecheck, rule:localname, rule:methodcall) ---
 # A nimic module (a file whose leading comments hold the `# /// nimic` block) runs as written; its bindings that may
-# need a `.copy()` are checked on their first execution. The import hook only watches the module's code (the usual
-# bytecode cache is used); the modules that imported nimic while loading (the main program) are watched from their
-# running frames (_n_install_value_checks).
+# need a `.copy()` are checked on their first execution (nimic.valuecheck). The transpiler's checks of the source run
+# too, so Python finds what transpiling would reject: private names that collide with their Nim names, before the
+# module runs, and free calls of procs its star imports overload, once its imports have run. The import hook only
+# watches the module's code (the usual bytecode cache is used); the modules that imported nimic while loading (the
+# main program) are watched from their running frames (_n_install_value_checks).
+
+
+def _n_imports_end(tree: _ast.Module) -> int:
+    """The first line after a module's imports: after its last top-level statement that imports (`import`,
+    `from ... import`, `include(...)`, `importFrom(...)`, `importExcept(...)`, also in a `when` branch)."""
+    importers = ("include", "importFrom", "importExcept")
+    end = 0
+    for stmt in tree.body:
+        if isinstance(stmt, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+            continue
+        if any(isinstance(n, (_ast.Import, _ast.ImportFrom))
+               or isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name) and n.func.id in importers
+               for n in _ast.walk(stmt)):
+            end = stmt.end_lineno
+    return end + 1
+
+
+def _n_check_module_source(code, source: str, path: str, module: _types.ModuleType) -> _ast.Module:
+    """Watches a nimic module's bindings and checks its private names now, and its free calls once its imports
+    have run: when the next line starts (`module` is still being loaded). Returns its tree."""
+    tree = _valuecheck.watch(code, source, path) or _ast.parse(source, path)
+    _transpiler.check_private_names(tree, path)
+    _valuecheck.at_line(code, _n_imports_end(tree),
+                        lambda: _transpiler.check_imported_module(tree, module, path))
+    return tree
 
 
 class _NimicLoader(_machinery.SourceFileLoader):
-    """Loads a nimic module as usual, its bindings watched."""
+    """Loads a nimic module as usual, its bindings watched and its source checked."""
 
     def exec_module(self, module: _types.ModuleType) -> None:
         code = self.get_code(module.__name__)
-        _valuecheck.watch(code, _importlib_util.decode_source(self.get_data(self.path)), self.path)
+        _n_check_module_source(code, _importlib_util.decode_source(self.get_data(self.path)), self.path, module)
         exec(code, module.__dict__)
+        _valuecheck.run_line_hook(code)  # no line ran after its imports
 
 
 class _NimicFinder:
@@ -1238,7 +1269,7 @@ def _n_install_value_checks() -> None:
         path = frame.f_globals.get("__file__") or ""
         if frame.f_code.co_name == "<module>" and _valuecheck.is_nimic_file(path):
             with _builtins.open(path, encoding="utf-8") as f:
-                _valuecheck.watch(frame.f_code, f.read(), path)
+                _n_check_module_source(frame.f_code, f.read(), path, sys.modules[frame.f_globals["__name__"]])
         frame = frame.f_back
 
 
