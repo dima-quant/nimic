@@ -30,6 +30,8 @@ Execution verification of converted nimic code: Python run vs transpiled + compi
   nimony      each converted nimony module nnimony/<path>.py is transpiled into a copy of nimony's src/
               (the clone next to the project) and type-checked; its tests run in Python, as the compiled
               transpiled module, and appended to the original nimony module: all three outputs must match.
+              A module whose `when isMainModule` block reads the command line declares its arguments in its
+              header (`# test-args: {tmp}/x.s.nif`); `{tmp}` is an empty directory of each run's own.
 
 Modules marked for rework or with open gaps in ncompiler/conversion_queue.md are reported as XFAIL
 (expected failure).
@@ -44,6 +46,7 @@ import ast
 import filecmp
 import os
 import re
+import shlex
 from collections import Counter
 import shutil
 import subprocess
@@ -508,6 +511,20 @@ def _with_tests(original: str, transpiled: str) -> str | None:
             + transpiled[found.start():])
 
 
+def _test_args(module_file: Path, tmp: Path) -> list[str]:
+    """The command-line arguments the module's tests run with: its header's `# test-args: ...` (shell words),
+    `{tmp}` replaced by `tmp`, a fresh empty directory (the tests run from the nimony clone, which they must not
+    write to). No key, no arguments."""
+    for line in module_file.read_text().splitlines()[1:]:
+        if line.startswith("# ///"):
+            break
+        if line.startswith("# test-args:"):
+            shutil.rmtree(tmp, ignore_errors=True)
+            tmp.mkdir(parents=True)
+            return [a.replace("{tmp}", str(tmp)) for a in shlex.split(line.removeprefix("# test-args:"))]
+    return []
+
+
 def check_nimony() -> None:
     print("== nimony modules (nnimony/): nim check, tests Python vs compiled Nim, vs the original nimony module",
           flush=True)
@@ -531,7 +548,9 @@ def check_nimony() -> None:
         chk = run(["nim", "check", *flags, target.name], target.parent)
         report(chk.returncode == 0, f"nimony module {key}", "" if chk.returncode == 0 else first_error(chk), key)
         # tests run from the nimony checkout, as nimony's own do (filelinecache reads src/lib/...)
-        py = run([PY, "-m", module], NIMONY_SRC.parent, [ROOT / "src", ROOT])
+        module_file = NNIMONY / f"{key}.py"
+        tmp = SCRATCH / "nimony_tmp" / key.replace("/", "_")
+        py = run([PY, "-m", module, *_test_args(module_file, tmp / "py")], NIMONY_SRC.parent, [ROOT / "src", ROOT])
         original = _with_tests((NIMONY_SRC / f"{key}.nim").read_text(), tr.stdout)
         if original is None:
             print(f"  SKIP  nimony tests {key}  — no tests", flush=True)
@@ -548,7 +567,7 @@ def check_nimony() -> None:
             if build.returncode != 0:
                 report(False, f"nimony {what} {key}", "nim c: " + first_error(build), key)
                 continue
-            nim = run([exe], NIMONY_SRC.parent)
+            nim = run([exe, *_test_args(module_file, tmp / what)], NIMONY_SRC.parent)
             same = nim.returncode == 0 and py.stdout == nim.stdout
             detail = "" if same else (f"Nim run: exit {nim.returncode}" if nim.returncode else "stdout differs: " + next(
                 (f"py {a!r} / nim {b!r}" for a, b in zip(py.stdout.splitlines(), nim.stdout.splitlines()) if a != b),
