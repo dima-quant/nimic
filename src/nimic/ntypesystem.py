@@ -1306,9 +1306,10 @@ class _DispatchedCallable:
 class _NExtendedProc(_DispatchedCallable):
     """A plain proc that a @dispatch set of another module extends, where the proc is bound: its module and the
     modules that imported or re-export it (_n_promote_extended_proc). Nim resolves a call in the caller's scope.
-    A module that binds the name to it (a star import) calls the set: all @dispatch sets are shared by name, so
-    it sees the extending module's overloads too. The proc's own module, and a qualified call from a module with
-    a binding of its own (`nifcore.addIdent(dest, s)` in nifpools, whose `addIdent` is the set), call the proc."""
+    Another module calls the set: all @dispatch sets are shared by name, so it sees the extending module's
+    overloads too, also when it reaches this binding through a method call past another module's proc of the
+    name (`tb.addIdent(s, info)` after `import nifpools, nifbuilder`). The proc's own module, and a qualified call
+    from a module that binds the name to the set (`nifcore.addIdent(dest, s)` in nifpools), call the proc."""
 
     def __init__(self, proc: types.FunctionType, overload_set: _DispatchedCallable):
         super().__init__(overload_set, proc)
@@ -1320,9 +1321,10 @@ class _NExtendedProc(_DispatchedCallable):
         while frame is not None and frame.f_code.co_filename.startswith(_N_RUNTIME_DIR):
             frame = frame.f_back  # through a method call (Object.__getattr__), a template
         scope = self._n_home if frame is None else frame.f_globals
-        if scope is not self._n_home and scope.get(self.__name__) is self:
-            return self._n_target(*args, **kwargs)
-        return self._n_fn(*args, **kwargs)
+        bound = scope.get(self.__name__)
+        if scope is self._n_home or (isinstance(bound, _DispatchedCallable) and not isinstance(bound, _NExtendedProc)):
+            return self._n_fn(*args, **kwargs)  # the set: every @dispatch of the name returns one of its own
+        return self._n_target(*args, **kwargs)
 
 
 def _n_named_tuple_result(fn: callable) -> callable:

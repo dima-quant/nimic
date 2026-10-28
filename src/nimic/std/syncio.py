@@ -142,7 +142,7 @@ def set_file_pos(f, pos: int) -> None:
     f.seek(pos)
 
 
-def close(f) -> None:
+def close(f: File) -> None:
     """Close file handle."""
     f_handle = getattr(f, '_n_handle', f)
     if hasattr(f_handle, 'close'):

@@ -3576,6 +3576,87 @@ class TestNTypes(unittest.TestCase):
             for name in sources:
                 sys.modules.pop(name, None)
 
+    def test_method_call_reaches_the_extending_set_past_another_modules_proc(self):
+        """`import nifpools, nifbuilder` then `tb.addIdent(s, info)`: nifbuilder's plain `addIdent(b: var Builder)`,
+        star-imported last, doesn't take a TokenBuf, so the method call reaches the binding of TokenBuf's module
+        (nifcore), the extended proc. Nim sees nifpools' overloads there: the call reaches the set, not nifcore's
+        plain proc. A free call of the class's module's proc, and its own qualified call, still reach the plain proc."""
+        modules = {}
+        sources = {
+            "_n_xs_core": """
+                class Buf(Object):
+                    n: nint
+                def mark(b: Buf, s: string) -> string:
+                    return string("core ") + s
+                def markCore(b: Buf) -> string:
+                    return b.mark(string("own"))
+                """,
+            "_n_xs_pools": """
+                from _n_xs_core import *
+                import _n_xs_core
+                @dispatch
+                def mark(b: Buf, s: string, info: nint) -> string:
+                    return _n_xs_core.mark(b, string("pools ")) + s
+                @dispatch
+                def mark(b: Buf, s: nint, info: nint) -> string:
+                    return string("pools int")
+                """,
+            "_n_xs_builder": """
+                class Bld(Object):
+                    n: nint
+                def mark(b: Bld, s: string) -> string:
+                    return string("builder ") + s
+                """,
+            "_n_xs_prelude": """
+                from _n_xs_pools import *
+                from _n_xs_builder import *
+                import _n_xs_core
+                def run(b: Buf, d: Bld) -> list:
+                    return [b.mark(string("a"), 1), b.mark(string("b")), d.mark(string("c")),
+                            _n_xs_core.mark(b, string("d"))]
+                """,
+        }
+        try:
+            for module_name, body in sources.items():
+                module = types.ModuleType(module_name)
+                sys.modules[module_name] = module
+                exec("from __future__ import annotations\nfrom nimic.ntypes import *\n" + textwrap.dedent(body),
+                     module.__dict__)
+                modules[module_name] = module
+            core, prelude = modules["_n_xs_core"], modules["_n_xs_prelude"]
+            self.assertEqual(prelude.run(core.Buf(), modules["_n_xs_builder"].Bld()),
+                             ["core pools a", "core b", "builder c", "core d"])
+            self.assertEqual(core.markCore(core.Buf()), "core own")
+        finally:
+            for name in sources:
+                sys.modules.pop(name, None)
+
+    def test_syncio_close_takes_only_a_file(self):
+        """syncio's `close(f: File)` doesn't take an Object: a later star import that rebinds `close` to it (a
+        module re-exporting nimic.ntypes) leaves `bld.close()` to the proc of the receiver's module, as in Nim."""
+        module = types.ModuleType("_n_cl_builder")
+        sys.modules["_n_cl_builder"] = module
+        try:
+            exec(textwrap.dedent("""
+                from __future__ import annotations
+                from nimic.ntypes import *
+                class Bld(Object):
+                    n: nint
+                def close(b: mut @ Bld):
+                    b.n = 7
+                """), module.__dict__)
+            scope = {}
+            exec(textwrap.dedent("""
+                from __future__ import annotations
+                from _n_cl_builder import *
+                from nimic.ntypes import *
+                bld = Bld()
+                bld.close()
+                """), scope)
+            self.assertEqual(scope["bld"].n, 7)
+        finally:
+            sys.modules.pop("_n_cl_builder", None)
+
     def test_method_call_reaches_the_receiver_types_module(self):
         """Two imported modules' plain procs of one name are overloads in Nim (nifcore's `addIdent(b: var
         TokenBuf)`, nifbuilder's `addIdent(b: var Builder)`); the later star import rebinds the name in Python.
