@@ -24,15 +24,13 @@
 
 | Module | Size | Std imports (✗ = no nimic shim yet) | Agent |
 |---|---|---|---|
-| `lib/nifprelude` | 372 bytes |  |  |
-| `lib/nifchecksums` | 2,565 bytes | formatfloat, sha1 |  |
 | `lib/lengiface` | 3,852 bytes | assertions, formatfloat, sha1, syncio |  |
 | `lib/htmlbuilder` | 4,222 bytes |  |  |
-| `lib/nifstreams` | 8,456 bytes | tables |  |
+| `lib/nifindexes` | 12,090 bytes | assertions, hashes, os, sha1, strutils, syncio, tables |  |
 | `lib/legacy/nif26reader` | 13,861 bytes | assertions, memfiles, parseutils |  |
 | `lib/bif` | 52,325 bytes | assertions, strutils, syncio, varints |  |
 
-## All modules of `src/lib` (29/38 converted, 1 legacy)
+## All modules of `src/lib` (32/38 converted, 1 legacy)
 
 | Module | Tier | Size | Depends on | Std imports | Status |
 |---|---|---|---|---|---|
@@ -71,7 +69,7 @@
 | `lib/foreignmodules` | 4 | 7,572 bytes | lib/bif, lib/nifcore, lib/nifcoreparse, lib/nifreader, lib/stringviews | tables | 🔲 Pending |
 | `lib/nifpools` | 4 | 22,429 bytes | lib/comesfrom, lib/nifcore, lib/nifcoreparse, lib/nifreader, lib/nifroles, lib/vfs, models/tags | assertions | ✅ Converted |
 | `lib/nifqueries` | 4 | 2,547 bytes | lib/nifcore, lib/nifcoreparse | assertions | ✅ Converted |
-| `lib/nifchecksums` | 5 | 2,565 bytes | lib/bitabs, lib/nifpools, lib/nifreader | formatfloat, sha1 | 🔲 Pending |
-| `lib/nifprelude` | 5 | 372 bytes | lib/bitabs, lib/nifbuilder, lib/nifpools, lib/nifreader, lib/nifroles |  | 🔲 Pending |
-| `lib/nifstreams` | 5 | 8,456 bytes | lib/lineinfos, lib/nifpools, lib/nifreader | tables | 🔲 Pending |
+| `lib/nifchecksums` | 5 | 2,565 bytes | lib/bitabs, lib/nifpools, lib/nifreader | formatfloat, sha1 | ✅ Converted |
+| `lib/nifprelude` | 5 | 372 bytes | lib/bitabs, lib/nifbuilder, lib/nifpools, lib/nifreader, lib/nifroles |  | ✅ Converted |
+| `lib/nifstreams` | 5 | 8,456 bytes | lib/lineinfos, lib/nifpools, lib/nifreader | tables | ✅ Converted |
 | `lib/nifindexes` | 6 | 12,090 bytes | lib/bitabs, lib/compat2, lib/lineinfos, lib/nifchecksums, lib/nifcoreparse, lib/nifpools, lib/nifreader, lib/stringviews, lib/symparser, lib/vfs, models/nifindex_tags, models/tags | assertions, hashes, os, sha1, strutils, syncio, tables | 🔲 Pending |
