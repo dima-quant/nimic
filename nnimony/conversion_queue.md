@@ -24,13 +24,15 @@
 
 | Module | Size | Std imports (✗ = no nimic shim yet) | Agent |
 |---|---|---|---|
+| `lib/nifprelude` | 372 bytes |  |  |
+| `lib/nifchecksums` | 2,565 bytes | formatfloat, sha1 |  |
 | `lib/lengiface` | 3,852 bytes | assertions, formatfloat, sha1, syncio |  |
 | `lib/htmlbuilder` | 4,222 bytes |  |  |
+| `lib/nifstreams` | 8,456 bytes | tables |  |
 | `lib/legacy/nif26reader` | 13,861 bytes | assertions, memfiles, parseutils |  |
-| `lib/nifcoreparse` | 26,586 bytes | assertions, math, strutils, syncio |  |
 | `lib/bif` | 52,325 bytes | assertions, strutils, syncio, varints |  |
 
-## All modules of `src/lib` (26/38 converted, 1 legacy)
+## All modules of `src/lib` (29/38 converted, 1 legacy)
 
 | Module | Tier | Size | Depends on | Std imports | Status |
 |---|---|---|---|---|---|
@@ -65,10 +67,10 @@
 | `lib/lengiface` | 2 | 3,852 bytes | lib/nifbuilder, lib/nifcore, lib/vfs | assertions, formatfloat, sha1, syncio | 🔲 Pending |
 | `lib/nifcdecl` | 2 | 10,477 bytes | lib/nifcore, models/callconv_tags, models/leng_tags, models/tags | assertions | ✅ Converted |
 | `lib/nifreader` | 2 | 38,779 bytes | lib/nifcore, lib/stringviews, lib/vfs | assertions, memfiles, parseutils | ✅ Converted |
-| `lib/nifcoreparse` | 3 | 26,586 bytes | lib/comesfrom, lib/lineinfos, lib/nifbuilder, lib/nifcore, lib/nifreader, lib/stringviews | assertions, math, strutils, syncio | 🔲 Pending |
+| `lib/nifcoreparse` | 3 | 26,586 bytes | lib/comesfrom, lib/lineinfos, lib/nifbuilder, lib/nifcore, lib/nifreader, lib/stringviews | assertions, math, strutils, syncio | ✅ Converted |
 | `lib/foreignmodules` | 4 | 7,572 bytes | lib/bif, lib/nifcore, lib/nifcoreparse, lib/nifreader, lib/stringviews | tables | 🔲 Pending |
-| `lib/nifpools` | 4 | 22,429 bytes | lib/comesfrom, lib/nifcore, lib/nifcoreparse, lib/nifreader, lib/nifroles, lib/vfs, models/tags | assertions | 🔲 Pending |
-| `lib/nifqueries` | 4 | 2,547 bytes | lib/nifcore, lib/nifcoreparse | assertions | 🔲 Pending |
+| `lib/nifpools` | 4 | 22,429 bytes | lib/comesfrom, lib/nifcore, lib/nifcoreparse, lib/nifreader, lib/nifroles, lib/vfs, models/tags | assertions | ✅ Converted |
+| `lib/nifqueries` | 4 | 2,547 bytes | lib/nifcore, lib/nifcoreparse | assertions | ✅ Converted |
 | `lib/nifchecksums` | 5 | 2,565 bytes | lib/bitabs, lib/nifpools, lib/nifreader | formatfloat, sha1 | 🔲 Pending |
 | `lib/nifprelude` | 5 | 372 bytes | lib/bitabs, lib/nifbuilder, lib/nifpools, lib/nifreader, lib/nifroles |  | 🔲 Pending |
 | `lib/nifstreams` | 5 | 8,456 bytes | lib/lineinfos, lib/nifpools, lib/nifreader | tables | 🔲 Pending |
