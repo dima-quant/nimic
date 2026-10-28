@@ -95,6 +95,7 @@ from nimic.nsystem import (
     include,
     importExcept,
     importFrom,
+    exportExcept,
     slurp,
     staticRead,
     hook,

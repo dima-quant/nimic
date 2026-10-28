@@ -42,7 +42,8 @@ import types
 import warnings
 from functools import wraps
 
-from nimic.ntypesystem import dispatch, _n_registry, _n_routine_pragmas, _n_templates, _n_template_codes
+from nimic.ntypesystem import (dispatch, _n_registry, _n_routine_pragmas, _n_templates, _n_template_codes,
+                                _NGeneric)
 from nimic.nsystem import _n_node_at
 from nimic import valuecheck
 
@@ -234,10 +235,12 @@ class _BlockYields(ast.NodeTransformer):
 
 def _n_make_block_template(template_func, func_def: ast.FunctionDef, blocks: list[str]):
     """The generator of a block template and the factory (signature without the block parameters)
-    that dispatch registers; the factory returns the context manager for `with`."""
+    that dispatch registers; the factory returns the context manager for `with`. A generic template's
+    factory is generic (dispatch binds its type parameters), and calls the generator specialized with them."""
     gen_def = copy.deepcopy(func_def)
     gen_def.decorator_list = []
     gen_def.returns = None
+    type_params, gen_def.type_params = gen_def.type_params, []  # compiled plain, specialized from its source
     # block parameters may carry placeholder defaults (`body: typed = None` after defaulted parameters)
     first_default = len(gen_def.args.args) - len(gen_def.args.defaults)
     gen_def.args.defaults = [d for i, d in enumerate(gen_def.args.defaults, first_default)
@@ -278,9 +281,21 @@ def _n_make_block_template(template_func, func_def: ast.FunctionDef, blocks: lis
     n_blocks = len(blocks)
     param_names = [a.arg for a in gen_def.args.args]
     arg_tuple = "(" + "".join(f"{n}, " for n in param_names) + ")"
+    gen, type_list = "_gen", ""
+    if type_params:
+        gen_def.type_params = type_params
+        gen_fn._n_source = ast.unparse(gen_def)
+        gen_fn.__type_params__ = template_func.__type_params__
+        gen_fn = _NGeneric(gen_fn)
+        type_list = "[" + ", ".join(ast.unparse(t) for t in type_params) + "]"
+        gen = "_gen[" + ", ".join(t.name for t in type_params) + "]"
     factory_ns = {"_call": _BlockTemplateCall, "_gen": gen_fn, "_n": n_blocks}
-    exec(f"def {name}({', '.join(param_names)}):\n    return _call(_gen, {arg_tuple}, _n, {name!r})\n", factory_ns)
+    factory_src = (f"def {name}{type_list}({', '.join(param_names)}):\n"
+                   f"    return _call({gen}, {arg_tuple}, _n, {name!r})\n")
+    exec(factory_src, factory_ns)
     factory = factory_ns[name]
+    if type_params:
+        factory._n_source = factory_src  # dispatch reads the type parameters and specializes from it
     factory.__defaults__ = defaults
     factory.__annotations__ = {k: template_func.__annotations__.get(k, "untyped") for k in param_names}
     factory.__module__ = template_func.__module__
@@ -318,7 +333,7 @@ def _n_uses_caller_scope(func_def: ast.FunctionDef, module_globals: dict) -> boo
     a = func_def.args
     params = {arg.arg for arg in a.posonlyargs + a.args + a.kwonlyargs}
     blocks = set(_n_block_params(func_def, _n_ast_annotations(func_def)))
-    own = params | _n_declared_locals(func_def)
+    own = params | _n_declared_locals(func_def) | {t.name for t in func_def.type_params}
     for stmt in func_def.body:
         for node in ast.walk(stmt):
             if not isinstance(node, ast.Name):

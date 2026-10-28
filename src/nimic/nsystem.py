@@ -19,6 +19,7 @@ import shutil as _shutil
 import sys
 from sys import getrefcount as _sys_getrefcount
 import types as _types
+import enum as _enum
 from enum import StrEnum, auto
 from typing import Generator, TypeVar
 
@@ -663,12 +664,39 @@ def importExcept(module: str, *names: str) -> None:
 def importFrom(module: str, *names: str) -> None:
     """Nim: from m import a, b — binds only `names` of `module` (relative to the calling module's package
     for a leading dot) in the caller's namespace; operator names have no Python binding. Transpiles to
-    `from m import a, b` (rule:importfrom)."""
+    `from m import a, b` (rule:importfrom). A name can be a member of an enum the module binds (Nim's
+    `from vfs import FileWriteMode, AlwaysWrite`: a non-pure enum's members are symbols of its module). Without
+    names it is `from m import nil`: it binds the module's name, for qualified use (`m.a`) only."""
     namespace = sys._getframe(1).f_globals
     mod = _importlib.import_module(module, namespace.get("__package__") or None)
+    if not names:
+        namespace[module.rsplit(".", 1)[-1]] = mod
     for n in names:
         if n.isidentifier():
-            namespace[n] = getattr(mod, n)
+            namespace[n] = getattr(mod, n) if hasattr(mod, n) else _n_enum_member(mod, n)
+
+
+def _n_enum_member(mod: _types.ModuleType, name: str) -> _enum.Enum:
+    """The member `name` of the enums `mod` binds (in Python a member lives in its class). ImportError when no
+    enum has it, or several do: Nim picks such a member by the expected type, so it must be qualified."""
+    members = {id(cls): cls[name] for cls in vars(mod).values()
+               if isinstance(cls, type) and issubclass(cls, _enum.Enum) and name in cls.__members__}
+    if len(members) != 1:
+        enums = ", ".join(sorted(type(m).__name__ for m in members.values()))
+        raise ImportError(f"cannot import name {name!r} from {mod.__name__!r}" +
+                          (f": a member of the enums {enums}, write it qualified" if members else ""))
+    return next(iter(members.values()))
+
+
+def exportExcept(module: _types.ModuleType, *names: str) -> None:
+    """Nim: export m except a, b — re-exports the imported module `m` except `names` (operators by their Nim
+    names, as importExcept). Transpiles to `export m except a, b` (rule:exportexcept). Python's star import of
+    the calling module gives its importers all of its names, as `with export:` does: the hidden names stay visible
+    to them, unless the calling module defines them itself (nifpools' createTokenBuf). The call takes the module
+    and runs in the calling module, so it can later hide them from Python importers too (an `__all__`); for now
+    it only checks that `m` is a module."""
+    if not isinstance(module, _types.ModuleType):
+        raise TypeError(f"exportExcept: {module!r} is no module (import it: `from . import m`)")
 
 
 _n_hooks = ("copy", "sink", "destroy", "wasMoved", "dup", "trace")

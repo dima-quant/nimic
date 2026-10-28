@@ -180,7 +180,10 @@ Imports:
   rule:importexcept -> importExcept("..m", "a", "%") transpiles as `import ../m except a, `%``; in Python it
     binds the module's public names except those
   rule:importfrom -> importFrom("..m", "a", "%") transpiles as Nim's selective `from ../m import a, `%``; in
-    Python it binds only those names (a Python `from m import a` is a full `import m`)
+    Python it binds only those names (a Python `from m import a` is a full `import m`); importFrom("..m")
+    without names is `from ../m import nil` and binds only `m` (qualified use)
+  rule:exportexcept -> exportExcept(nifcore, "pool", "%") transpiles as `export nifcore except pool, `%``; in
+    Python it only checks that nifcore is a module: importers still see the hidden names
   rule:include -> include("x", "y") transpiles as `include x, y`; in Python the files run in the includer's
     namespace
   rule:modulepath -> nimic.x.y import paths transpile as x/y, with module renaming (e.g. syncio -> io)
@@ -1273,12 +1276,19 @@ class _Unparser(NodeVisitor):
         if (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id in ("importExcept", "importFrom")
                 and value.args and all(isinstance(a, Constant) and isinstance(a.value, str) for a in value.args)):
             # rule:importexcept -> importExcept("..m", "a", "%") is `import ../m except a, `%``
-            # rule:importfrom -> importFrom("..m", "a", "%") is `from ../m import a, `%``
+            # rule:importfrom -> importFrom("..m", "a", "%") is `from ../m import a, `%``; no names: `import nil`
             module = value.args[0].value
             level = len(module) - len(module.lstrip("."))
-            names = ", ".join(n if n.isidentifier() else f"`{n}`" for n in (a.value for a in value.args[1:]))
+            names = ", ".join(n if n.isidentifier() else f"`{n}`" for n in (a.value for a in value.args[1:])) or "nil"
             path = self._import_path(module.lstrip("."), level)
             self.fill(f"import {path} except {names}" if value.func.id == "importExcept" else f"from {path} import {names}")
+            return
+        if (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id == "exportExcept"
+                and len(value.args) > 1 and isinstance(value.args[0], Name)
+                and all(isinstance(a, Constant) and isinstance(a.value, str) for a in value.args[1:])):
+            # rule:exportexcept -> exportExcept(nifcore, "pool", "%") is `export nifcore except pool, `%``
+            names = ", ".join(n if n.isidentifier() else f"`{n}`" for n in (a.value for a in value.args[1:]))
+            self.fill(f"export {value.args[0].id} except {names}")
             return
         if (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id == "assign"
                 and len(value.args) == 2 and not value.keywords):

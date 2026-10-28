@@ -126,6 +126,27 @@ def _tGAdd[Id](t: mut @ _TGTabF[Id], v: float64) -> Id:
     return _TGTab[Id, uint64](t)._tGAdd(cast[uint64](v))
 
 
+# nifpools' `template buildTree*[T: enum](dest: var TokenBuf; tag: T; info; body: untyped)`: a generic block
+# template next to a concrete one of the same name; module-level, as the specializations run in the module's scope
+class _TBlkTag(NIntEnum):
+    a = auto()
+    b = auto()
+
+
+@template
+def _tBlkTree(out: mut @ seq[string], tag: nint, body: untyped):
+    out.add(string("(int ") + str(tag))
+    body
+    out.add(string(")"))
+
+
+@template
+def _tBlkTree[T: enum](out: mut @ seq[string], tag: T, body: untyped):
+    out.add(string("(high ") + str(ord(high(T))) + string(" ") + str(ord(tag)))
+    body
+    out.add(string(")"))
+
+
 class TestNTypes(unittest.TestCase):
 
     def test_integers_initialization(self):
@@ -3479,6 +3500,82 @@ class TestNTypes(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             _n_fwd_proc(string("x"), nint(2))  # the forward declaration is no imported proc
 
+    def test_dispatch_set_survives_a_later_import_of_the_extended_proc(self):
+        """`import nifpools, std/syncio`: nifpools' `writeFile(b: TokenBuf; path)` overloads syncio's plain
+        `writeFile(path, content)`, and Nim reaches it whatever the import order. A later star import of the plain
+        proc's module (or of a module re-exporting it) still reaches the set: the free and the method call. The
+        proc's own module and a qualified call from the extending module (nifpools' `nifcore.addIdent(dest, s)` in
+        its `addIdent(dest, s, info = NoLineInfo)`) reach the plain proc. An overload defined in a function doesn't
+        rebind the module's names; a Python library proc is never rebound."""
+        modules = {}
+        python_basename = os.path.basename
+
+        class _PxLocal(Object):
+            n: nint
+        sources = {
+            "_n_px_std": """
+                def wf(path: string, content: string) -> string:
+                    return string("std ") + path
+                def join(a: string, b: string) -> string:
+                    return a + b
+                def tag(s: string) -> string:
+                    return string("std ") + s
+                def tagTwice(s: string) -> string:
+                    return tag(s) + tag(s)
+                """,
+            "_n_px_reexport": """
+                from _n_px_std import *
+                """,
+            "_n_px_pools": """
+                from _n_px_std import *
+                from os.path import basename
+                class Buf(Object):
+                    n: nint
+                @dispatch
+                def wf(b: Buf, path: string) -> string:
+                    return string("pools ") + path
+                @dispatch
+                def basename(b: Buf) -> string:
+                    return string("buf")
+                import _n_px_std
+                @dispatch
+                def tag(s: string, info: nint = 0) -> string:
+                    return _n_px_std.tag(s) + string(" info")
+                """,
+            "_n_px_user": """
+                from _n_px_pools import *
+                from _n_px_std import *
+                from _n_px_reexport import *
+                def run(b: Buf) -> list:
+                    return [wf(b, string("p")), b.wf(string("q")), wf(string("r"), string("text"))]
+                """,
+        }
+        try:
+            for module_name, body in sources.items():
+                module = types.ModuleType(module_name)
+                sys.modules[module_name] = module
+                exec("from __future__ import annotations\nfrom nimic.ntypes import *\n" + textwrap.dedent(body),
+                     module.__dict__)
+                modules[module_name] = module
+            std, pools, user = modules["_n_px_std"], modules["_n_px_pools"], modules["_n_px_user"]
+            self.assertEqual(user.run(pools.Buf()), ["pools p", "pools q", "std r"])
+            self.assertIs(std.wf, modules["_n_px_reexport"].wf)
+            self.assertIs(std.wf, user.wf)
+            self.assertEqual(std.wf(string("s"), string("t")), "std s")
+            self.assertEqual(pools.tag(string("a")), "std a info")
+            self.assertEqual(std.tagTwice(string("b")), "std bstd b")
+            self.assertIs(os.path.basename, python_basename)
+            self.assertEqual(pools.basename(pools.Buf()), "buf")
+
+            @dispatch
+            def join(b: _PxLocal, c: _PxLocal) -> string:  # a local overload: Nim's local scope
+                return string("local")
+            self.assertIsNot(std.join, join)
+            self.assertEqual(std.join(string("a"), string("b")), "ab")
+        finally:
+            for name in sources:
+                sys.modules.pop(name, None)
+
     def test_method_call_reaches_the_receiver_types_module(self):
         """Two imported modules' plain procs of one name are overloads in Nim (nifcore's `addIdent(b: var
         TokenBuf)`, nifbuilder's `addIdent(b: var Builder)`); the later star import rebinds the name in Python.
@@ -3530,6 +3627,32 @@ class TestNTypes(unittest.TestCase):
         finally:
             for name in modules:
                 sys.modules.pop(name)
+
+    def test_method_call_skips_a_local_that_is_no_routine(self):
+        """nifqueries' `findChildKind(node: Cursor; kind: NifKind)` compares `children.kind == kind`: Nim's call
+        resolution skips the parameter `kind` (no routine) and reaches the proc `kind(Cursor)`. A local routine
+        still shadows the module's proc."""
+        module = types.ModuleType("_n_mc_shadow")
+        exec(textwrap.dedent("""
+            from __future__ import annotations
+            from nimic.ntypes import *
+            class C(Object):
+                v: nint
+            def kind(c: C) -> nint:
+                return c.v
+            def same(c: C, kind: nint) -> bool:
+                return c.kind() == kind
+            def local_proc(c: C) -> nint:
+                def kind(c: C) -> nint:
+                    return c.v + 1
+                return c.kind()
+            """), module.__dict__)
+        sys.modules[module.__name__] = module
+        try:
+            self.assertTrue(module.same(module.C(v=3), 3))
+            self.assertEqual(module.local_proc(module.C(v=3)), 4)
+        finally:
+            sys.modules.pop(module.__name__)
 
     def test_transpile_rejects_free_calls_of_overlapping_star_imports(self):
         """rule:methodcall: two star imports binding one name to different procs, one of them plain (nifcore's and
@@ -3691,6 +3814,22 @@ class TestNTypes(unittest.TestCase):
             lib = run(["-c", "import nimic, sc_lib; print('imported')"])  # checked once it ran
             self.assertEqual(lib.stdout, "", lib.stderr)
             self.assertIn("sc_lib.py:6: addThing(...)", lib.stderr)
+
+    def test_dispatch_unannotated_int_default_is_nint(self):
+        """An unannotated default `cap = 16` has the literal's Nim type, `int` (nifpools' `createTokenBuf(cap =
+        16)`, called with `subtreeWidth(src) + 2`): an `nint` argument matches it, as a literal does."""
+        @dispatch
+        def _n_t_cap_default(cap=16) -> string:
+            return string("int ") + str(cap)
+
+        @dispatch
+        def _n_t_cap_default(cap: string) -> string:
+            return string("string")
+
+        self.assertEqual(_n_t_cap_default(), "int 16")
+        self.assertEqual(_n_t_cap_default(3), "int 3")
+        self.assertEqual(_n_t_cap_default(nint(4)), "int 4")
+        self.assertEqual(_n_t_cap_default(string("x")), "string")
 
     def test_dispatch_bound_call_keeps_body_errors(self):
         """A call bound to an overload through its defaults runs that overload; a NotImplementedError of its body
@@ -5780,6 +5919,53 @@ class TestNTypes(unittest.TestCase):
         exec("importFrom('nimic.std.terminal', 'styledWrite')", ns)
         self.assertIn("styledWrite", ns)
         self.assertNotIn("styledWriteLine", ns)
+        # Nim's `from m import nil` (nifpools' nifcoreparse): only the module's name, for qualified calls
+        self.assertIn("from ../options import nil", unparse(ast.parse("importFrom('..options')\n"))[0])
+        exec("importFrom('nimic.std.terminal')", ns)
+        self.assertIs(ns["terminal"], sys.modules["nimic.std.terminal"])
+        self.assertNotIn("nil", ns)
+
+    def test_selective_import_of_enum_members(self):
+        """nifpools' `from vfs import FileWriteMode, AlwaysWrite, OnlyIfChanged`: a non-pure enum's members are
+        symbols of its module in Nim, so importFrom binds a member by its name (in Python it lives in its class).
+        A name of no enum, or of members of two enums (Nim picks by the expected type), is an ImportError."""
+        module = types.ModuleType("_n_imp_enums")
+        exec(textwrap.dedent("""
+            from nimic.ntypes import *
+            class Mode(NIntEnum):
+                AlwaysWrite = auto()
+                OnlyIfChanged = auto()
+            ModeAlias = Mode
+            class Vis(NIntEnum):
+                Local = auto()
+                Shared = auto()
+            class Capture(NIntEnum):
+                Local = auto()
+            """), module.__dict__)
+        sys.modules[module.__name__] = module
+        try:
+            ns = {"importFrom": importFrom, "__name__": "probe", "__package__": ""}
+            exec("importFrom('_n_imp_enums', 'Mode', 'AlwaysWrite', 'OnlyIfChanged', 'Shared')", ns)
+            self.assertIs(ns["AlwaysWrite"], module.Mode.AlwaysWrite)
+            self.assertIs(ns["OnlyIfChanged"], module.Mode.OnlyIfChanged)
+            self.assertIs(ns["Shared"], module.Vis.Shared)
+            with self.assertRaisesRegex(ImportError, "a member of the enums Capture, Vis, write it qualified"):
+                exec("importFrom('_n_imp_enums', 'Local')", ns)
+            with self.assertRaisesRegex(ImportError, "cannot import name 'Missing' from '_n_imp_enums'$"):
+                exec("importFrom('_n_imp_enums', 'Missing')", ns)
+        finally:
+            sys.modules.pop(module.__name__)
+        out = unparse(ast.parse("importFrom('.vfs', 'FileWriteMode', 'AlwaysWrite')\n"))[0]
+        self.assertIn("from vfs import FileWriteMode, AlwaysWrite", out)
+
+    def test_export_except(self):
+        """Nim's `export nifcore except createTokenBuf, pool` is exportExcept(nifcore, "createTokenBuf", "pool")
+        (rule:exportexcept; operators by their Nim names). In Python it only checks its argument is a module."""
+        out = unparse(ast.parse("from . import nifcore\nexportExcept(nifcore, 'createTokenBuf', 'pool', '%')\n"))[0]
+        self.assertIn("export nifcore except createTokenBuf, pool, `%`", out)
+        exportExcept(textwrap, "dedent")
+        with self.assertRaisesRegex(TypeError, "is no module"):
+            exportExcept("textwrap", "dedent")
 
     def test_strtabs_modes(self):
         """std/strtabs: keys compare by the table's mode (case / style insensitive)."""
@@ -7378,6 +7564,16 @@ def addWord(b: mut@Builder, w: string) -> None:
         with _t_add_cast(b, string("char*")):
             b.buf.add(string("p"))
         self.assertEqual(str(b.buf), "((char*) p)")
+
+    def test_generic_block_template(self):
+        """A block template with type parameters (nifpools' `buildTree[T: enum]`): `with t(args):` binds `T` from
+        the argument, in the template's body too, as a generic proc's call does; the concrete overload of the
+        name keeps its arguments."""
+        out = seq[string]()
+        with _tBlkTree(out, _TBlkTag.b):
+            with _tBlkTree(out, nint(7)):
+                out.add(string("x"))
+        self.assertEqual([str(s) for s in out], ["(high 1 1", "(int 7", "x", ")", ")"])
 
     def test_block_template_two_blocks_out_param_and_overload(self):
         """Two blocks (`t(args): b1 do: b2` as `with t(args):` ... `with do:`), an out parameter assigned

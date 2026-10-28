@@ -351,6 +351,9 @@ _n_aliases = {"float": "float64", "int": "int32", "str": "string", "NBool": "boo
               "static[bool]": "bool", "static[int]": "int32",
               "static[float]": "float64", "static[str]": "string",
               "nint": "int64", "uint": "uint64", "RootObj": "Object"}
+# the Nim type of a Python literal, where it differs from _n_aliases: an unannotated default `cap = 16` is
+# Nim's `int` (an int literal argument still converts to any integer type)
+_n_literal_types = {"int": "nint"}
 
 # Names of types marked with @distinct — excluded from issubclass-based dispatch matching
 _n_distinct_types: set = set()
@@ -424,7 +427,7 @@ def _n_routine_pragmas(fn: callable) -> list[str]:
 
 
 def get_type_params(fn: callable) -> dict:
-    lines = ins.getsource(fn).split("\n")
+    lines = (getattr(fn, "_n_source", None) or ins.getsource(fn)).split("\n")  # a generated function has its own
     for line in lines:
         if "def " in line:
             break
@@ -923,6 +926,13 @@ def _n_fingerprint(value) -> object:
 
 
 _n_overloads: dict = {}  # @dispatch name -> its functions
+
+
+def _n_set_procs(fn) -> tuple:
+    """The procs a @dispatch set calls: its overloads, and the imported proc it extends (calls no overload takes)."""
+    extends = fn._n_extends
+    return (*_n_overloads.get(fn.__name__, (fn._n_fn,)), *((extends,) if extends is not None else ()))
+
 _n_alias_results: dict = {}  # code object -> whether its function's result may be shared (cleared by a new overload)
 
 
@@ -977,7 +987,7 @@ def _n_result_may_alias(fn, _seen: frozenset = frozenset()) -> bool | str:
         may = True
     elif isinstance(target, _DispatchedCallable):
         may = _n_alias_join(_n_result_may_alias(o, _seen | {key})
-                            for o in _n_overloads.get(target.__name__, (target._n_fn,)))
+                            for o in _n_set_procs(target))
     else:  # what it returns
         sources = _valuecheck.returned_sources(code)
         may = True if sources is None else _n_alias_join(_n_source_may_alias(s, fn, _seen | {key}) for s in sources)
@@ -1024,7 +1034,7 @@ def _n_param_mutable(fn, position: int | None, keyword: str | None) -> bool:
     if isinstance(fn, types.MethodType):
         fn, position = fn.__func__, None if position is None else position + 1
     if isinstance(fn, _DispatchedCallable):
-        return any(_n_param_mutable(o, position, keyword) for o in _n_overloads.get(fn.__name__, (fn._n_fn,)))
+        return any(_n_param_mutable(o, position, keyword) for o in _n_set_procs(fn))
     code = getattr(fn, "__code__", None)
     if code is None:
         return True
@@ -1293,6 +1303,28 @@ class _DispatchedCallable:
         return self
 
 
+class _NExtendedProc(_DispatchedCallable):
+    """A plain proc that a @dispatch set of another module extends, where the proc is bound: its module and the
+    modules that imported or re-export it (_n_promote_extended_proc). Nim resolves a call in the caller's scope.
+    A module that binds the name to it (a star import) calls the set: all @dispatch sets are shared by name, so
+    it sees the extending module's overloads too. The proc's own module, and a qualified call from a module with
+    a binding of its own (`nifcore.addIdent(dest, s)` in nifpools, whose `addIdent` is the set), call the proc."""
+
+    def __init__(self, proc: types.FunctionType, overload_set: _DispatchedCallable):
+        super().__init__(overload_set, proc)
+        self.__name__ = overload_set.__name__  # the extended name (syncio's writeFile, an alias of write_file)
+        self._n_home = proc.__globals__
+
+    def __call__(self, *args, **kwargs):
+        frame = sys._getframe(1)
+        while frame is not None and frame.f_code.co_filename.startswith(_N_RUNTIME_DIR):
+            frame = frame.f_back  # through a method call (Object.__getattr__), a template
+        scope = self._n_home if frame is None else frame.f_globals
+        if scope is not self._n_home and scope.get(self.__name__) is self:
+            return self._n_target(*args, **kwargs)
+        return self._n_fn(*args, **kwargs)
+
+
 def _n_named_tuple_result(fn: callable) -> callable:
     """A proc declared to return a named tuple type converts a returned tuple literal to it (Nim
     `result = (a, b)` for `tuple[x, y: T]`). Wrapped only when the annotation names an NTuple class
@@ -1348,19 +1380,41 @@ def _n_typedesc_sig(annotation: str) -> str:
 _N_SYSTEM_BUILTINS = frozenset({"abs", "len", "min", "max"})
 
 
-def _n_register_imported_proc(fn: callable, fn_globals: dict) -> None:
+def _n_register_imported_proc(fn: callable, fn_globals: dict) -> callable:
     """Nim overloading spans modules: `proc cmp*(a, b: Int128)` adds an overload to system.cmp. When a
     @dispatch proc shadows a routine of the same name that is no overload set itself (a system or std
     proc imported into the module, or a builtin of _N_SYSTEM_BUILTINS such as abs), calls no overload matches go to it.
-    A plain function of the same module (a forward declaration) is not such a routine."""
+    A plain function of the same module (a forward declaration) is not such a routine. Returns the routine when this
+    call registered it, else None."""
     if fn.__name__ in _n_imported_procs:
-        return
+        return None
     prior = fn_globals.get(fn.__name__)
     if prior is None and fn.__name__ in _N_SYSTEM_BUILTINS:
         prior = getattr(sys.modules["builtins"], fn.__name__)
     if (callable(prior) and not isinstance(prior, (type, _DispatchedCallable))
             and getattr(prior, "__module__", None) != fn.__module__):
         _n_imported_procs[fn.__name__] = prior
+        return prior
+    return None
+
+
+def _n_promote_extended_proc(prior: callable, overload_set: _DispatchedCallable) -> None:
+    """Nim overloads every proc: with `import nifpools, std/syncio`, `writeFile(b, path)` is nifpools' overload
+    whatever the import order. nimic writes a proc with one overload as a plain def, so a later star import of
+    its module would rebind the name to the plain proc and drop the set extending it. When a module-level
+    @dispatch set first extends a plain nimic proc, the name is rebound to an _NExtendedProc wherever it is bound
+    to that proc (its module, the modules that imported or re-export it): a star import of any of them binds it,
+    and its calls reach the set or the proc by the caller's scope. Not for a proc of Python's (a
+    builtin, the standard library) or an overload defined in a function or a class (Nim's local scope)."""
+    name = overload_set.__name__
+    if (not isinstance(prior, types.FunctionType) or overload_set.__qualname__ != name
+            or prior.__module__.split(".")[0] in sys.stdlib_module_names):
+        return
+    extended = _NExtendedProc(prior, overload_set)
+    for module in list(sys.modules.values()):
+        namespace = getattr(module, "__dict__", None)
+        if isinstance(namespace, dict) and namespace.get(name) is prior:
+            namespace[name] = extended
 
 
 _N_BOUND_TAG = "\x00bound:"  # second entry of a bounded type variable's signature element: ("T", tag + bound)
@@ -1408,6 +1462,7 @@ def dispatch(fn: callable) -> callable:
             if i >= default_offset:
                 def_val = defaults[i - default_offset]
                 def_type = type(def_val).__name__
+                def_type = _n_literal_types.get(def_type, def_type)
                 _annotations[name] = _n_aliases.get(def_type, def_type)
             elif fn.__name__ in _n_templates:
                 _annotations[name] = "untyped"
@@ -1436,7 +1491,7 @@ def dispatch(fn: callable) -> callable:
         elem, conv = _n_vararg_type(fn.__annotations__.get(vararg_name, "untyped"), fn_globals)
         entries = __dispatch_varargs__.setdefault(fn.__name__, [])
         entries[:] = [e for e in entries if e[0] != tuple(sig_list)] + [(tuple(sig_list), elem, conv, fn)]
-    _n_register_imported_proc(fn, fn_globals)
+    extended = _n_register_imported_proc(fn, fn_globals)
     _n_overloads.setdefault(fn.__name__, []).append(fn)  # its callers' value checks read them (rule:valuecheck)
     _n_alias_results.clear()
     generic = any((arg in _n_generic_types for arg in sig_list))
@@ -1672,7 +1727,10 @@ def dispatch(fn: callable) -> callable:
     for nm in __resolved__:
         debugG[nm] = __resolved__[nm].copy()
 
-    return _DispatchedCallable(fn_dispatch, fn)
+    overload_set = _DispatchedCallable(fn_dispatch, fn)
+    if extended is not None:
+        _n_promote_extended_proc(extended, overload_set)
+    return overload_set
 
 
 # --- UFCS (Nim method-call syntax) ---
@@ -3055,12 +3113,17 @@ def _n_build_c_fields(items: tuple, field_types: dict, python_fields: set, prefi
     return fields, anonymous
 
 
+def _n_is_routine(value: object) -> bool:
+    """Whether a name's value is a routine (a proc, template, @dispatch set), not a type or a variable."""
+    return callable(value) and not isinstance(value, type)
+
+
 def _n_first_param_takes(fn: callable, cls: type) -> bool:
     """Whether a proc's first parameter takes an instance of `cls`: false only when its annotation names a class
     `cls` isn't a subclass of, for every overload of a @dispatch set. A generic type, a missing annotation or a
     non-function take anything here (they resolve, or fail, as before)."""
     if isinstance(fn, _DispatchedCallable):
-        return any(_n_first_param_takes(o, cls) for o in _n_overloads.get(fn.__name__, (fn._n_fn,)))
+        return any(_n_first_param_takes(o, cls) for o in _n_set_procs(fn))
     fn = ins.unwrap(fn)  # an overload returning a named tuple is wrapped (_n_named_tuple_result)
     if not isinstance(fn, types.FunctionType) or not fn.__code__.co_argcount:
         return True
@@ -3080,7 +3143,7 @@ def _n_method_call_proc(name: str, proc: callable, cls: type) -> callable:
         return proc
     for base in cls.__mro__:
         own = getattr(sys.modules.get(base.__module__), name, None)
-        if callable(own) and not isinstance(own, type) and _n_first_param_takes(own, cls):
+        if _n_is_routine(own) and _n_first_param_takes(own, cls):
             return own
     return proc
 
@@ -3273,8 +3336,12 @@ class _Object(Ntype):
             while frame is not None and frame.f_code.co_filename.startswith(_N_RUNTIME_DIR):
                 frame = frame.f_back
             if frame is not None:
-                proc = frame.f_locals.get(name, frame.f_globals.get(name))
-                if callable(proc) and not isinstance(proc, type):
+                # a local that is no routine (a parameter `kind` next to the proc `kind(Cursor)`) is no
+                # candidate of Nim's call resolution: the proc of the module scope is
+                proc = frame.f_locals.get(name)
+                if not _n_is_routine(proc):
+                    proc = frame.f_globals.get(name)
+                if _n_is_routine(proc):
                     return functools.partial(_n_method_call_proc(name, proc, type(self)), self)
         raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
