@@ -3774,6 +3774,44 @@ class TestNTypes(unittest.TestCase):
         finally:
             sys.modules.pop(module.__name__)
 
+    def test_method_call_skips_a_global_that_is_no_routine(self):
+        """bif's self-test: a `let tags` of a module-level `block` is a Python global, and rebinds the star-imported
+        proc `tags(Cursor)`. In Nim the block's variable is out of scope in `sameValue`'s `a.tags`, and no variable
+        is a candidate of call resolution anyway: the call reaches the proc of the receiver's module. A name the
+        caller doesn't bind at all still has no method call."""
+        defs = types.ModuleType("_n_mc_defs")
+        exec(textwrap.dedent("""
+            from __future__ import annotations
+            from nimic.ntypes import *
+            class C(Object):
+                v: nint
+            def tags(c: C) -> nint:
+                return c.v
+            """), defs.__dict__)
+        user = types.ModuleType("_n_mc_user")
+        sys.modules[defs.__name__] = defs
+        sys.modules[user.__name__] = user
+        try:
+            exec(textwrap.dedent("""
+                from __future__ import annotations
+                from nimic.ntypes import *
+                from _n_mc_defs import *
+                def show(c: C) -> nint:
+                    return c.tags()
+                def unbound(c: C) -> bool:
+                    return hasattr(c, "nosuchproc")
+                first = show(C(v=1))
+                with block("one"):
+                    with let:
+                        tags = nint(5)
+                second = show(C(v=2))
+                """), user.__dict__)
+            self.assertEqual((user.first, user.second), (1, 2))
+            self.assertFalse(user.unbound(defs.C(v=1)))
+        finally:
+            sys.modules.pop(defs.__name__)
+            sys.modules.pop(user.__name__)
+
     def test_transpile_rejects_free_calls_of_overlapping_star_imports(self):
         """rule:methodcall: two star imports binding one name to different procs, one of them plain (nifcore's and
         nifbuilder's addIdent): a free call `addIdent(b, s)` reaches only the last import's proc in Python, so
@@ -3832,6 +3870,24 @@ class TestNTypes(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "line 9: addThing"):
                 check_imported_module(tree, module)
             self.assertIn("addThing(b, 1)", unparse(tree)[0])  # unparse() itself doesn't need the module
+            # the import-time check runs once the imports have run, before the module's own definitions (bif's
+            # `@dispatch def load(filename)` next to nifcore's and atomics' `load`): what the module defines
+            # later, also in a `when` branch, is its own overload all the same
+            later = textwrap.dedent("""
+                from nimic.ntypes import *
+                from _n_fc_core import *
+                from _n_fc_builder import *
+                def f(b: Buf):
+                    addThing(b, 1)
+                    lowProbe(2)
+                if comptime(True):
+                    @dispatch
+                    def addThing(s: string, v: nint):
+                        pass
+                """)
+            imported = types.ModuleType("_n_fc_later")
+            exec("from _n_fc_core import *\nfrom _n_fc_builder import *", imported.__dict__)
+            self.assertEqual(free_call_overlaps(ast.parse(later), imported), [])
         finally:
             for name in modules:
                 sys.modules.pop(name)
@@ -7660,6 +7716,26 @@ def addWord(b: mut@Builder, w: string) -> None:
         with self.assertRaises(TypeError):
             p < 3
 
+    def test_ptr_char_contents(self):
+        """`cast[ptr char](a)[]` reads the char at an address (bif's magic check on an integer address), as
+        `ptr byte` does; it is read from the slot on every access, so a write through another path is seen,
+        and `p[] = c` writes the slot."""
+        with var:
+            s = string("NIFBIN")
+        with let:
+            base = cast[uintp](addr(s[0]))
+            p = cast[ptr[char]](addr(s[2]))
+        self.assertEqual(cast[ptr[char]](base + uint(1)).contents, ch("I"))
+        self.assertEqual(cast[ptr[byte]](base + uint(1)).contents, 73)
+        self.assertEqual(p.contents, ch("F"))
+        s[2] = ch("x")
+        self.assertEqual(p.contents, ch("x"))
+        p.contents = ch("y")
+        self.assertEqual(str(s), "NIyBIN")
+        self.assertEqual(p.contents, ch("y"))
+        s[2] = ch("z")
+        self.assertEqual(p.contents, ch("z"))
+
     def test_template_assigns_its_parameter(self):
         """A statement template assigning its parameter (`template inc(p: pchar; diff = 1) = p = ...`) assigns
         the call's argument: it is expanded in @template_expand callers, also with a default or keyword argument,
@@ -7784,6 +7860,32 @@ def addWord(b: mut@Builder, w: string) -> None:
         with _t_add_cast(b, string("char*")):
             b.buf.add(string("p"))
         self.assertEqual(str(b.buf), "((char*) p)")
+
+    def test_expression_template_returns_untyped_param(self):
+        """`return call` in a template with a return type is its value, not a code block (compat2's
+        `template onRaiseQuit(call: untyped): untyped = call`): `t(x)` is x. Only a bare statement `call`
+        makes `call` a block; that template runs as `with t():`. Transpiled, the value is the body."""
+        @template
+        def _t_ident(call: untyped) -> untyped:
+            return call
+
+        @template
+        def _t_stmt(call: untyped) -> untyped:
+            call
+
+        self.assertEqual(_t_ident(nint(3)), 3)
+        self.assertEqual(_t_ident(string("ab")), string("ab"))
+        with _t_stmt():
+            pass
+        src = textwrap.dedent('''
+            @template
+            def onRaiseQuit(call: untyped) -> untyped:
+                return call
+            def readBytes(f: File, p: pointer, n: nint) -> nint: return onRaiseQuit(f.readBuffer(p, n))
+        ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("template onRaiseQuit*(call: untyped): untyped =\n  call\n", out)
+        self.assertIn("onRaiseQuit(f.readBuffer(p, n))", out)
 
     def test_generic_block_template(self):
         """A block template with type parameters (nifpools' `buildTree[T: enum]`): `with t(args):` binds `T` from

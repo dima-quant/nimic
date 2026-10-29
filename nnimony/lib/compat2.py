@@ -38,7 +38,7 @@ else:
     @template
     def onRaiseQuit(call: untyped) -> untyped:
         """{.private.}"""
-        call
+        return call
 
 if comptime(not defined("nimony")):
     importFrom("nimic.std.paths", "Path")

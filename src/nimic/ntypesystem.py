@@ -3159,8 +3159,9 @@ def _n_method_call_proc(name: str, proc: callable, cls: type) -> callable:
     overloads (nifcore's `addIdent(b: var TokenBuf)`, nifbuilder's `addIdent(b: var Builder)`), but in Python
     the later star import rebinds the name. When the caller's proc doesn't take the receiver, the call reaches
     the proc `name` of the module defining the receiver's class (or a base class) that does: a proc the methods
-    rule would make a method of the type, but for a later definition it uses. Otherwise the caller's proc."""
-    if _n_first_param_takes(proc, cls):
+    rule would make a method of the type, but for a later definition it uses. Otherwise the caller's proc.
+    `proc` is None when the caller binds `name` only to a value (no candidate): then the module's proc, or None."""
+    if proc is not None and _n_first_param_takes(proc, cls):
         return proc
     for base in cls.__mro__:
         own = getattr(sys.modules.get(base.__module__), name, None)
@@ -3381,12 +3382,17 @@ class _Object(Ntype):
                 frame = frame.f_back
             if frame is not None:
                 # a local that is no routine (a parameter `kind` next to the proc `kind(Cursor)`) is no
-                # candidate of Nim's call resolution: the proc of the module scope is
+                # candidate of Nim's call resolution: the proc of the module scope is. Nor is a global that is
+                # no routine (a module-level block's `let tags`, a Python global): the receiver's module's proc is
                 proc = frame.f_locals.get(name)
                 if not _n_is_routine(proc):
                     proc = frame.f_globals.get(name)
                 if _n_is_routine(proc):
                     return _NMethodCall(_n_method_call_proc(name, proc, type(self)), self)
+                if proc is not None:
+                    proc = _n_method_call_proc(name, None, type(self))
+                    if proc is not None:
+                        return _NMethodCall(proc, self)
         raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
     @property
@@ -5083,15 +5089,31 @@ class pointer(Ntype):
 
     # --- lazy contents ---
 
+    def _n_c_slot(self, ct):
+        """A ctypes pointer to the pointee's C slot, or None when `ct` has no C type."""
+        type_name = ct.__name__
+        if type_name not in DICT_OF_C_TYPES and hasattr(ct, '_n_register_type'):
+            ct._n_register_type()
+        if type_name not in DICT_OF_C_TYPES:
+            return None
+        return ctypes.cast(ctypes.c_void_p(self._n_addr), ctypes.POINTER(DICT_OF_C_TYPES[type_name]))
+
     @property
     def contents(self):
         """Lazily materialize the pointed-to object on first access."""
+        ct = type(self)._n_contents_type
+        if (self._n_addr != 0 and ct is not None and not hasattr(ct, '_n_ptr_cast')
+                and hasattr(ct, '_n_on_array') and _n_uncached_elem(ct)):
+            # a value read from the slot (a char, a value-slot enum): read it on every access, as
+            # containers do, so a write through another path is seen
+            c_slot = self._n_c_slot(ct)
+            if c_slot is not None:
+                return ct._n_on_array(c_slot, 0)
         if self._n_contents_cache is not None:
             return self._n_contents_cache
         if self._n_addr == 0:
             return None
         # Lazy materialization via _n_ptr_cast
-        ct = type(self)._n_contents_type
         if ct is not None and hasattr(ct, '_n_ptr_cast'):
             self._n_contents_cache = ct._n_ptr_cast(self)
         return self._n_contents_cache
@@ -5101,16 +5123,12 @@ class pointer(Ntype):
         if self._n_addr != 0:
             ct = type(self)._n_contents_type
             if ct is not None and hasattr(ct, '__name__'):
-                type_name = ct.__name__
-                if type_name not in DICT_OF_C_TYPES and hasattr(ct, '_n_register_type'):
-                    ct._n_register_type()
                 # set the value backing to the contents's backing buffer, replace by cast?
-                if type_name in DICT_OF_C_TYPES:
-                    c_elem_type = DICT_OF_C_TYPES[type_name]
-                    ptr_c_type = ctypes.POINTER(c_elem_type)
-                    c_data = ctypes.cast(ctypes.c_void_p(self._n_addr), ptr_c_type)
+                c_data = self._n_c_slot(ct)
+                if c_data is not None:
 
                     if value is None or isinstance(value, NilPtr):
+                        c_elem_type = c_data._type_
                         c_data[0] = getattr(c_elem_type, '_type_', ctypes.c_void_p)(0) if issubclass(c_elem_type, ctypes._SimpleCData) else 0 # Just a safe default
                         self._n_contents_cache = None
                     elif hasattr(ct, '_n_on_array'):

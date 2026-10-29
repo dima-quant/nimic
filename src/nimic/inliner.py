@@ -183,11 +183,11 @@ do = _DoBlock()
 
 def _n_block_params(func_def: ast.FunctionDef, annotations: dict) -> list[str]:
     """The trailing parameters of a template that are code blocks: annotated typed/untyped and used as
-    bare statements (`body`, or `return body` in templates written with -> untyped)."""
+    bare statements (`body`). `return x` is a value (Nim `template t(x: untyped): untyped = x`)."""
     params = [a.arg for a in func_def.args.args]
     used = set()
     for node in ast.walk(func_def):
-        if isinstance(node, (ast.Expr, ast.Return)) and isinstance(node.value, ast.Name):
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Name):
             used.add(node.value.id)
     blocks = []
     for name in reversed(params):
@@ -201,7 +201,7 @@ def _n_block_params(func_def: ast.FunctionDef, annotations: dict) -> list[str]:
 
 
 class _BlockYields(ast.NodeTransformer):
-    """Replace the bare statements `block` (and `return block`) by `yield <block index>`. Inside a loop of
+    """Replace the bare statements `block` by `yield <block index>`. Inside a loop of
     the template it is `if (yield <index>): break`: a `break` in the block of `for _ in t():` leaves the
     template's loop, as Nim's `break` in the expanded body does (_BlockTemplateCall.__iter__ sends True)."""
 
@@ -218,7 +218,6 @@ class _BlockYields(ast.NodeTransformer):
         return node
 
     visit_Expr = _maybe
-    visit_Return = _maybe
 
     def _loop(self, node):
         self.loops += 1
@@ -502,8 +501,8 @@ class _ParamStores(ast.NodeTransformer):
 
 
 class _BlockSplicer(ast.NodeTransformer):
-    """The bare statements `block` (and `return block`) of a template body replaced by the statements of
-    the call's code blocks (Nim substitutes the block where the template uses it)."""
+    """The bare statements `block` of a template body replaced by the statements of the call's code blocks
+    (Nim substitutes the block where the template uses it)."""
 
     def __init__(self, blocks: dict[str, list]):
         self.blocks = blocks
@@ -513,7 +512,7 @@ class _BlockSplicer(ast.NodeTransformer):
             return [copy.deepcopy(stmt) for stmt in self.blocks[node.value.id]] or [ast.copy_location(ast.Pass(), node)]
         return node
 
-    visit_Expr = visit_Return = _maybe
+    visit_Expr = _maybe
 
     def visit_FunctionDef(self, node):  # nested procs keep their own statements
         return node

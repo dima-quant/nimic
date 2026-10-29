@@ -23,7 +23,8 @@ Scope qualifiers:
     is a scope (its variables are not exported, also at module level)
   rule:writeexport -> write no parentheses for "export" by assigning low priority
   rule:looptemplate -> for _ in c.loopInto(): body (a template running its code block in a loop) is the block
-    call c.loopInto(): body, as `with` is for a template running its block once
+    call c.loopInto(): body, as `with` is for a template running its block once. A block parameter is one used
+    as a bare statement; `return x` is the template's value
   rule:operator -> @operator("+!") def plus_bang(...) is proc `+!`*(...); its calls plus_bang(a, b) / a.plus_bang(b)
     are a +! b (Nim's precedence of the operator), plus_bang(a) is +!a, a bare plus_bang is `+!`; calls of
     @operator procs of other modules are found through the registry
@@ -198,7 +199,8 @@ Memory & variables:
     it is Nim's getter, `proc x*(o: T): U = o.x`); a nimic module is checked at import too
   rule:methodcall -> not a rewrite: check_imported_module() (before unparse(), with the imported module) rejects a free
     call f(x, ...) of a name that two star imports bind to different procs, one of them plain (Python calls the last
-    import's); write x.f(...). A nimic module is checked once its imports have run too
+    import's); write x.f(...). A name the module defines a routine of (in its source, also later) is its own
+    overload. A nimic module is checked once its imports have run too
   rule:privatepragma -> a {.private.} docstring pragma keeps a proc (an operator, which can't take a _
     prefix) unexported; the pragma itself is not emitted
   rule:deref -> pointer dereference: ".contents" -> "[]"
@@ -2182,7 +2184,7 @@ class _Unparser(NodeVisitor):
         last = fn.args.args[-1]
         if not (isinstance(last.annotation, Name) and last.annotation.id in ("typed", "untyped")):
             return False
-        return any(isinstance(n, (Expr, Return)) and isinstance(n.value, Name) and n.value.id == last.arg
+        return any(isinstance(n, Expr) and isinstance(n.value, Name) and n.value.id == last.arg
                    for n in ast.walk(fn))
 
     @staticmethod
@@ -3800,6 +3802,20 @@ def _star_imported_procs(tree, module) -> dict:
     return procs
 
 
+def _module_level_routines(tree) -> set:
+    """The names of the routines a module defines at its top level, also in `when` branches and `with` blocks
+    (not in a proc or class): from the source, so they count before their `def` has run."""
+    names = set()
+    stack = list(tree.body) if isinstance(tree, Module) else [tree]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (FunctionDef, AsyncFunctionDef)):
+            names.add(node.name)
+        elif not isinstance(node, (ClassDef, Lambda)):
+            stack.extend(child for child in iter_child_nodes(node) if isinstance(child, ast.stmt))
+    return names
+
+
 def free_call_overlaps(tree, module) -> list:
     """rule:methodcall: Nim overloads plain procs of one name from two imported modules by type (nifcore's
     `addIdent(b: var TokenBuf)`, nifbuilder's `addIdent(b: var Builder)`); in Python the later star import binds
@@ -3807,13 +3823,15 @@ def free_call_overlaps(tree, module) -> list:
     `addIdent(b, s)` only the last import's. Returns (line, message) for each free call of such a name: one that
     two star imports bind to different procs, at least one of them plain (two @dispatch sets are one overload
     set; a plain proc a @dispatch set extends belongs to it), and that the module itself doesn't define. A name
-    bound in the calling function shadows the proc. Only the star imports that ran count."""
+    bound in the calling function shadows the proc. Only the star imports that ran count. The module's own
+    routines come from its source: the import-time check runs before their `def`s (nimic.nsystem)."""
     overlaps = {}
+    own = _module_level_routines(tree)
     for n, procs in _star_imported_procs(tree, module).items():
         extended = {id(getattr(p, "_n_extends", None)) for p in procs.values()}  # int128's low extends system low
         rest = [p for i, p in procs.items() if i not in extended]
         if (len(rest) > 1 and any(isinstance(p, types.FunctionType) for p in rest)
-                and id(vars(module).get(n)) in procs):
+                and id(vars(module).get(n)) in procs and n not in own):
             overlaps[n] = rest
     found = []
 
