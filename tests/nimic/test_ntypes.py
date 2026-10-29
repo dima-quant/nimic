@@ -2825,6 +2825,16 @@ class TestNTypes(unittest.TestCase):
         self.assertTrue(issubclass(FieldDefect, Defect))
         self.assertTrue(issubclass(Defect, Exception))
 
+    def test_assertion_defect(self):
+        """Nim's `assert` / `doAssert` / `raiseAssert` raise AssertionDefect: `except AssertionDefect:` catches what
+        Python's assert statement and nimic's procs raise (AssertionError). Known limit: `except Defect:` doesn't."""
+        for fail in (lambda: exec("assert False, 'm'"), lambda: doAssert(False, "m"), lambda: raiseAssert("m")):
+            with self.assertRaises(AssertionDefect):
+                fail()
+        from nimic.std.os import paramStr, paramCount, param_str, param_count  # gap 6 of batch 14: camelCase too
+        self.assertIs(paramStr, param_str)
+        self.assertIs(paramCount, param_count)
+
     def test_unchecked_assign_is_reentrant(self):
         """Nested `with uncheckedAssign:` keeps the flag active until the outer block exits."""
         from nimic.ntypesystem import _n_unchecked_assign_active
@@ -3630,6 +3640,35 @@ class TestNTypes(unittest.TestCase):
         finally:
             for name in sources:
                 sys.modules.pop(name, None)
+
+    def test_syncio_binary_io(self):
+        """std/syncio's binary procs with Nim's names, also as method calls on a File (`f.writeBuffer(p, n)`,
+        bif): writeBuffer / readBuffer of raw memory, getFilePos, and setFilePos relative to the start, the
+        current position or the end (FileSeekPos)."""
+        from nimic.std.syncio import (open as nopen, close as nclose, writeBuffer, readBuffer, getFilePos,
+                                      setFilePos, fspSet, fspCur, fspEnd, fmWrite, fmRead)
+        path = os.path.join(tempfile.mkdtemp(), "binary.bin")
+        src = array[4, uint8]([1, 2, 3, 250])
+        f = nopen(string(path), fmWrite)
+        self.assertEqual(f.writeBuffer(addr(src), 4), 4)
+        self.assertEqual(writeBuffer(f, addr(src), 2), 2)
+        self.assertEqual(int(getFilePos(f)), 6)
+        nclose(f)
+        with builtins.open(path, "rb") as raw:
+            self.assertEqual(raw.read(), bytes([1, 2, 3, 250, 1, 2]))
+        f = nopen(string(path), fmRead)
+        dst = array[2, uint8]()
+        setFilePos(f, 2)
+        self.assertEqual(f.readBuffer(addr(dst), 2), 2)
+        self.assertEqual([int(x) for x in dst], [3, 250])
+        self.assertEqual(int(f.getFilePos()), 4)
+        f.setFilePos(-1, fspCur)
+        self.assertEqual(int(getFilePos(f)), 3)
+        setFilePos(f, -2, relativeTo=fspEnd)
+        self.assertEqual(int(getFilePos(f)), 4)
+        setFilePos(f, 0, fspSet)
+        self.assertEqual(int(getFilePos(f)), 0)
+        nclose(f)
 
     def test_syncio_close_takes_only_a_file(self):
         """syncio's `close(f: File)` doesn't take an Object: a later star import that rebinds `close` to it (a
@@ -6115,6 +6154,84 @@ class TestNTypes(unittest.TestCase):
         t = newStringTable(string("k"), string("v"), modeCaseSensitive)
         self.assertEqual([(str(k), str(v)) for k, v in pairs(t)], [("k", "v")])
 
+    def test_table_iteration(self):
+        """std/tables: pairs / keys / values of a table, in insertion order for an OrderedTable. `pairs(t)` takes
+        the table's own pairs, never the proc `pairs` the caller's scope binds (it recursed)."""
+        from nimic.std.tables import initOrderedTable, initTable
+        t = initOrderedTable[string, nint]()
+        t[string("b")] = nint(2)
+        t[string("a")] = nint(1)
+        self.assertEqual([(str(k), int(v)) for k, v in pairs(t)], [("b", 2), ("a", 1)])
+        self.assertEqual([(str(k), int(v)) for k, v in t.pairs()], [("b", 2), ("a", 1)])
+        self.assertEqual([str(k) for k in t.keys()], ["b", "a"])
+        self.assertEqual([int(v) for v in t.values()], [2, 1])
+        self.assertEqual([str(k) for k, _ in pairs(initTable[string, nint]())], [])
+
+    def test_len_attribute_of_sized_values(self):
+        """Nim's `x.len` is `len(x)`: every sized nimic value has `.len` (seq and string had it; array, Tset,
+        openArray, cstring and the tables were an AttributeError)."""
+        from nimic.std.tables import initOrderedTable
+        t = initOrderedTable[string, nint]()
+        t[string("a")] = nint(1)
+        values = {"array": array[3, nint](), "seq": seq[nint]([nint(1), nint(2)]), "string": string("ab"),
+                  "Tset": Tset[uint8]([1, 2, 3]), "table": t, "cstring": cstring(b"abcd"),
+                  "openArray": openArray[nint](seq[nint]([nint(1), nint(2)]))}
+        for name, x in values.items():
+            with self.subTest(name):
+                self.assertEqual(x.len, len(x))
+        self.assertEqual([values[n].len for n in ("array", "Tset", "table", "cstring")], [3, 3, 1, 4])
+
+    def test_object_len_answers_len(self):
+        """A `len` an Object class declares, a @property (Nim's `b.len`, rules §4) or a method, is also what
+        Python's `len(b)` returns: in Nim both are the call `len(b)`. A length of 0 leaves the object truthy (no
+        Nim code tests an object as a bool, but nimic's own `x or y` must not change)."""
+        class _TLenProp(Object):
+            n: nint
+
+            @property
+            def len(b: _TLenProp) -> nint:
+                return b.n
+
+        class _TLenMethod(Object):
+            n: nint
+
+            def len(b: _TLenMethod) -> nint:
+                return b.n
+
+        p, m = _TLenProp(n=nint(3)), _TLenMethod(n=nint(4))
+        self.assertEqual((p.len, len(p)), (3, 3))
+        self.assertEqual((m.len(), len(m)), (4, 4))
+        self.assertTrue(bool(_TLenProp(n=nint(0))))
+        self.assertTrue(bool(_TLenMethod(n=nint(0))))
+
+    def test_method_call_without_parentheses_fails_loudly(self):
+        """`b.count` without parentheses, where `count` is a proc and no @property, is the bound proc in Python
+        but the call `count(b)` in Nim. Using it as a value (a condition, a comparison, arithmetic) raises
+        TypeError instead of being silently true (`b.count != 0` was always true in nifindexes)."""
+        module = types.ModuleType("_n_mc_noparens")
+        exec(textwrap.dedent("""
+            from __future__ import annotations
+            from nimic.ntypes import *
+            class Buf(Object):
+                n: nint
+            def count(b: Buf) -> nint:
+                return b.n
+            b = Buf(n=nint(0))
+            called = b.count()
+            def as_bool():
+                return bool(b.count)
+            def compared():
+                return b.count != 0
+            def ordered():
+                return b.count > 0
+            def added():
+                return b.count + 1
+            """), module.__dict__)
+        self.assertEqual(module.called, 0)
+        for probe in ("as_bool", "compared", "ordered", "added"):
+            with self.subTest(probe), self.assertRaisesRegex(TypeError, r"count\(\)|@property"):
+                getattr(module, probe)()
+
     def test_ref_object_int_fields_hold_declared_type(self):
         """A plain int assigned to an integer field of a ref object becomes the declared type, so the
         field can be passed as a `var int` (and keeps its width)."""
@@ -6945,6 +7062,23 @@ def addWord(b: mut@Builder, w: string) -> None:
                 _a: int32
                 def a(self): pass
             '''), ["_a and a are both defined"])
+        # but a @property a returning only the field _a is Nim's getter `proc a*(t: T): int32 = t.a` (in the
+        # module `t.a` is the field, elsewhere the proc: the same value); a property doing more still collides
+        self.assertEqual(collisions('''\
+            class T(Object):
+                _a: int32
+                @property
+                def a(t: T) -> int32:
+                    """{.inline.}"""
+                    return t._a
+            '''), [])
+        self.assertEqual(collisions('''\
+            class T(Object):
+                _a: int32
+                @property
+                def a(t: T) -> int32:
+                    return t._a + 1
+            '''), ["_a and a are both defined"])
         # a parameter _a doesn't hide the proc a in a call (Nim's `var a = a(1)`), but does as a value
         self.assertEqual(collisions('''\
             def g(_a: int32):
@@ -7095,6 +7229,11 @@ def addWord(b: mut@Builder, w: string) -> None:
         self.assertEqual(nim("g(x=array[2, byte]([1, 2]))"), "g(x = array[2, byte]([byte(1), 2]))")
         self.assertEqual(nim("f(array[2, ptr[nint]]([p, q]))"), "f(array[2, ptr int]([p, q]))")
         self.assertEqual(nim("f(array[2, bool]([True, False]))"), "f(array[2, bool]([true, false]))")
+        # an array called without elements is its default value (Nim's `f([])` for an openArray, a zeroed array)
+        self.assertEqual(nim("f(array[0, tuple[string, string]]())"), "f(default(array[0, (string, string)]))")
+        self.assertEqual(nim("R(q=array[2, byte]())"), "R(q: default(array[2, byte]))")
+        self.assertEqual(nim("x = array[3, nint]()"), "x = default(array[3, int])")
+        self.assertEqual(nim("with var:\n    a = array[4, byte]()"), "var\n  a*: array[4, byte]")
 
     def test_enum_array_field(self):
         """An array[N, E] field of a C-backed object (E an NIntEnum): its slots hold the ordinals and a

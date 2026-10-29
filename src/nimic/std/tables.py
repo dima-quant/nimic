@@ -57,6 +57,16 @@ class _NTable(Object):
     def __len__(self):
         return len(self._n_dict)
 
+    def pairs(self):
+        """Nim: pairs(t) — (key, value), in insertion order."""
+        return iter(self._n_dict.items())
+
+    def keys(self):
+        return iter(self._n_dict.keys())
+
+    def values(self):
+        return iter(self._n_dict.values())
+
     def getOrDefault(self, key, *default):
         """Nim: t.getOrDefault(k) is default(V) for a missing key; t.getOrDefault(k, d) is d."""
         if key in self._n_dict:

@@ -8,7 +8,8 @@ from enum import Enum
 import builtins
 import ctypes
 import os
-from nimic.ntypes import File
+from enum import auto
+from nimic.ntypes import File, NIntEnum, ufcs, int64
 from nimic.ntypesystem import string, _n_encode_str, _n_decode_bytes, _n_os_arg
 
 
@@ -25,6 +26,17 @@ fmWrite = FileMode.fmWrite
 fmAppend = FileMode.fmAppend
 fmReadWrite = FileMode.fmReadWrite
 fmReadWriteExisting = FileMode.fmReadWriteExisting
+
+
+class FileSeekPos(NIntEnum):
+    """Nim: FileSeekPos, what setFilePos's position is relative to (the ordinals are Python's whence)."""
+    fspSet = auto()  # the start of the file
+    fspCur = auto()  # the current position
+    fspEnd = auto()  # the end of the file
+
+fspSet = FileSeekPos.fspSet
+fspCur = FileSeekPos.fspCur
+fspEnd = FileSeekPos.fspEnd
 
 def open(*args):
     """Nim-style open — supports both open(path, mode) and open(f, path, mode)."""
@@ -82,6 +94,7 @@ readFile = read_file
 writeFile = write_file
 
 
+@ufcs(File, aliases=("writeBuffer",))
 def write_buffer(f, buffer, size: int) -> int:
     """Write `size` bytes from `buffer` to file `f`.
     Returns number of bytes written."""
@@ -105,6 +118,7 @@ def write_buffer(f, buffer, size: int) -> int:
     return f.write(data)
 
 
+@ufcs(File, aliases=("readBuffer",))
 def read_buffer(f, buffer, size: int) -> int:
     """Read up to `size` bytes from file `f` into `buffer`.
     Returns number of bytes read."""
@@ -135,11 +149,25 @@ def read_buffer(f, buffer, size: int) -> int:
     return n
 
 readBuffer = read_buffer
+writeBuffer = write_buffer
 
 
-def set_file_pos(f, pos: int) -> None:
-    """Seek to absolute position in file."""
-    f.seek(pos)
+@ufcs(File, aliases=("setFilePos",))
+def set_file_pos(f, pos: int, relativeTo: FileSeekPos = FileSeekPos.fspSet) -> None:
+    """Nim: setFilePos — seek to `pos`, relative to the start (fspSet), the current position or the end."""
+    f.seek(int(pos), int(relativeTo))
+
+
+setFilePos = set_file_pos
+
+
+@ufcs(File, aliases=("getFilePos",))
+def get_file_pos(f) -> int64:
+    """Nim: getFilePos — the current position in the file."""
+    return int64(getattr(f, '_n_handle', f).tell())
+
+
+getFilePos = get_file_pos
 
 
 def close(f: File) -> None:

@@ -98,6 +98,10 @@ def param_str(i: int) -> string:
     return _n_os_result(sys.argv[i])
 
 
+paramCount = param_count
+paramStr = param_str
+
+
 if _os.name == 'nt':
     DirSep = char('\\')
     AltSep = char('/')

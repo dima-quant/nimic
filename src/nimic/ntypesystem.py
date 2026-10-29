@@ -128,6 +128,12 @@ class IndexDefect(Defect, IndexError):
     """Nim: IndexDefect — an index outside the bounds of an array (bound checks on)."""
 
 
+# Nim: AssertionDefect, raised by a failed `assert` / `doAssert`. Python's assert statement raises AssertionError
+# whatever nimic defines, so the name is that class: `except AssertionDefect:` catches a failed assert. Unlike
+# Nim's, it is no Defect (`except Defect:` doesn't catch it)
+AssertionDefect = AssertionError
+
+
 class RangeDefect(Defect):
     """Nim: RangeDefect — a value outside its range type (range checks on), e.g. chr(256). Not a
     ValueError: Nim's `except ValueError` doesn't catch it."""
@@ -2837,6 +2843,19 @@ class NMetaClass(type):
         return super().__new__(mcs, name, bases, dict(namespace), **kwargs)
 
 
+class _NLen:
+    """Nim's `x.len` is the call `len(x)`: the `.len` of a sized nimic value (array, Tset, openArray, cstring).
+    seq and string define their own; an Object class gets it from its `__len__` (Object.__init_subclass__)."""
+
+    @property
+    def len(self) -> int:
+        return len(self)
+
+
+def _n_len_of_object(self) -> int:
+    """`len(b)` of an Object whose class declares `len` (a @property or a method): Nim's `len(b)` is `b.len`."""
+    n = self.len
+    return int(n() if callable(n) else n)
 
 
 class Trange:
@@ -2869,7 +2888,7 @@ class Trange:
         return cls._n_cache[key]
 
 
-class Tset(set):
+class Tset(_NLen, set):
     """Nim's ``set[T]`` for ordinal types. ``Tset[MyEnum]`` returns a proper
     ``set`` subclass that can be instantiated, used in ``isinstance()``, and
     inherited from.  Results are cached so ``Tset[X] is Tset[X]``."""
@@ -3150,6 +3169,29 @@ def _n_method_call_proc(name: str, proc: callable, cls: type) -> callable:
     return proc
 
 
+class _NMethodCall(functools.partial):
+    """`b.f` of an Object, `f` a proc of the caller's scope (UFCS): the proc bound to `b`, to be called. Nim's `b.f`
+    without parentheses is the call `f(b)` itself, so using the bound proc as a value (a condition, a comparison,
+    arithmetic) is a missing `()`: `b.count != 0` would be always true. It raises TypeError instead (rules §4:
+    write `b.f()`, or declare `f` a @property of the class)."""
+
+    def _n_misused(self, *_):
+        name = getattr(self.func, "__name__", "f")
+        raise TypeError(f"{type(self.args[0]).__name__}.{name} without parentheses is the proc {name}, not its "
+                        f"result: write .{name}() or declare {name} a @property of the class (rules §4)")
+
+    __bool__ = __lt__ = __le__ = __gt__ = __ge__ = _n_misused
+    __add__ = __radd__ = __sub__ = __rsub__ = __mul__ = __rmul__ = __index__ = __int__ = _n_misused
+
+    def __eq__(self, other):
+        return self is other if callable(other) else self._n_misused()
+
+    def __ne__(self, other):
+        return self is not other if callable(other) else self._n_misused()
+
+    __hash__ = functools.partial.__hash__
+
+
 def _n_coerce_int_field(cls: type, name: str, value: object) -> object:
     """A plain int stored in a Python-side integer field becomes the field's declared type (a
     mutable NInteger, so the field can be passed as `var int`)."""
@@ -3344,7 +3386,7 @@ class _Object(Ntype):
                 if not _n_is_routine(proc):
                     proc = frame.f_globals.get(name)
                 if _n_is_routine(proc):
-                    return functools.partial(_n_method_call_proc(name, proc, type(self)), self)
+                    return _NMethodCall(_n_method_call_proc(name, proc, type(self)), self)
         raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
     @property
@@ -4049,6 +4091,15 @@ class Object(_Object, metaclass=NMetaClass):
             # Python drops __hash__ when a class defines __eq__; in Nim `==` and `hash` are independent
             # procs, so an overloaded `==` keeps the inherited hashing (e.g. PIdent's `==`)
             cls.__hash__ = next(b.__hash__ for b in cls.__mro__[1:] if b.__dict__.get("__hash__") is not None)
+        # Nim's `len(b)` and `b.len` are one call: a class declaring one form answers the other (a `len` @property,
+        # rules §4, or method answers Python's len(b); a container's __len__ gives `.len`). A length of 0 keeps
+        # the object truthy, as before
+        if "len" in cls.__dict__ and not hasattr(cls, "__len__"):
+            cls.__len__ = _n_len_of_object
+            if not hasattr(cls, "__bool__"):
+                cls.__bool__ = lambda self: True
+        elif "__len__" in cls.__dict__ and not hasattr(cls, "len"):
+            cls.len = _NLen.len
         # Capture the defining module's globals so that eval() in
         # get_or_eval_type can resolve constants used in type annotations
         # (e.g. array[_MINIMP4_MAX_SPS, pointer]).
@@ -4162,7 +4213,7 @@ class UncheckedArray(Ntype):
 
 UncheckedArray._n_register_type()
 
-class array(Ntype):
+class array(_NLen, Ntype):
     """Fixed-size array: array[N, T] → Nim array[N, T].
 
     Backed by a ctypes buffer of exactly N elements of type T.
@@ -4718,7 +4769,7 @@ class seq(Ntype):
                 DICT_OF_TYPES[class_name] = seq_type
 
 
-class openArray(Ntype):
+class openArray(_NLen, Ntype):
     """Nim's openArray[T] — accepts array[N,T] or seq[T] transparently.
 
     In Python: thin wrapper that delegates indexing to the underlying container.
@@ -6288,7 +6339,7 @@ def _n_os_result(s) -> 'string':
     return string(_n_from_text(s))
 
 
-class cstring:
+class cstring(_NLen):
     """Nim cstring — a nullable pointer to a null-terminated char buffer.
 
     In Nim, cstring is pointer-sized (char*), can be nil, does not own its data. In nimic it is

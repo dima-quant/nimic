@@ -185,6 +185,7 @@ from nimic.ntypesystem import (
     OverflowDefect,
     IndexDefect,
     RangeDefect,
+    AssertionDefect,
     BackwardsIndex,
     back,
     uncheckedAssign,
@@ -388,10 +389,10 @@ def items(coll):
 
 def pairs(coll):
     """Nim: pairs — (index, item) of a seq, array or string; a collection's own pairs (tables:
-    (key, value))."""
-    own = getattr(coll, "pairs", None)
+    (key, value)). The type's own: an Object's method-call lookup would find this proc and recurse."""
+    own = getattr(type(coll), "pairs", None)
     if callable(own):
-        return own()
+        return own(coll)
     return ((nint(i), x) for i, x in enumerate(coll))
 
 

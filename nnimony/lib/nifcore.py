@@ -1831,6 +1831,11 @@ class TokenBuf(Object):
     pool: Pool                     # literals (typically shared by an app)
     tags: TagPool                  # tags (typically per-adapter)
 
+    @property
+    def len(b: TokenBuf) -> nint:
+        """{.inline.}"""
+        return b._len
+
 
 @hook("copy")
 def _copyTokenBuf(dest: mut @ TokenBuf, src: TokenBuf):
@@ -1961,12 +1966,6 @@ def adoptForeignTokens(data: pointer, count: nint,
     GC_ref(result._owner._tags)
     result._owner._rc = 2
     return result
-
-
-@dispatch
-def len(b: TokenBuf) -> nint:
-    """{.inline.}"""
-    return b._len
 
 
 @ufcs(TokenBuf)

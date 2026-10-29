@@ -30,6 +30,8 @@ LEGACY_STD = {"macros": "legacy: expand the calls"}
 # modules that are not converted, with the reason (decided with the user)
 LEGACY_MODULES = {
     "lib/keymatcher": "macro machinery (`declareMatcher`), called only by its own tests; macros are legacy",
+    "lib/legacy/nif26reader": "NIF26 reader, used only by the nif26 -> nif27 migration tool, which nimic doesn't "
+                              "need (also not for a newer nimony)",
 }
 
 # components in the order of the plan; the current one is scanned module by module

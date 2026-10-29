@@ -133,7 +133,8 @@ Operators & renaming:
   rule:array -> array[N, T]([a, b]) is the Nim literal [a, b] where a type is given: an object constructor's
     field (T(f: [a, b])) and a declaration (x: array[N, T] = [a, b], also from `with var: x = array[...](...)`);
     elsewhere (call arguments, elements, returns) the conversion array[N, T]([a, b]), which keeps the index
-    type, its numeric first element typed: array[2, int8]([int8(-1), 2]); array[I, T]({k: v}) is [k: v]
+    type, its numeric first element typed: array[2, int8]([int8(-1), 2]); array[I, T]({k: v}) is [k: v];
+    array[N, T]() is default(array[N, T]) (a declaration `with var: x = array[N, T]()` is `var x: array[N, T]`)
   rule:isnot -> write isnot according to Nim syntax
   rule:notin -> write notin according to Nim syntax
   rule:inrange -> inrange(a, b) transpiles as a .. b (Nim inclusive range literal)
@@ -193,7 +194,8 @@ Memory & variables:
   rule:localname -> a private name _x transpiles to x (not exported); otherwise add "*" when definition,
     except for "result". Names starting with __ or _<digit> keep the old local_ prefix. Before unparse(),
     check_private_names() rejects modules where dropping the _ would change meaning (_x and x bound in
-    one scope, or x used after a private value _x shadows it); a nimic module is checked at import too
+    one scope, or x used after a private value _x shadows it; a field _x with a @property x that only returns
+    it is Nim's getter, `proc x*(o: T): U = o.x`); a nimic module is checked at import too
   rule:methodcall -> not a rewrite: check_imported_module() (before unparse(), with the imported module) rejects a free
     call f(x, ...) of a name that two star imports bind to different procs, one of them plain (Python calls the last
     import's); write x.f(...). A nimic module is checked once its imports have run too
@@ -3239,6 +3241,15 @@ class _Unparser(NodeVisitor):
                 if pop:
                     self._context_stack.pop()
                 return
+            # rule:array (default): array[N, T]() without elements is default(array[N, T]) (Nim has no array
+            # constructor call; `f([])` passes an empty one to an openArray)
+            if (isinstance(node.func, Subscript) and isinstance(node.func.value, Name) and node.func.value.id == "array"
+                    and not node.args and not node.keywords):
+                with self.delimit("default(", ")"):
+                    self.traverse(node.func)
+                if pop:
+                    self._context_stack.pop()
+                return
             # independent of the call-context branch above (array[N, T] calls also set func_name)
             def is_number(e):  # a literal whose Nim type the context gives: 1, -1, 2.5
                 if isinstance(e, UnaryOp) and isinstance(e.op, (USub, UAdd)):
@@ -3693,11 +3704,24 @@ def _is_private(name):
     return len(name) > 1 and name[0] == "_" and name[1] != "_" and not name[1].isdigit()
 
 
+def _field_getter(fn) -> str | None:
+    """The field _x a @property x returns and does nothing else with (`return self._x`, after a docstring):
+    Nim's getter `proc x*(o: T): U = o.x`. Else None."""
+    body = [s for s in fn.body if not (isinstance(s, Expr) and isinstance(s.value, Constant))]
+    if (any(isinstance(d, Name) and d.id == "property" for d in fn.decorator_list) and len(fn.args.args) == 1
+            and len(body) == 1 and isinstance(body[0], Return) and isinstance(body[0].value, Attribute)
+            and isinstance(body[0].value.value, Name) and body[0].value.value.id == fn.args.args[0].arg
+            and body[0].value.attr == "_" + fn.name):
+        return body[0].value.attr
+    return None
+
+
 def private_name_collisions(tree):
     """rule:localname: a private _x transpiles to x. Returns (line, scope, message) for each place where that
-    changes meaning: _x and x bound in one scope (except overloaded procs, or a parameter x shadowed by a
-    later _x, as Nim's `let x = f(x)`), or x used as a value after a private value _x is bound (Nim's x would
-    then be _x). Calls x(...) are fine: Nim's `var x = x(1)` still calls the proc x afterwards."""
+    changes meaning: _x and x bound in one scope (except overloaded procs, a parameter x shadowed by a
+    later _x, as Nim's `let x = f(x)`, or a field _x with a @property x that only returns it, Nim's getter), or
+    x used as a value after a private value _x is bound (Nim's x would then be _x). Calls x(...) are fine: Nim's
+    `var x = x(1)` still calls the proc x afterwards."""
     found = []
 
     def scan_scope(label, body, params=(), start=(0, 0)):
@@ -3717,7 +3741,8 @@ def private_name_collisions(tree):
             while stack:
                 n = stack.pop()
                 if isinstance(n, (FunctionDef, AsyncFunctionDef)):
-                    bind(n.name, "proc", (n.lineno, n.col_offset))
+                    bind(n.name, "getter" if label.startswith("class ") and _field_getter(n) else "proc",
+                         (n.lineno, n.col_offset))
                     a = n.args
                     ps = [x.arg for x in a.posonlyargs + a.args + a.kwonlyargs]
                     ps += [x.arg for x in (a.vararg, a.kwarg) if x]
@@ -3743,7 +3768,8 @@ def private_name_collisions(tree):
             twin = name[1:]
             if twin in bound:
                 twin_kind = bound[twin][0]
-                if not (kind == twin_kind == "proc" or twin_kind == "param"):  # overloads; Nim's let x = f(x)
+                # overloads; Nim's let x = f(x); a field's getter
+                if not (kind == twin_kind == "proc" or twin_kind == "param" or twin_kind == "getter"):
                     found.append((pos[0], label, f"{name} and {twin} are both defined"))
                     continue
             if kind != "proc":
