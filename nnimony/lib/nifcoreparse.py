@@ -406,7 +406,7 @@ def _emitValueWithLineInfo(bld: mut @ Builder, c: mut @ Cursor,
     with let:
         li = rawLineInfo(c)
     with let:
-        abs = li if li.isValid() else cur
+        abs = li if li.isValid() else cur.copy()
     if li.isValid():
         cur <<= li
         cur.comment = StrId(0)   # a comment is a one-shot decoration, never inherited
@@ -564,7 +564,7 @@ def _emitValueIndexed(bld: mut @ Builder, c: mut @ Cursor, cur: mut @ NifLineInf
     with let:
         li = rawLineInfo(c)
     with let:
-        abs = li if li.isValid() else cur
+        abs = li if li.isValid() else cur.copy()
     if li.isValid():
         cur <<= li
         cur.comment = StrId(0)   # a comment is a one-shot decoration, never inherited

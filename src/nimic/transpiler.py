@@ -200,7 +200,9 @@ Memory & variables:
   rule:methodcall -> not a rewrite: check_imported_module() (before unparse(), with the imported module) rejects a free
     call f(x, ...) of a name that two star imports bind to different procs, one of them plain (Python calls the last
     import's); write x.f(...). A name the module defines a routine of (in its source, also later) is its own
-    overload. A nimic module is checked once its imports have run too
+    overload. Only what Nim's import brings counts (a nimic module's own procs and its `with export:` /
+    exportExcept, from its source); a free call Python binds to a proc a star import leaks while Nim sees another
+    is rejected too. A nimic module is checked once its imports have run too (its main block doesn't count)
   rule:privatepragma -> a {.private.} docstring pragma keeps a proc (an operator, which can't take a _
     prefix) unexported; the pragma itself is not emitted
   rule:deref -> pointer dereference: ".contents" -> "[]"
@@ -255,6 +257,7 @@ from _ast import *
 from collections import deque
 from contextlib import contextmanager, nullcontext
 from enum import IntEnum, _simple_enum, auto
+from nimic.valuecheck import is_nimic_file
 
 
 def parse(source, filename='<unknown>', mode='exec', *,
@@ -3783,23 +3786,88 @@ def private_name_collisions(tree):
     return sorted(found)
 
 
-def _star_imported_procs(tree, module) -> dict:
-    """The procs the module's star imports bind (`from .nifcore import *`): name -> {id: proc}, one entry per
-    distinct proc. Classes and non-callables are left out."""
-    procs = {}
+def _star_imports(tree, module) -> list:
+    """The modules the module's star imports bind (`from .nifcore import *`), those that ran."""
+    found = []
     for node in walk(tree):
         if not (isinstance(node, ImportFrom) and node.names[0].name == "*" and node.module != "__future__"):
             continue
         name = importlib.util.resolve_name("." * node.level + (node.module or ""), module.__package__ or "")
         imported = sys.modules.get(name)
-        if imported is None:
-            continue  # in a branch that didn't run (`if comptime(...)`): it binds nothing in Python
+        if imported is not None:  # else in a branch that didn't run (`if comptime(...)`): it binds nothing
+            found.append(imported)
+    return found
+
+
+_nimic_trees = {}  # path -> the source tree of a nimic module
+
+
+def _nimic_tree(module):
+    """The source tree of a nimic module (`# /// nimic` header); None for any other (nimic.ntypes, a std shim)."""
+    path = getattr(module, "__file__", None) or ""
+    if not (path.endswith(".py") and is_nimic_file(path)):
+        return None
+    if path not in _nimic_trees:
+        with open(path, encoding="utf-8") as f:
+            _nimic_trees[path] = parse(f.read(), path)
+    return _nimic_trees[path]
+
+
+def _module_exports(tree, module) -> tuple:
+    """What a nimic module re-exports, from its source: (modules, names, hidden). `with export: m` exports the
+    module bound to `m`, `with export: m.X` or `with export: X` (no module) the name X; `exportExcept(m, "a")`
+    exports `m` but hides `a` (hidden: module name -> names)."""
+    modules, names, hidden = [], set(), {}
+    for node in walk(tree):
+        if isinstance(node, With) and any(isinstance(i.context_expr, Name) and i.context_expr.id == "export"
+                                          for i in node.items):
+            for stmt in node.body:
+                if not isinstance(stmt, Expr):
+                    continue
+                for item in stmt.value.elts if isinstance(stmt.value, Tuple) else [stmt.value]:
+                    if isinstance(item, Attribute):
+                        names.add(item.attr)
+                    elif isinstance(item, Name):
+                        bound = getattr(module, item.id, None)
+                        modules.append(bound) if isinstance(bound, types.ModuleType) else names.add(item.id)
+        elif (isinstance(node, Call) and isinstance(node.func, Name) and node.func.id == "exportExcept"
+              and node.args and isinstance(node.args[0], Name)):
+            bound = getattr(module, node.args[0].id, None)
+            if isinstance(bound, types.ModuleType):
+                modules.append(bound)
+                hidden[bound.__name__] = {a.value for a in node.args[1:] if isinstance(a, Constant)}
+    return modules, names, hidden
+
+
+def _nim_exports(module, name: str, proc, seen: frozenset = frozenset()) -> bool:
+    """Whether Nim's `import module` brings `proc` as `name`: the module's own names and what it re-exports
+    (`with export:`, `exportExcept`), not what it only imports. Python's star import re-exports all of a module's
+    names, also those of its own star imports (nifcoreparse's `from .nifbuilder import *` brings nifbuilder's
+    `offset` to its importers; Nim's nifcoreparse doesn't export nifbuilder). A module that isn't nimic, and a name
+    the module doesn't take from one of its star imports (an `include`), count as exported."""
+    tree = _nimic_tree(module)
+    if tree is None or module.__name__ in seen or name in _module_level_routines(tree):
+        return True
+    if not any(getattr(m, name, None) is proc for m in _star_imports(tree, module)):
+        return True
+    modules, names, hidden = _module_exports(tree, module)
+    return name in names or any(
+        getattr(m, name, None) is proc and name not in hidden.get(m.__name__, ())
+        and _nim_exports(m, name, proc, seen | {module.__name__}) for m in modules)
+
+
+def _star_imported_procs(tree, module) -> tuple:
+    """The procs the module's star imports bind: (visible, leaked), each name -> {id: proc}, one entry per
+    distinct proc. Leaked: a star import binds it in Python, but Nim's import doesn't bring it (_nim_exports).
+    Classes and non-callables are left out."""
+    visible, leaked = {}, {}
+    for imported in _star_imports(tree, module):
         public = getattr(imported, "__all__", None) or [n for n in vars(imported) if not n.startswith("_")]
         for n in public:
             proc = getattr(imported, n, None)
             if callable(proc) and not isinstance(proc, type):
-                procs.setdefault(n, {})[id(proc)] = proc
-    return procs
+                (visible if _nim_exports(imported, n, proc) else leaked).setdefault(n, {})[id(proc)] = proc
+    return visible, leaked
 
 
 def _module_level_routines(tree) -> set:
@@ -3824,15 +3892,26 @@ def free_call_overlaps(tree, module) -> list:
     two star imports bind to different procs, at least one of them plain (two @dispatch sets are one overload
     set; a plain proc a @dispatch set extends belongs to it), and that the module itself doesn't define. A name
     bound in the calling function shadows the proc. Only the star imports that ran count. The module's own
-    routines come from its source: the import-time check runs before their `def`s (nimic.nsystem)."""
+    routines come from its source: the import-time check runs before their `def`s (nimic.nsystem).
+    Only the procs Nim's imports bring count as overloads (_nim_exports); a free call is also reported when the
+    name is bound to a proc a star import leaks (not exported in Nim) while Nim calls another one."""
     overlaps = {}
     own = _module_level_routines(tree)
-    for n, procs in _star_imported_procs(tree, module).items():
+    visible, leaked = _star_imported_procs(tree, module)
+    for n, procs in visible.items():
+        if n in own:
+            continue
         extended = {id(getattr(p, "_n_extends", None)) for p in procs.values()}  # int128's low extends system low
         rest = [p for i, p in procs.items() if i not in extended]
-        if (len(rest) > 1 and any(isinstance(p, types.FunctionType) for p in rest)
-                and id(vars(module).get(n)) in procs and n not in own):
-            overlaps[n] = rest
+        bound = vars(module).get(n)
+        if not any(isinstance(p, types.FunctionType) for p in rest + [bound]):
+            continue
+        if len(rest) > 1 and (id(bound) in procs or id(bound) in leaked.get(n, {})):
+            overlaps[n] = (rest, "Nim picks the overload by type, Python calls the last star import's")
+        elif id(bound) in leaked.get(n, {}) and id(bound) not in procs and id(getattr(bound, "_n_extends", None)) \
+                not in procs:
+            overlaps[n] = (rest, f"Python calls {getattr(bound, '__module__', '?')}'s, which a star import leaks "
+                                 f"(Nim's import doesn't export it)")
     found = []
 
     def local_names(fn) -> set:
@@ -3850,10 +3929,10 @@ def free_call_overlaps(tree, module) -> list:
             shadowed = shadowed | local_names(node)
         if (isinstance(node, Call) and isinstance(node.func, Name) and node.func.id in overlaps
                 and node.func.id not in shadowed):
-            modules = sorted({getattr(p, "__module__", "?") for p in overlaps[node.func.id]})
+            procs, why = overlaps[node.func.id]
+            modules = sorted({getattr(p, "__module__", "?") for p in procs})
             receiver = ast.unparse(node.args[0]) if node.args else "x"
-            found.append((node.lineno, f"{node.func.id}(...) is a proc of {', '.join(modules)}; Nim picks the "
-                                       f"overload by type, Python calls the last star import's: write "
+            found.append((node.lineno, f"{node.func.id}(...) is a proc of {', '.join(modules)}; {why}: write "
                                        f"{receiver}.{node.func.id}(...)"))
         for child in iter_child_nodes(node):
             scan(child, shadowed)

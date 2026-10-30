@@ -1233,13 +1233,27 @@ def include(*names: str) -> None:
 # main program) are watched from their running frames (_n_install_value_checks).
 
 
+def _n_is_main_block(stmt: _ast.stmt) -> bool:
+    """Whether `stmt` is `if comptime(__name__ == "__main__"):` or `if __name__ == "__main__":` (rule:main)."""
+    if not isinstance(stmt, _ast.If):
+        return False
+    test = stmt.test
+    if isinstance(test, _ast.Call) and isinstance(test.func, _ast.Name) and test.func.id == "comptime" and test.args:
+        test = test.args[0]
+    return (isinstance(test, _ast.Compare) and isinstance(test.left, _ast.Name) and test.left.id == "__name__"
+            and len(test.comparators) == 1 and isinstance(test.comparators[0], _ast.Constant)
+            and test.comparators[0].value == "__main__")
+
+
 def _n_imports_end(tree: _ast.Module) -> int:
     """The first line after a module's imports: after its last top-level statement that imports (`import`,
-    `from ... import`, `include(...)`, `importFrom(...)`, `importExcept(...)`, also in a `when` branch)."""
+    `from ... import`, `include(...)`, `importFrom(...)`, `importExcept(...)`, also in a `when` branch). The main
+    block (`if comptime(__name__ == "__main__"):`, Nim's `when isMainModule:`) doesn't count: it runs only in the
+    main program and is the module's last code, its imports included (a module's tests)."""
     importers = ("include", "importFrom", "importExcept")
     end = 0
     for stmt in tree.body:
-        if isinstance(stmt, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+        if isinstance(stmt, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)) or _n_is_main_block(stmt):
             continue
         if any(isinstance(n, (_ast.Import, _ast.ImportFrom))
                or isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name) and n.func.id in importers

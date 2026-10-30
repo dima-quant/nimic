@@ -3957,6 +3957,11 @@ class TestNTypes(unittest.TestCase):
             "sc_builder.py": header + "class Bld(Object):\n    n: nint\ndef addThing(b: mut @ Bld, v: nint):\n    b.n -= v\n",
             "sc_free.py": header + "from sc_core import *\nfrom sc_builder import *\n"
                                    "if comptime(__name__ == '__main__'):\n    echo('ran')\n    addThing(Buf(), nint(1))\n",
+            # a main block that imports (a module's tests) is no import: checked before it, imported too
+            "sc_tests.py": header + "from sc_core import *\nfrom sc_builder import *\n"
+                                    "def use(b):\n    addThing(b, nint(1))\n"
+                                    "if comptime(__name__ == '__main__'):\n    from nimic.std.os import *\n"
+                                    "    echo('ran')\n",
             "sc_method.py": header + "from sc_core import *\nfrom sc_builder import *\n"
                                      "if comptime(__name__ == '__main__'):\n    b = Buf()\n    b.addThing(nint(1))\n"
                                      "    echo(b.n)\n",
@@ -3990,6 +3995,59 @@ class TestNTypes(unittest.TestCase):
             lib = run(["-c", "import nimic, sc_lib; print('imported')"])  # checked once it ran
             self.assertEqual(lib.stdout, "", lib.stderr)
             self.assertIn("sc_lib.py:6: addThing(...)", lib.stderr)
+            for args in ([os.path.join(tmp, "sc_tests.py")], ["-c", "import sc_tests; print('imported')"],
+                         ["-c", "import nimic, sc_tests; print('imported')"]):
+                tests = run(args)
+                self.assertEqual(tests.stdout, "", tests.stderr)
+                self.assertIn("sc_tests.py:8: addThing(...)", tests.stderr)
+
+    def test_free_call_check_counts_only_nim_exports(self):
+        """rule:methodcall counts what Nim's import brings: a module's own procs and its exports. Python's star
+        import also brings what the module star-imported (nifcoreparse's `from .nifbuilder import *` brings
+        nifbuilder's `offset` to foreignmodules; Nim's nifcoreparse doesn't export nifbuilder). Such a leaked proc
+        is no overload: a free call Python binds to the one proc Nim sees passes. Reported: a free call Python binds
+        to the leaked proc while Nim sees another, and one where the module exports the other (`with export:`,
+        `exportExcept` unless it hides the name)."""
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        header = "# /// nimic\n#\n# ///\nfrom nimic.ntypes import *\n"
+        main = "def use(b):\n    addThing(b, nint(1))\necho('ran')\n"
+        files = {
+            "nx_core.py": header + "class Buf(Object):\n    n: nint\ndef addThing(b: mut @ Buf, v: nint):\n    b.n += v\n",
+            "nx_builder.py": header + "class Bld(Object):\n    n: nint\ndef addThing(b: mut @ Bld, v: nint):\n    b.n -= v\n",
+            "nx_parse.py": header + "from nx_builder import *\ndef parseThing():\n    pass\n",
+            "nx_parse_export.py": header + "from nx_builder import *\nimport nx_builder\nwith export:\n    nx_builder\n",
+            "nx_parse_except.py": header + "from nx_builder import *\nimport nx_builder\n"
+                                           "exportExcept(nx_builder, 'addThing')\n",
+            "nx_parse_name.py": header + "from nx_builder import *\nimport nx_builder\n"
+                                         "with export:\n    nx_builder.addThing\n",
+            "nx_leak.py": header + "from nx_parse import *\nfrom nx_core import *\n" + main,
+            "nx_leak_binds.py": header + "from nx_core import *\nfrom nx_parse import *\n" + main,
+            "nx_except.py": header + "from nx_parse_except import *\nfrom nx_core import *\n" + main,
+            "nx_export.py": header + "from nx_parse_export import *\nfrom nx_core import *\n" + main,
+            "nx_name.py": header + "from nx_parse_name import *\nfrom nx_core import *\n" + main,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, text in files.items():
+                with open(os.path.join(tmp, name), "w") as f:
+                    f.write(text)
+            env = dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(root, "src"), root, tmp)),
+                       NIMIC_VALUECHECK="error")
+
+            def run(name):
+                return subprocess.run([sys.executable, os.path.join(tmp, name)], capture_output=True, text=True,
+                                      cwd=tmp, env=env)
+
+            for name in ("nx_leak.py", "nx_except.py"):
+                passed = run(name)
+                self.assertEqual((passed.returncode, passed.stdout), (0, "ran\n"), passed.stderr)
+            leak = run("nx_leak_binds.py")
+            self.assertEqual(leak.stdout, "", leak.stderr)
+            self.assertIn("nx_leak_binds.py:8: addThing(...) is a proc of nx_core; Python calls nx_builder's, which "
+                          "a star import leaks (Nim's import doesn't export it): write b.addThing(...)", leak.stderr)
+            for name in ("nx_export.py", "nx_name.py"):
+                exported = run(name)
+                self.assertEqual(exported.stdout, "", exported.stderr)
+                self.assertIn(f"{name}:8: addThing(...) is a proc of nx_builder, nx_core; Nim picks", exported.stderr)
 
     def test_dispatch_unannotated_int_default_is_nint(self):
         """An unannotated default `cap = 16` has the literal's Nim type, `int` (nifpools' `createTokenBuf(cap =
