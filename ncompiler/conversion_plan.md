@@ -101,7 +101,7 @@ is added to the core.
 
 ## From Phase A to Phase B (decided 2026-10-29)
 
-`src/lib` is complete with `lib/bif` (batch 15). `lib/keymatcher` and `lib/legacy/nif26reader` are legacy, not
+`src/lib` is complete with `lib/foreignmodules` (batch 16), which imports `lib/bif` (batch 15). `lib/keymatcher` and `lib/legacy/nif26reader` are legacy, not
 converted (`nnimony/tools/queue.py`). Then, in this order:
 
 1. **The Phase A milestone:** an end-to-end check in `tests/verify_transpiled.py` that NIF files round-trip
