@@ -43,7 +43,7 @@ import warnings
 from functools import wraps
 
 from nimic.ntypesystem import (dispatch, _n_registry, _n_routine_pragmas, _n_templates, _n_template_codes,
-                                _NGeneric)
+                                _NGeneric, _DispatchedCallable)
 from nimic.nsystem import _n_node_at
 from nimic import valuecheck
 
@@ -301,6 +301,7 @@ def _n_make_block_template(template_func, func_def: ast.FunctionDef, blocks: lis
     factory.__qualname__ = template_func.__qualname__
     factory.__doc__ = template_func.__doc__
     factory._n_globals = template_func.__globals__  # dispatch resolves annotations in the template's module
+    factory._n_template_code = template_func.__code__  # the template a binding of the factory is (_n_bound_template)
     factory._n_block_params = tuple(blocks)
     _n_registry.block_templates.add(name)  # the transpiler writes `for _ in t(...):` as `t(...):`
     return factory
@@ -368,6 +369,7 @@ def _n_template_entry(func_def: ast.FunctionDef, blocks=(), module_globals: dict
 
 
 _n_template_defs: dict = {}  # code object -> the template's parsed FunctionDef (None without source)
+_n_template_entries: dict = {}  # code object -> the template's expansion entry (_n_bound_template)
 _n_template_caller_scope: dict = {}  # code object -> whether the template uses its caller's variables
 
 
@@ -395,8 +397,8 @@ def template(template_func):
             # @template_expand callers, its block spliced in: Nim's {.inject.} locals are the caller's
             dirty = "dirty" in _n_routine_pragmas(template_func)
             if dirty or _n_uses_caller_scope(func_def, template_func.__globals__):
-                _n_templates[template_func.__name__] = _n_template_entry(
-                    func_def, blocks, None if dirty else template_func.__globals__)
+                _n_register_template(template_func, _n_template_entry(
+                    func_def, blocks, None if dirty else template_func.__globals__))
             return factory
     is_untyped = (
         "return" in template_func.__annotations__
@@ -419,8 +421,27 @@ def template(template_func):
         if not isinstance(template_def_node, ast.FunctionDef):
             raise TypeError("The template must be a standard Python function.")
 
-        _n_templates[template_func.__name__] = _n_template_entry(template_def_node)
+        _n_register_template(template_func, _n_template_entry(template_def_node))
     return dispatch(template_func)
+
+
+def _n_register_template(template_func, entry: dict) -> None:
+    """An expanded template: by its name (dispatch types its parameters `untyped`) and by its code, which the
+    binding of a caller's name finds (_n_bound_template)."""
+    _n_templates[template_func.__name__] = entry
+    _n_template_entries[template_func.__code__] = entry
+
+
+def _n_bound_template(binding) -> dict | None:
+    """The expansion entry of the template a caller's name is bound to (the template's overload set, a block
+    template's factory set, or the function), or None: the name is another proc, or unbound."""
+    procs = binding._n_table.view().fns if isinstance(binding, _DispatchedCallable) else (binding,)
+    for proc in reversed(procs):
+        proc = inspect.unwrap(proc) if callable(proc) else proc
+        entry = _n_template_entries.get(getattr(proc, "_n_template_code", getattr(proc, "__code__", None)))
+        if entry is not None:
+            return entry
+    return None
 
 
 class _ParameterReplacer(ast.NodeTransformer):
@@ -553,9 +574,13 @@ class _TemplateInliner(ast.NodeTransformer):
     """
 
     def __init__(self, dict_with_templates, module_globals: dict | None = None, caller_has_result: bool = False,
-                 mut_params: set[str] | frozenset = frozenset()):
+                 mut_params: set[str] | frozenset = frozenset(), binding_of=None):
         self.dict_with_templates = dict_with_templates
         self.module_globals = module_globals or {}
+        # what a name of the caller's own code is bound to (its closure, its module): Nim expands a template
+        # where the caller's scope binds its name (rule:template)
+        self.binding_of = binding_of or self.module_globals.get
+        self.local_templates = {}  # the templates the caller's body defines
         # a bare `return` of an expanded template returns from the caller: with Nim's `result`
         self.caller_has_result = caller_has_result
         self.mut_params = mut_params  # the caller's `mut @` / `out @` parameters
@@ -565,7 +590,11 @@ class _TemplateInliner(ast.NodeTransformer):
         """The registered template a call expands, or None."""
         if not isinstance(call_node, ast.Call) or not isinstance(call_node.func, ast.Name):
             return None
-        entry = self.dict_with_templates.get(call_node.func.id)
+        name = call_node.func.id
+        entry = self.local_templates.get(name)
+        if entry is None:
+            # the caller's own calls: the template its name is bound to; calls in an expanded body by name
+            entry = _n_bound_template(self.binding_of(name)) if self._depth == 0 else self.dict_with_templates.get(name)
         if entry is None or bool(entry.get("blocks")) != with_blocks:
             return None
         if entry.get("globals") is not None and not _n_uses_caller_scope(entry["def"], entry["globals"]):
@@ -685,7 +714,7 @@ class _TemplateInliner(ast.NodeTransformer):
                     untyped_template = True
         if not untyped_template:
             return self.generic_visit(node)
-        _n_templates[node.name] = _n_template_entry(node, _n_block_params(node, _n_ast_annotations(node)))
+        self.local_templates[node.name] = _n_template_entry(node, _n_block_params(node, _n_ast_annotations(node)))
 
 
 def _n_as_list(node) -> list:
@@ -725,7 +754,17 @@ def template_expand(target_func):
     # Transform the target AST by inlining the template.
     has_result = isinstance(func_def_node, ast.FunctionDef) and any(
         isinstance(n, ast.Name) and n.id == "result" and isinstance(n.ctx, ast.Store) for n in ast.walk(func_def_node))
-    inliner = _TemplateInliner(_n_templates, target_func.__globals__, has_result, _n_mut_params(func_def_node))
+    cells = dict(zip(target_func.__code__.co_freevars, target_func.__closure__ or ()))
+
+    def binding_of(name: str) -> object:
+        if name in cells:
+            try:
+                return cells[name].cell_contents
+            except ValueError:  # not bound yet
+                return None
+        return target_func.__globals__.get(name)
+    inliner = _TemplateInliner(_n_templates, target_func.__globals__, has_result, _n_mut_params(func_def_node),
+                               binding_of)
     transformed_ast = inliner.visit(target_ast)
 
     ast.fix_missing_locations(transformed_ast)

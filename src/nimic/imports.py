@@ -184,7 +184,7 @@ def is_routine(value) -> bool:
 
 def reaches(binding, obj) -> bool:
     """Whether a call of Python's `binding` can reach `obj`: the same object, or one an overload set includes (its
-    `_n_includes` protocol: its overloads, the imported proc it extends, the other bindings of the set)."""
+    `_n_includes` protocol: its overloads, the sets it includes, the proc it extends)."""
     return binding is obj or bool(getattr(binding, "_n_includes", lambda _: False)(obj))
 
 
@@ -280,20 +280,36 @@ def visible(imports: list, name: str) -> list:
     return list(found.values())
 
 
+def _when_not_declared(node) -> str | None:
+    """The name of an `if comptime(not declared("name")):` statement (Nim `when not declared(name)`), or None."""
+    test = node.test if isinstance(node, ast.If) else None
+    if (isinstance(test, ast.Call) and isinstance(test.func, ast.Name) and test.func.id == "comptime"
+            and len(test.args) == 1 and isinstance(test.args[0], ast.UnaryOp) and isinstance(test.args[0].op, ast.Not)):
+        inner = test.args[0].operand
+        if (isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name) and inner.func.id == "declared"
+                and len(inner.args) == 1 and isinstance(inner.args[0], ast.Constant)
+                and isinstance(inner.args[0].value, str)):
+            return inner.args[0].value
+    return None
+
+
 def own_definitions(tree) -> dict:
     """How the module defines a name at its top level, from its source: "plain" (a def without an overload
     decorator), "set" (@dispatch or @template: an overload set extending the name's binding before it), "value"
     (a class, a variable or constant), "overloads" (`f = overloads(...)`). A set wins over a plain def of the name
-    (a forward declaration and its overloads)."""
+    (a forward declaration and its overloads). A def under `if comptime(not declared("f")):` (Nim `when not
+    declared(f)`) defines nothing where an import binds the name: it isn't counted."""
     rank = {"value": 0, "plain": 1, "overloads": 2, "set": 3}
     found = {}
+    undeclared = {id(stmt) for node in _top_level(tree) if _when_not_declared(node)
+                  for stmt in ast.walk(node) if getattr(stmt, "name", None) == _when_not_declared(node)}
 
     def note(name, kind):
         if rank[kind] >= rank.get(found.get(name), -1):
             found[name] = kind
 
     for node in _top_level(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and id(node) not in undeclared:
             decorators = {(d.func if isinstance(d, ast.Call) else d) for d in node.decorator_list}
             note(node.name, "set" if any(isinstance(d, ast.Name) and d.id in ("dispatch", "template")
                                          for d in decorators) else "plain")

@@ -9,8 +9,9 @@ from nimic.ntypes import *
 with push("warning[UnusedImport]: off"):
 
     from .bitabs import getOrIncl
-    from .nifpools import buildTree, createTokenBuf, ErrT, globalTags, NifKind, NoLineInfo, pool, tags, toString
-    from .nifbuilder import addHeader, addIdent, addIntLit, addStrLit, extract, withTree
+    from .nifpools import (
+        buildTree, createTokenBuf, ErrT, globalTags, NifKind, NoLineInfo, pool, tags, toString, writeFile)
+    from .nifbuilder import addHeader, addIdent, addIntLit, addStrLit, extract, open, withTree
     from . import nifroles
     export(nifroles)
     importFrom(".nifreader")   # text reader; qualified-only: its NifKind must
@@ -23,6 +24,7 @@ if comptime(__name__ == "__main__"):
     # one name of two imports, called free: Nim overloads them (rule:overloads)
     addIdent = overloads(nifbuilder.addIdent, nifpools.addIdent)
     addIntLit = overloads(nifbuilder.addIntLit, nifpools.addIntLit)
+    addStrLit = overloads(nifbuilder.addStrLit, nifpools.addStrLit)
 
     def _roleHelper(n: nint) -> nint:
         """{.nifBalanced.}"""

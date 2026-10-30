@@ -206,6 +206,7 @@ def next[Key, Val](b: BTree[Key, Val], index: nint) -> tuple[Key, Val, nint]:
                 break
     return (it._keys[i], it._vals[i], index + 1)
 
+@dispatch
 def pairs[Key, Val](b: BTree[Key, Val]) -> tuple[Key, Val]:
     with var:
         i = 0

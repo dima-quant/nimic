@@ -200,6 +200,7 @@ def toInt64Checked(arg: Int128, onError: int64) -> int64:
     return cast[int64](_bitconcat(arg._udata[1], arg._udata[0]))
 
 
+@dispatch
 def toInt(arg: Int128) -> nint:
     if comptime(sizeof(nint) == 4):
         return cast[nint](arg.toInt32())

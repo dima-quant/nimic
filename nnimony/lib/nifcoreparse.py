@@ -53,6 +53,7 @@ addCharLit = overloads(nifbuilder.addCharLit, nifcore.addCharLit)
 addIntLit = overloads(nifbuilder.addIntLit, nifcore.addIntLit)
 addUIntLit = overloads(nifbuilder.addUIntLit, nifcore.addUIntLit)
 addFloatLit = overloads(nifbuilder.addFloatLit, nifcore.addFloatLit)
+addStrLit = overloads(nifbuilder.addStrLit, nifcore.addStrLit)
 offset = overloads(nifbuilder.offset, rd.offset)
 
 

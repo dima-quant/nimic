@@ -754,11 +754,7 @@ def overloads(*procs: object) -> object:
     names = {getattr(p, "__name__", None) for p in procs}
     if len(procs) < 2 or len(names) != 1 or not all(callable(p) for p in procs):
         raise TypeError(f"overloads: needs two or more procs of one name, got {procs!r}")
-    result = None
-    for proc in procs:
-        overload_set = proc if isinstance(proc, _ntypesystem._DispatchedCallable) else _ntypesystem.dispatch(proc)
-        result = result or overload_set
-    return result  # the @dispatch sets of a name are one set (rule:overloads)
+    return _ntypesystem._n_overloads(procs, sys._getframe(1))  # the caller's set of the name
 
 
 _n_hooks = ("copy", "sink", "destroy", "wasMoved", "dup", "trace")

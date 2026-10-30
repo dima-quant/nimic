@@ -19,6 +19,10 @@ from .stringviews import beginStore, endStore, pchar, StringView
 from .vfs import initBlob, VfsBlob, vfsOpenMmap
 from .nifcore import add, len, NifKind  # the ONE token-kind enum, shared with the binary token model
 from . import nifcore
+from nimic.std import memfiles, syncio
+# one name of two imports, overloaded by the reader's (rule:overloads)
+open = overloads(syncio.open, memfiles.open)
+close = overloads(syncio.close, memfiles.close)
 
 exportFrom(nifcore, "NifKind")
 
@@ -196,6 +200,7 @@ if comptime(not defined("nimony")):
             return cast[ptr[UncheckedArray[char]]](addr(s[start]))
 
 
+@dispatch
 def close(r: mut @ Reader):
     """Release the backend's read handle (mmap unmap, LMDB read txn
     close, …) via the explicit VfsBlob close API."""
@@ -1154,6 +1159,7 @@ def extractModuleSuffix(filename: string) -> string:
     return result
 
 
+@dispatch
 def open(filename: string, lineBased=False) -> Reader:
     """With `lineBased`, the reader accepts NIF's optional line-based syntax:
     a top-level line not starting with `(` is a node `(tag args...)` that ends

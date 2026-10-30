@@ -197,7 +197,8 @@ def _countTriples(s: string) -> nint:
         i += 1
     return result
 
-def endsWith(x: string, s: set[char]) -> bool:
+@dispatch
+def endsWith(x: string, s: Tset[char]) -> bool:
     with var:
         i = len(x) - 1
         result = False

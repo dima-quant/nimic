@@ -15,6 +15,7 @@ from nimic.std.sets import *
 importFrom("nimic.std.terminal", "isatty")
 importFrom("nimic.std.times", "utc", "fromUnix", "local", "getTime", "format", "DateTime")
 importFrom("nimic.std.private.globs", "nativeToUnixPath")
+from .pathutils import splitFile  # its set overloads os' splitFile
 
 if comptime(defined("nimPreviewSlimSystem")):
     from nimic.std.syncio import *

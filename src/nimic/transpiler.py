@@ -4000,9 +4000,8 @@ def import_problems(tree, module) -> list:
         line = read.get(name) or (named[name][-1][0] if name in named else def_lines.get(name, 0))
         if kind == "plain":
             # the def replaces the binding; only the module's own reads can reach the wrong proc (its importers
-            # import the name and are checked themselves). Against a core proc (nifreader's open next to syncio's)
-            # until phase 3: a @dispatch would extend the core proc in every module (_NExtendedProc)
-            missing = sorted({m.__name__ for obj, m in seen if is_routine(obj) and not is_core(m.__name__)})
+            # import the name and are checked themselves), also a core proc's (nifreader's open next to syncio's)
+            missing = sorted({m.__name__ for obj, m in seen if is_routine(obj)})
             if missing and name in read:
                 found.append((def_lines.get(name, line), f"plaindef: the module defines a plain {name}, and "
                                                          f"{', '.join(missing)} has a {name} too: Python replaces it, "

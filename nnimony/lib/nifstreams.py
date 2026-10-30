@@ -33,7 +33,7 @@ from .nifpools import (
     dotToken, endRead, ErrT, getKeyId, getOrIncl, globalTags, identToken, inc, info, int28Token, intVal, kind, KindBits,
     len, NifKind, NifToken, NoNifLineInfo, parseFromBuffer, Pool, pool, rawLineInfo, registerTag, soperand, StrId,
     strId, strLitToken, symdefToken, SymId, symId, syms, symToken, tagId, tagLitToken, tags, TokenBuf, toString,
-    uintVal, uoperand)
+    uintVal, uoperand, writeFile)
 from . import nifpools
 # `except`: the frontend went all-NifLineInfo; the classic side keeps speaking
 # PackedLineInfo, so nifpools' same-name/same-params variants must not leak

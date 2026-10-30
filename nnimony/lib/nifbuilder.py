@@ -165,6 +165,7 @@ def extract(b: sink @ Builder) -> string:
     return result
 
 
+@dispatch
 def close(b: mut @ Builder):
     if b._mode == _Mode.UsesFile:
         _finish(b)

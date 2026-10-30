@@ -53,7 +53,7 @@ else:
 from ..models.tags import TagEnum
 from ..models.nifindex_tags import NifIndexKind, rawTagIsNifIndexKind
 from nimic.std.sha1 import finalize
-from nimic.std.syncio import writeFile
+from .nifpools import writeFile  # its set overloads syncio's writeFile
 
 include("compat2")
 

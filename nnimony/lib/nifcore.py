@@ -69,7 +69,7 @@ else:
 
 from nimic.std.assertions import *
 from nimic.std.hashes import *
-from .bitabs import BiTable, ensureIndexed, getKeyId, getOrIncl, initBiTable, len
+from .bitabs import BiTable, ensureIndexed, getKeyId, getOrIncl, hash, initBiTable, len
 from .lineinfos import FileId, isValid, NoFile
 from . import bitabs, lineinfos, nifroles
 export(nifroles)  # a `{.nifWrap.}` in a template body is resolved where it expands

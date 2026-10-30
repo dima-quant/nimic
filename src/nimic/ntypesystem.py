@@ -257,27 +257,12 @@ class NilPtr:
     def __repr__(self) -> str:
         return f"NilPtr({self._n_type_name!r})"
 
-__resolved__ = {}
-
-__dispatch_generic__ = {}
-
-__dispatch_genericT__ = {}
-
-__tdefs__ = {}
-
-__arg_names__ = {}
-
-# name -> {signature: {parameter: default}}: defaults per overload (not per last-decorated function)
-__arg_defaults__ = {}
-
-# rule:varargs: name -> [(fixed parameter types, element type, converter name or None, fn)] for procs with
-# a `*args: T` parameter; tried when no overload matches the call's arity (Nim prefers non-varargs)
-__dispatch_varargs__ = {}
-
-# name -> the proc of that name a @dispatch overload set extends (Nim overloads system/imported procs):
-# the module global (system, std, another module) or Python builtin it shadowed when first registered
-_n_imported_procs: dict = {}
-_n_imported_sigs: set = set()  # (name, call signature) served by the imported proc
+# the @dispatch overload sets by scope: (id of the module's globals, function path, name) -> (globals, set)
+# (_n_overload_table; rule:overloads)
+_n_sets: dict = {}
+_n_module_tables: dict = {}  # name -> the module-level sets of the name, in creation order
+_n_open_tables: dict = {}  # name -> the open sets of the name (_n_open_symbol)
+_n_open_sets: dict = {}  # id of a set -> (the set, its open set)
 
 # --- Generic Type Classes & Aliases ---
 
@@ -448,6 +433,35 @@ def get_type_params(fn: callable) -> dict:
     return T_def
 
 
+def _n_open_symbol(defined: object) -> object:
+    """Nim resolves an overloaded name of a generic proc where the proc is instantiated too (an open symbol:
+    bitabs' `getOrInclFromView[T]` calls `hash(v)` of a StringView, which its caller's module imports). A
+    specialization calls the open set of the name its module binds to an overload set: the overloads of the name
+    in every module, the set's own preferred, without ambiguity. A plain proc, a type or a value stays."""
+    if not isinstance(defined, _DispatchedCallable):
+        return defined
+    entry = _n_open_sets.get(id(defined._n_table))
+    if entry is None or entry[0] is not defined._n_table:
+        table = _NOverloadTable(defined.__name__)
+        table.prefer = defined._n_table
+        table.include(defined._n_table)
+        for module_table in _n_module_tables.get(defined.__name__, ()):
+            table.include(module_table)
+        _n_open_tables.setdefault(defined.__name__, []).append(table)
+        entry = (defined._n_table, _DispatchedCallable(table, defined._n_fn))
+        _n_open_sets[id(defined._n_table)] = entry
+    return entry[1]
+
+
+def _n_code_names(code) -> set:
+    """The global names a code object and its nested code (comprehensions, local procs) read."""
+    names = set(code.co_names)
+    for const in code.co_consts:
+        if isinstance(const, types.CodeType):
+            names |= _n_code_names(const)
+    return names
+
+
 def _specialize_generic(fn: callable, T_var: dict[str, str]) -> callable:
     """Create a concrete specialization of a generic function.
 
@@ -514,6 +528,8 @@ def _specialize_generic(fn: callable, T_var: dict[str, str]) -> callable:
     builtin_names = vars(sys.modules["builtins"])
     ns = {name: t for name, t in DICT_OF_TYPES.items() if name not in builtin_names}
     ns.update(fn.__globals__)
+    for name in _n_code_names(code) & ns.keys():
+        ns[name] = _n_open_symbol(ns[name])  # Nim's open symbols: the overloads where it is instantiated
     exec(code, ns)
     specialized_fn = ns[func_def.name]
     # Preserve the original function name for dispatch lookup
@@ -608,9 +624,6 @@ def _match_generic_pattern(sig_type: str, arg_type: str, T_def: dict) -> dict | 
     if match(sig_type, arg_type) and bound:
         return bound
     return None
-
-
-debugG = {}
 
 
 # --- Multi-Dispatch ---
@@ -785,18 +798,17 @@ def _n_resolve_type_aliases(ann: str, namespace: dict) -> str:
     return resolved if changed and resolved is not None else ann
 
 
-def _n_has_arity(name: str, n: int) -> bool:
-    return any(len(sig) == n for table in (__resolved__, __dispatch_generic__, __dispatch_genericT__)
-               for sig in table.get(name, ()))
+def _n_has_arity(view, n: int) -> bool:
+    return any(len(sig) == n for table in (view.resolved, view.generic, view.genericT) for sig in table)
 
 
-def _n_bind_overloads(name: str, args: tuple, kwargs: dict) -> list[tuple]:
+def _n_bind_overloads(view, args: tuple, kwargs: dict) -> list[tuple]:
     """Positional argument tuples obtained by binding `args` and `kwargs` to the parameters of each
-    overload of `name` (keywords by name, missing trailing parameters from that overload's defaults),
+    overload of a set's view (keywords by name, missing trailing parameters from that overload's defaults),
     the ones needing fewer defaults first."""
     found = []
-    defaults_of = __arg_defaults__.get(name, {})
-    for sig, names in __arg_names__.get(name, {}).items():
+    defaults_of = view.arg_defaults
+    for sig, names in view.arg_names.items():
         if len(args) > len(names):
             continue
         full, used, n_defaults = list(args), set(), 0
@@ -931,13 +943,11 @@ def _n_fingerprint(value) -> object:
     return ("object", id(value))  # unknown: compares equal to itself, a change of it is not seen
 
 
-_n_overloads: dict = {}  # @dispatch name -> its functions
-
-
 def _n_set_procs(fn) -> tuple:
-    """The procs a @dispatch set calls: its overloads, and the imported proc it extends (calls no overload takes)."""
-    extends = fn._n_extends
-    return (*_n_overloads.get(fn.__name__, (fn._n_fn,)), *((extends,) if extends is not None else ()))
+    """The procs a @dispatch set calls: its overloads and the included sets', and the proc it extends (calls no
+    overload takes)."""
+    view = fn._n_table.view()
+    return (*view.fns, *((view.extends,) if view.extends is not None else ()))
 
 _n_alias_results: dict = {}  # code object -> whether its function's result may be shared (cleared by a new overload)
 
@@ -1245,9 +1255,9 @@ def _n_type_matches(arg_type: str, sig_type: str) -> bool:
     return _match_subtype(arg_type, sig_type) or _match_converter(arg_type, sig_type)
 
 
-def _n_varargs_call(name: str, args: tuple):
-    """A callable running the first varargs overload of `name` that matches `args`, or None."""
-    for fixed, elem, conv, fn in __dispatch_varargs__.get(name, ()):
+def _n_varargs_call(view, args: tuple):
+    """A callable running the first varargs overload of a set's view that matches `args`, or None."""
+    for fixed, elem, conv, fn in view.varargs:
         if len(args) < len(fixed):
             continue
         if not all(_n_type_matches(autorename(a), t) for a, t in zip(args, fixed)):
@@ -1272,14 +1282,106 @@ class _NoOverload(NotImplementedError):
         self.attempt = attempt
 
 
+class _NOverloadView:
+    """The overloads a call of a set sees (_NOverloadTable.view): the entries of the set and of the sets it
+    includes, merged in registration order, and the call signatures resolved so far."""
+
+    def __init__(self):
+        self.resolved, self.generic, self.genericT, self.tdefs = {}, {}, {}, {}
+        self.arg_names, self.arg_defaults = {}, {}
+        self.varargs, self.fns = [], []
+        self.extends = None
+        self.extends_sigs = set()  # call signatures served by the proc the set extends
+        self.ambiguous = {}  # signature -> the two procs of two sets defining it (rule:overloads)
+
+
+class _NOverloadTable:
+    """An overload set (rule:overloads): the procs of one name that one scope defines with @dispatch (a module, or
+    a function: Nim's local scope; a class's methods belong to its module, Nim's methods are procs) and the procs
+    of that name the scope had bound when the set was created, which Nim overloads with them: an imported set is
+    included, a plain proc of another module or a builtin (abs) takes the calls no overload takes. A module sees
+    the overloads its imports bring, not every overload of the name. `overloads(a.f, b.f)` makes a set including
+    both, an identical signature of two included sets is an ambiguous call."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.resolved, self.generic, self.genericT, self.tdefs = {}, {}, {}, {}
+        self.arg_names, self.arg_defaults = {}, {}
+        self.varargs = []  # rule:varargs: [(fixed parameter types, element type, converter name or None, fn)]
+        self.fns = []  # the functions registered: their callers' value checks read them (rule:valuecheck)
+        self.origins = {}  # (kind, signature) -> the function registered
+        self.includes = []  # the sets of other scopes it overloads
+        self.extends = None
+        self.dependents = []  # the sets including it
+        self.prefer = None  # an open set (_n_open_symbol): the set whose own entries win, no ambiguity
+        self._view = None
+        self.call = _n_dispatcher(self)
+
+    def include(self, other: "_NOverloadTable") -> None:
+        if other is not self and other not in self.includes and self not in other.closure():
+            self.includes.append(other)
+            other.dependents.append(self)
+            self.changed()
+
+    def changed(self) -> None:
+        """A new overload: this set and the sets including it rebuild their views at their next call."""
+        todo, seen = [self], set()
+        while todo:
+            table = todo.pop()
+            if id(table) not in seen:
+                seen.add(id(table))
+                table._view = None
+                todo += table.dependents
+        _n_alias_results.clear()
+
+    def closure(self) -> list:
+        """The sets a call reaches: the included ones (depth first), then this one, in registration order."""
+        order, seen = [], set()
+
+        def visit(table):
+            if id(table) not in seen:
+                seen.add(id(table))
+                for included in table.includes:
+                    visit(included)
+                order.append(table)
+        visit(self)
+        return order
+
+    def view(self) -> _NOverloadView:
+        if self._view is None:
+            view, origin = _NOverloadView(), {}
+            tables = self.closure()
+            if self.prefer is not None:
+                tables = [t for t in tables if t is not self.prefer] + [self.prefer]
+            for table in tables:
+                for kind in ("resolved", "generic", "genericT"):
+                    merged = getattr(view, kind)
+                    for sig, fn in getattr(table, kind).items():
+                        defined, prior = table.origins[(kind, sig)], origin.get((kind, sig))
+                        if prior is not None and ins.unwrap(prior) is not ins.unwrap(defined) and self.prefer is None:
+                            view.ambiguous[sig] = (prior, defined)
+                        origin[(kind, sig)] = defined
+                        merged[sig] = fn
+                view.tdefs.update(table.tdefs)
+                view.arg_names.update(table.arg_names)
+                view.arg_defaults.update(table.arg_defaults)
+                fixed = {entry[0] for entry in table.varargs}
+                view.varargs = [entry for entry in view.varargs if entry[0] not in fixed] + table.varargs
+                view.fns += [fn for fn in table.fns if fn not in view.fns]
+                view.extends = table.extends or view.extends
+            self._view = view
+        return self._view
+
+
 class _DispatchedCallable:
-    """Callable returned by @dispatch: forwards calls to the dispatcher and looks like
+    """Callable returned by @dispatch: calls its overload set (_NOverloadTable) and looks like
     the decorated function (name, annotations, code, type params, globals), so it can
     be re-dispatched (e.g. by DispDict) and bound as a method."""
 
-    def __init__(self, target, orig_fn):
+    def __init__(self, table: _NOverloadTable, orig_fn):
         functools.update_wrapper(self, orig_fn)  # copies __type_params__ (3.12+) and __dict__
-        self._n_target = target
+        self._n_table = table
+        self._n_target = table.call
         self._n_fn = orig_fn
         # not covered by update_wrapper, but read by dispatch() on re-dispatch
         self.__code__ = getattr(orig_fn, "__code__", None)
@@ -1293,14 +1395,17 @@ class _DispatchedCallable:
 
     @property
     def _n_extends(self) -> callable:
-        """The imported proc this overload set extends (calls no overload takes go to it), or None."""
-        return _n_imported_procs.get(self.__name__)
+        """The proc this overload set extends (calls no overload takes go to it), or None."""
+        return self._n_table.view().extends
 
     def _n_includes(self, proc: callable) -> bool:
-        """Whether a call of this set can reach `proc`: another binding of the set (the @dispatch sets of a name are
-        one set), one of its overloads, or the imported proc it extends (the import checks, rule:methodcall)."""
-        return (proc is self or (isinstance(proc, _DispatchedCallable) and proc.__name__ == self.__name__)
-                or any(proc is p or ins.unwrap(proc) is ins.unwrap(p) for p in _n_set_procs(self)))
+        """Whether a call of this set can reach `proc`: a binding of this set or of a set it includes, one of their
+        overloads, or the proc it extends (the import checks)."""
+        if proc is self:
+            return True
+        if isinstance(proc, _DispatchedCallable):
+            return any(proc._n_table is table for table in self._n_table.closure())
+        return any(proc is p or ins.unwrap(proc) is ins.unwrap(p) for p in _n_set_procs(self))
 
     def __get__(self, instance, owner=None):
         if instance is None:
@@ -1315,38 +1420,14 @@ class _DispatchedCallable:
         return self
 
 
-class _NExtendedProc(_DispatchedCallable):
-    """A plain proc that a @dispatch set of another module extends, where the proc is bound: its module and the
-    modules that imported or re-export it (_n_promote_extended_proc). Nim resolves a call in the caller's scope.
-    Another module calls the set: all @dispatch sets are shared by name, so it sees the extending module's
-    overloads too, also when it reaches this binding through a method call past another module's proc of the
-    name (`tb.addIdent(s, info)` after `import nifpools, nifbuilder`). The proc's own module, and a qualified call
-    from a module that binds the name to the set (`nifcore.addIdent(dest, s)` in nifpools), call the proc."""
-
-    def __init__(self, proc: types.FunctionType, overload_set: _DispatchedCallable):
-        super().__init__(overload_set, proc)
-        self.__name__ = overload_set.__name__  # the extended name (syncio's writeFile, an alias of write_file)
-        self._n_home = proc.__globals__
-
-    def __call__(self, *args, **kwargs):
-        frame = sys._getframe(1)
-        while frame is not None and frame.f_code.co_filename.startswith(_N_RUNTIME_DIR):
-            frame = frame.f_back  # through a method call (Object.__getattr__), a template
-        scope = self._n_home if frame is None else frame.f_globals
-        bound = scope.get(self.__name__)
-        if scope is self._n_home or (isinstance(bound, _DispatchedCallable) and not isinstance(bound, _NExtendedProc)):
-            return self._n_fn(*args, **kwargs)  # the set: every @dispatch of the name returns one of its own
-        return self._n_target(*args, **kwargs)
-
-
-def _n_named_tuple_result(fn: callable) -> callable:
+def _n_named_tuple_result(fn: callable, frame=None) -> callable:
     """A proc declared to return a named tuple type converts a returned tuple literal to it (Nim
     `result = (a, b)` for `tuple[x, y: T]`). Wrapped only when the annotation names an NTuple class
     already defined, so other procs pay nothing."""
     ann = getattr(fn, "__annotations__", {}).get("return")
     rtype = ann
-    if isinstance(ann, str):  # the module's name, or a local one of the scope defining fn
-        rtype = fn.__globals__.get(ann) or sys._getframe(2).f_locals.get(ann)
+    if isinstance(ann, str):  # the module's name, or a local one of the scope defining fn (`frame`)
+        rtype = fn.__globals__.get(ann) or (frame.f_locals.get(ann) if frame is not None else None)
     if not (isinstance(rtype, type) and issubclass(rtype, NTuple)):
         return fn
     fields = rtype._n_fields
@@ -1394,68 +1475,97 @@ def _n_typedesc_sig(annotation: str) -> str:
 _N_SYSTEM_BUILTINS = frozenset({"abs", "len", "min", "max"})
 
 
-def _n_register_imported_proc(fn: callable, fn_globals: dict) -> callable:
-    """Nim overloading spans modules: `proc cmp*(a, b: Int128)` adds an overload to system.cmp. When a
-    @dispatch proc shadows a routine of the same name that is no overload set itself (a system or std
-    proc imported into the module, or a builtin of _N_SYSTEM_BUILTINS such as abs), calls no overload matches go to it.
-    A plain function of the same module (a forward declaration) is not such a routine. Returns the routine when this
-    call registered it, else None."""
-    if fn.__name__ in _n_imported_procs:
-        return None
-    prior = fn_globals.get(fn.__name__)
-    if prior is None and fn.__name__ in _N_SYSTEM_BUILTINS:
-        prior = getattr(sys.modules["builtins"], fn.__name__)
-    if (callable(prior) and not isinstance(prior, (type, _DispatchedCallable))
-            and getattr(prior, "__module__", None) != fn.__module__):
-        _n_imported_procs[fn.__name__] = prior
-        return prior
+_N_CORE_SCOPE: dict = {}  # the module-level sets of the nimic core (nimic.ntypes, nimic.std.*): one scope
+
+
+def _n_table_of(scope: dict, path: str, name: str) -> tuple:
+    """(the overload set of `name` that the scope owns, whether this call created it). `scope` is a module's
+    globals, `path` the function path of a local set ("outer.<locals>"), "" for the module's. The core's modules
+    share their sets: star imports bind the core's names (Nim's system and std), the last one binding a name
+    would hide another core module's overloads of it."""
+    if not path and str(scope.get("__name__", "")).split(".")[0] == "nimic":
+        scope = _N_CORE_SCOPE
+    key = (id(scope), path, name)
+    entry = _n_sets.get(key)
+    if entry is not None and entry[0] is scope:
+        return entry[1], False
+    table = _NOverloadTable(name)
+    _n_sets[key] = (scope, table)  # holds the globals: their id stays theirs
+    if not path:
+        _n_module_tables.setdefault(name, []).append(table)
+        for open_table in _n_open_tables.get(name, ()):
+            open_table.include(table)
+    return table, True
+
+
+def _n_extend(table: _NOverloadTable, prior: object, module: str) -> None:
+    """Nim overloads the procs of the name the scope sees: `prior`, bound to the name where a set is created,
+    joins it. An overload set is included; a proc of another module that is no overload set (a system or std
+    proc, a plain nimic proc, a builtin of _N_SYSTEM_BUILTINS such as abs) takes the calls no overload takes. A
+    plain function of the same module (a forward declaration) is not such a proc."""
+    if isinstance(prior, _DispatchedCallable):
+        table.include(prior._n_table)
+    elif (callable(prior) and not isinstance(prior, type)
+          and getattr(prior, "__module__", None) != module):
+        table.extends = prior
+        table.changed()
+
+
+def _n_defining_locals(fn: callable, frame) -> object:
+    """The locals of the function whose body defines `fn` (Nim's local scope), from the frames calling dispatch,
+    or None."""
+    while frame is not None:
+        if fn.__qualname__.startswith(frame.f_code.co_qualname + ".<locals>."):
+            return frame.f_locals
+        frame = frame.f_back
     return None
 
 
-def _n_promote_extended_proc(prior: callable, overload_set: _DispatchedCallable) -> None:
-    """Nim overloads every proc: with `import nifpools, std/syncio`, `writeFile(b, path)` is nifpools' overload
-    whatever the import order. nimic writes a proc with one overload as a plain def, so a later star import of
-    its module would rebind the name to the plain proc and drop the set extending it. When a module-level
-    @dispatch set first extends a plain nimic proc, the name is rebound to an _NExtendedProc wherever it is bound
-    to that proc (its module, the modules that imported or re-export it): a star import of any of them binds it,
-    and its calls reach the set or the proc by the caller's scope. Not for a proc of Python's (a
-    builtin, the standard library) or an overload defined in a function or a class (Nim's local scope)."""
-    name = overload_set.__name__
-    if (not isinstance(prior, types.FunctionType) or overload_set.__qualname__ != name
-            or prior.__module__.split(".")[0] in sys.stdlib_module_names):
-        return
-    extended = _NExtendedProc(prior, overload_set)
-    for module in list(sys.modules.values()):
-        namespace = getattr(module, "__dict__", None)
-        if isinstance(namespace, dict) and namespace.get(name) is prior:
-            namespace[name] = extended
+def _n_overload_table(fn: callable, fn_globals: dict, frame) -> _NOverloadTable:
+    """The set a @dispatch of `fn` joins: its scope's set of the name. A function defined in a function belongs
+    to that function (Nim's local scope), a method to its class's module, a template expansion's function (run in
+    a copy of the globals) to its module. The first @dispatch of a scope's name creates the set with the proc the
+    scope has bound to the name (_n_extend): the local binding, the module's, a builtin's."""
+    module = sys.modules.get(fn.__module__)
+    scope = module.__dict__ if module is not None and fn_globals.get("__name__") == fn.__module__ else fn_globals
+    head, sep, _ = fn.__qualname__.rpartition("<locals>.")
+    path = head + sep[:-1]
+    table, created = _n_table_of(scope, path, fn.__name__)
+    if created:
+        local = _n_defining_locals(fn, frame) if path else None
+        if local is not None and fn.__name__ in local:
+            prior = local[fn.__name__]
+        elif fn.__name__ in scope:
+            prior = scope[fn.__name__]
+        else:
+            prior = getattr(sys.modules["builtins"], fn.__name__) if fn.__name__ in _N_SYSTEM_BUILTINS else None
+        _n_extend(table, prior, fn.__module__)
+    return table
+
+
+def _n_overloads(procs: tuple, frame) -> _DispatchedCallable:
+    """`f = overloads(a.f, b.f)` (rule:overloads): the caller's set of the name includes each proc's set; a plain
+    proc becomes an overload (it needs types for all its parameters)."""
+    name = procs[0].__name__
+    path = "" if frame.f_code.co_name == "<module>" else frame.f_code.co_qualname + ".<locals>"
+    table, _ = _n_table_of(frame.f_globals, path, name)
+    for proc in procs:
+        if isinstance(proc, _DispatchedCallable):
+            table.include(proc._n_table)
+        else:
+            _n_add_overload(table, proc, frame)
+    first = procs[0]
+    return _DispatchedCallable(table, first._n_fn if isinstance(first, _DispatchedCallable) else first)
 
 
 _N_BOUND_TAG = "\x00bound:"  # second entry of a bounded type variable's signature element: ("T", tag + bound)
 
 
-def dispatch(fn: callable) -> callable:
-    """Decorator implementing Nim-style multi-dispatch based on argument type annotations.
-
-    Registers function signatures in one of three global registries:
-      __resolved__          — concrete type signatures (direct match)
-      __dispatch_generic__  — signatures using generic type classes (SomeInteger, SomeFloat)
-      __dispatch_genericT__ — signatures using parameterized generics [T: constraint]
-
-    The returned wrapper (fn_dispatch) resolves calls at runtime:
-    1. Check __resolved__ for an exact match on argument types.
-    2. If not found, try __dispatch_generic__ (match arg type against type class tuples).
-    3. If not found, try __dispatch_genericT__ (match with type parameter binding).
-    4. On successful resolution, cache the result in __resolved__ for future calls.
-    5. Raise NotImplementedError if no matching signature is found.
-    """
-    if isinstance(fn, _DispatchedCallable):
-        # re-dispatch (e.g. DispDict overloading an explicit @dispatch method): register the
-        # original function; registering the wrapper would make it dispatch to itself forever
-        fn = fn._n_fn
-    fn = _n_named_tuple_result(fn)
+def _n_add_overload(table: _NOverloadTable, fn: callable, frame=None) -> callable:
+    """Registers `fn` in the set by its parameter types (`frame`: the scope defining it, for a local return type).
+    Returns the function registered."""
+    fn = _n_named_tuple_result(fn, frame)
     # No kwargs in dispatched functions. Types should match. TODO: Python types should be treated as literals
-    # TODO properly remove prefix
     _annotations = {}
     if (
         fn.__code__.co_varnames
@@ -1503,20 +1613,11 @@ def dispatch(fn: callable) -> callable:
     if fn.__code__.co_flags & ins.CO_VARARGS:
         vararg_name = fn.__code__.co_varnames[arg_count + fn.__code__.co_kwonlyargcount]
         elem, conv = _n_vararg_type(fn.__annotations__.get(vararg_name, "untyped"), fn_globals)
-        entries = __dispatch_varargs__.setdefault(fn.__name__, [])
-        entries[:] = [e for e in entries if e[0] != tuple(sig_list)] + [(tuple(sig_list), elem, conv, fn)]
-    extended = _n_register_imported_proc(fn, fn_globals)
-    _n_overloads.setdefault(fn.__name__, []).append(fn)  # its callers' value checks read them (rule:valuecheck)
-    _n_alias_results.clear()
-    generic = any((arg in _n_generic_types for arg in sig_list))
-    genericT = len(fn.__type_params__) > 0
-    # register signature
-    if fn.__name__ not in __arg_names__:
-        __arg_names__[fn.__name__] = {}
-
-    if genericT:
+        table.varargs[:] = [e for e in table.varargs if e[0] != tuple(sig_list)] + [(tuple(sig_list), elem, conv, fn)]
+    table.fns.append(fn)
+    if len(fn.__type_params__) > 0:
+        kind = "genericT"
         T_def = {t: _n_union_type_class(c, fn_globals) for t, c in get_type_params(fn).items()}  # `T: A | B` is a type class
-        # register T def
         # expand generic types; a bounded type variable carries its bound, so overloads that differ only in their
         # bounds (`[T: SomeInteger]` / `[T: SomeFloat]`) are distinct entries
         sigs = tuple(
@@ -1524,206 +1625,224 @@ def dispatch(fn: callable) -> callable:
             ((arg,) if arg not in _n_generic_types else _n_generic_types[arg])
             for arg in sig_list
         )
-        if fn.__name__ in __dispatch_genericT__:
-            __dispatch_genericT__[fn.__name__][sigs] = fn
-            __tdefs__[fn.__name__][sigs] = T_def
-        else:
-            __dispatch_genericT__[fn.__name__] = {sigs: fn}
-            __tdefs__[fn.__name__] = {sigs: T_def}
-        __arg_names__[fn.__name__][sigs] = arg_names
-        __arg_defaults__.setdefault(fn.__name__, {})[sigs] = arg_defaults
-    elif generic:
+        table.genericT[sigs] = fn
+        table.tdefs[sigs] = T_def
+    elif any(arg in _n_generic_types for arg in sig_list):
+        kind = "generic"
         # expand generic types
         sigs = tuple(
             (arg,) if arg not in _n_generic_types else _n_generic_types[arg]
             for arg in sig_list
         )
-        if fn.__name__ in __dispatch_generic__:
-            __dispatch_generic__[fn.__name__][sigs] = fn
-        else:
-            __dispatch_generic__[fn.__name__] = {sigs: fn}
-        __arg_names__[fn.__name__][sigs] = arg_names
-        __arg_defaults__.setdefault(fn.__name__, {})[sigs] = arg_defaults
+        table.generic[sigs] = fn
     else:
+        kind = "resolved"
         sigs = tuple((arg,) for arg in sig_list)
-        typed = _n_typed_literals(fn, sig_list, numbers=False)
-        if fn.__name__ in __resolved__:
-            __resolved__[fn.__name__][sigs] = typed
-        else:
-            __resolved__[fn.__name__] = {sigs: typed}
-        __arg_names__[fn.__name__][sigs] = arg_names
-        __arg_defaults__.setdefault(fn.__name__, {})[sigs] = arg_defaults
+        table.resolved[sigs] = _n_typed_literals(fn, sig_list, numbers=False)
+    table.origins[(kind, sigs)] = fn
+    table.arg_names[sigs] = arg_names
+    table.arg_defaults[sigs] = arg_defaults
+    table.changed()
+    return fn
+
+
+def dispatch(fn: callable) -> callable:
+    """Decorator implementing Nim-style multi-dispatch based on argument type annotations.
+
+    Registers the function in its scope's overload set (_n_overload_table), by its signature:
+      resolved — concrete type signatures (direct match)
+      generic  — signatures using generic type classes (SomeInteger, SomeFloat)
+      genericT — signatures using parameterized generics [T: constraint]
+
+    A call of the set resolves over its view (the set's overloads and its included sets', _n_dispatcher).
+    """
+    if isinstance(fn, _DispatchedCallable):
+        # re-dispatch (e.g. DispDict overloading an explicit @dispatch method): register the
+        # original function; registering the wrapper would make it dispatch to itself forever
+        fn = fn._n_fn
+    frame = sys._getframe(1)
+    table = _n_overload_table(fn, getattr(fn, "_n_globals", fn.__globals__), frame)
+    return _DispatchedCallable(table, _n_add_overload(table, fn, frame))
+
+
+def _n_ambiguity(view, name: str, sig: tuple) -> None:
+    """Nim rejects a call two overloads of two sets match equally (an identical signature): TypeError."""
+    if sig in view.ambiguous:
+        first, second = view.ambiguous[sig]
+        raise TypeError(f"ambiguous call: {name}({', '.join(s[0] for s in sig)}) is defined in {first.__module__} "
+                        f"and {second.__module__} (rule:overloads)")
+
+
+def _n_dispatcher(table: _NOverloadTable) -> callable:
+    """The function a set's calls run: resolves the call over the set's view.
+    1. An exact match of the argument types (concrete overloads, calls resolved before).
+    2. Else the generic type classes (match arg type against type class tuples).
+    3. Else the parameterized generics (match with type parameter binding).
+    4. A resolution is cached in the view.
+    5. NotImplementedError (_NoOverload) if no signature matches."""
+    name = table.name
 
     def fn_dispatch(*args, **kwargs):
+        view = table.view()
         # a call already bound to one overload's parameters (keywords and defaults filled in): dispatch it
         # as it is; filling defaults again could bind it to another overload with shifted positions
         bound = kwargs.pop("_n_bound", False)
         attempt = kwargs.pop("_n_attempt", None)
         if kwargs:
             # bind keywords (and defaults) to each overload's parameters, then dispatch positionally
-            candidates = _n_bind_overloads(fn.__name__, args, kwargs)
-            if not candidates and fn.__name__ in _n_imported_procs:
-                return _n_imported_procs[fn.__name__](*args, **kwargs)
+            candidates = _n_bind_overloads(view, args, kwargs)
+            if not candidates and view.extends is not None:
+                return view.extends(*args, **kwargs)
             if not candidates:
-                raise TypeError(f"Invalid keyword arguments for {fn.__name__}")
+                raise TypeError(f"Invalid keyword arguments for {name}")
             for cand in candidates:
                 found, result = bound_call(cand)
                 if found:
                     return result
-            if fn.__name__ in _n_imported_procs:
-                return _n_imported_procs[fn.__name__](*args, **kwargs)
-            raise _NoOverload(f"Function not defined for keyword signature: {fn.__name__}", attempt)
+            if view.extends is not None:
+                return view.extends(*args, **kwargs)
+            raise _NoOverload(f"Function not defined for keyword signature: {name}", attempt)
 
-        if not bound and not _n_has_arity(fn.__name__, len(args)):
+        if not bound and not _n_has_arity(view, len(args)):
             # no overload takes exactly this many arguments: fill trailing defaults per overload
-            for cand in _n_bind_overloads(fn.__name__, args, {}):
+            for cand in _n_bind_overloads(view, args, {}):
                 found, result = bound_call(cand)
                 if found:
                     return result
 
-        sigs = ((autorename(arg),) for arg in args)
-        fn_sig = tuple(sigs)
-        if (fn.__name__, fn_sig) in _n_imported_sigs:
-            return _n_imported_procs[fn.__name__](*args)
-        is_resolved = (
-            fn.__name__ in __resolved__ and fn_sig in __resolved__[fn.__name__]
-        )
-        if is_resolved:
-            return __resolved__[fn.__name__][fn_sig](*args)
-        else:
-            # try to resolve signature
-            if fn.__name__ in __dispatch_generic__:
-                sig_defs = __dispatch_generic__[fn.__name__]
-                for sig_def in sig_defs:
-                    if len(fn_sig) == len(sig_def):
-                        i = 0
-                        while i < len(fn_sig) and fn_sig[i][0] in sig_def[i]:
-                            i += 1
-                        if i == len(fn_sig):
-                            if fn.__name__ in __resolved__:
-                                __resolved__[fn.__name__][fn_sig] = sig_defs[sig_def]
-                            else:
-                                __resolved__[fn.__name__] = {fn_sig: sig_defs[sig_def]}
-                            break
-            if fn.__name__ in __dispatch_genericT__:
-                sig_defs = __dispatch_genericT__[fn.__name__]
-                # Collect all matching candidates with specificity scores.
-                # Higher specificity = more specific match.
-                # compound pattern match (Case C) > bare T match (Case B) > exact match (Case A)
-                best_match = None  # (specificity, sig_def, T_var)
-                for sig_def in sig_defs:
-                    if len(fn_sig) == len(sig_def):
-                        i = 0
-                        T_var = {}
-                        T_def = __tdefs__[fn.__name__][sig_def]
-                        specificity = 0  # sum of per-position specificity
-                        while i < len(fn_sig):
-                            arg_name = fn_sig[i][0]
-                            sig_name = sig_def[i][0]
-                            if arg_name in sig_def[i]:
-                                # Case A: exact match (specificity 0)
-                                pass
-                            elif sig_name in T_def:
-                                # Case B: bare type variable (specificity 1)
-                                T_sym = sig_name
-                                T_value = arg_name
-                                if T_sym in T_var:
-                                    if not _n_fits_binding(T_value, T_var[T_sym]):
-                                        break
-                                elif _n_fits_constraint(T_value, T_def[T_sym]):
-                                    T_var[T_sym] = T_value
-                                else:
+        fn_sig = tuple((autorename(arg),) for arg in args)
+        if fn_sig in view.extends_sigs:
+            return view.extends(*args)
+        resolved = view.resolved
+        if fn_sig in resolved:
+            _n_ambiguity(view, name, fn_sig)
+            return resolved[fn_sig](*args)
+        # try to resolve signature
+        for sig_def, sig_fn in view.generic.items():
+            if len(fn_sig) == len(sig_def):
+                i = 0
+                while i < len(fn_sig) and fn_sig[i][0] in sig_def[i]:
+                    i += 1
+                if i == len(fn_sig):
+                    _n_ambiguity(view, name, sig_def)
+                    resolved[fn_sig] = sig_fn
+                    break
+        if view.genericT:
+            sig_defs = view.genericT
+            # Collect all matching candidates with specificity scores.
+            # Higher specificity = more specific match.
+            # compound pattern match (Case C) > bare T match (Case B) > exact match (Case A)
+            best_match = None  # (specificity, sig_def, T_var)
+            for sig_def in sig_defs:
+                if len(fn_sig) == len(sig_def):
+                    i = 0
+                    T_var = {}
+                    T_def = view.tdefs[sig_def]
+                    specificity = 0  # sum of per-position specificity
+                    while i < len(fn_sig):
+                        arg_name = fn_sig[i][0]
+                        sig_name = sig_def[i][0]
+                        if arg_name in sig_def[i]:
+                            # Case A: exact match (specificity 0)
+                            pass
+                        elif sig_name in T_def:
+                            # Case B: bare type variable (specificity 1)
+                            T_sym = sig_name
+                            T_value = arg_name
+                            if T_sym in T_var:
+                                if not _n_fits_binding(T_value, T_var[T_sym]):
                                     break
-                                specificity += 1
+                            elif _n_fits_constraint(T_value, T_def[T_sym]):
+                                T_var[T_sym] = T_value
                             else:
-                                # Case C: compound type pattern (specificity 2)
-                                matched = _match_generic_pattern(sig_name, arg_name, T_def)
-                                if matched is not None:
-                                    conflict = False
-                                    for t_sym, t_val in matched.items():
-                                        if t_sym in T_var:
-                                            if not _n_fits_binding(t_val, T_var[t_sym]):
-                                                conflict = True
-                                                break
-                                        elif _n_fits_constraint(t_val, T_def[t_sym]):
-                                            T_var[t_sym] = t_val
-                                        else:
+                                break
+                            specificity += 1
+                        else:
+                            # Case C: compound type pattern (specificity 2)
+                            matched = _match_generic_pattern(sig_name, arg_name, T_def)
+                            if matched is not None:
+                                conflict = False
+                                for t_sym, t_val in matched.items():
+                                    if t_sym in T_var:
+                                        if not _n_fits_binding(t_val, T_var[t_sym]):
                                             conflict = True
                                             break
-                                    if conflict:
+                                    elif _n_fits_constraint(t_val, T_def[t_sym]):
+                                        T_var[t_sym] = t_val
+                                    else:
+                                        conflict = True
                                         break
-                                    specificity += 2
-                                elif any(_match_subtype(arg_name, s) or _match_converter(arg_name, _n_aliases.get(s, s))
-                                         for s in sig_def[i]):  # as concrete overloads: subtypes, int literals
-                                    specificity += 1
-                                else:
+                                if conflict:
                                     break
-                            i += 1
-                        if i == len(fn_sig):
-                            if best_match is None or specificity > best_match[0]:
-                                best_match = (specificity, sig_def, T_var)
-                if best_match is not None:
-                    _, best_sig_def, best_T_var = best_match
-                    generic_fn = sig_defs[best_sig_def]
-                    specialized = _specialize_generic(generic_fn, best_T_var)
-                    targets = [best_T_var.get(d[0], d[0]) if len(d) == 1 or d[-1].startswith(_N_BOUND_TAG) else a[0]
-                               for d, a in zip(best_sig_def, fn_sig)]
-                    specialized = _n_typed_literals(specialized, targets)
-                    if fn.__name__ in __resolved__:
-                        __resolved__[fn.__name__][fn_sig] = specialized
-                    else:
-                        __resolved__[fn.__name__] = {fn_sig: specialized}
-        is_resolved = (
-            fn.__name__ in __resolved__ and fn_sig in __resolved__[fn.__name__]
-        )
+                                specificity += 2
+                            elif any(_match_subtype(arg_name, s) or _match_converter(arg_name, _n_aliases.get(s, s))
+                                     for s in sig_def[i]):  # as concrete overloads: subtypes, int literals
+                                specificity += 1
+                            else:
+                                break
+                        i += 1
+                    if i == len(fn_sig):
+                        if best_match is None or specificity > best_match[0]:
+                            best_match = (specificity, sig_def, T_var)
+            if best_match is not None:
+                _, best_sig_def, best_T_var = best_match
+                _n_ambiguity(view, name, best_sig_def)
+                generic_fn = sig_defs[best_sig_def]
+                specialized = _specialize_generic(generic_fn, best_T_var)
+                targets = [best_T_var.get(d[0], d[0]) if len(d) == 1 or d[-1].startswith(_N_BOUND_TAG) else a[0]
+                           for d, a in zip(best_sig_def, fn_sig)]
+                resolved[fn_sig] = _n_typed_literals(specialized, targets)
+        is_resolved = fn_sig in resolved
         if not is_resolved:
             # try subtype and converter matching against registered concrete signatures
-            if fn.__name__ in __resolved__:
-                for sig_def, sig_fn in __resolved__[fn.__name__].items():
-                    if len(fn_sig) == len(sig_def):
-                        if all(
-                            _match_subtype(fn_sig[i][0], sig_def[i][0])
-                            or _match_converter(fn_sig[i][0], sig_def[i][0])
-                            for i in range(len(fn_sig))
-                        ):
-                            __resolved__[fn.__name__][fn_sig] = _n_typed_literals(sig_fn, [d[0] for d in sig_def])
-                            is_resolved = True
-                            break
+            for sig_def, sig_fn in resolved.items():
+                if len(fn_sig) == len(sig_def):
+                    if all(
+                        _match_subtype(fn_sig[i][0], sig_def[i][0])
+                        or _match_converter(fn_sig[i][0], sig_def[i][0])
+                        for i in range(len(fn_sig))
+                    ):
+                        _n_ambiguity(view, name, sig_def)
+                        resolved[fn_sig] = _n_typed_literals(sig_fn, [d[0] for d in sig_def])
+                        is_resolved = True
+                        break
         if not is_resolved and not bound:
             # overloads of this arity didn't match the types: try overloads whose defaults fill the call
-            for cand in _n_bind_overloads(fn.__name__, args, {}):
+            for cand in _n_bind_overloads(view, args, {}):
                 if len(cand) > len(args):
                     found, result = bound_call(cand)
                     if found:
                         return result
         if not is_resolved:
             # a registered varargs overload wins over a method of the first argument (e.g. str.format)
-            varargs_call = _n_varargs_call(fn.__name__, args)
+            varargs_call = _n_varargs_call(view, args)
             if varargs_call is not None:
                 return varargs_call()
         if not is_resolved:
             # Check UFCS: if the first argument has a method with this function's name
-            if len(args) >= 1 and not fn.__name__.startswith("__") and hasattr(args[0], fn.__name__):
-                method = getattr(args[0], fn.__name__)
-                if (callable(method) and getattr(method, "__func__", None) not in (fn, fn_dispatch)
+            if len(args) >= 1 and not name.startswith("__") and hasattr(args[0], name):
+                method = getattr(args[0], name)
+                func = getattr(method, "__func__", None)
+                if (callable(method) and not (isinstance(func, _DispatchedCallable) and func._n_table is table)
+                        and func not in view.fns
                         and not isinstance(method, functools.partial)):  # not the UFCS lookup of a proc
                     try:
                         return method(*args[1:], **kwargs)
                     except AttributeError:
                         pass
         if is_resolved:
-            return __resolved__[fn.__name__][fn_sig](*args)
-        varargs_call = _n_varargs_call(fn.__name__, args)
+            return resolved[fn_sig](*args)
+        varargs_call = _n_varargs_call(view, args)
         if varargs_call is not None:
             return varargs_call()
-        if fn.__name__ in _n_imported_procs and not bound:
-            # no overload of this set matches: the imported proc it extends (system `low`, builtin `abs`). Not
-            # for a call bound to an overload's parameters (its defaults filled in): the caller goes on with the
-            # original arguments
-            _n_imported_sigs.add((fn.__name__, fn_sig))
-            return _n_imported_procs[fn.__name__](*args)
+        if view.extends is not None and not bound:
+            # no overload of this set matches: the proc it extends (system `low`, builtin `abs`). Not for a call
+            # bound to an overload's parameters (its defaults filled in): the caller goes on with the original
+            # arguments
+            view.extends_sigs.add(fn_sig)
+            return view.extends(*args)
         sig_str = ", ".join([sig[0] for sig in fn_sig])
-        raise _NoOverload(f"Function not defined for signature: {fn.__name__}({sig_str})", attempt)
+        raise _NoOverload(f"Function not defined for signature: {name}({sig_str})", attempt)
 
     def bound_call(cand: tuple) -> tuple:
         """Dispatches a call bound to one overload's parameters: (False, None) when no overload takes it, so the
@@ -1737,14 +1856,7 @@ def dispatch(fn: callable) -> callable:
                 raise
             return False, None
 
-    # for debugging save in visible debugG
-    for nm in __resolved__:
-        debugG[nm] = __resolved__[nm].copy()
-
-    overload_set = _DispatchedCallable(fn_dispatch, fn)
-    if extended is not None:
-        _n_promote_extended_proc(extended, overload_set)
-    return overload_set
+    return fn_dispatch
 
 
 # --- UFCS (Nim method-call syntax) ---
@@ -1786,7 +1898,7 @@ def ufcs(*classes: type, aliases: tuple = (), python_api: bool = False) -> calla
                         and (cls, name) not in _n_ufcs_registry):
                     # an overload of a method the class defines (e.g. `==` of two values in the class, a
                     # later `==` with an integer): the method joins the overload set
-                    dispatch(own)
+                    _n_add_overload(fn._n_table, own)
                 elif (hasattr(cls, name) and (cls, name) not in _n_ufcs_registry and not operator_override
                       and not replaces_python):
                     raise TypeError(f"@ufcs: {cls.__name__}.{name} already exists; "

@@ -4,6 +4,7 @@ import ast
 import builtins
 import contextlib
 import ctypes
+import importlib
 import inspect
 import io
 import json
@@ -3540,14 +3541,27 @@ class TestNTypes(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             _n_fwd_proc(string("x"), nint(2))  # the forward declaration is no imported proc
 
-    def test_dispatch_set_survives_a_later_import_of_the_extended_proc(self):
+    def _run_sources(self, sources: dict) -> dict:
+        """Imports each source as a module of that name (with the core's star imports), in order, from files in a
+        temporary folder (generic procs and templates need their source); the caller removes them from
+        sys.modules."""
+        folder = tempfile.mkdtemp()
+        for module_name, body in sources.items():
+            with open(os.path.join(folder, module_name + ".py"), "w") as f:
+                f.write("from __future__ import annotations\nfrom nimic.ntypes import *\n" + textwrap.dedent(body))
+        sys.path.insert(0, folder)
+        try:
+            return {name: importlib.import_module(name) for name in sources}
+        finally:
+            sys.path.remove(folder)
+
+    def test_dispatch_set_extends_the_plain_proc_it_shadows(self):
         """`import nifpools, std/syncio`: nifpools' `writeFile(b: TokenBuf; path)` overloads syncio's plain
-        `writeFile(path, content)`, and Nim reaches it whatever the import order. A later star import of the plain
-        proc's module (or of a module re-exporting it) still reaches the set: the free and the method call. The
-        proc's own module and a qualified call from the extending module (nifpools' `nifcore.addIdent(dest, s)` in
-        its `addIdent(dest, s, info = NoLineInfo)`) reach the plain proc. An overload defined in a function doesn't
-        rebind the module's names; a Python library proc is never rebound."""
-        modules = {}
+        `writeFile(path, content)`. The set takes the calls no overload takes; a module importing the name from
+        the set's module reaches both, one importing it from the plain proc's module reaches the plain proc, which
+        stays bound in its module. A qualified call from the set's module (nifpools' `nifcore.addIdent(dest, s)`
+        in its `addIdent(dest, s, info = NoLineInfo)`) reaches the plain proc. An overload defined in a function
+        doesn't change the module's set; a Python library proc is never rebound."""
         python_basename = os.path.basename
 
         class _PxLocal(Object):
@@ -3563,12 +3577,10 @@ class TestNTypes(unittest.TestCase):
                 def tagTwice(s: string) -> string:
                     return tag(s) + tag(s)
                 """,
-            "_n_px_reexport": """
-                from _n_px_std import *
-                """,
             "_n_px_pools": """
-                from _n_px_std import *
+                from _n_px_std import tag, wf
                 from os.path import basename
+                import _n_px_std
                 class Buf(Object):
                     n: nint
                 @dispatch
@@ -3577,41 +3589,162 @@ class TestNTypes(unittest.TestCase):
                 @dispatch
                 def basename(b: Buf) -> string:
                     return string("buf")
-                import _n_px_std
                 @dispatch
                 def tag(s: string, info: nint = 0) -> string:
                     return _n_px_std.tag(s) + string(" info")
                 """,
             "_n_px_user": """
-                from _n_px_pools import *
-                from _n_px_std import *
-                from _n_px_reexport import *
+                from _n_px_pools import Buf, wf
                 def run(b: Buf) -> list:
-                    return [wf(b, string("p")), wf(b, string("q")), wf(string("r"), string("text"))]
+                    return [wf(b, string("p")), wf(string("r"), string("text"))]
+                """,
+            "_n_px_stduser": """
+                from _n_px_std import wf
+                def run() -> string:
+                    return wf(string("r"), string("text"))
                 """,
         }
         try:
-            for module_name, body in sources.items():
-                module = types.ModuleType(module_name)
-                sys.modules[module_name] = module
-                exec("from __future__ import annotations\nfrom nimic.ntypes import *\n" + textwrap.dedent(body),
-                     module.__dict__)
-                modules[module_name] = module
+            modules = self._run_sources(sources)
             std, pools, user = modules["_n_px_std"], modules["_n_px_pools"], modules["_n_px_user"]
-            self.assertEqual(user.run(pools.Buf()), ["pools p", "pools q", "std r"])
-            self.assertIs(std.wf, modules["_n_px_reexport"].wf)
-            self.assertIs(std.wf, user.wf)
+            self.assertEqual(user.run(pools.Buf()), ["pools p", "std r"])
+            self.assertIsInstance(std.wf, types.FunctionType)
+            self.assertIs(modules["_n_px_stduser"].wf, std.wf)
+            self.assertEqual(modules["_n_px_stduser"].run(), "std r")
             self.assertEqual(std.wf(string("s"), string("t")), "std s")
             self.assertEqual(pools.tag(string("a")), "std a info")
             self.assertEqual(std.tagTwice(string("b")), "std bstd b")
             self.assertIs(os.path.basename, python_basename)
             self.assertEqual(pools.basename(pools.Buf()), "buf")
+            self.assertEqual(pools.basename("/x/y"), "y")
 
             @dispatch
             def join(b: _PxLocal, c: _PxLocal) -> string:  # a local overload: Nim's local scope
                 return string("local")
             self.assertIsNot(std.join, join)
             self.assertEqual(std.join(string("a"), string("b")), "ab")
+            self.assertEqual(join(_PxLocal(), _PxLocal()), "local")
+        finally:
+            for name in sources:
+                sys.modules.pop(name, None)
+
+    def test_overload_sets_are_owned_by_their_scope(self):
+        """Nim overloads the procs a module sees: its own and its imports' (rule:overloads). A @dispatch set
+        belongs to its scope (a module; a function, Nim's local scope; a class's methods belong to its module, with
+        its procs): another module's set of the name with the same signature doesn't replace it (nifpools'
+        `info(c: Cursor)` and nifstreams'), generic procs specialize per set, a generic's call of an overloaded
+        name reaches the overloads where it is instantiated (Nim's open symbol: bitabs' `hash(v)` of a StringView),
+        a local set sees the module's overloads and leaves them unchanged, and a signature two sets of an
+        `overloads(...)` both define is an ambiguous call."""
+        sources = {
+            "_n_os_a": """
+                class Cur(Object):
+                    n: nint
+                @dispatch
+                def info(c: Cur) -> string:
+                    return string("a")
+                @dispatch
+                def info(c: nint) -> string:
+                    return string("a nint")
+                @dispatch
+                def show[T](x: T) -> string:
+                    return string("a")
+                @dispatch
+                def tag(x: nint) -> string:
+                    return string("a tag")
+                @dispatch
+                def tagged[T](x: T) -> string:
+                    return tag(x)
+                def local_info() -> list:
+                    @dispatch
+                    def info(c: string) -> string:
+                        return string("local")
+                    return [info(string("s")), info(Cur(n=1))]
+                """,
+            "_n_os_b": """
+                from _n_os_a import Cur, tagged
+                class Other(Object):
+                    n: nint
+                @dispatch
+                def tag(x: Other) -> string:
+                    return string("b tag")
+                def run_tagged() -> list:
+                    return [tagged(Other(n=1)), tagged(nint(1))]
+                @dispatch
+                def info(c: Cur) -> string:
+                    return string("b")
+                @dispatch
+                def show[T](x: T) -> string:
+                    return string("b")
+                """,
+            "_n_os_c": """
+                import _n_os_a, _n_os_b
+                info = overloads(_n_os_a.info, _n_os_b.info)
+                """,
+            "_n_os_m": """
+                @dispatch
+                def m(k: K, x: nint) -> string:
+                    return string("proc")
+                class K(Object):
+                    v: nint
+                    def m(self, x: string) -> string:
+                        return string("method string")
+                    def m(self, x: float64) -> string:
+                        return string("method float")
+                """,
+        }
+        try:
+            modules = self._run_sources(sources)
+            a, b, c, m = (modules[n] for n in sources)
+            cur = a.Cur(n=1)
+            self.assertEqual(a.info(cur), "a")
+            self.assertEqual(b.info(cur), "b")
+            with self.assertRaises(NotImplementedError):
+                b.info(nint(1))  # b imports Cur only: Nim doesn't see a's info
+            self.assertEqual(a.show(nint(1)), "a")
+            self.assertEqual(b.show(nint(1)), "b")
+            self.assertEqual(b.run_tagged(), ["b tag", "a tag"])  # an open symbol of a generic
+            self.assertEqual(c.info(nint(1)), "a nint")
+            with self.assertRaisesRegex(TypeError, r"ambiguous call: info\(Cur\).*_n_os_a.*_n_os_b"):
+                c.info(cur)
+            self.assertEqual(a.local_info(), ["local", "a"])
+            with self.assertRaises(NotImplementedError):
+                a.info(string("s"))
+            k = m.K(v=1)
+            self.assertEqual(k.m(string("s")), "method string")
+            self.assertEqual(k.m(float64(1.0)), "method float")
+            self.assertEqual(k.m(nint(1)), "proc")
+        finally:
+            for name in sources:
+                sys.modules.pop(name, None)
+
+    def test_template_expands_where_its_name_is_bound(self):
+        """Nim expands a template where the caller's scope binds its name (rule:template): a @template_expand
+        caller whose module binds the name to its own proc calls the proc, not another module's template of
+        that name."""
+        sources = {
+            "_n_tv_a": """
+                @template
+                def twice(x) -> untyped:
+                    x + x
+                @template_expand
+                def run() -> nint:
+                    r = twice(nint(2))
+                    return r
+                """,
+            "_n_tv_b": """
+                def twice(x: nint) -> nint:
+                    return x * 3
+                @template_expand
+                def run() -> nint:
+                    r = twice(nint(2))
+                    return r
+                """,
+        }
+        try:
+            modules = self._run_sources(sources)
+            self.assertEqual(modules["_n_tv_a"].run(), 4)
+            self.assertEqual(modules["_n_tv_b"].run(), 6)
         finally:
             for name in sources:
                 sys.modules.pop(name, None)
@@ -3911,6 +4044,11 @@ class TestNTypes(unittest.TestCase):
             "nx_qualified.py": header + "import nx_both\necho(nx_both.addThing(nx_both.Buf(), nint(1)))\n",
             "nx_corelocal.py": header + "from nimic.std.syncio import *\nfrom nx_plainlib import Pb\n"
                                         "def f(open):\n    return open(1)\necho('ran')\n",
+            # Nim `when not declared(addThing)`: a def where the import binds nothing, so no plaindef
+            "nx_whendeclared.py": header + "from nx_core import addThing\n"
+                                           "if comptime(not declared('addThing')):\n"
+                                           "    def addThing(b, v: nint) -> nint:\n        return nint(4)\n"
+                                           "def use(b):\n    return addThing(b, nint(1))\necho('ran')\n",
         }
         with tempfile.TemporaryDirectory() as tmp:
             for name, text in files.items():
@@ -3925,6 +4063,7 @@ class TestNTypes(unittest.TestCase):
 
             for name, out in (("nx_leak.py", "ran\n"), ("nx_except.py", "ran\n"),
                               ("nx_corelocal.py", "ran\n"), ("nx_plainunread.py", "ran\n"),
+                              ("nx_whendeclared.py", "ran\n"),
                               ("nx_shadowqualified.py", "ran\n"),
                               ("nx_dispatch.py", "ran\n"), ("nx_overloads.py", "12\n")):
                 passed = run(name)
