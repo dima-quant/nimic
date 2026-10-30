@@ -34,16 +34,16 @@ from sampling import random, Rng
 # class _Mass(float32):
 #     pass
 @distinct
-class _Velocity(float64):
-  def __isub__(a: mut @ _Velocity, b: _Velocity):
+class Velocity(float64):
+  def __isub__(a: mut @ Velocity, b: Velocity):
       """{.borrow.}"""
       return super().__isub__(b)
   @template
-  def __mul__(v: _Velocity, dt: ATime) -> _Distance:
+  def __mul__(v: Velocity, dt: ATime) -> _Distance:
       return _Distance(float64(v) * float64(dt))
   @template
-  def __rmul__(v: _Velocity, k: float64) -> _Velocity:
-      return _Velocity(float64(k) * float64(v))
+  def __rmul__(v: Velocity, k: float64) -> Velocity:
+      return Velocity(float64(k) * float64(v))
 @distinct
 class _Distance(float64):
     def __iadd__(a: mut @ _Distance, b: _Distance):
@@ -58,19 +58,19 @@ class ATime(float32):   # Avoid conflict with the Time unit introduced in book 2
     def __lt__(a: ATime, b: ATime) -> bool:
         return float32(a) < float32(b)
 @distinct
-class  _Acceleration(float64):
+class  Acceleration(float64):
     @template
-    def __mul__(accel: _Acceleration, dt: ATime) -> _Velocity:
-        return _Velocity(float64(accel) * float64(dt))
+    def __mul__(accel: Acceleration, dt: ATime) -> Velocity:
+        return Velocity(float64(accel) * float64(dt))
 
 with const:
   SmallRadius = 0.2
-  G = _Acceleration(9.80665) # Gravity
+  G = Acceleration(9.80665) # Gravity
 
 class _MovingSphere(Object):
     ## Import those are NOT the MovingSpheres from book2
     # Movement mutable
-    velocity: _Velocity
+    velocity: Velocity
     pos_y: _Distance
 
     # Movement constants
@@ -149,7 +149,7 @@ def random_moving_spheres(
 
                   result._movingSpheres.add(_MovingSphere(
                       coef_restitution=0.6,
-                      velocity=_Velocity(10.0 + (4 * random(rng, float32) - 2.0)),
+                      velocity=Velocity(10.0 + (4 * random(rng, float32) - 2.0)),
                       x=center.x,
                       pos_y=_Distance(center.y),
                       z=center.z,
@@ -163,7 +163,7 @@ def random_moving_spheres(
 
                   result._movingSpheres.add(_MovingSphere(
                       coef_restitution=0.5,
-                      velocity=_Velocity(10.0 + (4 * random(rng, float32) - 2.0)),
+                      velocity=Velocity(10.0 + (4 * random(rng, float32) - 2.0)),
                       x=center.x,
                       pos_y=_Distance(center.y),
                       z=center.z,
@@ -174,7 +174,7 @@ def random_moving_spheres(
                   # Glass
                   result._movingSpheres.add(_MovingSphere(
                       coef_restitution=0.5,
-                      velocity=_Velocity(10.0 + (4 * random(rng, float32) - 2.0)),
+                      velocity=Velocity(10.0 + (4 * random(rng, float32) - 2.0)),
                       x=center.x,
                       pos_y=_Distance(center.y),
                       z=center.z,

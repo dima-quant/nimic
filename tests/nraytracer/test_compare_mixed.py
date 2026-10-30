@@ -5,7 +5,7 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-from scenes_animated import ATime, _Velocity, _Acceleration, G
+from scenes_animated import ATime, Velocity, Acceleration, G
 
 def test_mixed_precision_mul():
     for i in range(20):

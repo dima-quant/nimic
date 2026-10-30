@@ -28,14 +28,10 @@ import sys
 import types
 
 from nimic import transpiler
-from nimic.imports import included_trees, nim_exports
+from nimic.imports import imports_of, included_trees, is_core, is_routine, nim_exports, visible
 from nimic.valuecheck import is_nimic_file
 
 _WIDTH = 120
-
-
-def _is_core(name: str) -> bool:
-    return name == "nimic" or name.startswith("nimic.")
 
 
 def _star_targets(tree, package: str) -> list:
@@ -44,7 +40,7 @@ def _star_targets(tree, package: str) -> list:
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.names[0].name == "*" and node.module != "__future__":
             name = importlib.util.resolve_name("." * node.level + (node.module or ""), package)
-            spec = None if _is_core(name) else importlib.util.find_spec(name)
+            spec = None if is_core(name) else importlib.util.find_spec(name)
             if spec is not None and is_nimic_file(spec.origin or ""):  # not the core, not Python's own (math)
                 found.append((node, name))
     return sorted(found, key=lambda t: t[0].lineno)
@@ -222,6 +218,7 @@ def _plan(module_name: str) -> tuple:
         every_star.append((line, name))
     stars = [(node, name) for node, name in stars if name in sys.modules]
     loaded = [m for m in list(sys.modules.values()) if isinstance(m, types.ModuleType)]
+    imports = imports_of(tree, module)
     chosen = {name: [] for _, name in stars}  # star-imported module -> names
     extra = {}  # defining module -> names (leaks)
     candidates = used | dispatched | {a for a in attributes
@@ -234,28 +231,26 @@ def _plan(module_name: str) -> tuple:
             continue
         line, provider = providers[-1]  # Python binds the last star import's
         value = getattr(sys.modules[provider], u)
-        if any(_is_core(m) and getattr(sys.modules[m], u, None) is value for _, m in providers):
+        if any(is_core(m) and getattr(sys.modules[m], u, None) is value for _, m in providers):
             continue  # the core star import binds it (a user module's star import may re-export it)
         if u in attributes and u not in used and u not in dispatched and (namespace.get(u) is not value
-                                                  or _is_core(getattr(value, "__module__", None) or "nimic")):
+                                                  or is_core(getattr(value, "__module__", None) or "nimic")):
             continue  # an attribute name only: method syntax reaches a nimic module's proc the module binds
-        routines = {id(getattr(sys.modules[m], u)): m for _, m in providers
-                    if callable(getattr(sys.modules[m], u)) and not isinstance(getattr(sys.modules[m], u), type)
-                    and nim_exports(sys.modules[m], u, getattr(sys.modules[m], u))}
+        routines = {m.__name__ for obj, m in visible(imports, u) if is_routine(obj)}  # Nim's view: name resolution, rules 8.1
         if len(routines) > 1:
-            report.append(f"  ! {u}: routines of {', '.join(sorted(set(routines.values())))} (Nim overloads them; "
+            report.append(f"  ! {u}: routines of {', '.join(sorted(routines))} (Nim overloads them; "
                           f"Python binds {getattr(value, '__module__', provider)}'s)")
         # every star import binding this object; Nim's import of which brings it (its own name, or re-exported)
-        visible = [m for _, m in providers
-                   if getattr(sys.modules[m], u) is value and nim_exports(sys.modules[m], u, value)]
-        if visible:
-            defining = [m for m in visible if getattr(value, "__module__", None) == m]
-            chosen[(defining or visible)[-1]].append(u)
+        exporters = [m for _, m in providers
+                     if getattr(sys.modules[m], u) is value and nim_exports(sys.modules[m], u, value)]
+        if exporters:
+            defining = [m for m in exporters if getattr(value, "__module__", None) == m]
+            chosen[(defining or exporters)[-1]].append(u)
             continue
         # a leak: Python binds a name Nim's imports don't bring (a star import of a star import)
         others = [m for _, m in providers if getattr(sys.modules[m], u) is not value
                   and nim_exports(sys.modules[m], u, getattr(sys.modules[m], u))]
-        core = [m for m in others if _is_core(m)]
+        core = [m for m in others if is_core(m)]
         if core:
             report.append(f"  ~ {u}: was {provider}'s leak, now {core[-1]}'s (the core star import; Nim's)")
         elif others and u in dispatched:

@@ -206,7 +206,10 @@ Memory & variables:
     import's); write x.f(...). A name the module defines a routine of (in its source, also later) is its own
     overload. Only what Nim's import brings counts (a nimic module's own procs and its export / exportFrom /
     exportExcept, from its source); a free call Python binds to a proc a star import leaks while Nim sees another
-    is rejected too. A nimic module is checked once its imports have run too (its main block doesn't count)
+    is rejected too. A nimic module is checked once its imports have run too (its main block doesn't count).
+    Name resolution (rules §8.1): import_problems() checks that each name's Python binding reaches every routine
+    Nim's imports make visible (hiddenoverload, ownset, plaindef, notexported, unbound, ambiguous, qualified), and
+    the import hygiene (starimport, doubleimport, importorder)
   rule:privatepragma -> a {.private.} docstring pragma keeps a proc (an operator, which can't take a _
     prefix) unexported; the pragma itself is not emitted
   rule:deref -> pointer dereference: ".contents" -> "[]"
@@ -249,6 +252,7 @@ The docstring for the original ``ast`` module is given below:
 """
 import argparse
 import ast
+import builtins
 import copy
 import importlib.util
 import inspect
@@ -262,7 +266,9 @@ from _ast import *
 from collections import deque
 from contextlib import contextmanager, nullcontext
 from enum import IntEnum, _simple_enum, auto
-from nimic.imports import is_overloads, module_level_routines, nim_exports, star_imports
+from nimic.imports import (exported, imports_of, included_trees, is_core, is_overloads, is_routine,
+                           module_level_routines, nim_exports, own_definitions, reaches, star_imports,
+                           visible)
 from nimic.valuecheck import is_nimic_file
 
 
@@ -3888,20 +3894,6 @@ def free_call_overlaps(tree, module) -> list:
     return sorted(found)
 
 
-def _is_core_module(name: str) -> bool:
-    """The nimic core (nimic.ntypes, nimic.std.*): its imports stay star imports."""
-    return name == "nimic" or name.startswith("nimic.")
-
-
-def _is_routine(value) -> bool:
-    return callable(value) and not isinstance(value, (type, types.ModuleType))
-
-
-def _includes(binding, proc) -> bool:
-    """Whether a call of `binding` can reach `proc` (an overload set's `_n_includes` protocol)."""
-    return binding is proc or bool(getattr(binding, "_n_includes", lambda _: False)(proc))
-
-
 _import_checks_off = []  # set while migrating_imports() runs
 
 
@@ -3929,134 +3921,146 @@ def _globals_read(tree) -> set:
     return names
 
 
-def import_problems(tree, module) -> list:
-    """rule:methodcall, rule:import: Python binds one object per name, Nim overloads every visible proc of a name.
-    Returns (line, message) for each import that makes Python's binding differ from Nim's:
-    - starimport: a star import of a nimic module that is not the core (Python's star import also brings what that
-      module imported; list the names: `from .nifcore import TokenBuf, Cursor`);
-    - doubleimport: one name imported from two modules as different objects (Python keeps the later);
-    - hiddenoverload: a name the module reads, imported from one module or bound by a core star import, while
-      another imported module makes a different routine of that name visible in Nim (nimic.imports.nim_exports):
-      Nim overloads them, Python calls the bound one;
-    - notexported: a name imported from a module that only imports it itself (Nim's import of that module doesn't
-      bring it);
-    - plaindef: a module-level plain `def f` while the module imports a routine `f` (Python replaces it, Nim
-      overloads it: write @dispatch);
-    - importorder: a core star import after a name import that it rebinds.
-    Only the imports that ran count; the module's own names and @dispatch overloads come from its source."""
-    if _import_checks_off:
-        return []
-    package = module.__package__ or ""
-    found, bindings, imported, core_stars = [], {}, [], []
-    for node in walk(tree):
-        if isinstance(node, ImportFrom) and node.module != "__future__":
-            base = importlib.util.resolve_name("." * node.level + (node.module or ""), package)
-            source = sys.modules.get(base)
-            if node.names[0].name == "*":
-                if source is None:
-                    continue
-                imported.append((source, None, frozenset()))
-                if _is_core_module(base):
-                    core_stars.append((node.lineno, source))
-                elif is_nimic_file(getattr(source, "__file__", None) or ""):
-                    found.append((node.lineno, f"starimport: `from {'.' * node.level}{node.module or ''} import *` "
-                                               f"also binds what {base} imported; list the names it uses"))
-                continue
-            for alias in node.names:
-                sub = sys.modules.get(f"{base}.{alias.name}")
-                if source is not None and hasattr(source, alias.name) and not isinstance(
-                        getattr(source, alias.name), types.ModuleType):
-                    if not nim_exports(source, alias.name, getattr(source, alias.name)):
-                        home = getattr(getattr(source, alias.name), "__module__", None) or "the module defining it"
-                        found.append((node.lineno, f"notexported: {base} only imports {alias.name}, Nim's import of it "
-                                                   f"doesn't bring it: import it from {home}"))
-                    imported.append((source, None, frozenset()))
-                    bindings.setdefault(alias.asname or alias.name, []).append(
-                        (node.lineno, source, getattr(source, alias.name), alias.name))
-                elif sub is not None:
-                    imported.append((sub, None, frozenset()))
-                    bindings.setdefault(alias.asname or alias.name, []).append((node.lineno, None, sub, alias.name))
-        elif isinstance(node, Import):
-            imported += [(sys.modules[a.name], None, frozenset()) for a in node.names if a.name in sys.modules]
-        elif (isinstance(node, Call) and isinstance(node.func, Name) and node.func.id in ("importFrom", "importExcept")
-              and node.args and all(isinstance(a, Constant) and isinstance(a.value, str) for a in node.args)):
-            source = sys.modules.get(importlib.util.resolve_name(node.args[0].value, package))
-            if source is None:
-                continue
-            names = frozenset(a.value for a in node.args[1:])
-            imported.append((source, names, frozenset()) if node.func.id == "importFrom"
-                            else (source, None, names))
-            for n in names if node.func.id == "importFrom" else ():
-                if n.isidentifier() and hasattr(source, n):
-                    bindings.setdefault(n, []).append((node.lineno, source, getattr(source, n), n))
-    own = module_level_routines(tree)
-    dispatched = {node.name for node in walk(tree) if isinstance(node, (FunctionDef, AsyncFunctionDef))
-                  and any(isinstance(f := d.func if isinstance(d, Call) else d, Name) and f.id in ("dispatch", "template")
-                          for d in node.decorator_list)}  # overload sets: they extend the imported proc
-    # names the module reads as values (free calls); a name it imports only for method syntax (`b.addIdent()`, which
-    # Object.__getattr__ resolves by the receiver) is no free call
-    read = {n.id for n in walk(tree) if isinstance(n, Name) and isinstance(n.ctx, Load)}
-    merged = {t.id for node in walk(tree) if is_overloads(node) for t in node.targets if isinstance(t, Name)}
-    for name, entries in bindings.items():
-        if name in merged:
-            continue  # `name = overloads(...)` binds the procs Nim overloads (rule:overloads)
-        objects = {id(obj): (line, src) for line, src, obj, _ in entries}
-        if len(objects) > 1:
-            line, _ = max(objects.values(), key=lambda e: e[0])
-            sources = ", ".join(sorted({src.__name__ for _, src, _, _ in entries if src is not None}))
-            found.append((line, f"doubleimport: {name} is imported from {sources} as different objects; Python keeps "
-                                f"the later: write `{name} = overloads(...)`, or call one of them qualified"))
-            continue
-        line, source, proc, attr = entries[-1]
-        if not _is_routine(proc) or name in dispatched:
-            continue  # the module's @dispatch extends the imported proc
-        if name in own:
-            found.append((line, f"plaindef: the module defines a plain {name} and imports {source.__name__}'s; Python "
-                                f"replaces it, Nim overloads them: write @dispatch"))
-            continue
-        if name not in read:
-            continue
-        others = sorted({m.__name__ for m, names, hidden in imported
-                         if m is not source and (names is None or attr in names) and attr not in hidden
-                         and _is_routine(q := getattr(m, attr, None)) and not _includes(proc, q)
-                         and nim_exports(m, attr, q)})
-        if others:
-            found.append((line, f"hiddenoverload: {name} is imported from {source.__name__}, and {', '.join(others)} "
-                                f"has a {name} too: Nim overloads them, Python calls {source.__name__}'s: write "
-                                f"`{name} = overloads(...)`, or a method call"))
-    # a name the core's star import binds, read by the module, while another import has a routine of that name too
-    first_read = {}
+def _first_global_reads(tree) -> dict:
+    """name -> the first line where the module's code reads the global `name` (a local of a proc doesn't count)."""
+    first, read = {}, _globals_read(tree)
 
-    def reads(node, local):
+    def scan(node, local):
         if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
             a = node.args
             local = local | {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs + [a.vararg, a.kwarg] if x}
             local |= {n.id for n in walk(node) if isinstance(n, Name) and isinstance(n.ctx, Store)}
-        elif isinstance(node, Name) and isinstance(node.ctx, Load) and node.id not in local:
-            first_read[node.id] = min(first_read.get(node.id, node.lineno), node.lineno)
+        elif isinstance(node, Name) and isinstance(node.ctx, Load) and node.id not in local and node.id in read:
+            first[node.id] = min(first.get(node.id, node.lineno), node.lineno)
         for child in iter_child_nodes(node):
-            reads(child, local)
+            scan(child, local)
 
-    reads(tree, frozenset())
-    for name in sorted(_globals_read(tree) - set(bindings) - merged - own - dispatched):
-        proc = vars(module).get(name)
-        cores = [core.__name__ for _, core in core_stars if getattr(core, name, None) is proc]
-        if not (_is_routine(proc) and cores):
+    scan(tree, frozenset())
+    return first
+
+
+def import_problems(tree, module) -> list:
+    """rule:import, rule:methodcall (nimic_translation_rules_nimony.md §8.1, name resolution): Python binds one object
+    per name, Nim overloads every proc of a name that the module's imports make visible. For each name the module
+    reads or binds, its Python binding (once the imports ran: binding) must reach everything Nim sees
+    (nimic.imports.visible); returns (line, message) for each name where it doesn't:
+    - hiddenoverload: the binding (a name import, a core star import) misses another visible routine of the name;
+    - ownset: the module's @dispatch/@template set extends a binding that misses a visible routine;
+    - plaindef: a plain `def` of a name another imported nimic module makes visible as a routine, read by the
+      module (Python replaces, Nim overloads; against a core proc not yet: proposal phase 3);
+    - notexported: the binding is an object Nim's imports don't bring (a module that only imports it);
+    - unbound: a name the module reads, which Nim's imports bring and Python binds to nothing;
+    - ambiguous: a type or value the binding holds, while another visible object has the name (Nim: ambiguous);
+    - qualified: `m.f` reaches one routine, while Nim's `m.f` overloads those `m` exports.
+    And the import hygiene: starimport (a star import of a nimic module that isn't the core: it also binds what that
+    module imported), doubleimport (one name imported from two modules), importorder (a core star import rebinding
+    a name imported before it). Only the imports that ran count; the module's own names come from its source."""
+    if _import_checks_off:
+        return []
+    imports = imports_of(tree, module)
+    path = getattr(module, "__file__", None) or ""
+    own, def_lines = {}, {}
+    for t in [tree, *(included_trees(tree, path) if path else [])]:
+        for name, kind in own_definitions(t).items():
+            own.setdefault(name, kind)
+    for node in walk(tree):
+        if isinstance(node, (FunctionDef, AsyncFunctionDef)):
+            def_lines.setdefault(node.name, node.lineno)
+    read = _first_global_reads(tree)
+    found, named = [], {}
+    for imp in imports:
+        if imp.star and not is_core(imp.module.__name__) and is_nimic_file(getattr(imp.module, "__file__", None) or ""):
+            found.append((imp.line, f"starimport: `from {imp.module.__name__} import *` also binds what "
+                                    f"{imp.module.__name__} imported; list the names it uses"))
+        for name, attr in imp.bound:
+            obj = imp.module if attr is None else getattr(imp.module, attr, None)
+            named.setdefault(name, []).append((imp.line, imp.module, obj, attr))
+    for name, entries in named.items():
+        if own.get(name) != "overloads" and len({id(e[2]) for e in entries}) > 1:
+            sources = ", ".join(sorted({m.__name__ for _, m, _, _ in entries}))
+            found.append((entries[-1][0], f"doubleimport: {name} is imported from {sources} as different objects; "
+                                          f"Python keeps the later: write `{name} = overloads(...)`, or call one of "
+                                          f"them qualified"))
+    for imp in imports:
+        if imp.star and is_core(imp.module.__name__):
+            rebound = sorted(n for n, entries in named.items() if entries[0][0] < imp.line
+                             and hasattr(imp.module, n) and getattr(imp.module, n) is not entries[-1][2])
+            if rebound:
+                found.append((imp.line, f"importorder: `from {imp.module.__name__} import *` rebinds "
+                                        f"{', '.join(rebound)}, imported before it: put the core's star imports first"))
+    core_stars = [imp.module for imp in imports if imp.star and is_core(imp.module.__name__)]
+    for name in sorted(set(read) | set(named) | {n for n, k in own.items() if k in ("plain", "set")}):
+        kind = own.get(name)
+        if kind in ("overloads", "value") or (name.startswith("__") and name.endswith("__")):
+            continue  # `name = overloads(...)` binds what Nim overloads; a class or value of the module is its own
+        seen = visible(imports, name)
+        binding = vars(module).get(name)
+        missing = sorted({m.__name__ for obj, m in seen if is_routine(obj) and not reaches(binding, obj)})
+        line = read.get(name) or (named[name][-1][0] if name in named else def_lines.get(name, 0))
+        if kind == "plain":
+            # the def replaces the binding; only the module's own reads can reach the wrong proc (its importers
+            # import the name and are checked themselves). Against a core proc (nifreader's open next to syncio's)
+            # until phase 3: a @dispatch would extend the core proc in every module (_NExtendedProc)
+            missing = sorted({m.__name__ for obj, m in seen if is_routine(obj) and not is_core(m.__name__)})
+            if missing and name in read:
+                found.append((def_lines.get(name, line), f"plaindef: the module defines a plain {name}, and "
+                                                         f"{', '.join(missing)} has a {name} too: Python replaces it, "
+                                                         f"Nim overloads them: write @dispatch"))
             continue
-        others = sorted({m.__name__ for m, names, hidden in imported
-                         if not _is_core_module(m.__name__) and (names is None or name in names) and name not in hidden
-                         and _is_routine(q := getattr(m, name, None)) and not _includes(proc, q)
-                         and nim_exports(m, name, q)})
-        if others:
-            found.append((first_read.get(name, 0), f"hiddenoverload: {name} is {cores[-1]}'s (its star import), and "
-                                                   f"{', '.join(others)} has a {name} too: Nim overloads them, Python "
-                                                   f"calls {cores[-1]}'s: write `{name} = overloads(...)`"))
-    for line, core in core_stars:
-        rebound = sorted(n for n, entries in bindings.items() if entries[0][0] < line and hasattr(core, n)
-                         and getattr(core, n) is not entries[-1][2])
-        if rebound:
-            found.append((line, f"importorder: `from {core.__name__} import *` rebinds {', '.join(rebound)}, imported "
-                                f"before it: put the core's star imports first"))
+        if kind == "set":
+            if missing:
+                found.append((def_lines.get(name, line), f"ownset: the module's @dispatch {name} extends "
+                                                         f"{getattr(binding, '__module__', 'no imported proc')}'s, and "
+                                                         f"{', '.join(missing)} has a {name} too: Python's set misses "
+                                                         f"it: bind `{name} = overloads(...)` before the set"))
+            continue
+        if binding is None:
+            providers = sorted({m.__name__ for _, m in seen if not is_core(m.__name__)})
+            if name in read and name not in named and providers and not hasattr(builtins, name):
+                found.append((line, f"unbound: {name} is read, Nim's import of {', '.join(providers)} brings it, "
+                                    f"Python binds nothing: import it"))
+            continue
+        source = named[name][-1][1] if name in named else None
+        if (source is not None and named[name][-1][3] is not None and not is_core(source.__name__)
+                and not any(obj is binding for obj, _ in seen)):  # (a module binding is no name of another)
+            attr = named[name][-1][3] or name
+            home = getattr(binding, "__module__", None) or "the module defining it"
+            found.append((named[name][-1][0], f"notexported: {source.__name__} only imports {attr}, Nim's import of "
+                                              f"it doesn't bring it: import it from {home}"))
+            continue
+        if name not in read:
+            continue  # imported only for method syntax (`b.addIdent()`, which Object.__getattr__ resolves)
+        if not [m for _, m in seen if not is_core(m.__name__)]:
+            continue  # duplicates within the core (std/os's fmRead next to syncio's) are nimic's to resolve
+        if is_routine(binding):
+            if missing:
+                cores = [c.__name__ for c in core_stars if getattr(c, name, None) is binding]
+                origin = (f"imported from {source.__name__}" if source is not None
+                          else f"{cores[-1]}'s (its star import)" if cores else f"{binding.__module__}'s")
+                calls = source.__name__ if source is not None else cores[-1] if cores else binding.__module__
+                found.append((line, f"hiddenoverload: {name} is {origin}, and {', '.join(missing)} has a {name} too: "
+                                    f"Nim overloads them, Python calls {calls}'s: write `{name} = overloads(...)`"))
+        else:
+            others = sorted({m.__name__ for obj, m in seen if obj is not binding and not is_routine(obj)})
+            if others:
+                found.append((line, f"ambiguous: {name} is a type or value of several imports ({', '.join(others)}, "
+                                    f"and Python's): Nim reports an ambiguity: import one of them qualified"))
+    qualified = set()
+    for node in walk(tree):
+        if not (isinstance(node, Attribute) and isinstance(node.ctx, Load) and isinstance(node.value, Name)):
+            continue
+        target = vars(module).get(node.value.id)
+        if not isinstance(target, types.ModuleType) or (target.__name__, node.attr) in qualified:
+            continue
+        qualified.add((target.__name__, node.attr))
+        reached = getattr(target, node.attr, None)
+        missing = sorted({getattr(o, "__module__", "?") for o in exported(target, node.attr)
+                          if is_routine(o) and not reaches(reached, o)})
+        if is_routine(reached) and missing:
+            found.append((node.lineno, f"qualified: {node.value.id}.{node.attr} is "
+                                       f"{getattr(reached, '__module__', '?')}'s, and {target.__name__} also exports "
+                                       f"{', '.join(missing)}'s {node.attr}: Nim overloads them: write "
+                                       f"`{node.attr} = overloads(...)` in {target.__name__}"))
     return sorted(found)
 
 

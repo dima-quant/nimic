@@ -414,7 +414,7 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | ``export lineinfos.FileId, lineinfos.`==` `` (symbols of another module, an operator) | `exportFrom(lineinfos, "FileId", "==")` | `rule:writeexport`: the names of the module, operators by their Nim names (in Python a class's operators are its methods and come with the class) |
 | Private names | `_` prefix (operators: `{.private.}`) | Identifiers defined **without** `*` in Nim (procs, templates, types, fields, module variables) are written `_name`; they transpile to `name` without `*` (`rule:localname`). Names starting with `__` or `_<digit>` keep a `local_` prefix. The transpiler rejects a module where dropping the `_` changes meaning (`private_name_collisions`): `_x` and `x` both defined in one scope (except overloaded procs, and `_base = f(base)` for a parameter `base` not used afterwards, i.e. Nim's `let base = f(base)`), or `x` used as a value after a private value `_x` (calls `x(...)` still find the proc in Nim). Rename then, e.g. `_pkgConf` |
 | `import std/tables` | `from nimic.std.tables import *` | Module paths are translated: `nimic.x.y` → `x/y`, with module renaming (`rule:modulepath`) |
-| `import ../options`, `import nifcore` (another nimic module) | `from ..options import ConfigRef, TOption`, `from .nifcore import Cursor, TokenBuf, beginRead` | `rule:import`: a nimic module is imported **by name**, its names listed (`nnimony/tools/explicit_imports.py` writes the list); only the nimic core (`nimic.ntypes`, `nimic.std.*`) is star-imported. Python's star import would also bind what the module imported itself, and the later star import would rebind a name (proposal `feature_module_scoped_dispatch.md`). A Python `from m import ...` is a full Nim `import m`; relative imports keep their level (one `../` per extra dot). A name the module only imports itself (not exported) is imported from the module defining it. The import checks (at import and before transpiling) reject a star import of a nimic module (`starimport`), a name imported from two modules (`doubleimport`), a name imported from a module that only imports it (`notexported`), a plain `def` of an imported name (`plaindef`: write `@dispatch`), a core star import after a name import it rebinds (`importorder`), and a name the module calls free (imported by name, or bound by a core star import) while another imported module makes a different routine of it visible (`hiddenoverload`: Nim overloads them, write `f = overloads(a.f, b.f)`) |
+| `import ../options`, `import nifcore` (another nimic module) | `from ..options import ConfigRef, TOption`, `from .nifcore import Cursor, TokenBuf, beginRead` | `rule:import`: a nimic module is imported **by name**, its names listed (`nnimony/tools/explicit_imports.py` writes the list); only the nimic core (`nimic.ntypes`, `nimic.std.*`) is star-imported. Python's star import would also bind what the module imported itself, and the later star import would rebind a name (proposal `feature_module_scoped_dispatch.md`). A Python `from m import ...` is a full Nim `import m`; relative imports keep their level (one `../` per extra dot). A name the module only imports itself (not exported) is imported from the module defining it. The import checks (§8.1, at import and before transpiling) reject a star import of a nimic module (`starimport`), a name imported from two modules (`doubleimport`), a name imported from a module that only imports it (`notexported`), a plain `def` of an imported name (`plaindef`: write `@dispatch`), a core star import after a name import it rebinds (`importorder`), and a name the module calls free (imported by name, or bound by a core star import) while another imported module makes a different routine of it visible (`hiddenoverload`: Nim overloads them, write `f = overloads(a.f, b.f)`) |
 | `msgs.message(...)`, `nimlexbase.EndOfFile` (qualified by module) | `from . import msgs`, then `msgs.message(...)` | `from . import m` binds the module name in Python and is `import m` (once at module level). A method of another module's type is called as a method (`nimlexbase.handleCR(L, pos)` is `L.handleCR(pos)`) |
 | `import nifreader as rd`, then `rd.next(r, tok)`, `rd.ExpandedToken` | `from . import nifreader as rd`, then `rd.next(r, tok)` | `rule:import`: `from . import m as x` (also `from ..pkg import m as x`) is `import m as x` |
 | `import ".." / models / [leng_tags, tags]` then `export leng_tags` (modules of another directory used by name) | `from ..models import leng_tags, tags`, `export(leng_tags)` | A relative `from ..pkg import m` binds module names: `import ../pkg/m` (`rule:import`; unparse()'s `package` tells it from a name import `from .nifcore import TokenBuf`) |
@@ -426,6 +426,46 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | `import nifcore, nifbuilder` then `addIdent(b, s)` with `b` of either type (one name from two modules, called free) | `from . import nifcore, nifbuilder`<br>`addIdent = overloads(nifcore.addIdent, nifbuilder.addIdent)` | `rule:overloads`: a set over both procs, resolved by the argument types; the assignment emits nothing (Nim overloads the procs of its imports). The procs share their name; a plain proc needs all its parameters annotated |
 | `import ropes except `%`` | `importExcept(".ropes", "%")` | `rule:importexcept`: the module's public names except the given ones (operators have no Python name) |
 
+
+### 8.1 Name resolution (`rule:import`)
+
+Nim resolves a name among the symbols visible in the module; Python binds one object per name. nimic code must make
+the two agree. The rules below are what `nimic/imports.py` implements and what the import checks
+(`transpiler.import_problems`, at import and before transpiling) enforce. `nnimony/tools/explicit_imports.py` uses
+the same definitions.
+
+**Definitions**, for a name `n` that module `M` reads (a free call, a value, an annotation):
+
+| Term | Definition |
+| --- | --- |
+| **own(M, n)** | `M` defines `n` at its top level, also in `when` branches and in the files it includes: a plain `def`, an overload set (`@dispatch`, `@template`), a class, a variable or constant. `n = overloads(...)` defines nothing: it binds imported procs |
+| **imports of M** | Every Python import of a nimic module is a full Nim import of it: `from .nifcore import TokenBuf`, `from . import nifcore`, `import nifcore` (and the core's star imports). `importFrom(".m", "a")` limits it to `a`, `importExcept(".m", "a")` hides `a`. The imports of `M`'s main block count only when `M` is the main program |
+| **exports(I, n)** | What Nim's import of module `I` brings as `n`: `I`'s own non-private `n` (a `_name` is never exported), and, recursively, what `I` re-exports with `export(m)`, `exportFrom(m, "n")`, `exportExcept(m, ...)` minus the hidden names. A module that isn't nimic (the core, Python's) exports what it binds |
+| **V(M, n)**, Nim's view | own(M, n) plus exports(I, n) for every import `I` of `M`, one entry per distinct object |
+| **B(M, n)**, Python's binding | `M`'s global `n` once its imports have run: the last name import or core star import that binds it. An own `@dispatch`/`@template` set then extends B; an own plain `def` replaces it |
+| **B reaches X** | `B is X`, or `B` is an overload set that includes `X` (its overloads, the imported proc it extends; in phase 1 all `@dispatch` sets of a name are one set) |
+
+**The rule:** for every name `M` reads, B(M, n) must reach every routine in V(M, n), and a type or value in V(M, n)
+must be B(M, n) itself. Each way to break it has its own report:
+
+| Report | When | Fix |
+| --- | --- | --- |
+| `hiddenoverload` | B (a name import, a core star import) doesn't reach another visible routine of `n` | `n = overloads(a.n, b.n)` (Nim overloads them; the line emits nothing) |
+| `ownset` | an own `@dispatch`/`@template` `n` extends a B that misses a visible routine | bind `n = overloads(...)` before the set |
+| `plaindef` | an own plain `def n`, called by `M`, while an imported nimic module makes a routine `n` visible (Python replaces, Nim overloads). Against a core proc (nifreader's `open` next to syncio's) not yet: phase 3 of `feature_module_scoped_dispatch.md` | `@dispatch` |
+| `notexported` | B is an object no import of `M` exports (`from .m import x` where `m` only imports `x`) | import it from the module defining it |
+| `unbound` | `M` reads `n`, Nim's imports bring it, Python binds nothing | import it |
+| `ambiguous` | a type or value `n` of several imports (Nim reports an ambiguity) | import one of them qualified |
+| `qualified` | `m.f` reaches one routine while Nim's `m.f` overloads those `m` exports | `f = overloads(...)` in `m` |
+
+Import hygiene, checked too: `starimport` (a star import of a nimic module that isn't the core: it also binds what
+that module imported), `doubleimport` (one name imported from two modules), `importorder` (a core star import
+rebinding a name imported before it).
+
+**Not checked:** names only used in method syntax (`b.addIdent()`, resolved by `Object.__getattr__` until phase 2
+of the proposal makes them free calls); duplicates within the core itself (std/os's `fmRead` next to syncio's);
+dynamic access (`getattr(m, "f")`, `globals()`), which Nim has no equivalent of. The checks can't see argument types:
+they report a visible overload even when every call takes the bound one's types.
 
 ## 9. Callable type (`rule:calltype`)
 | Nim | Python (Nimic) | Notes |

@@ -27,6 +27,7 @@ from nimic.system.ansi_c import c_malloc, c_free
 from nimic import ntypesystem as _ntypesystem
 from nimic import valuecheck as _valuecheck
 from nimic import transpiler as _transpiler
+from nimic import imports as _n_imports
 from nimic.ntypesystem import char, cstring, seq, string, NIntEnum, _n_dollar, ufcs, _n_default_value, RangeDefect
 
 class _SomeCastClass:
@@ -648,12 +649,17 @@ class pragma:
 
 
 def importExcept(module: str, *names: str) -> None:
-    """Nim: import m except a, b — binds the public names of `module` (relative to the calling
-    module's package for a leading dot) in the caller's namespace, except `names`; operator names
-    such as "%" have no Python binding. Transpiles to `import m except a, b` (rule:importexcept)."""
+    """Nim: import m except a, b (relative to the calling module's package for a leading dot). Transpiles to
+    `import m except a, b` (rule:importexcept); operator names such as "%" have no Python binding. A module of the
+    nimic core (nimic.std.strutils) is imported like the core's star imports: its public names except `names` are
+    bound. Another nimic module binds only its name, for qualified use (`m.b`): the names the caller uses are
+    imported by name (`from .ropes import rope`), as for every nimic module (rules §8)."""
     frame = sys._getframe(1)
     namespace = frame.f_globals
     mod = _importlib.import_module(module, namespace.get("__package__") or None)
+    if not mod.__name__.startswith("nimic."):
+        namespace[module.rsplit(".", 1)[-1]] = mod
+        return
     public = getattr(mod, "__all__", None) or [n for n in vars(mod) if not n.startswith("_")]
     excluded = set(names)
     for n in public:
@@ -1289,18 +1295,6 @@ def include(*names: str) -> None:
 # main program) are watched from their running frames (_n_install_value_checks).
 
 
-def _n_is_main_block(stmt: _ast.stmt) -> bool:
-    """Whether `stmt` is `if comptime(__name__ == "__main__"):` or `if __name__ == "__main__":` (rule:main)."""
-    if not isinstance(stmt, _ast.If):
-        return False
-    test = stmt.test
-    if isinstance(test, _ast.Call) and isinstance(test.func, _ast.Name) and test.func.id == "comptime" and test.args:
-        test = test.args[0]
-    return (isinstance(test, _ast.Compare) and isinstance(test.left, _ast.Name) and test.left.id == "__name__"
-            and len(test.comparators) == 1 and isinstance(test.comparators[0], _ast.Constant)
-            and test.comparators[0].value == "__main__")
-
-
 def _n_imports_end(tree: _ast.Module) -> int:
     """The first line after a module's imports: after its last top-level statement that imports (`import`,
     `from ... import`, `include(...)`, `importFrom(...)`, `importExcept(...)`, also in a `when` branch). The main
@@ -1309,7 +1303,7 @@ def _n_imports_end(tree: _ast.Module) -> int:
     importers = ("include", "importFrom", "importExcept")
     end = 0
     for stmt in tree.body:
-        if isinstance(stmt, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)) or _n_is_main_block(stmt):
+        if isinstance(stmt, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)) or _n_imports.is_main_block(stmt):
             continue
         if any(isinstance(n, (_ast.Import, _ast.ImportFrom))
                or isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name) and n.func.id in importers

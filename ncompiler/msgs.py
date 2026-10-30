@@ -25,7 +25,7 @@ from .lineinfos import (
     commandLineIdx, createDocLink, ERecoverableError, errMax, errMin, ESuggestDone, fatalMsgs, FileIndex, FileInfoKind,
     hintMax, hintMin, InvalidFileIdx, MsgKindToStr, raiseRecoverableError, Severity, TErrorOutput, TFileInfo, TLineInfo,
     TMsgKind, unknownLineInfo, warnMax, warnMin)
-from .pathutils import AbsoluteDir, isEmpty, RelativeFile, relativeTo
+from .pathutils import AbsoluteDir, AbsoluteFile, isEmpty, RelativeFile, relativeTo
 # TODO: requires nimic feature macros (G17): import std/macros
 
 importExcept(".ropes", "%")

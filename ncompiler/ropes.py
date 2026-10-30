@@ -192,7 +192,7 @@ def equalsFile(r: Rope, filename: AbsoluteFile) -> bool:
 
 if comptime(__name__ == "__main__"):
     from nimic.std.os import removeFile, fileExists
-    from nimic.std.strutils import *
+    importFrom("nimic.std.strutils", "repeat", "%")  # not addf: the tests call ropes' own
 
     # 1. newRopeAppender, freeze, resetRopeCache
     with var:

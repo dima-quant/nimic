@@ -5,10 +5,10 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-from scenes_animated import ATime, _Velocity, _Acceleration, G
+from scenes_animated import ATime, Velocity, Acceleration, G
 
 def test_velocity_borrow_sub():
-    with var: v = _Velocity(5.0)
+    with var: v = Velocity(5.0)
     with let: dt = ATime(0.005)
     for i in range(200):
         v -= G * dt
