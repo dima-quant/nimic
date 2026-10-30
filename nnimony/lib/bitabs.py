@@ -136,7 +136,7 @@ def ensureIndexed[Id, T](t: mut @ BiTable[Id, T]):
     # the sake of the rare one — so a caller that looks up BY VALUE in a table
     # that might have been filled with `addOrdered` calls this first. Getting it
     # wrong is an assertion in `getKeyId`, not a wrong answer.
-    if not t.isIndexed(): _rebuildIndex(t)
+    if not isIndexed(t): _rebuildIndex(t)
 
 
 @dispatch
@@ -161,7 +161,7 @@ def addOrdered[Id, T](t: mut @ BiTable[Id, T], v: sink @ T) -> Id:
 
 @dispatch
 def getKeyId[Id, T](t: BiTable[Id, T], v: T) -> Id:
-    assert t.isIndexed(), "getKeyId on a table filled by addOrdered: call ensureIndexed first"
+    assert isIndexed(t), "getKeyId on a table filled by addOrdered: call ensureIndexed first"
     with let:
         origH = hash(v)
     with var:
@@ -300,7 +300,7 @@ class BiTableFloat[Id](BiTable[Id, uint64]):
 @dispatch
 def getOrIncl[Id](t: mut @ BiTableFloat[Id], v: float64) -> Id:
     """{.inline.}"""
-    return BiTable[Id, uint64](t).getOrIncl(cast[uint64](v))
+    return getOrIncl(BiTable[Id, uint64](t), cast[uint64](v))
 
 
 @ufcs(BiTableFloat)
@@ -327,10 +327,10 @@ if comptime(__name__ == "__main__"):
     assert getKeyId(t, string("none")) == u32(0)
 
     for i in range(100_000):
-        _ = t.getOrIncl(str(i) + "___" + str(i))
+        _ = getOrIncl(t, str(i) + "___" + str(i))
 
     for i in range(100_000):
-        assert _idToIdx(t.getOrIncl(str(i) + "___" + str(i))) == i + 4
+        assert _idToIdx(getOrIncl(t, str(i) + "___" + str(i))) == i + 4
     assert t._vals.len == 100004
 
     assert t._vals[0] == string("hello")
@@ -339,9 +339,9 @@ if comptime(__name__ == "__main__"):
     with var:
         tf = initBiTable[uint32, float64]()
 
-    _ = tf.getOrIncl(0.4)
-    _ = tf.getOrIncl(16.4)
-    _ = tf.getOrIncl(32.4)
+    _ = getOrIncl(tf, 0.4)
+    _ = getOrIncl(tf, 16.4)
+    _ = getOrIncl(tf, 32.4)
     assert getKeyId(tf, 32.4) == u32(3)
 
     # `addOrdered` must be indistinguishable from having interned all along, and
@@ -353,16 +353,16 @@ if comptime(__name__ == "__main__"):
         with var:
             a = initBiTable[uint32, string]()
         for i in range(5_000):
-            assert _idToIdx(a.addOrdered("s" + str(i))) == i     # same ids getOrIncl gives
+            assert _idToIdx(addOrdered(a, "s" + str(i))) == i     # same ids getOrIncl gives
         assert a._vals.len == 5_000
         assert a[uint32(1)] == string("s0")                              # id -> value, no index yet
         assert a[uint32(5_000)] == string("s4999")
 
         # `getKeyId` needs the index, and says so rather than answering wrongly
-        assert not a.isIndexed()
-        a.ensureIndexed()
-        assert a.isIndexed()
-        a.ensureIndexed()                                                # idempotent
+        assert not isIndexed(a)
+        ensureIndexed(a)
+        assert isIndexed(a)
+        ensureIndexed(a)                                                # idempotent
         assert getKeyId(a, string("s0")) == u32(1)
         assert getKeyId(a, string("s4999")) == u32(5_000)
         assert getKeyId(a, string("nope")) == u32(0)
@@ -371,19 +371,19 @@ if comptime(__name__ == "__main__"):
 
         # and interning must now REUSE those ids rather than append duplicates
         for i in range(5_000):
-            assert _idToIdx(a.getOrIncl("s" + str(i))) == i
+            assert _idToIdx(getOrIncl(a, "s" + str(i))) == i
         assert a._vals.len == 5_000
-        assert _idToIdx(a.getOrIncl(string("fresh"))) == 5_000
+        assert _idToIdx(getOrIncl(a, string("fresh"))) == 5_000
         assert a._vals.len == 5_001
 
     with block("orderedThenIncl"):
         # `getOrIncl` builds the index itself, so it needs no `ensureIndexed`
         with var:
             b = initBiTable[uint32, string]()
-        for i in range(100): _ = b.addOrdered("t" + str(i))
-        assert not b.isIndexed()
-        assert _idToIdx(b.getOrIncl(string("t42"))) == 42
-        assert b.isIndexed()
+        for i in range(100): _ = addOrdered(b, "t" + str(i))
+        assert not isIndexed(b)
+        assert _idToIdx(getOrIncl(b, string("t42"))) == 42
+        assert isIndexed(b)
         assert b._vals.len == 100
         assert getKeyId(b, string("t99")) == u32(100)
 
@@ -392,10 +392,10 @@ if comptime(__name__ == "__main__"):
         # costs it nothing and `getKeyId` never trips its assertion
         with var:
             d = initBiTable[uint32, string]()
-        assert d.isIndexed()                                             # empty counts as indexed
-        _ = d.getOrIncl(string("only"))
-        assert d.isIndexed()
-        d.ensureIndexed()
+        assert isIndexed(d)                                             # empty counts as indexed
+        _ = getOrIncl(d, string("only"))
+        assert isIndexed(d)
+        ensureIndexed(d)
         assert getKeyId(d, string("only")) == u32(1)
 
     echo("success")
@@ -405,11 +405,11 @@ if comptime(__name__ == "__main__"):
         tab = initBiTable[uint32, string]()
     for i in range(40):
         with let:
-            id = tab.getOrIncl("item_" + str(i))
+            id = getOrIncl(tab, "item_" + str(i))
         doAssert(id == uint32(i + 1))
     doAssert(len(tab) == 40)
-    doAssert(tab.getOrIncl(string("item_0")) == u32(1))
-    doAssert(tab.getOrIncl(string("item_25")) == u32(26))
+    doAssert(getOrIncl(tab, string("item_0")) == u32(1))
+    doAssert(getOrIncl(tab, string("item_25")) == u32(26))
     doAssert(not hasId(tab, u32(0)))
     doAssert(hasId(tab, u32(1)))
     doAssert(hasId(tab, u32(40)))

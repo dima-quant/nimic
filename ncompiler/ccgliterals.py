@@ -55,23 +55,23 @@ def _genStringLiteralDataOnlyV1(m: BModule, s: string, result: mut@Rope) -> None
     result.add(tmp)
     with var:
         res = newBuilder(string(""))
-    with res._addVarWithTypeAndInitializer(_VarKind.AlwaysConst, name=tmp):
-        with res._addSimpleStruct(m, name=string(""), baseType=string("")):
-            res._addField(name=string("Sup"), typ=string("TGenericSeq"))
-            res._addArrayField(name=string("data"), elementType=NimChar, len=s.len + 1)
+    with _addVarWithTypeAndInitializer(res, _VarKind.AlwaysConst, name=tmp):
+        with _addSimpleStruct(res, m, name=string(""), baseType=string("")):
+            _addField(res, name=string("Sup"), typ=string("TGenericSeq"))
+            _addArrayField(res, name=string("data"), elementType=NimChar, len=s.len + 1)
         with do:
             with var:
                 strInit = _StructInitializer()
-            with res._addStructInitializer(strInit, kind=_StructInitializerKind.siOrderedStruct):
-                with res._addField(strInit, name=string("Sup")):
+            with _addStructInitializer(res, strInit, kind=_StructInitializerKind.siOrderedStruct):
+                with _addField(res, strInit, name=string("Sup")):
                     with var:
                         seqInit = _StructInitializer()
-                    with res._addStructInitializer(seqInit, kind=_StructInitializerKind.siOrderedStruct):
-                        with res._addField(seqInit, name=string("len")):
+                    with _addStructInitializer(res, seqInit, kind=_StructInitializerKind.siOrderedStruct):
+                        with _addField(res, seqInit, name=string("len")):
                             res.addIntValue(s.len)
-                        with res._addField(seqInit, name=string("reserved")):
+                        with _addField(res, seqInit, name=string("reserved")):
                             res.add(_cCast(NimInt, _cOp(_TypedBinaryOp.BitOr, NimUint, _cCast(NimUint, cIntValue(s.len)), NimStrlitFlag)))
-                with res._addField(strInit, name=string("data")):
+                with _addField(res, strInit, name=string("data")):
                     res.add(makeCString(s))
     m.s[TCFileSection.cfsStrData].add(res.extract())
 
@@ -97,20 +97,20 @@ def _genStringLiteralV1(m: BModule, n: PNode, result: mut@Builder) -> None:
 def _genStringLiteralDataOnlyV2(m: BModule, s: string, result: Rope, isConst: bool) -> None:
     with var:
         res = newBuilder(string(""))
-    with res._addVarWithTypeAndInitializer(
+    with _addVarWithTypeAndInitializer(res,
         _VarKind.AlwaysConst if isConst else _VarKind.Global,
         name=result
     ):
-        with res._addSimpleStruct(m, name=string(""), baseType=string("")):
-            res._addField(name=string("cap"), typ=NimInt)
-            res._addArrayField(name=string("data"), elementType=NimChar, len=s.len + 1)
+        with _addSimpleStruct(res, m, name=string(""), baseType=string("")):
+            _addField(res, name=string("cap"), typ=NimInt)
+            _addArrayField(res, name=string("data"), elementType=NimChar, len=s.len + 1)
         with do:
             with var:
                 structInit = _StructInitializer()
-            with res._addStructInitializer(structInit, kind=_StructInitializerKind.siOrderedStruct):
-                with res._addField(structInit, name=string("cap")):
+            with _addStructInitializer(res, structInit, kind=_StructInitializerKind.siOrderedStruct):
+                with _addField(res, structInit, name=string("cap")):
                     res.add(_cOp(_TypedBinaryOp.BitOr, NimInt, cIntValue(s.len), NimStrlitFlag))
-                with res._addField(structInit, name=string("data")):
+                with _addField(res, structInit, name=string("data")):
                     res.add(makeCString(s))
     m.s[TCFileSection.cfsStrData].add(res.extract())
 
@@ -133,17 +133,17 @@ def _genStringLiteralV2(m: BModule, n: PNode, isConst: bool, result: mut@Builder
     result.add(tmp)
     with var:
         res = newBuilder(string(""))
-    with res._addVarWithInitializer(
+    with _addVarWithInitializer(res,
         _VarKind.AlwaysConst if isConst else _VarKind.Global,
         name=tmp,
         typ=string("NimStringV2")
     ):
         with var:
             strInit = _StructInitializer()
-        with res._addStructInitializer(strInit, kind=_StructInitializerKind.siOrderedStruct):
-            with res._addField(strInit, name=string("len")):
+        with _addStructInitializer(res, strInit, kind=_StructInitializerKind.siOrderedStruct):
+            with _addField(res, strInit, name=string("len")):
                 res.addIntValue(n.strVal.len)
-            with res._addField(strInit, name=string("p")):
+            with _addField(res, strInit, name=string("p")):
                 res.add(_cCast(_ptrType(string("NimStrPayload")), _cAddr(litName)))
     m.s[TCFileSection.cfsStrData].add(res.extract())
 
@@ -163,10 +163,10 @@ def _genStringLiteralV2Const(m: BModule, n: PNode, isConst: bool, result: mut@Bu
         pureLit = m.tmpBase + rope(id)
     with var:
         strInit = _StructInitializer()
-    with result._addStructInitializer(strInit, kind=_StructInitializerKind.siOrderedStruct):
-        with result._addField(strInit, name=string("len")):
+    with _addStructInitializer(result, strInit, kind=_StructInitializerKind.siOrderedStruct):
+        with _addField(result, strInit, name=string("len")):
             result.addIntValue(n.strVal.len)
-        with result._addField(strInit, name=string("p")):
+        with _addField(result, strInit, name=string("p")):
             result.add(_cCast(_ptrType(string("NimStrPayload")), _cAddr(pureLit)))
 
 
@@ -260,7 +260,7 @@ def _genStringLiteralV3Const(m: BModule, n: PNode, isConst: bool, result: mut@Bu
         payloadSize = AlwaysAvail + m.g.config.target.ptrSize - 1
     with var:
         si = _StructInitializer()
-    with result._addStructInitializer(si, kind=_StructInitializerKind.siOrderedStruct):
+    with _addStructInitializer(result, si, kind=_StructInitializerKind.siOrderedStruct):
         if s.len <= AlwaysAvail:
             with result._addField(si, name=string("bytes")):
                 result.add(_ssoBytesLit(m, s, s.len))
@@ -278,32 +278,32 @@ def _genStringLiteralV3Const(m: BModule, n: PNode, isConst: bool, result: mut@Bu
                 dataName = getTempName(m)
             with var:
                 res = newBuilder(string(""))
-            with res._addVarWithTypeAndInitializer(
+            with _addVarWithTypeAndInitializer(res,
                 _VarKind.AlwaysConst if isConst else _VarKind.Global,
                 name=dataName
             ):
-                with res._addSimpleStruct(m, name=string(""), baseType=string("")):
-                    res._addField(name=string("rc"), typ=NimInt)
-                    res._addField(name=string("fullLen"), typ=NimInt)
-                    res._addField(name=string("capImpl"), typ=NimInt)
-                    res._addArrayField(name=string("data"), elementType=NimChar, len=s.len + 1)
+                with _addSimpleStruct(res, m, name=string(""), baseType=string("")):
+                    _addField(res, name=string("rc"), typ=NimInt)
+                    _addField(res, name=string("fullLen"), typ=NimInt)
+                    _addField(res, name=string("capImpl"), typ=NimInt)
+                    _addArrayField(res, name=string("data"), elementType=NimChar, len=s.len + 1)
                 with do:
                     with var:
                         di = _StructInitializer()
-                    with res._addStructInitializer(di, kind=_StructInitializerKind.siOrderedStruct):
-                        with res._addField(di, name=string("fullLen")):
+                    with _addStructInitializer(res, di, kind=_StructInitializerKind.siOrderedStruct):
+                        with _addField(res, di, name=string("fullLen")):
                             res.addIntValue(s.len)
-                        with res._addField(di, name=string("rc")):
+                        with _addField(res, di, name=string("rc")):
                             res.addIntValue(1)
-                        with res._addField(di, name=string("capImpl")):
+                        with _addField(res, di, name=string("capImpl")):
                             res.addIntValue(0)  # static, never freed
-                        with res._addField(di, name=string("data")):
+                        with _addField(res, di, name=string("data")):
                             res.add(makeCString(s))
             m.s[TCFileSection.cfsStrData].add(res.extract())
             # slen = StaticSlen (254): marks this as a static (never-freed) long string.
-            with result._addField(si, name=string("bytes")):
+            with _addField(result, si, name=string("bytes")):
                 result.add(_ssoBytesLit(m, s, 254))
-            with result._addField(si, name=string("more")):
+            with _addField(result, si, name=string("more")):
                 result.add(_cCast(_ptrType(string("LongString")), _cAddr(dataName)))
 
 
@@ -329,29 +329,29 @@ def _genStringLiteralV3(m: BModule, n: PNode, isConst: bool, result: mut@Builder
         res = newBuilder(string(""))
     if s.len <= AlwaysAvail:
         # Short: bytes holds slen + all chars (zero-padded), more = NULL.
-        with res._addVarWithInitializer(
+        with _addVarWithInitializer(res,
             _VarKind.AlwaysConst if isConst else _VarKind.Global,
             name=tmp, typ=string("SmallString")
         ):
             with var:
                 si = _StructInitializer()
-            with res._addStructInitializer(si, kind=_StructInitializerKind.siOrderedStruct):
-                with res._addField(si, name=string("bytes")):
+            with _addStructInitializer(res, si, kind=_StructInitializerKind.siOrderedStruct):
+                with _addField(res, si, name=string("bytes")):
                     res.add(_ssoBytesLit(m, s, s.len))
-                with res._addField(si, name=string("more")):
+                with _addField(res, si, name=string("more")):
                     res.add(NimNil)
     elif s.len <= payloadSize:
         # Medium: bytes holds slen + chars 0-6; more holds chars 7..PayloadSize-1 as raw bits.
-        with res._addVarWithInitializer(
+        with _addVarWithInitializer(res,
             _VarKind.AlwaysConst if isConst else _VarKind.Global,
             name=tmp, typ=string("SmallString")
         ):
             with var:
                 si = _StructInitializer()
-            with res._addStructInitializer(si, kind=_StructInitializerKind.siOrderedStruct):
-                with res._addField(si, name=string("bytes")):
+            with _addStructInitializer(res, si, kind=_StructInitializerKind.siOrderedStruct):
+                with _addField(res, si, name=string("bytes")):
                     res.add(_ssoBytesLit(m, s, s.len))
-                with res._addField(si, name=string("more")):
+                with _addField(res, si, name=string("more")):
                     res.add(_ssoMoreLit(m, s))
     else:
         # Long: cache the LongString block to emit it only once per module per string.
@@ -362,40 +362,40 @@ def _genStringLiteralV3(m: BModule, n: PNode, isConst: bool, result: mut@Builder
             dataName = string()
         if id == m.labels:
             dataName = getTempName(m)
-            with res._addVarWithTypeAndInitializer(
+            with _addVarWithTypeAndInitializer(res,
                 _VarKind.AlwaysConst if isConst else _VarKind.Global,
                 name=dataName
             ):
-                with res._addSimpleStruct(m, name=string(""), baseType=string("")):
-                    res._addField(name=string("rc"), typ=NimInt)
-                    res._addField(name=string("fullLen"), typ=NimInt)
-                    res._addField(name=string("capImpl"), typ=NimInt)
-                    res._addArrayField(name=string("data"), elementType=NimChar, len=s.len + 1)
+                with _addSimpleStruct(res, m, name=string(""), baseType=string("")):
+                    _addField(res, name=string("rc"), typ=NimInt)
+                    _addField(res, name=string("fullLen"), typ=NimInt)
+                    _addField(res, name=string("capImpl"), typ=NimInt)
+                    _addArrayField(res, name=string("data"), elementType=NimChar, len=s.len + 1)
                 with do:
                     with var:
                         di = _StructInitializer()
-                    with res._addStructInitializer(di, kind=_StructInitializerKind.siOrderedStruct):
-                        with res._addField(di, name=string("fullLen")):
+                    with _addStructInitializer(res, di, kind=_StructInitializerKind.siOrderedStruct):
+                        with _addField(res, di, name=string("fullLen")):
                             res.addIntValue(s.len)
-                        with res._addField(di, name=string("rc")):
+                        with _addField(res, di, name=string("rc")):
                             res.addIntValue(1)
-                        with res._addField(di, name=string("capImpl")):
+                        with _addField(res, di, name=string("capImpl")):
                             res.addIntValue(0)  # bit 0 = 0: static, never freed
-                        with res._addField(di, name=string("data")):
+                        with _addField(res, di, name=string("data")):
                             res.add(makeCString(s))
         else:
             dataName = m.tmpBase + string(str(id))
         # slen = StaticSlen (254): marks this as a static (never-freed) long string.
-        with res._addVarWithInitializer(
+        with _addVarWithInitializer(res,
             _VarKind.AlwaysConst if isConst else _VarKind.Global,
             name=tmp, typ=string("SmallString")
         ):
             with var:
                 si = _StructInitializer()
-            with res._addStructInitializer(si, kind=_StructInitializerKind.siOrderedStruct):
-                with res._addField(si, name=string("bytes")):
+            with _addStructInitializer(res, si, kind=_StructInitializerKind.siOrderedStruct):
+                with _addField(res, si, name=string("bytes")):
                     res.add(_ssoBytesLit(m, s, 254))
-                with res._addField(si, name=string("more")):
+                with _addField(res, si, name=string("more")):
                     res.add(_cCast(_ptrType(string("LongString")), _cAddr(dataName)))
     m.s[TCFileSection.cfsStrData].add(res.extract())
 

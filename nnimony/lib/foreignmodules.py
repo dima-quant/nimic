@@ -33,7 +33,7 @@ from .nifcore import (
     add, addSubtree, beginRead, createTokenBuf, Cursor, cursorAt, inc, lineInfoFile, newPool, newTagPool, NifKind, Pool,
     pool, rawLineInfo, sym, symId, symName, symString, TagPool, TokenBuf)
 from .nifcoreparse import len, parse, parseFromBuffer, peekRootInfo, toModuleString, toString
-from .nifreader import decodeInt, decodeStr, ExpandedToken, indexStartsAt, jumpTo, next, offset, Reader
+from .nifreader import close, decodeInt, decodeStr, ExpandedToken, indexStartsAt, jumpTo, next, offset, Reader
 from . import nifreader
 from . import stringviews
 from .bif import getOrQuit, isBifFile, load, store
@@ -86,7 +86,7 @@ class ForeignModule(Object):
             # The decl subtree is already resident; `addSubtree` re-interns literals,
             # tag names and line-info filenames across pools (the bif buffer keeps its
             # own fresh pools), so the copy lands in the caller's `tags`/`pool` world.
-            buf.addSubtree(cursorAt(m.bifBuf, pos))
+            addSubtree(buf, cursorAt(m.bifBuf, pos))
         else:
             if withLineInfo:
                 m.r.jumpTo(m._rootOffset)
@@ -180,6 +180,10 @@ if comptime(__name__ == "__main__"):
     from nimic.std.syncio import *
     from nimic.std.algorithm import *
     from nimic.std.strutils import *
+    from nimic.std import syncio
+    from . import nifreader
+    # one name of two imports, called free: Nim overloads them (rule:overloads)
+    close = overloads(syncio.close, nifreader.close)
 
     def _sortedKeys(t: Table[string, nint]) -> seq[string]:
         result = seq[string]()
@@ -316,7 +320,7 @@ if comptime(__name__ == "__main__"):
         r.jumpTo(getOrQuit(tab, string("v.0.m")))
         parse(r, one)
         echo(string("at v.0.m: "), toString(one, includeLineInfo=False))
-        r.close()
+        close(r)
 
         removeFile(textFile)
         removeFile(bifFile)

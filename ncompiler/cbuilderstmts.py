@@ -26,32 +26,32 @@ def _addFieldAssignmentWithValue(builder: mut@Builder, lhs: Snippet, name: strin
 
 @template
 def _addAssignment(builder: mut@Builder, lhs: Snippet, rhs: Snippet):
-    with builder._addAssignmentWithValue(lhs):
+    with _addAssignmentWithValue(builder, lhs):
         builder.add(rhs)
 
 
 @template
 def _addFieldAssignment(builder: mut@Builder, lhs: Snippet, name: string, rhs: Snippet):
-    with builder._addFieldAssignmentWithValue(lhs, name):
+    with _addFieldAssignmentWithValue(builder, lhs, name):
         builder.add(rhs)
 
 
 @template
 def _addMutualFieldAssignment(builder: mut@Builder, lhs: Snippet, rhs: Snippet, name: string):
-    with builder._addFieldAssignmentWithValue(lhs, name):
+    with _addFieldAssignmentWithValue(builder, lhs, name):
         builder.add(rhs)
         builder.add(string(".") + name)
 
 
 @template
 def _addAssignment(builder: mut@Builder, lhs: Snippet, rhs: nint | int64 | uint64 | Int128):
-    with builder._addAssignmentWithValue(lhs):
+    with _addAssignmentWithValue(builder, lhs):
         builder.addIntValue(rhs)
 
 
 @template
 def _addFieldAssignment(builder: mut@Builder, lhs: Snippet, name: string, rhs: nint | int64 | uint64 | Int128):
-    with builder._addFieldAssignmentWithValue(lhs, name):
+    with _addFieldAssignmentWithValue(builder, lhs, name):
         builder.addIntValue(rhs)
 
 
@@ -79,8 +79,8 @@ def _addStmt(builder: mut@Builder, stmtBody: typed):
 
 
 def _addCallStmt(builder: mut@Builder, callee: Snippet, *args: Snippet) -> None:
-    with builder._addStmt():
-        builder._addCall(callee, *args)
+    with _addStmt(builder):
+        _addCall(builder, callee, *args)
 
 
 # XXX blocks need indent tracker in `Builder` object

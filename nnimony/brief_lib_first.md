@@ -57,9 +57,13 @@ Follow the `nimic-convert` skill (`.agents/skills/nimic-convert/SKILL.md`) with 
   - `import ".." / models / [tags]` → `from ..models.tags import TagEnum, ...`;
   - `export x` → `export(x)`; `export x.a` → `exportFrom(x, "a")`;
   - a name a module only imports itself is imported from the module defining it;
-  - `nnimony/tools/explicit_imports.py` lists the names a draft with star imports uses; the import checks (§8) reject
-    what Python would bind differently from Nim, e.g. a free call of a name two imports provide: `f = overloads(a.f,
+  - `nnimony/tools/explicit_imports.py` lists the names a draft with star imports uses; the import checks (§8.1)
+    reject what Python would bind differently from Nim, e.g. a free call of a name two imports provide: `f = overloads(a.f,
     b.f)`.
+- **The call syntax follows the Python definition** (rules §4): a method of the class (the methods rule) is called as
+  a method, a module-level proc or template free, whatever the original's spelling: `tb.addIdent(s)` of a proc the
+  methods rule leaves at module level is `addIdent(tb, s)`, `with b.addCast(t):` of a module-level template is
+  `with addCast(b, t):`. A module calling a method of another module's class imports that module (`from . import m`).
 - **`when defined(nimony)` / `when not defined(nimony)`:** convert like any `when`, i.e. `if comptime(...)`
   with every branch, the inactive ones included. Python runs the host-Nim (Nim 2) build, where
   `defined("nimony")` is false.

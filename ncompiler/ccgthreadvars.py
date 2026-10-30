@@ -27,12 +27,12 @@ def _accessThreadLocalVar(p: BProc, s: PSym) -> None:
     if _emulatedThreadVars(p.config) and TCProcFlag.threadVarAccessed not in p.flags:
         incl(p.flags, TCProcFlag.threadVarAccessed)
         incl(p.module.flags, CodegenFlag.usesThreadVars)
-        p.procSec(TCProcSection.cpsLocals)._addVar(
+        _addVar(p.procSec(TCProcSection.cpsLocals),
             kind=_VarKind.Local,
             name=string("NimTV_"),
             typ=_ptrType(string("NimThreadVars")),
         )
-        p.procSec(TCProcSection.cpsInit)._addAssignment(
+        _addAssignment(p.procSec(TCProcSection.cpsInit),
             string("NimTV_"),
             _cCast(
                 _ptrType(string("NimThreadVars")),
@@ -48,7 +48,7 @@ def _declareThreadVar(m: BModule, s: PSym, isExtern: bool) -> None:
         # allocator for it :-(
         if not containsOrIncl(m.g.nimtvDeclared, s.id):
             m.g.nimtvDeps.add(s.loc.t)
-            m.g.nimtv._addField(name=s.loc.snippet, typ=getTypeDesc(m, s.loc.t))
+            _addField(m.g.nimtv, name=s.loc.snippet, typ=getTypeDesc(m, s.loc.t))
     else:
         with let:
             vis = (
@@ -56,7 +56,7 @@ def _declareThreadVar(m: BModule, s: PSym, isExtern: bool) -> None:
                 if isExtern
                 else (_DeclVisibility.ExportLibVar if TLocFlag.lfExportLib in s.loc.flags else _DeclVisibility.Private)
             )
-        m.s[TCFileSection.cfsVars]._addVar(
+        _addVar(m.s[TCFileSection.cfsVars],
             m,
             s,
             name=s.loc.snippet,
@@ -73,8 +73,8 @@ def _generateThreadLocalStorage(m: BModule) -> None:
         for t in items(m.g.nimtvDeps):
             _ = getTypeDesc(m, t)
         finishTypeDescriptions(m)
-        with m.s[TCFileSection.cfsSeqTypes]._addTypedef(name=string("NimThreadVars")):
-            with m.s[TCFileSection.cfsSeqTypes]._addSimpleStruct(m, name=string(""), baseType=string("")):
+        with _addTypedef(m.s[TCFileSection.cfsSeqTypes], name=string("NimThreadVars")):
+            with _addSimpleStruct(m.s[TCFileSection.cfsSeqTypes], m, name=string(""), baseType=string("")):
                 m.s[TCFileSection.cfsSeqTypes].add(m.g.nimtv.extract())
 
 
@@ -87,7 +87,7 @@ def _generateThreadVarsSize(m: BModule) -> None:
                 or (TSymFlag.sfCompileToCpp in m.module.flags)
                 else _DeclVisibility.None_
             )
-        with m.s[TCFileSection.cfsProcs]._addDeclWithVisibility(externc):
-            m.s[TCFileSection.cfsProcs]._addProcHeader(string("NimThreadVarsSize"), NimInt, _cProcParams())
-            with m.s[TCFileSection.cfsProcs]._finishProcHeaderWithBody():
-                m.s[TCFileSection.cfsProcs]._addReturn(_cCast(NimInt, _cSizeof(string("NimThreadVars"))))
+        with _addDeclWithVisibility(m.s[TCFileSection.cfsProcs], externc):
+            _addProcHeader(m.s[TCFileSection.cfsProcs], string("NimThreadVarsSize"), NimInt, _cProcParams())
+            with _finishProcHeaderWithBody(m.s[TCFileSection.cfsProcs]):
+                _addReturn(m.s[TCFileSection.cfsProcs], _cCast(NimInt, _cSizeof(string("NimThreadVars"))))

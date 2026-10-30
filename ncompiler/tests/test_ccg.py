@@ -463,18 +463,18 @@ if comptime(__name__ == "__main__"):
     # 1. variables, arrays, typedefs
     with var:
         dcD = newBuilder(string(""))
-    dcD._addVar(kind=_VarKind.Global, name=string("g"), typ=string("NI"), initializer=string("1"))
-    dcD._addArrayVar(kind=_VarKind.Const, name=string("arr"), elementType=string("NU8"), len=3)
-    with dcD._addArrayVarWithInitializer(kind=_VarKind.AlwaysConst, name=string("t"), elementType=string("NI"), len=2):
+    _addVar(dcD, kind=_VarKind.Global, name=string("g"), typ=string("NI"), initializer=string("1"))
+    _addArrayVar(dcD, kind=_VarKind.Const, name=string("arr"), elementType=string("NU8"), len=3)
+    with _addArrayVarWithInitializer(dcD, kind=_VarKind.AlwaysConst, name=string("t"), elementType=string("NI"), len=2):
         dcD.add(string("{1, 2}"))
-    with dcD._addVarWithType(kind=_VarKind.Local, name=string("v")):
+    with _addVarWithType(dcD, kind=_VarKind.Local, name=string("v")):
         dcD.add(string("NF"))
-    with dcD._addTypedef(name=string("T")):
+    with _addTypedef(dcD, name=string("T")):
         dcD.add(string("NI32"))
-    with dcD._addArrayTypedef(name=string("A"), len=BiggestInt(4)):
+    with _addArrayTypedef(dcD, name=string("A"), len=BiggestInt(4)):
         dcD.add(string("NI"))
-    dcD._addProcTypedef(TCallingConvention.ccCDecl, string("P"), string("void"), string("(void)"))
-    dcD._addInclude(string("<stdio.h>"))
+    _addProcTypedef(dcD, TCallingConvention.ccCDecl, string("P"), string("void"), string("(void)"))
+    _addInclude(dcD, string("<stdio.h>"))
     doAssert(dcD.extract() == string("static NI g = 1;\nstatic NIM_CONST NU8 arr[3];\nstatic const NI t[2] = {1, 2};\n"
                                   "NF v;\ntypedef NI32 T;\ntypedef NI A[4];\ntypedef N_CDECL_PTR(void, P)(void);\n"
                                   "#include <stdio.h>\n"), string("decls: ") + dcD.extract())
@@ -483,18 +483,18 @@ if comptime(__name__ == "__main__"):
     with var:
         dcSi = newBuilder(string(""))
         dcConstr = _StructInitializer()
-    with dcSi._addStructInitializer(dcConstr, kind=_StructInitializerKind.siNamedStruct):
-        with dcSi._addField(dcConstr, name=string("a")):
+    with _addStructInitializer(dcSi, dcConstr, kind=_StructInitializerKind.siNamedStruct):
+        with _addField(dcSi, dcConstr, name=string("a")):
             dcSi.add(string("1"))
-        with dcSi._addField(dcConstr, name=string("")):
+        with _addField(dcSi, dcConstr, name=string("")):
             dcSi.add(string("2"))
     doAssert(dcSi.extract() == string("{.a = 1, 2}"), string("named initializer: ") + dcSi.extract())
     with var:
         dcFb = newBuilder(string(""))
         dcFsym = PSym(id=20, alignment=16, bitsize=3, flags=Tset[TSymFlag]({TSymFlag.sfNoalias}))
-    dcFb._addField(dcFsym, name=string("f"), typ=string("NI"))
-    dcFb._addArrayField(name=string("buf"), elementType=string("char"), len=8)
-    dcFb._addProcField(TCallingConvention.ccNimCall, string("cb"), string("void"), string("(void)"))
+    _addField(dcFb, dcFsym, name=string("f"), typ=string("NI"))
+    _addArrayField(dcFb, name=string("buf"), elementType=string("char"), len=8)
+    _addProcField(dcFb, TCallingConvention.ccNimCall, string("cb"), string("void"), string("(void)"))
     doAssert(dcFb.extract() == string("\tNIM_ALIGN(16) NI NIM_NOALIAS f:3;\n\tchar buf[8];\nN_NIMCALL_PTR(void, cb)(void);\n"),
              string("fields: ") + dcFb.extract())
 
@@ -505,15 +505,15 @@ if comptime(__name__ == "__main__"):
         dcObjT = PType(id=30, kind=TTypeKind.tyObject, sonsImpl=seq[PType]([None]))
     dcSm.config.cCompiler = TSystemCC.ccGcc
     dcSm.config.globalOptions.incl(TGlobalOption.optTinyRtti)
-    with dcSb._addStruct(dcSm, dcObjT, string("Obj"), string("")):
-        dcSb._addField(name=string("x"), typ=string("NI"))
+    with _addStruct(dcSb, dcSm, dcObjT, string("Obj"), string("")):
+        _addField(dcSb, name=string("x"), typ=string("NI"))
     dcObjT.flags.incl(TTypeFlag.tfPacked)
     dcObjT.flags.incl(TTypeFlag.tfFinal)
-    with dcSb._addStruct(dcSm, dcObjT, string("Packed"), string("")):
+    with _addStruct(dcSb, dcSm, dcObjT, string("Packed"), string("")):
         discard
     with var:
         dcSub = PType(id=31, kind=TTypeKind.tyObject, sonsImpl=seq[PType]([dcObjT]))
-    with dcSb._addStruct(dcSm, dcSub, string("Sub"), string("Obj")):
+    with _addStruct(dcSb, dcSm, dcSub, string("Sub"), string("Obj")):
         discard
     doAssert(dcSb.extract() == string("struct Obj {\n\tTNimTypeV2* m_type;\n\tNI x;\n};\n"
                                    "struct __attribute__((__packed__)) Packed {\n\tchar dummy;\n};\n"
@@ -521,12 +521,12 @@ if comptime(__name__ == "__main__"):
     dcSm.config.cCompiler = TSystemCC.ccVcc
     with var:
         dcVb = newBuilder(string(""))
-    with dcVb._addStruct(dcSm, dcObjT, string("P2"), string("")):
-        with dcVb._addFieldWithStructType(dcSm, dcObjT, string("inner")):
-            dcVb._addField(name=string("y"), typ=string("NI"))
-        with dcVb._addAnonUnion():
-            dcVb._addField(name=string("u"), typ=string("NI"))
-    with dcVb._addSimpleStruct(dcSm, string(""), string("")):
+    with _addStruct(dcVb, dcSm, dcObjT, string("P2"), string("")):
+        with _addFieldWithStructType(dcVb, dcSm, dcObjT, string("inner")):
+            _addField(dcVb, name=string("y"), typ=string("NI"))
+        with _addAnonUnion(dcVb):
+            _addField(dcVb, name=string("u"), typ=string("NI"))
+    with _addSimpleStruct(dcVb, dcSm, string(""), string("")):
         discard
     doAssert(dcVb.extract() == string("#pragma pack(push, 1)\nstruct P2 {\n\t#pragma pack(push, 1)\nstruct {\tNI y;\n} inner;\n"
                                    "#pragma pack(pop)\nunion{\n\tNI u;\n};\n};\n#pragma pack(pop)\n"
@@ -537,12 +537,12 @@ if comptime(__name__ == "__main__"):
         dcPb = newBuilder(string(""))
         dcParams = _ProcParamBuilder()
         dcNoaliasParam = PSym(id=40, flags=Tset[TSymFlag]({TSymFlag.sfNoalias}), loc=TLoc(snippet=string("p")))
-    with dcPb._addProcParams(dcParams):
-        dcPb._addParam(dcParams, name=string("a"), typ=string("NI"))
-        dcPb._addParam(dcParams, dcNoaliasParam, typ=string("NI*"))
-        dcPb._addUnnamedParam(dcParams, string("NF"))
-        dcPb._addProcTypedParam(dcParams, TCallingConvention.ccNimCall, string("f"), string("void"), string("(void)"))
-        dcPb._addVarargsParam(dcParams)
+    with _addProcParams(dcPb, dcParams):
+        _addParam(dcPb, dcParams, name=string("a"), typ=string("NI"))
+        _addParam(dcPb, dcParams, dcNoaliasParam, typ=string("NI*"))
+        _addUnnamedParam(dcPb, dcParams, string("NF"))
+        _addProcTypedParam(dcPb, dcParams, TCallingConvention.ccNimCall, string("f"), string("void"), string("(void)"))
+        _addVarargsParam(dcPb, dcParams)
     doAssert(dcPb.extract() == string("(NI a, NI* NIM_NOALIAS p, NF, N_NIMCALL_PTR(void, f)(void), ...)"),
              string("dcParams: ") + dcPb.extract())
     doAssert(_cProcParams() == string("(void)"), string("cProcParams()"))
@@ -553,15 +553,15 @@ if comptime(__name__ == "__main__"):
         dcPrcType = PType(id=50, kind=TTypeKind.tyProc, callConvImpl=TCallingConvention.ccNoInline)
         dcPrc = PSym(id=51, typ=dcPrcType, flags=Tset[TSymFlag]({TSymFlag.sfPure, TSymFlag.sfNoReturn}))
     dcSm.config.exc = ExceptionSystem.excSetjmp
-    dcHb._addProcHeader(TCallingConvention.ccCDecl, string("f"), string("void"), string("(void)"))
-    dcHb._finishProcHeaderAsProto()
-    dcHb._addProcHeader(string("init"), string("void"), string("(void)"), isConstructor=True)
-    dcHb._finishProcHeaderAsProto()
-    dcHb._addProcHeader(dcSm, dcPrc, string("g"), string("(void)"), string("void"), True)
-    dcHb._finishProcHeaderAsProto()
+    _addProcHeader(dcHb, TCallingConvention.ccCDecl, string("f"), string("void"), string("(void)"))
+    _finishProcHeaderAsProto(dcHb)
+    _addProcHeader(dcHb, string("init"), string("void"), string("(void)"), isConstructor=True)
+    _finishProcHeaderAsProto(dcHb)
+    _addProcHeader(dcHb, dcSm, dcPrc, string("g"), string("(void)"), string("void"), True)
+    _finishProcHeaderAsProto(dcHb)
     dcSm.config.cCompiler = TSystemCC.ccGcc
-    dcHb._addProcHeader(dcSm, dcPrc, string("h"), string("(void)"), string("void"), True)
-    with dcHb._finishProcHeaderWithBody():
+    _addProcHeader(dcHb, dcSm, dcPrc, string("h"), string("(void)"), string("void"), True)
+    with _finishProcHeaderWithBody(dcHb):
         dcHb.addLineEnd(string("return;"))
     doAssert(dcHb.extract() == string("N_CDECL(void, f)(void);\nvoid __attribute__((constructor)) init(void);\n"
                                    "__declspec(naked) __declspec(noreturn) N_NOINLINE(void, g)(void);\n"
@@ -569,9 +569,9 @@ if comptime(__name__ == "__main__"):
                                    "\treturn;\n}\n\n"), string("headers: ") + dcHb.extract())
     with var:
         dcPv = newBuilder(string(""))
-    dcPv._addProcVar(dcSm, dcPrc, string("pv1"), string("(void)"), string("void"), isStatic=True)
-    dcPv._addProcVar(TCallingConvention.ccNimCall, string("pv2"), string("(NI)"), string("NI"), isVolatile=True)
-    dcPv._addProcVar(string("pv3"), string("(void)"), string("void"), isStatic=True)
+    _addProcVar(dcPv, dcSm, dcPrc, string("pv1"), string("(void)"), string("void"), isStatic=True)
+    _addProcVar(dcPv, TCallingConvention.ccNimCall, string("pv2"), string("(NI)"), string("NI"), isVolatile=True)
+    _addProcVar(dcPv, string("pv3"), string("(void)"), string("void"), isStatic=True)
     doAssert(dcPv.extract() == string("static N_NOINLINE_PTR(void, pv1)(void) __attribute__((naked)) __attribute__((noreturn));\n"
                                    "N_NIMCALL_PTR(NI, volatile pv2)(NI);\nstatic void (*pv3)(void);\n"),
              string("proc vars: ") + dcPv.extract())
@@ -583,11 +583,11 @@ if comptime(__name__ == "__main__"):
                           flags=Tset[TSymFlag]({TSymFlag.sfRegister, TSymFlag.sfVolatile}))
         dcDeclVar = PSym(id=61, kind=TSymKind.skVar, flags=Tset[TSymFlag]({TSymFlag.sfCodegenDecl}),
                        constraint=PNode(kind=TNodeKind.nkStrLit, strVal=string("$1 __thread $2")))
-    dcVv._addVar(dcSm, dcAlignedVar, name=string("a"), typ=string("NI"), kind=_VarKind.Global,
+    _addVar(dcVv, dcSm, dcAlignedVar, name=string("a"), typ=string("NI"), kind=_VarKind.Global,
               visibility=_DeclVisibility.Private, initializer=string("0"))
-    dcVv._addVar(dcSm, dcDeclVar, name=string("b"), typ=string("NI"), initializer=string("{}"),
+    _addVar(dcVv, dcSm, dcDeclVar, name=string("b"), typ=string("NI"), initializer=string("{}"),
               initializerKind=_VarInitializerKind.CppConstructor)
-    with dcVv._addDeclWithVisibility(_DeclVisibility.ExternC):
+    with _addDeclWithVisibility(dcVv, _DeclVisibility.ExternC):
         dcVv.addLineEnd(string("int c;"))
     doAssert(dcVv.extract() == string("NIM_ALIGN(8) N_LIB_PRIVATE static NI register volatile a = 0;\n"
                                    "NI __thread b{};\nNIM_EXTERNC int c;\n"), string("symbol vars: ") + dcVv.extract())
@@ -596,24 +596,24 @@ if comptime(__name__ == "__main__"):
     with var:
         dc2B = newBuilder(string(""))
         dc2Init = _StructInitializer()
-    with dc2B._addVarWithInitializer(kind=_VarKind.Local, name=string("v"), typ=string("NI")):
+    with _addVarWithInitializer(dc2B, kind=_VarKind.Local, name=string("v"), typ=string("NI")):
         dc2B.add(string("1"))
-    with dc2B._addVarWithTypeAndInitializer(kind=_VarKind.Global, name=string("w")):
+    with _addVarWithTypeAndInitializer(dc2B, kind=_VarKind.Global, name=string("w")):
         dc2B.add(string("NF"))
         with do:
             dc2B.add(string("2.0"))
-    with dc2B._addUnionType():
-        dc2B._addField(name=string("u"), typ=string("NI"))
+    with _addUnionType(dc2B):
+        _addField(dc2B, name=string("u"), typ=string("NI"))
     dc2B.add(ch('\n'))
     for kind in [_StructInitializerKind.siArray, _StructInitializerKind.siOrderedStruct]:
-        with dc2B._addStructInitializer(dc2Init, kind=kind):
-            with dc2B._addField(dc2Init, name=string("a")):
+        with _addStructInitializer(dc2B, dc2Init, kind=kind):
+            with _addField(dc2B, dc2Init, name=string("a")):
                 dc2B.add(string("1"))
-            with dc2B._addField(dc2Init, name=string("b")):
+            with _addField(dc2B, dc2Init, name=string("b")):
                 dc2B.add(string("2"))
         dc2B.add(ch(' '))
-    with dc2B._addStructInitializer(dc2Init, kind=_StructInitializerKind.siWrapper):
-        with dc2B._addField(dc2Init, name=string("x")):
+    with _addStructInitializer(dc2B, dc2Init, kind=_StructInitializerKind.siWrapper):
+        with _addField(dc2B, dc2Init, name=string("x")):
             dc2B.add(string("x"))
     doAssert(dc2B.extract() == string("NI v = 1;\nstatic NF w = 2.0;\nunion{\n\tNI u;\n}\n{1, 2} {1, 2} x"),
              string("initializers: ") + dc2B.extract())
@@ -628,14 +628,14 @@ if comptime(__name__ == "__main__"):
                         n=PNode(kind=TNodeKind.nkRecList, sons=seq[PNode]([
                             PNode(kind=TNodeKind.nkSym, sym=PSym(id=72, typ=PType(id=73, kind=TTypeKind.tyUncheckedArray)))])))
     dc2M.config.globalOptions.excl(TGlobalOption.optTinyRtti)
-    with dc2S._addSimpleStruct(dc2M, string("S"), string("Base")):
+    with _addSimpleStruct(dc2S, dc2M, string("S"), string("Base")):
         discard
-    with dc2S._addStruct(dc2M, dc2Rtti, string("R"), string("")):
+    with _addStruct(dc2S, dc2M, dc2Rtti, string("R"), string("")):
         discard
-    with dc2S._addStruct(dc2M, dc2Flex, string("F"), string("")):
-        dc2S._addField(name=string("data"), typ=string("NI"), isFlexArray=True)
+    with _addStruct(dc2S, dc2M, dc2Flex, string("F"), string("")):
+        _addField(dc2S, name=string("data"), typ=string("NI"), isFlexArray=True)
     dc2M.config.backend = TBackend.backendCpp
-    with dc2S._addSimpleStruct(dc2M, string("C"), string("Base")):
+    with _addSimpleStruct(dc2S, dc2M, string("C"), string("Base")):
         discard
     doAssert(dc2S.extract() == string("struct S {\n\tBase Sup;\n};\nstruct R {\n\tTNimType* m_type;\n};\n"
                                       "struct F {\n\tchar dummy;\n\tNI data[SEQ_DECL_SIZE];\n};\n"
@@ -647,6 +647,6 @@ if comptime(__name__ == "__main__"):
         dc2Pod = PType(id=74, name=string("NI"), sym=PSym(id=75, flags=Tset[TSymFlag]({TSymFlag.sfCppNonPod})))
         dc2Tl = PSym(id=76, kind=TSymKind.skVar, typ=dc2Pod)
     dc2M.config.globalOptions.incl(TGlobalOption.optThreads)
-    dc2V._addVar(dc2M, dc2Tl, name=string("tl"), typ=string("NI"), kind=_VarKind.Threadvar)
+    _addVar(dc2V, dc2M, dc2Tl, name=string("tl"), typ=string("NI"), kind=_VarKind.Threadvar)
     doAssert(dc2V.extract() == string("NIM_THREAD_LOCAL NI tl;\n"), string("thread local: ") + dc2V.extract())
     echo(string("All cbuilderdecls tests passed successfully!"))

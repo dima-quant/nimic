@@ -12,10 +12,10 @@ formatter does; nothing rewrites code at import. For each name it picks:
   the module that defines it, which adds an import to the Nim output. The report lists these.
 
 The names come from the module's code (symtable: every global a scope reads), its annotations, the files it
-includes (they run in its namespace), and method-syntax calls `x.f()` of a proc the module binds through the star
-import (Object.__getattr__ finds `f` in the caller's globals). The report also lists names that two of the
-module's imports bind to different routines: Nim overloads them, Python binds the later one
-(`f = overloads(a.f, b.f)` or a method call, a decision for the reviewer).
+includes (they run in its namespace), and the names its own @dispatch / @template sets extend. Method syntax of a
+module-level proc is no name use: the call syntax follows the definition (`nnimony/tools/free_calls.py` rewrites
+such calls into free calls first). The report also lists names that two of the module's imports bind to different
+routines: Nim overloads them, Python binds the later one (`f = overloads(a.f, b.f)`, a decision for the reviewer).
 """
 
 import argparse
@@ -55,7 +55,7 @@ def _all_star_imports(tree, package: str) -> list:
 
 
 def _used_names(source: str, tree, path: str) -> set:
-    """The globals the module's code reads (every scope), the names in its annotations, and its attribute names."""
+    """The globals the module's code reads (every scope) and the names in its annotations."""
     names = set()
 
     def walk(table):
@@ -86,11 +86,6 @@ def _used_names(source: str, tree, path: str) -> set:
                 except SyntaxError:
                     pass  # a docstring-like string, no annotation
     return names
-
-
-def _attribute_names(tree) -> set:
-    """Names used as `x.f` where x is no module name bound by `from . import m` (method syntax candidates)."""
-    return {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
 
 
 def _decorator_name(node) -> str | None:
@@ -203,12 +198,11 @@ def _plan(module_name: str) -> tuple:
     used = _used_names(source, tree, path)
     for included in included_trees(tree, path):
         text = ast.unparse(included)
-        used |= _used_names(text, included, path) | _attribute_names(included)
+        used |= _used_names(text, included, path)
     own, dispatched = _own_names(tree)
     named, module_imports = _bound_by_name(tree, package)
     own |= named - dispatched
     namespace = vars(module)
-    attributes = _attribute_names(tree)
     every_star = []
     for line, name in _all_star_imports(tree, package):
         if name not in sys.modules and importlib.util.find_spec(name) is None:
@@ -221,8 +215,7 @@ def _plan(module_name: str) -> tuple:
     imports = imports_of(tree, module)
     chosen = {name: [] for _, name in stars}  # star-imported module -> names
     extra = {}  # defining module -> names (leaks)
-    candidates = used | dispatched | {a for a in attributes
-                                      if callable(namespace.get(a)) and not isinstance(namespace.get(a), type)}
+    candidates = used | dispatched
     for u in sorted(candidates):
         if (u in own and u not in dispatched) or (u.startswith("__") and u.endswith("__")):
             continue  # the module's own name; a module attribute (`__name__`)
@@ -233,9 +226,6 @@ def _plan(module_name: str) -> tuple:
         value = getattr(sys.modules[provider], u)
         if any(is_core(m) and getattr(sys.modules[m], u, None) is value for _, m in providers):
             continue  # the core star import binds it (a user module's star import may re-export it)
-        if u in attributes and u not in used and u not in dispatched and (namespace.get(u) is not value
-                                                  or is_core(getattr(value, "__module__", None) or "nimic")):
-            continue  # an attribute name only: method syntax reaches a nimic module's proc the module binds
         routines = {m.__name__ for obj, m in visible(imports, u) if is_routine(obj)}  # Nim's view: name resolution, rules 8.1
         if len(routines) > 1:
             report.append(f"  ! {u}: routines of {', '.join(sorted(routines))} (Nim overloads them; "

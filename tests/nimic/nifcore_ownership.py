@@ -200,7 +200,7 @@ if comptime(__name__ == "__main__"):
         with var:
             b = createTokenBuf(4)
         for i in range(3):
-            b.add(NifToken(i * 10))
+            add(b, NifToken(i * 10))
         echo(string("built: rc ") + str(rc(b)))
         with var:
             c = beginRead(b)
@@ -208,7 +208,7 @@ if comptime(__name__ == "__main__"):
         _ = _peek(b, c)
         echo(string("after peek: rc ") + str(rc(b)))
         # a mutation while a cursor reads: the buffer copies its tokens and lets go of the owner
-        b.add(NifToken(30))
+        add(b, NifToken(30))
         echo(string("after add: owner nil "), isNil(b.owner), string(", cursor still reads "), load(c))
         with var:
             c2 = beginRead(b)
@@ -217,7 +217,7 @@ if comptime(__name__ == "__main__"):
         echo(string("after endRead: frees "), _gStats.frees, string(", owner nil "), isNil(c.owner))
         endRead(c2)
         # no cursor left: a mutation reclaims the owner header in place
-        b.add(NifToken(40))
+        add(b, NifToken(40))
         echo(string("reclaimed: owner nil "), isNil(b.owner), string(", frees "), _gStats.frees, string(", len "), b.len)
         with var:
             moved = move(b)

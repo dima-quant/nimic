@@ -31,9 +31,14 @@ from nimic.std.formatfloat import *
 from .nifcore import (
     beginRead, charLit, Cursor, cursorTagId, endRead, floatVal, hasMore, inc, into, intVal, kind, NifKind, skip, strVal,
     symName, tagName, tags, TokenBuf, uintVal)
-from .nifbuilder import addHeader, addStrLit, withTree
+from .nifbuilder import addHeader, addStrLit, close, withTree
 from . import nifbuilder
+from nimic.std.sha1 import finalize, update
 importFrom(".vfs", "OnlyIfChanged")
+from nimic.std import syncio
+from . import nifbuilder
+# one name of two imports, called free: Nim overloads them (rule:overloads)
+close = overloads(syncio.close, nifbuilder.close)
 
 if comptime(defined("nimony")):
     from nimic.std.sha1 import *
@@ -55,51 +60,51 @@ def lengInterfaceFile(lengFile: string) -> string:
 def _hashTree(s: mut @ Sha1State, n: mut @ Cursor, foundInline: mut @ bool):
     ## Hashes the tree at `n` and advances past it. Line information is not
     ## part of the digest, as for `.s.idx.nif`.
-    match n.kind():
+    match kind(n):
         case NifKind.TagLit:
             with let:
-                tag = n.tags().tagName(n.cursorTagId())
+                tag = tagName(tags(n), cursorTagId(n))
             if tag == "inline": foundInline <<= True
-            s.update("(")
-            s.update(tag)
-            with n.into():
-                while n.hasMore():
+            update(s, "(")
+            update(s, tag)
+            with into(n):
+                while hasMore(n):
                     _hashTree(s, n, foundInline)
-            s.update(")")
+            update(s, ")")
         case NifKind.Symbol:
-            s.update(" ")
-            s.update(n.symName())
+            update(s, " ")
+            update(s, symName(n))
             inc(n)
         case NifKind.SymbolDef:
-            s.update(" :")
-            s.update(n.symName())
+            update(s, " :")
+            update(s, symName(n))
             inc(n)
         case NifKind.Ident:
-            s.update(" ")
-            s.update(n.strVal())
+            update(s, " ")
+            update(s, strVal(n))
             inc(n)
         case NifKind.StrLit:
-            s.update(" \"")
-            s.update(n.strVal())
+            update(s, " \"")
+            update(s, strVal(n))
             inc(n)
         case NifKind.IntLit:
-            s.update(" ")
-            s.update(str(n.intVal()))
+            update(s, " ")
+            update(s, str(intVal(n)))
             inc(n)
         case NifKind.UIntLit:
-            s.update(" ")
-            s.update(str(n.uintVal()))
+            update(s, " ")
+            update(s, str(uintVal(n)))
             inc(n)
         case NifKind.FloatLit:
-            s.update(" ")
-            s.update(str(n.floatVal()))
+            update(s, " ")
+            update(s, str(floatVal(n)))
             inc(n)
         case NifKind.CharLit:
-            s.update(" '")
-            s.update(str(ord(n.charLit())))
+            update(s, " '")
+            update(s, str(ord(charLit(n))))
             inc(n)
         case NifKind.DotToken:
-            s.update(" .")
+            update(s, " .")
             inc(n)
         case _:
             inc(n)
@@ -111,37 +116,37 @@ def lengInterfaceDigest(buf: mut @ TokenBuf) -> string:
         s = newSha1State()
     with var:
         n = beginRead(buf)
-    if n.kind() == NifKind.TagLit:
-        s.update("(")
-        s.update(n.tags().tagName(n.cursorTagId()))
-        with n.into():
-            while n.hasMore():
-                if n.kind() == NifKind.TagLit and n.tags().tagName(n.cursorTagId()) == "proc":
+    if kind(n) == NifKind.TagLit:
+        update(s, "(")
+        update(s, tagName(tags(n), cursorTagId(n)))
+        with into(n):
+            while hasMore(n):
+                if kind(n) == NifKind.TagLit and tagName(tags(n), cursorTagId(n)) == "proc":
                     # (proc SymbolDef Params Type ProcPragmas Body)
-                    s.update("(proc")
+                    update(s, "(proc")
                     with var:
                         isInline = nbool(False)
-                    with n.into():
+                    with into(n):
                         with var:
                             i = nint(0)
-                        while i < 4 and n.hasMore():
+                        while i < 4 and hasMore(n):
                             _hashTree(s, n, isInline)
                             i += 1
-                        while n.hasMore():
+                        while hasMore(n):
                             if isInline:
                                 with var:
                                     ignored = nbool(False)
                                 _hashTree(s, n, ignored)
                             else:
                                 skip(n)
-                    s.update(")")
+                    update(s, ")")
                 else:
                     with var:
                         ignored = nbool(False)
                     _hashTree(s, n, ignored)
-        s.update(")")
+        update(s, ")")
     endRead(n)
-    result = string(str(SecureHash(s.finalize())))
+    result = string(str(SecureHash(finalize(s))))
     return result
 
 
@@ -151,10 +156,10 @@ def writeLengInterface(buf: mut @ TokenBuf, lengFile: string):
     ## nodes of the other modules.
     with var:
         b = nifbuilder.open(lengInterfaceFile(lengFile), writeMode=OnlyIfChanged)
-    b.addHeader()
-    with b.withTree(string("interface")):
-        b.addStrLit(lengInterfaceDigest(buf))
-    b.close()
+    addHeader(b)
+    with withTree(b, string("interface")):
+        addStrLit(b, lengInterfaceDigest(buf))
+    close(b)
 
 
 if comptime(__name__ == "__main__"):

@@ -382,7 +382,7 @@ class Lexer(TBaseLexer):
         """{.inline.}"""
         with var:
             h = finish_hash(hash)
-        tok.ident = L.cache.getIdent(cast[cstring](addr(L.buf[L.bufpos])), pos - L.bufpos, h)
+        tok.ident = getIdent(L.cache, cast[cstring](addr(L.buf[L.bufpos])), pos - L.bufpos, h)
         if (tok.ident.id < oprLow) or (tok.ident.id > oprHigh): tok.tokType = TokType.tkOpr
         else: tok.tokType = TokType(tok.ident.id - oprLow + ord(TokType.tkColon))
         L.bufpos = pos
@@ -1140,7 +1140,7 @@ def _getSymbol(L: mut @ Lexer, tok: mut @ Token):
             case _: break
     _tokenEnd(tok, pos - 1)
     h = finish_hash(h)
-    tok.ident = L.cache.getIdent(cast[cstring](addr(L.buf[L.bufpos])), pos - L.bufpos, h)
+    tok.ident = getIdent(L.cache, cast[cstring](addr(L.buf[L.bufpos])), pos - L.bufpos, h)
     if (tok.ident.id < ord(tokKeywordLow) - ord(TokType.tkSymbol)) or \
             (tok.ident.id > ord(tokKeywordHigh) - ord(TokType.tkSymbol)):
         tok.tokType = TokType.tkSymbol
@@ -1570,7 +1570,7 @@ def rawGetTok(L: mut @ Lexer, tok: mut @ Token):
                 L.bufpos += 1
                 if L.buf[L.bufpos] not in SymChars + Tset[char]({ch('_')}):
                     tok.tokType = TokType.tkSymbol
-                    tok.ident = L.cache.getIdent(string("_"))
+                    tok.ident = getIdent(L.cache, string("_"))
                 else:
                     tok.literal = string(str(c))
                     tok.tokType = TokType.tkInvalid
@@ -1712,13 +1712,13 @@ if comptime(__name__ == "__main__"):
     # precedence, keywords, identifiers, indentation
     with var:
         _cache2 = newIdentCache()
-    doAssert(getPrecedence(_cache2.getIdent(string("+"))) == 8)
-    doAssert(getPrecedence(_cache2.getIdent(string("*="))) == 1)
-    doAssert(getPrecedence(_cache2.getIdent(string("->"))) == 0)
-    doAssert(getPrecedence(_cache2.getIdent(string("div"))) == 9)
-    doAssert(getPrecedence(_cache2.getIdent(string("and"))) == 4)
-    doAssert(getPrecedence(_cache2.getIdent(utf8("±"))) == 8)
-    doAssert(getPrecedence(_cache2.getIdent(string("foo"))) == 2)
+    doAssert(getPrecedence(getIdent(_cache2, string("+"))) == 8)
+    doAssert(getPrecedence(getIdent(_cache2, string("*="))) == 1)
+    doAssert(getPrecedence(getIdent(_cache2, string("->"))) == 0)
+    doAssert(getPrecedence(getIdent(_cache2, string("div"))) == 9)
+    doAssert(getPrecedence(getIdent(_cache2, string("and"))) == 4)
+    doAssert(getPrecedence(getIdent(_cache2, utf8("±"))) == 8)
+    doAssert(getPrecedence(getIdent(_cache2, string("foo"))) == 2)
     doAssert(isKeyword(TokType.tkProc) and not isKeyword(TokType.tkSymbol) and not isKeyword(TokType.tkIntLit))
     doAssert(isNimIdentifier(string("foo_bar")) and not isNimIdentifier(string("_x")) and not isNimIdentifier(string("a__")))
     doAssert(getIndentWidth(FileIndex(0), llStreamOpen(string("type\n    A = int\n")), newIdentCache(), newConfigRef()) == 4)

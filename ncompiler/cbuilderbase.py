@@ -234,7 +234,7 @@ if comptime(__name__ == "__main__"):
         c.add(ch(' '))
         c.addIntValue(parseDecimalInt128(string("-170141183460469231731687303715884105727")))
         c.add(ch(' '))
-        c.addFloatValue(0.5)
+        addFloatValue(c, 0.5)
         doAssert(c.extract() == "-5 18446744073709551615 -170141183460469231731687303715884105727 0.5",
                  string("values: ") + c.extract())
 

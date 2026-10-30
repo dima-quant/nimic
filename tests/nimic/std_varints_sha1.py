@@ -37,10 +37,10 @@ if comptime(__name__ == "__main__"):
         echo(string("sha1 "), h)
         with var:
             state = newSha1State()
-        state.update(string("Hello "))
-        state.update(string("World"))
+        update(state, string("Hello "))
+        update(state, string("World"))
         with let:
-            parts = SecureHash(state.finalize())
+            parts = SecureHash(finalize(state))
         echo(string("in parts "), parts, string(" same "), parts == h)
         echo(string("empty "), secureHash(string("")))
         echo(string("parsed "), parseSecureHash(string("0A4D55A8D778E5022FAB701977C5D840BBC486D0")) == h)

@@ -19,6 +19,10 @@ with push("warning[UnusedImport]: off"):
 
 if comptime(__name__ == "__main__"):
     importFrom("nimic.std.os", "getTempDir", "removeFile")
+    from . import nifbuilder, nifpools
+    # one name of two imports, called free: Nim overloads them (rule:overloads)
+    addIdent = overloads(nifbuilder.addIdent, nifpools.addIdent)
+    addIntLit = overloads(nifbuilder.addIntLit, nifpools.addIntLit)
 
     def _roleHelper(n: nint) -> nint:
         """{.nifBalanced.}"""
@@ -30,25 +34,25 @@ if comptime(__name__ == "__main__"):
 
         # pool + globalTags + bitabs
         with let:
-            sid = pool.strings.getOrIncl(string("hello"))
+            sid = getOrIncl(pool.strings, string("hello"))
         echo(string("pool: "), pool.strings[sid], string(" tag: "), globalTags.tags[ErrT])
 
         # buildTree (from nifpools / nifcore)
         with var:
             tb = createTokenBuf(8)
         with buildTree(tb, ErrT, NoLineInfo):
-            tb.addIdent(string("item"), NoLineInfo)
-            tb.addStrLit(string("val"), NoLineInfo)
-            tb.addIntLit(42)
+            addIdent(tb, string("item"), NoLineInfo)
+            addStrLit(tb, string("val"), NoLineInfo)
+            addIntLit(tb, 42)
         echo(string("tree: "), toString(tb, False))
 
         # nifbuilder proc
         with var:
             bld = open(16, compact=True)
-        bld.addHeader()
-        with bld.withTree(string("stmts")):
-            bld.addIdent(string("foo"))
-            bld.addIntLit(7)
+        addHeader(bld)
+        with withTree(bld, string("stmts")):
+            addIdent(bld, string("foo"))
+            addIntLit(bld, 7)
         echo(string("builder: "), extract(bld))
 
         # nifreader.open on a small file under getTempDir()

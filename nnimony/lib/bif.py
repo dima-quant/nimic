@@ -105,6 +105,7 @@ from .nifcore import (
     rawLineInfo, rawTokenPtr, registerTag, StrId, strVal, sub, sym, SymId, symId, symName, symRecord, syms, symString,
     TagId, TagMask, tagName, TagPool, TokenBuf, toUniqueId, uintVal)
 from .vfs import vfsOpenMmap, vfsWrite
+from . import nifcore
 
 include("compat2")   # `onRaiseQuit`: run a raising call and `quit` on failure; identity under Nim
 
@@ -187,7 +188,7 @@ class BifModule(Object):
         result = default(Cursor)
         for entry in module.index:
             if symString(module.buf.pool, entry.sym) == name:
-                return module.buf.cursorAt(entry.pos)
+                return cursorAt(module.buf, entry.pos)
         return result
 
     def declarations(module: mut @ BifModule) -> _DeclarationsT:
@@ -197,7 +198,7 @@ class BifModule(Object):
         ## Iterates all indexed global declarations in storage order.
         for entry in module.index:
             yield (symString(module.buf.pool, entry.sym), entry.vis,
-                   module.buf.cursorAt(entry.pos))
+                   cursorAt(module.buf, entry.pos))
 
 
 def _isGlobalSymbol(s: string, dottedSuffix: string) -> bool:
@@ -225,26 +226,26 @@ def buildIndex(b: mut @ TokenBuf, dottedSuffix: string = string("")) -> seq[Inde
     result = seq[IndexEntry]([])
     if b.len == 0: return result
     with var:
-        c = b.beginRead()
+        c = beginRead(b)
         mostRecentTagPos = i32(0)
-    while c.hasMore():
-        match c.kind():
+    while hasMore(c):
+        match kind(c):
             case NifKind.TagLit:
                 mostRecentTagPos = int32(cursorToPosition(b, c))
-                c.inc()                        # descend into the body (visit every token)
+                inc(c)                        # descend into the body (visit every token)
             case NifKind.SymbolDef:
                 with let:
                     isG = _isGlobalSymbol(symName(c), dottedSuffix)
-                    sid = c.symId()
+                    sid = symId(c)
                     tagPos = mostRecentTagPos
-                c.inc()                        # advance to the marker / next sibling
+                inc(c)                        # advance to the marker / next sibling
                 if isG:
                     with let:
-                        vis = IndexVis.ivHidden if c.hasMore() and c.kind() == NifKind.DotToken else IndexVis.ivExported
+                        vis = IndexVis.ivHidden if hasMore(c) and kind(c) == NifKind.DotToken else IndexVis.ivExported
                     result.add(IndexEntry(sym=sid, pos=tagPos, vis=vis))
             case _:
-                c.inc()
-    c.endRead()
+                inc(c)
+    endRead(c)
     return result
 
 
@@ -418,7 +419,7 @@ def storeToString(b: mut @ TokenBuf, dottedSuffix: string = string("")) -> strin
     _appendVarint(result, uint64(b.len))
     _appendVarint(result, uint64(len(b.tags.tags)))
     _appendVarint(result, uint64(len(b.pool.strings)))
-    _appendVarint(result, uint64(b.pool.syms().len))
+    _appendVarint(result, uint64(syms(b.pool).len))
     _appendVarint(result, uint64(len(b.pool.filenames)))
     # Pad to NifToken alignment so the mmap loader can borrow the token block in
     # place (see `tokenPad`).
@@ -426,11 +427,11 @@ def storeToString(b: mut @ TokenBuf, dottedSuffix: string = string("")) -> strin
         result.add(ch('\0'))
     # token stream: one contiguous block.
     if b.len > 0:
-        _appendRaw(result, b.rawTokenPtr(), b.len * sizeof(NifToken))
+        _appendRaw(result, rawTokenPtr(b), b.len * sizeof(NifToken))
     # pools, each in id order (ids are 1-based, dense up to len).
     for i in inrange(1, len(b.tags.tags)):      _appendStr(result, b.tags.tags[TagId(i)])
     for i in inrange(1, len(b.pool.strings)):   _appendStr(result, b.pool.strings[StrId(i)])
-    for i in inrange(1, b.pool.syms().len):      _appendStr(result, b.pool.symString(SymId(i)))
+    for i in inrange(1, syms(b.pool).len):      _appendStr(result, symString(b.pool, SymId(i)))
     for i in inrange(1, len(b.pool.filenames)): _appendStr(result, b.pool.filenames[FileId(i)])
     # symbol index — self-contained at the offset we now know. `pos` is a token
     # index (always >= 0) and `vis` a 0/1 enum, so plain varints suffice.
@@ -597,17 +598,17 @@ def loadFromFile(f: File) -> BifModule:
     # token stream: read straight into the storage in one block.
     if tokenCount > 0:
         with let:
-            dest = result.buf.growRawUninit(tokenCount)
+            dest = growRawUninit(result.buf, tokenCount)
             bytes = tokenCount * sizeof(NifToken)
         _readExact(f, dest, bytes)
     # pools: append in stored (id) order so ids 1,2,… match the token refs. No
     # hashing — `addOrdered` leaves the reverse index unbuilt, and `getOrIncl` (or
     # an explicit `ensureIndexed`, for `getKeyId`) builds it if one ever comes.
-    for _ in inrange(1, nTags):    _ = result.buf.tags.tags.addOrdered(_readStr(f))
-    for _ in inrange(1, nStrings): _ = result.buf.pool.strings.addOrdered(_readStr(f))
+    for _ in inrange(1, nTags):    _ = addOrdered(result.buf.tags.tags, _readStr(f))
+    for _ in inrange(1, nStrings): _ = addOrdered(result.buf.pool.strings, _readStr(f))
     for _ in inrange(1, nSyms):
-        _ = result.buf.pool.symbols.addOrdered(symRecord(result.buf.pool, _readStr(f)))
-    for _ in inrange(1, nFiles):   _ = result.buf.pool.filenames.addOrdered(_readStr(f))
+        _ = addOrdered(result.buf.pool.symbols, symRecord(result.buf.pool, _readStr(f)))
+    for _ in inrange(1, nFiles):   _ = addOrdered(result.buf.pool.filenames, _readStr(f))
     # symbol index (we are now positioned exactly at indexOffset).
     result.index = _readIndex(f)
     return result
@@ -702,11 +703,11 @@ def load(filename: string) -> BifModule:
     # pools: append in stored (id) order so ids 1,2,… match the token refs. No
     # hashing — `addOrdered` leaves the reverse index unbuilt, and `getOrIncl` (or
     # an explicit `ensureIndexed`, for `getKeyId`) builds it if one ever comes.
-    for _ in inrange(1, nTags):    _ = result.buf.tags.tags.addOrdered(r._rStr())
-    for _ in inrange(1, nStrings): _ = result.buf.pool.strings.addOrdered(r._rStr())
+    for _ in inrange(1, nTags):    _ = addOrdered(result.buf.tags.tags, r._rStr())
+    for _ in inrange(1, nStrings): _ = addOrdered(result.buf.pool.strings, r._rStr())
     for _ in inrange(1, nSyms):
-        _ = result.buf.pool.symbols.addOrdered(symRecord(result.buf.pool, r._rStr()))
-    for _ in inrange(1, nFiles):   _ = result.buf.pool.filenames.addOrdered(r._rStr())
+        _ = addOrdered(result.buf.pool.symbols, symRecord(result.buf.pool, r._rStr()))
+    for _ in inrange(1, nFiles):   _ = addOrdered(result.buf.pool.filenames, r._rStr())
     # symbol index (we are now positioned exactly at indexOffset).
     with let:
         nIndex = nint(r._rVarint())
@@ -785,7 +786,7 @@ def buildRemap(src: mut @ TokenBuf, pool: Pool, tags: TagPool) -> PoolRemap:
     result.tags = newSeq[TagId](nTags + 1)
     for i in inrange(1, nTags):
         with let:
-            id = tags.tags.getOrIncl(src.tags.tags[TagId(i)])
+            id = getOrIncl(tags.tags, src.tags.tags[TagId(i)])
         if uint32(id) > TagMask:
             quit(utf8("bif: tag pool overflow — '") + src.tags.tags[TagId(i)] +
                  string("' got id ") + str(id) + string(", but a TagLit holds only 9 bits"))
@@ -796,15 +797,15 @@ def buildRemap(src: mut @ TokenBuf, pool: Pool, tags: TagPool) -> PoolRemap:
     result.strings = newSeq[StrId](nStrings + 1)
     for i in inrange(1, nStrings):
         with let:
-            id = pool.strings.getOrIncl(src.pool.strings[StrId(i)])
+            id = getOrIncl(pool.strings, src.pool.strings[StrId(i)])
         result.strings[i] = id
         if uint32(id) != uint32(i): result.identity = False
     with let:
-        nSyms = src.pool.syms().len
+        nSyms = syms(src.pool).len
     result.syms = newSeq[SymId](nSyms + 1)
     for i in inrange(1, nSyms):
         with let:
-            id = pool.symId(src.pool.symString(SymId(i)))
+            id = symId(pool, symString(src.pool, SymId(i)))
         result.syms[i] = id
         if uint32(id) != uint32(i): result.identity = False
     with let:
@@ -812,7 +813,7 @@ def buildRemap(src: mut @ TokenBuf, pool: Pool, tags: TagPool) -> PoolRemap:
     result.files = newSeq[FileId](nFiles + 1)
     for i in inrange(1, nFiles):
         with let:
-            id = pool.filenames.getOrIncl(src.pool.filenames[FileId(i)])
+            id = getOrIncl(pool.filenames, src.pool.filenames[FileId(i)])
         result.files[i] = id
         if uint32(id) != uint32(i): result.identity = False
     return result
@@ -872,19 +873,19 @@ def _remapValue(dest: mut @ TokenBuf, c: mut @ Cursor, t: mut @ _Translator):
     ## one looks the new id up in the map.
     with let:
         destLi = _remapLineInfo(c, t._m)
-    match c.kind():
+    match kind(c):
         case NifKind.TagLit:
             with let:
                 destPos = dest.len.copy()
             t._noteTagPos(c, destPos)
-            dest.openTag(t._m._mapTag(c.cursorTagId()))
-            dest.appendLineInfo(destLi)          # right after the tag head
-            with c.into():
-                while c.hasMore():
+            openTag(dest, t._m._mapTag(cursorTagId(c)))
+            appendLineInfo(dest, destLi)          # right after the tag head
+            with into(c):
+                while hasMore(c):
                     _remapValue(dest, c, t)
             with let:
                 lenBefore = dest.len.copy()
-            dest.closeTag()
+            closeTag(dest)
             if dest.len != lenBefore:
                 # The body outgrew the 19-bit jump field, so `closeTag` spliced an
                 # `ExtendedSuffix` at `destPos + 1` and shifted everything behind it.
@@ -896,20 +897,20 @@ def _remapValue(dest: mut @ TokenBuf, c: mut @ Cursor, t: mut @ _Translator):
             # no pool involved, so it copies verbatim (Cursor discipline: never read a
             # `strId`/`symId` off such a token).
             if isInlineLit(c):
-                dest.add(c.load())
-            elif c.kind() == NifKind.Symbol or c.kind() == NifKind.SymbolDef:
-                dest.add(_poolRefToken(c.kind(), uint32(t._m._mapSym(SymId(combinedPayload(c) >> 1)))))
+                add(dest, load(c))
+            elif kind(c) == NifKind.Symbol or kind(c) == NifKind.SymbolDef:
+                add(dest, _poolRefToken(kind(c), uint32(t._m._mapSym(SymId(combinedPayload(c) >> 1)))))
             else:
-                dest.add(_poolRefToken(c.kind(), uint32(t._m._mapStr(StrId(combinedPayload(c) >> 1)))))
-            dest.appendLineInfo(destLi)
-            c.inc()
-        case NifKind.IntLit:     dest.addIntLit(intVal(c));     dest.appendLineInfo(destLi); c.inc()
-        case NifKind.UIntLit:    dest.addUIntLit(uintVal(c));   dest.appendLineInfo(destLi); c.inc()
-        case NifKind.FloatLit:   dest.addFloatLit(floatVal(c)); dest.appendLineInfo(destLi); c.inc()
-        case NifKind.CharLit:    dest.addCharLit(charLit(c));   dest.appendLineInfo(destLi); c.inc()
-        case NifKind.DotToken:   dest.addDotToken();            dest.appendLineInfo(destLi); c.inc()
+                add(dest, _poolRefToken(kind(c), uint32(t._m._mapStr(StrId(combinedPayload(c) >> 1)))))
+            appendLineInfo(dest, destLi)
+            inc(c)
+        case NifKind.IntLit:     addIntLit(dest, intVal(c));     appendLineInfo(dest, destLi); inc(c)
+        case NifKind.UIntLit:    addUIntLit(dest, uintVal(c));   appendLineInfo(dest, destLi); c.inc()
+        case NifKind.FloatLit:   addFloatLit(dest, floatVal(c)); appendLineInfo(dest, destLi); inc(c)
+        case NifKind.CharLit:    addCharLit(dest, charLit(c));   appendLineInfo(dest, destLi); inc(c)
+        case NifKind.DotToken:   addDotToken(dest);            appendLineInfo(dest, destLi); inc(c)
         case NifKind.LineInfoLit:
-            dest.add(c.load()); c.inc()                    # defensive: not a valid head token
+            dest.add(load(c)); c.inc()                    # defensive: not a valid head token
         case NifKind.ExtendedSuffix:
             quit(string("bif: ExtendedSuffix cannot be a head token"))
         case NifKind.UnknownToken | NifKind.EofToken | NifKind.ParLe | NifKind.ParRi:
@@ -947,10 +948,10 @@ def _remapInto(raw: mut @ BifModule, pool: Pool, tags: TagPool,
     result.buf = createTokenBuf(max(n + (n >> 3), 16), pool, tags)
     if n > 0:
         with var:
-            c = raw.buf.beginRead()
-        while c.hasMore():
+            c = beginRead(raw.buf)
+        while hasMore(c):
             _remapValue(result.buf, c, t)
-        c.endRead()
+        endRead(c)
     result.index = newSeq[IndexEntry](raw.index.len)
     for i in range(raw.index.len):
         result.index[i] = IndexEntry(sym=m._mapSym(raw.index[i].sym),
@@ -1007,14 +1008,14 @@ if comptime(__name__ == "__main__"):
     # remapped buffer is only required to *mean* the same thing — token widths
     # legitimately differ when a line info moves to the wide file layout.
     def _sameValue(a: Cursor, b: Cursor) -> bool:
-        if a.kind() != b.kind(): return False
+        if kind(a) != kind(b): return False
         with let:
             la = rawLineInfo(a)
             lb = rawLineInfo(b)
         if la.line != lb.line or la.col != lb.col: return False
         if lineInfoFile(a) != lineInfoFile(b): return False
-        match a.kind():
-            case NifKind.TagLit:                       return a.tags().tags[a.cursorTagId()] == b.tags().tags[b.cursorTagId()]
+        match kind(a):
+            case NifKind.TagLit:                       return nifcore.tags(a).tags[cursorTagId(a)] == nifcore.tags(b).tags[cursorTagId(b)]
             case NifKind.StrLit | NifKind.Ident:       return strVal(a) == strVal(b)
             case NifKind.Symbol | NifKind.SymbolDef:   return symName(a) == symName(b)
             case NifKind.IntLit:                       return intVal(a) == intVal(b)
@@ -1026,19 +1027,19 @@ if comptime(__name__ == "__main__"):
 
     def _sameTree(a: mut @ Cursor, b: mut @ Cursor) -> bool:
         result = True
-        while a.hasMore() and b.hasMore():
+        while hasMore(a) and hasMore(b):
             if not _sameValue(a, b): return False
-            if a.kind() == NifKind.TagLit:
+            if kind(a) == NifKind.TagLit:
                 with var:
                     ok = True
-                with a.peekInto():
-                    with b.peekInto():
+                with peekInto(a):
+                    with peekInto(b):
                         ok = _sameTree(a, b)
                 if not ok: return False
             else:
-                a.inc()
-                b.inc()
-        result = a.hasMore() == b.hasMore()
+                inc(a)
+                inc(b)
+        result = hasMore(a) == hasMore(b)
         return result
 
     with block("round_trip"):
@@ -1047,21 +1048,21 @@ if comptime(__name__ == "__main__"):
         with var:
             src = createTokenBuf(16)
         with let:
-            tFoo = src.tags.registerTag(string("foo"))
-            tBar = src.tags.registerTag(string("bar"))
-            f = src.pool.filenames.getOrIncl(string("some/where.nim"))
-        with src.buildTree(tFoo):
-            src.appendLineInfo(f, i32(10), i32(2))
-            with src.buildTree(tBar):
-                src.addStrLit(string("hi"))                         # inline (<=3)
-                src.addStrLit(string("a longer interned string"))   # pool
-                src.addSymUse(string("some.long.symbol.name.0"))    # sym pool
-                src.addSymDef(string("another.symbol.def.1"))
-                src.addIntLit(42)
-                src.addIntLit(i64(1) << 40)                         # suffix-extended
-                src.addUIntLit(u64(0))
-                src.addFloatLit(3.14)
-                src.addIdent(string("ident_name"))
+            tFoo = registerTag(src.tags, string("foo"))
+            tBar = registerTag(src.tags, string("bar"))
+            f = getOrIncl(src.pool.filenames, string("some/where.nim"))
+        with buildTree(src, tFoo):
+            appendLineInfo(src, f, i32(10), i32(2))
+            with buildTree(src, tBar):
+                addStrLit(src, string("hi"))                         # inline (<=3)
+                addStrLit(src, string("a longer interned string"))   # pool
+                addSymUse(src, string("some.long.symbol.name.0"))    # sym pool
+                addSymDef(src, string("another.symbol.def.1"))
+                addIntLit(src, 42)
+                addIntLit(src, i64(1) << 40)                         # suffix-extended
+                addUIntLit(src, u64(0))
+                addFloatLit(src, 3.14)
+                addIdent(src, string("ident_name"))
 
         with let:
             tmp = string("/tmp/bif_selftest.bif")
@@ -1072,13 +1073,13 @@ if comptime(__name__ == "__main__"):
         # pools must match value-for-value (so ids line up)
         doAssert(len(m.buf.tags.tags) == len(src.tags.tags))
         doAssert(len(m.buf.pool.strings) == len(src.pool.strings))
-        doAssert(m.buf.pool.syms().len == src.pool.syms().len)
+        doAssert(syms(m.buf.pool).len == syms(src.pool).len)
         doAssert(len(m.buf.pool.filenames) == len(src.pool.filenames))
         # spot-check a decoded value via a cursor
         with var:
-            c = m.buf.beginRead()
-        doAssert(c.kind() == NifKind.TagLit)
-        doAssert(m.buf.tags.tagName(c.cursorTagId()) == string("foo"))
+            c = beginRead(m.buf)
+        doAssert(kind(c) == NifKind.TagLit)
+        doAssert(tagName(m.buf.tags, cursorTagId(c)) == string("foo"))
 
         # the non-mmap File reader must decode byte-for-byte the same buffer as the
         # mmap path (it walks the same varint header + alignment pad).
@@ -1088,7 +1089,7 @@ if comptime(__name__ == "__main__"):
             fm = loadFromFile(ff)
         close(ff)
         doAssert(_sameTokens(src, fm.buf), string("loadFromFile disagrees with mmap load"))
-        doAssert(fm.buf.pool.syms().len == src.pool.syms().len)
+        doAssert(syms(fm.buf.pool).len == syms(src.pool).len)
 
         # containsSym probes only the syms table (skipping header, pad, tokens, tags,
         # strings); it must find a pooled name and reject an absent one.
@@ -1102,18 +1103,18 @@ if comptime(__name__ == "__main__"):
         with var:
             src = createTokenBuf(16)
         with let:
-            tStmts = src.tags.registerTag(string("stmts"))
-            tSdef = src.tags.registerTag(string("sdef"))
-        with src.buildTree(tStmts):
-            with src.buildTree(tSdef):                 # exported global: `x` marker
-                src.addSymDef(string("foo.3.mymod"))
-                src.addIdent(string("x"))
-            with src.buildTree(tSdef):                 # hidden global: `.` marker
-                src.addSymDef(string("bar.4.mymod"))
-                src.addDotToken()
-            with src.buildTree(tSdef):                 # local (1 dot) -> not indexed
-                src.addSymDef(string("loc.0"))
-                src.addIdent(string("x"))
+            tStmts = registerTag(src.tags, string("stmts"))
+            tSdef = registerTag(src.tags, string("sdef"))
+        with buildTree(src, tStmts):
+            with buildTree(src, tSdef):                 # exported global: `x` marker
+                addSymDef(src, string("foo.3.mymod"))
+                addIdent(src, string("x"))
+            with buildTree(src, tSdef):                 # hidden global: `.` marker
+                addSymDef(src, string("bar.4.mymod"))
+                addDotToken(src)
+            with buildTree(src, tSdef):                 # local (1 dot) -> not indexed
+                addSymDef(src, string("loc.0"))
+                addIdent(src, string("x"))
 
         with let:
             tmp = string("/tmp/bif_index_selftest.bif")
@@ -1124,26 +1125,26 @@ if comptime(__name__ == "__main__"):
         # entry 0: foo, exported; its pos points at the enclosing (sdef tag.
         with let:
             e0 = m.index[0]
-        doAssert(m.buf.pool.symString(e0.sym) == string("foo.3.mymod"))
+        doAssert(symString(m.buf.pool, e0.sym) == string("foo.3.mymod"))
         doAssert(e0.vis == IndexVis.ivExported)
         with var:
             c = cursorAt(m.buf, nint(e0.pos))
-        doAssert(c.kind() == NifKind.TagLit and m.buf.tags.tagName(c.cursorTagId()) == string("sdef"))
+        doAssert(kind(c) == NifKind.TagLit and tagName(m.buf.tags, cursorTagId(c)) == string("sdef"))
         # entry 1: bar, hidden.
-        doAssert(m.buf.pool.symString(m.index[1].sym) == string("bar.4.mymod"))
+        doAssert(symString(m.buf.pool, m.index[1].sym) == string("bar.4.mymod"))
         doAssert(m.index[1].vis == IndexVis.ivHidden)
 
         with let:
             foo = m.findDeclaration(string("foo.3.mymod"))
-        doAssert(not foo.cursorIsNil())
-        doAssert(foo.kind() == NifKind.TagLit and m.buf.tags.tagName(foo.cursorTagId()) == string("sdef"))
-        doAssert(m.findDeclaration(string("missing.0.mymod")).cursorIsNil())
+        doAssert(not cursorIsNil(foo))
+        doAssert(kind(foo) == NifKind.TagLit and tagName(m.buf.tags, cursorTagId(foo)) == string("sdef"))
+        doAssert(cursorIsNil(m.findDeclaration(string("missing.0.mymod"))))
         with var:
             declarationCount = 0
         for name, visibility, declaration in m.declarations():
             doAssert(name in array[2, string]([string("foo.3.mymod"), string("bar.4.mymod")]))
             doAssert(visibility in Tset[IndexVis](IndexVis.ivExported, IndexVis.ivHidden))
-            doAssert(declaration.kind() == NifKind.TagLit)
+            doAssert(kind(declaration) == NifKind.TagLit)
             declarationCount += 1
         doAssert(declarationCount == 2)
 
@@ -1162,25 +1163,25 @@ if comptime(__name__ == "__main__"):
         ## with line info on several heads so the remap has filenames to move.
         result = createTokenBuf(16)
         with let:
-            tStmts = result.tags.registerTag(string("stmts"))
-            tSdef = result.tags.registerTag(string("sdef"))
-            tCall = result.tags.registerTag(string("call"))
-            f = result.pool.filenames.getOrIncl(fileName)
-        with result.buildTree(tStmts):
-            result.appendLineInfo(f, i32(1), i32(0))
-            with result.buildTree(tSdef):
-                result.appendLineInfo(f, i32(12), i32(4))
-                result.addSymDef(selfSym)
-                result.addIdent(string("x"))
-                with result.buildTree(tCall):
-                    result.addSymUse(sharedSym)
-                    result.addStrLit(string("hi"))                        # inline (<= 3 bytes)
-                    result.addStrLit(string("a longer interned string"))  # pool ref
-                    result.appendLineInfo(f, i32(13), i32(8))
-                    result.addIntLit(42)
-                    result.addFloatLit(3.14)
-                    result.addCharLit(ch('q'))
-                    result.addDotToken()
+            tStmts = registerTag(result.tags, string("stmts"))
+            tSdef = registerTag(result.tags, string("sdef"))
+            tCall = registerTag(result.tags, string("call"))
+            f = getOrIncl(result.pool.filenames, fileName)
+        with buildTree(result, tStmts):
+            appendLineInfo(result, f, i32(1), i32(0))
+            with buildTree(result, tSdef):
+                appendLineInfo(result, f, i32(12), i32(4))
+                addSymDef(result, selfSym)
+                addIdent(result, string("x"))
+                with buildTree(result, tCall):
+                    addSymUse(result, sharedSym)
+                    addStrLit(result, string("hi"))                        # inline (<= 3 bytes)
+                    addStrLit(result, string("a longer interned string"))  # pool ref
+                    appendLineInfo(result, f, i32(13), i32(8))
+                    addIntLit(result, 42)
+                    addFloatLit(result, 3.14)
+                    addCharLit(result, ch('q'))
+                    addDotToken(result)
         return result
 
     with block("remap_into_shared_pools"):
@@ -1196,24 +1197,24 @@ if comptime(__name__ == "__main__"):
         with let:
             pool = newPool()
             tags = newTagPool()
-        _ = tags.registerTag(string("unrelated"))
-        _ = pool.strings.getOrIncl(string("some other string"))
-        _ = pool.symId(string("prior.symbol.0.othermod"))
-        for i in range(200): _ = pool.filenames.getOrIncl(string("file") + str(i) + string(".nim"))
+        _ = registerTag(tags, string("unrelated"))
+        _ = getOrIncl(pool.strings, string("some other string"))
+        _ = symId(pool, string("prior.symbol.0.othermod"))
+        for i in range(200): _ = getOrIncl(pool.filenames, string("file") + str(i) + string(".nim"))
 
         with var:
             m = loadInto(tmp, pool, tags)
         doAssert(m.buf.pool == pool, string("loaded buffer does not carry the caller's pool"))
         doAssert(m.buf.tags == tags, string("loaded buffer does not carry the caller's tags"))
-        doAssert(uint32(pool.filenames.getOrIncl(string("some/where.nim"))) > LiFileMaxC,
+        doAssert(uint32(getOrIncl(pool.filenames, string("some/where.nim"))) > LiFileMaxC,
                  string("test setup: the file id did not exceed the 7-bit layout"))
 
         with var:
-            a = src.beginRead()
-            b = m.buf.beginRead()
+            a = beginRead(src)
+            b = beginRead(m.buf)
         doAssert(_sameTree(a, b), string("remapped tree differs from the source"))
-        a.endRead()
-        b.endRead()
+        endRead(a)
+        endRead(b)
         # The wide file layout costs one extra token per line info, so the rewrite
         # provably ran (and provably could not have been an in-place id patch).
         doAssert(m.buf.len > src.len,
@@ -1223,15 +1224,15 @@ if comptime(__name__ == "__main__"):
         # ids, so `SymId` equality is a valid identity test against anything else
         # interned there.
         doAssert(m.index.len == 1, string("expected 1 global sym, got ") + str(m.index.len))
-        doAssert(m.index[0].sym == pool.symId(string("foo.3.mymod")))
+        doAssert(m.index[0].sym == symId(pool, string("foo.3.mymod")))
         doAssert(m.index[0].vis == IndexVis.ivExported)
         with var:
             decl = cursorAt(m.buf, nint(m.index[0].pos))
-        doAssert(decl.kind() == NifKind.TagLit and tags.tags[decl.cursorTagId()] == string("sdef"),
+        doAssert(kind(decl) == NifKind.TagLit and tags.tags[cursorTagId(decl)] == string("sdef"),
                  string("index position does not point at the declaration's tag"))
         with var:
-            body = decl.sub()
-        doAssert(body.kind() == NifKind.SymbolDef)
+            body = sub(decl)
+        doAssert(kind(body) == NifKind.SymbolDef)
         doAssert(symId(body, pool) == m.index[0].sym)
 
         # A second module translated into the SAME pools must agree on the symbol
@@ -1246,29 +1247,29 @@ if comptime(__name__ == "__main__"):
 
         def firstSymUse(mo: mut @ BifModule) -> SymId:
             with var:
-                c = mo.buf.beginRead()
+                c = beginRead(mo.buf)
             result = SymId(0)
-            while c.hasMore():
-                if c.kind() == NifKind.Symbol:
+            while hasMore(c):
+                if kind(c) == NifKind.Symbol:
                     result = symId(c, mo.buf.pool)
                     break
-                c.inc()
-            c.endRead()
+                inc(c)
+            endRead(c)
             return result
         doAssert(uint32(firstSymUse(m)) != u32(0))
         doAssert(firstSymUse(m) == firstSymUse(m2),
                  string("the shared symbol got different SymIds in two modules"))
-        doAssert(firstSymUse(m) == pool.symId(string("shared.1.othermod")))
+        doAssert(firstSymUse(m) == symId(pool, string("shared.1.othermod")))
         # …and the tag pools agree too, which is what makes `cursorTagId` castable.
         doAssert(m2.buf.tags == tags)
         # Guard against a vacuous comparator: two genuinely different modules must
         # NOT compare equal.
         with var:
-            d1 = src.beginRead()
-            d2 = m2.buf.beginRead()
+            d1 = beginRead(src)
+            d2 = beginRead(m2.buf)
         doAssert(not _sameTree(d1, d2), string("sameTree does not detect a difference"))
-        d1.endRead()
-        d2.endRead()
+        endRead(d1)
+        endRead(d2)
 
     with block("remap_identity_and_file_reader"):
         # Empty target pools: the file's ids are reproduced exactly, so the token
@@ -1292,18 +1293,18 @@ if comptime(__name__ == "__main__"):
         with let:
             pool2 = newPool()
             tags2 = newTagPool()
-        _ = pool2.symId(string("prior.symbol.0.othermod"))   # force a rewrite
+        _ = symId(pool2, string("prior.symbol.0.othermod"))   # force a rewrite
         with var:
             ff = open(tmp, fmRead)
             fm = loadFromFileInto(ff, pool2, tags2)
         close(ff)
         with var:
-            a = m.buf.beginRead()
-            b = fm.buf.beginRead()
+            a = beginRead(m.buf)
+            b = beginRead(fm.buf)
         doAssert(_sameTree(a, b), string("loadFromFileInto disagrees with loadInto"))
-        a.endRead()
-        b.endRead()
-        doAssert(fm.index[0].sym == pool2.symId(string("foo.3.mymod")))
+        endRead(a)
+        endRead(b)
+        doAssert(fm.index[0].sym == symId(pool2, string("foo.3.mymod")))
 
     echo(string("bif self-tests passed"))
 
@@ -1319,37 +1320,37 @@ if comptime(__name__ == "__main__"):
 
     def _samePools(a: TokenBuf, b: TokenBuf) -> bool:
         if len(a.tags.tags) != len(b.tags.tags) or len(a.pool.strings) != len(b.pool.strings) or \
-                a.pool.syms().len != b.pool.syms().len or len(a.pool.filenames) != len(b.pool.filenames):
+                syms(a.pool).len != syms(b.pool).len or len(a.pool.filenames) != len(b.pool.filenames):
             return False
         for i in inrange(1, len(a.tags.tags)):
             if a.tags.tags[TagId(i)] != b.tags.tags[TagId(i)]: return False
         for i in inrange(1, len(a.pool.strings)):
             if a.pool.strings[StrId(i)] != b.pool.strings[StrId(i)]: return False
-        for i in inrange(1, a.pool.syms().len):
-            if a.pool.symString(SymId(i)) != b.pool.symString(SymId(i)): return False
+        for i in inrange(1, syms(a.pool).len):
+            if symString(a.pool, SymId(i)) != symString(b.pool, SymId(i)): return False
         for i in inrange(1, len(a.pool.filenames)):
             if a.pool.filenames[FileId(i)] != b.pool.filenames[FileId(i)]: return False
         return True
 
     def _echoModule(label: string, m: mut @ BifModule):
         echo(label, string(": tokens "), m.buf.len, string(" tags "), len(m.buf.tags.tags),
-             string(" strings "), len(m.buf.pool.strings), string(" syms "), m.buf.pool.syms().len,
+             string(" strings "), len(m.buf.pool.strings), string(" syms "), syms(m.buf.pool).len,
              string(" files "), len(m.buf.pool.filenames), string(" index "), m.index.len)
         for e in m.index:
-            echo(string("  "), m.buf.pool.symString(e.sym), string(" sym "), uint32(e.sym), string(" pos "), e.pos,
+            echo(string("  "), symString(m.buf.pool, e.sym), string(" sym "), uint32(e.sym), string(" pos "), e.pos,
                  string(" "), e.vis)
         for name, visibility, declaration in m.declarations():
             echo(string("  decl "), name, string(" "), visibility, string(" "),
-                 m.buf.tags.tagName(declaration.cursorTagId()))
+                 tagName(m.buf.tags, cursorTagId(declaration)))
 
     def _sameAs(label: string, src: mut @ TokenBuf, m: mut @ BifModule):
         with var:
-            a = src.beginRead()
-            b = m.buf.beginRead()
+            a = beginRead(src)
+            b = beginRead(m.buf)
         echo(label, string(": same tree "), _sameTree(a, b), string(", same tokens "), _sameTokens(src, m.buf),
              string(", same pools "), _samePools(src, m.buf))
-        a.endRead()
-        b.endRead()
+        endRead(a)
+        endRead(b)
 
     def _test():
         echo(UnusedNameTag, string(" "), DependencyTag)
@@ -1409,9 +1410,9 @@ if comptime(__name__ == "__main__"):
         with let:
             busyPool = newPool()
             busyTags = newTagPool()
-        _ = busyTags.registerTag(string("unrelated"))
-        _ = busyPool.symId(string("prior.symbol.0.othermod"))
-        _ = busyPool.strings.getOrIncl(string("some other string"))
+        _ = registerTag(busyTags, string("unrelated"))
+        _ = symId(busyPool, string("prior.symbol.0.othermod"))
+        _ = getOrIncl(busyPool.strings, string("some other string"))
         with var:
             m4 = loadInto(p1, busyPool, busyTags)
         _echoModule(string("loadInto (busy pools)"), m4)
@@ -1439,8 +1440,8 @@ if comptime(__name__ == "__main__"):
         # findDeclaration on a loaded module
         with let:
             decl = m1.findDeclaration(string("foo.3.mymod"))
-        echo(string("findDeclaration: "), decl.kind(), string(" "), m1.buf.tags.tagName(decl.cursorTagId()),
-             string(" "), m1.findDeclaration(string("shared.1.othermod")).cursorIsNil())
+        echo(string("findDeclaration: "), kind(decl), string(" "), tagName(m1.buf.tags, cursorTagId(decl)),
+             string(" "), cursorIsNil(m1.findDeclaration(string("shared.1.othermod"))))
 
         # loadIndex / loadIndexFromFile / containsSym
         with let:

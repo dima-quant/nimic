@@ -68,7 +68,7 @@ if comptime(defined("vfsProfile")):
     def dumpVfsProfile(label: string):
         @template
         def emit(name: string, c: VfsCounter):
-            stderr.writeLine(string("[vfs] ") + label + string(" ") + name +
+            writeLine(stderr, string("[vfs] ") + label + string(" ") + name +
                              string(" count=") + str(c.count) +
                              string(" ms=") + formatFloat(float64(c.ns) / 1_000_000.0, ffDecimal, 3) +
                              string(" bytes=") + str(c.bytes))
@@ -96,6 +96,7 @@ class FileWriteMode(NIntEnum):
 # Never truncate a .nif or .bif that a reader may have mmap'd.
 
 from nimic.std.atomics import *
+from nimic.std.atomics import fetchAdd
 
 if comptime(defined("windows")):
     @importc
@@ -120,7 +121,7 @@ else:
         _atomicWriteCounter = Atomic[nint]()
 
     def _nextTempSeq() -> nint:
-        return _atomicWriteCounter.fetchAdd(1)
+        return fetchAdd(_atomicWriteCounter, 1)
 
 
 def atomicTempPath(target: string) -> string:

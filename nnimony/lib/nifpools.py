@@ -78,7 +78,7 @@ def _createMasterTagPool() -> TagPool:
     for e in inrange(low(TagEnum), high(TagEnum)):
         if e != TagEnum.InvalidTagId:
             with let:
-                id = result.registerTag(TagData[e][0])
+                id = registerTag(result, TagData[e][0])
             assert uint32(id) == uint32(e), \
                 string("tag pool misalignment for ") + TagData[e][0]
     return result
@@ -500,7 +500,7 @@ def addUnstructured(dest: mut @ TokenBuf, c: Cursor):
     with var:
         c = c.copy()
     while hasMore(c):
-        dest.addSubtree(c)
+        addSubtree(dest, c)
         skip(c)
 
 
@@ -509,8 +509,8 @@ def insert(dest: mut @ TokenBuf, src: Cursor, pos: nint):
     ## Insert the single subtree at `src` into `dest` at token position `pos`.
     with var:
         tmp = createTokenBuf(subtreeWidth(src) + 2)
-    tmp.addSubtree(src)
-    dest.insert(tmp, pos)
+    addSubtree(tmp, src)
+    insert(dest, tmp, pos)
     ## nifcore has no close-token info; the arg is accepted for compatibility.
 
 # ── Atom builders carrying line info (classic `dest.add xToken(v, info)`) ──
@@ -679,7 +679,7 @@ def copyInto(dest: mut @ TokenBuf, tag: TagId, info: NifLineInfo, body: untyped)
 @template
 def copyIntoUnchecked(dest: mut @ TokenBuf, tag: string, info: NifLineInfo, body: untyped):
     pragma("nifWrap")
-    addParLe(dest, globalTags.registerTag(tag), info)
+    addParLe(dest, registerTag(globalTags, tag), info)
     body
     closeTag(dest)
 
@@ -688,7 +688,7 @@ def copyIntoUnchecked(dest: mut @ TokenBuf, tag: string, info: NifLineInfo, body
 
 def takeTree(dest: mut @ TokenBuf, n: mut @ Cursor):
     """{.nifBalanced.}"""
-    dest.addSubtree(n)
+    addSubtree(dest, n)
     skip(n)
 
 # ── Skip intents / structural helpers ────────────────────────────────────
@@ -802,17 +802,17 @@ if comptime(__name__ == "__main__"):
         for e in array[5, TagEnum]([TagEnum.ErrTagId, TagEnum.SufTagId, TagEnum.AtTagId, TagEnum.DotTagId,
                                     high(TagEnum)]):
             echo(string("tag "), TagData[e][0], string(" ord "), ord(e), string(" id "),
-                 uint32(globalTags.registerTag(TagData[e][0])), string(" name "),
-                 globalTags.tagName(TagId(uint32(ord(e)))))
+                 uint32(registerTag(globalTags, TagData[e][0])), string(" name "),
+                 tagName(globalTags, TagId(uint32(ord(e)))))
         echo(string("ErrT "), uint32(ErrT), string(" InlineInt "), InlineInt)
         with let:
             newTag = registerTag(string("nifpoolsTestTag"))
         echo(string("new tag "), uint32(newTag) == uint32(ord(high(TagEnum))) + 1, string(" again "),
-             registerTag(string("nifpoolsTestTag")) == newTag, string(" name "), globalTags.tagName(newTag))
+             registerTag(string("nifpoolsTestTag")) == newTag, string(" name "), tagName(globalTags, newTag))
 
         # ── info-carrying builders, buildTree, copyInto, copyIntoUnchecked
         with let:
-            f = pool.filenames.getOrIncl(string("a.nim"))
+            f = getOrIncl(pool.filenames, string("a.nim"))
         with let:
             i1 = NifLineInfo(file=f, line=int32(3), col=int32(4))
         with let:
@@ -828,8 +828,8 @@ if comptime(__name__ == "__main__"):
             with buildTree(b, ErrT, i2):
                 addIdent(b, string("x"))
                 addIdent(b, string("y"), i1)
-                addIdent(b, pool.strings.getOrIncl(string("zident")), i2)
-                addStrLit(b, pool.strings.getOrIncl(string("pooled string")), i1)
+                addIdent(b, getOrIncl(pool.strings, string("zident")), i2)
+                addStrLit(b, getOrIncl(pool.strings, string("pooled string")), i1)
                 addStrLit(b, string("s"), i2)
                 addStrLit(b, string("s none"), NoLineInfo)
                 addIntLit(b, int64(-5), i1)
@@ -852,17 +852,17 @@ if comptime(__name__ == "__main__"):
         with var:
             other = createTokenBuf()
         addIdent(other, string("appended"), i2)
-        b.add(other)
+        add(b, other)
         _showBuf(string("with add"), b)
 
         # ── predicates, line info and raw-token accessors at every position
         with var:
-            c = b.beginRead()
+            c = beginRead(b)
         _showPredicates(string("root"), c)
         _showInfo(string("info root"), info(c))
         _showInfo(string("endInfo root"), endInfo(c))
-        with c.into():
-            with c.into():
+        with into(c):
+            with into(c):
                 while hasMore(c):
                     _showPredicates(string("  "), c)
                     _showInfo(string("  info"), info(c))
@@ -871,15 +871,15 @@ if comptime(__name__ == "__main__"):
                 consumeParRi(c)
             skipUntilEnd(c)
             _showPredicates(string("after skipUntilEnd"), c)
-        c.endRead()
+        endRead(c)
         for i in range(len(b)):
             _showTokenPredicates(string("token ") + string(str(i)), b[i])
             _showInfo(string("  raw info"), info(b[i]))
         echo(string("tagId of token 0 "), uint32(tagId(b[0])), string(" "), uint32(tagId(b[0])) == uint32(ord(TagEnum.StmtsTagId)))
         with var:
-            d = b.beginRead()
-        with d.into():
-            with d.into():
+            d = beginRead(b)
+        with into(d):
+            with into(d):
                 while hasMore(d):
                     if isIntLit(d):
                         echo(string("int: typebits "), typebits(load(d)), string(" getInt28 "), getInt28(d),
@@ -890,7 +890,7 @@ if comptime(__name__ == "__main__"):
                         echo(kind(d), string(": typebits "), typebits(load(d)), string(" uoperand "), uoperand(d))
                     skip(d)
             skipUntilEnd(d)
-        d.endRead()
+        endRead(d)
 
         # ── int28Token / getInt28 / patchInt28Token
         for v in array[8, int32]([int32(0), int32(1), int32(-1), int32(123456), int32(-123456),
@@ -904,16 +904,16 @@ if comptime(__name__ == "__main__"):
         with var:
             cf = createTokenBuf()
         with buildTree(cf, ErrT, NoLineInfo):
-            cf.add(int28Token(int32(-77), NoLineInfo))
-            cf.add(int28Token(int32(0), NoLineInfo))
+            add(cf, int28Token(int32(-77), NoLineInfo))
+            add(cf, int28Token(int32(0), NoLineInfo))
             addDotToken(cf, NoLineInfo)
         with var:
-            g = cf.beginRead()
-        with g.into():
+            g = beginRead(cf)
+        with into(g):
             while hasMore(g):
                 echo(string("cf getInt28 "), getInt28(g), string(" dot "), isDotToken(g))
                 skip(g)
-        g.endRead()
+        endRead(g)
 
         # ── setSymId on raw tokens: the kind is kept
         with var:
@@ -937,23 +937,23 @@ if comptime(__name__ == "__main__"):
         with let:
             growth = len(src)
         with var:
-            sc = src.beginRead()
-        w.insert(sc, 2)
-        sc.endRead()
+            sc = beginRead(src)
+        insert(w, sc, 2)
+        endRead(sc)
         widenEnclosingSealed(w, 2, growth)
         _showBuf(string("inserted into b"), w)
         with var:
             w2 = parseFromBuffer(string("(a (b 1) 2)"), string("w"))
         with var:
-            sc2 = src.beginRead()
-        w2.insert(sc2, 3)
-        sc2.endRead()
+            sc2 = beginRead(src)
+        insert(w2, sc2, 3)
+        endRead(sc2)
         widenEnclosingSealed(w2, 3, growth)
         widenEnclosingSealed(w2, 3, 0)
         _showBuf(string("inserted after b"), w2)
         with var:
             w3 = parseFromBuffer(string("(a (b 1) 2)"), string("w"))
-        w3.add(int28Token(int32(0), NoLineInfo))
+        add(w3, int28Token(int32(0), NoLineInfo))
         widenSealed(w3, 1, 0)
         echo(string("widenSealed by 0 keeps "), toString(w3, False))
 
@@ -961,7 +961,7 @@ if comptime(__name__ == "__main__"):
         with var:
             t1 = parseFromBuffer(string("(r (p 1 (q 2)) (p 3) x (q (p 4)))"), string("t"))
         with var:
-            base = t1.beginRead()
+            base = beginRead(t1)
         with var:
             n = base.copy()
         inc(n)
@@ -974,27 +974,27 @@ if comptime(__name__ == "__main__"):
              isLastSon(n), string(" "), toString(n, False))
         inc(n, TagClass.Anything)
         echo(string("after inc Anything: position "), cursorToPosition(base, n), string(" "), toString(n, False))
-        n.endRead()
+        endRead(n)
         with var:
             scan = base.copy()
         for _ in linearScan(scan):
             echo(string("scan "), cursorToPosition(base, scan), string(" "), toString(scan, False))
-        scan.endRead()
+        endRead(scan)
         with var:
             scan2 = base.copy()
         for _ in linearScan(scan2):
             if tagName(globalTags, cursorTagId(scan2)) == string("q"):
                 break
         echo(string("scan stopped at "), cursorToPosition(base, scan2), string(" "), toString(scan2, False))
-        scan2.endRead()
+        endRead(scan2)
         with var:
             atom = parseFromBuffer(string("x"), string("t"))
         with var:
-            ac = atom.beginRead()
+            ac = beginRead(atom)
         for _ in linearScan(ac):
             echo(string("scan of an atom runs its body"))
         echo(string("scan of an atom: "), toString(ac, False))
-        ac.endRead()
+        endRead(ac)
         with var:
             moved = createTokenBuf()
         with var:
@@ -1003,7 +1003,7 @@ if comptime(__name__ == "__main__"):
         takeTree(moved, tk)
         takeTree(moved, tk)
         echo(string("takeTree twice: "), toString(moved, False), string(" | then at "), toString(tk, False))
-        tk.endRead()
+        endRead(tk)
         with var:
             rest = createTokenBuf()
         with var:
@@ -1013,8 +1013,8 @@ if comptime(__name__ == "__main__"):
         with buildTree(rest, ErrT, NoLineInfo):
             addUnstructured(rest, ru)
         echo(string("addUnstructured: "), toString(rest, False))
-        ru.endRead()
-        base.endRead()
+        endRead(ru)
+        endRead(base)
 
         # ── parse / render: nifpools' overloads, nifcoreparse's when qualified
         with var:
@@ -1025,13 +1025,13 @@ if comptime(__name__ == "__main__"):
         echo(string("nifcoreparse.parseFromBuffer shares it "), own.pool == pool)
         _showBuf(string("parsed"), pb)
         with var:
-            pc = pb.beginRead()
+            pc = beginRead(pb)
         echo(string("toString(c) "), toString(pc))
         echo(string("toString(c, false) "), toString(pc, False))
         echo(string("toString(c, produceLineInfo = false) "), toString(pc, produceLineInfo=False))
         echo(string("nifcoreparse.toString(c, includeLineInfo = false) "),
              nifcoreparse.toString(pc, includeLineInfo=False))
-        pc.endRead()
+        endRead(pc)
 
         # ── writeFile in both modes, parseFromFile
         with let:
@@ -1044,13 +1044,13 @@ if comptime(__name__ == "__main__"):
         _showBuf(string("from the file"), pf)
         with let:
             before = getLastModificationTime(path)
-        pb.writeFile(path, FileWriteMode.OnlyIfChanged)
+        writeFile(pb, path, FileWriteMode.OnlyIfChanged)
         echo(string("OnlyIfChanged, unchanged: not rewritten "), getLastModificationTime(path) == before)
         vfsWrite(path, string("(changed)"))
-        pb.writeFile(path, FileWriteMode.OnlyIfChanged)
+        writeFile(pb, path, FileWriteMode.OnlyIfChanged)
         echo(string("OnlyIfChanged, changed: rewritten "), vfsRead(path) == nifcoreparse.toModuleString(pb, string(".nifpools_test_module")))
         vfsWrite(path, string("(other 1)"))
-        pb.writeFile(path, FileWriteMode.AlwaysWrite)
+        writeFile(pb, path, FileWriteMode.AlwaysWrite)
         with var:
             pf2 = parseFromFile(path, 4)
         _showBuf(string("from the file again"), pf2)

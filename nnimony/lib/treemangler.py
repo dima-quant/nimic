@@ -257,27 +257,27 @@ if comptime(__name__ == "__main__"):
     from nimic.std.syncio import *
 
     def _test(b: sink @ Mangler):
-        with b.withTree(string("stmts")):
-            with b.withTree(string("call")):
-                b.addSymbol(string("foo.3.mymod"))
-                b.addIntLit(3423)
-                b.addFloatLit(50.4)
+        with withTree(b, string("stmts")):
+            with withTree(b, string("call")):
+                addSymbol(b, string("foo.3.mymod"))
+                addIntLit(b, 3423)
+                addFloatLit(b, 50.4)
 
         echo(extract(b))
 
         # (array (range 0 9) (array (range 0 4 (i 8))))
         with var:
             m = createMangler(60)
-        with m.withTree(string("array")):
-            with m.withTree(string("range")):
-                m.addIntLit(0)
-                m.addIntLit(9)
-            with m.withTree(string("array")):
-                with m.withTree(string("range")):
-                    m.addIntLit(0)
-                    m.addIntLit(4)
-                with m.withTree(string("i")):
-                    m.addIntLit(8)
+        with withTree(m, string("array")):
+            with withTree(m, string("range")):
+                addIntLit(m, 0)
+                addIntLit(m, 9)
+            with withTree(m, string("array")):
+                with withTree(m, string("range")):
+                    addIntLit(m, 0)
+                    addIntLit(m, 4)
+                with withTree(m, string("i")):
+                    addIntLit(m, 8)
 
         assert extract(m) == string("AarrayArangeS0S9ZAR0AR6S0S4ZAiS8")
 

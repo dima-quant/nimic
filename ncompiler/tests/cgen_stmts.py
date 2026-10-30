@@ -13,7 +13,7 @@ def _getTemp(p: BProc, t: PType, needsInit: bool = False) -> TLoc:
     # simplified: no C++ temporaries, no initialization
     p.labels += 1
     result = TLoc(snippet=string("T") + rope(p.labels) + string("_"), t=t)
-    p.s(TCProcSection.cpsLocals)._addVar(kind=_VarKind.Local, name=result.snippet, typ=getTypeDesc(p.module, t))
+    _addVar(p.s(TCProcSection.cpsLocals), kind=_VarKind.Local, name=result.snippet, typ=getTypeDesc(p.module, t))
     return result
 
 
@@ -21,4 +21,4 @@ def _getTemp(p: BProc, t: PType, needsInit: bool = False) -> TLoc:
 def _genCaseRange(p: BProc, branch: PNode, info: mut@_SwitchCaseBuilder) -> None:
     # simplified: integer literals, no ranges
     for j in range(branch.len - 1):
-        p.s(TCProcSection.cpsStmts)._addCase(info, cIntValue(branch[j].intVal))
+        _addCase(p.s(TCProcSection.cpsStmts), info, cIntValue(branch[j].intVal))

@@ -14,6 +14,7 @@ from nimic.std.assertions import *
 from .nifcore import (
     beginRead, childCursor, Cursor, cursorIsNil, cursorTagId, endRead, hasMore, kind, NifKind, skip, strVal, tagName,
     tags)
+from . import nifcore
 
 
 @dispatch
@@ -21,7 +22,7 @@ def tagName(cursor: Cursor) -> string:
     """{.noSideEffect, inline.}"""
     ## Returns the textual tag at ``cursor``.
     assert kind(cursor) == NifKind.TagLit
-    return tags(cursor).tagName(cursorTagId(cursor))
+    return tagName(tags(cursor), cursorTagId(cursor))
 
 
 def tagIs(cursor: Cursor, name: string) -> bool:
@@ -36,9 +37,9 @@ def findChildTag(node: Cursor, name: string) -> Cursor:
     if kind(node) != NifKind.TagLit:
         return result
     with var:
-        children = node.childCursor()
+        children = childCursor(node)
     while hasMore(children):
-        if children.tagIs(name):
+        if tagIs(children, name):
             return children
         skip(children)
     return result
@@ -50,13 +51,13 @@ def findDescendantTag(node: Cursor, name: string) -> Cursor:
     if kind(node) != NifKind.TagLit:
         return result
     with var:
-        children = node.childCursor()
+        children = childCursor(node)
     while hasMore(children):
-        if children.tagIs(name):
+        if tagIs(children, name):
             return children
         if kind(children) == NifKind.TagLit:
             with let:
-                nested = children.findDescendantTag(name)
+                nested = findDescendantTag(children, name)
             if not cursorIsNil(nested):
                 return nested
         skip(children)
@@ -66,12 +67,12 @@ def findDescendantTag(node: Cursor, name: string) -> Cursor:
 def findChildKind(node: Cursor, kind: NifKind) -> Cursor:
     ## Finds the first direct child with token ``kind``.
     result = default(Cursor)
-    if node.kind() != NifKind.TagLit:
+    if nifcore.kind(node) != NifKind.TagLit:
         return result
     with var:
-        children = node.childCursor()
+        children = childCursor(node)
     while hasMore(children):
-        if children.kind() == kind:
+        if nifcore.kind(children) == kind:
             return children
         skip(children)
     return result
@@ -80,12 +81,12 @@ def findChildKind(node: Cursor, kind: NifKind) -> Cursor:
 def findLastChildKind(node: Cursor, kind: NifKind) -> Cursor:
     ## Finds the last direct child with token ``kind``.
     result = default(Cursor)
-    if node.kind() != NifKind.TagLit:
+    if nifcore.kind(node) != NifKind.TagLit:
         return result
     with var:
-        children = node.childCursor()
+        children = childCursor(node)
     while hasMore(children):
-        if children.kind() == kind:
+        if nifcore.kind(children) == kind:
             result = children.copy()
         skip(children)
     return result
@@ -98,16 +99,16 @@ if comptime(__name__ == "__main__"):
         tree = parseFromBuffer(
             string("(root (direct \"first\" \"last\") (nested (target value)))"), string("test"))
     with var:
-        root = tree.beginRead()
-    doAssert(root.tagIs(string("root")))
+        root = beginRead(tree)
+    doAssert(tagIs(root, string("root")))
     with let:
-        direct = root.findChildTag(string("direct"))
-    doAssert(direct.tagIs(string("direct")))
-    doAssert(strVal(direct.findChildKind(NifKind.StrLit)) == string("first"))
-    doAssert(strVal(direct.findLastChildKind(NifKind.StrLit)) == string("last"))
-    doAssert(root.findDescendantTag(string("target")).tagIs(string("target")))
-    doAssert(cursorIsNil(root.findChildTag(string("missing"))))
-    root.endRead()
+        direct = findChildTag(root, string("direct"))
+    doAssert(tagIs(direct, string("direct")))
+    doAssert(strVal(findChildKind(direct, NifKind.StrLit)) == string("first"))
+    doAssert(strVal(findLastChildKind(direct, NifKind.StrLit)) == string("last"))
+    doAssert(tagIs(findDescendantTag(root, string("target")), string("target")))
+    doAssert(cursorIsNil(findChildTag(root, string("missing"))))
+    endRead(root)
 
 if comptime(__name__ == "__main__"):
     def _show(title: string, c: Cursor):
@@ -122,38 +123,38 @@ if comptime(__name__ == "__main__"):
             t = parseFromBuffer(string(
                 "(top a \"s1\" 12 (x (y \"deep\" (z 3)) \"s2\") (y 7) \"s3\" (x 'c') ident2 -4)"), string("q"))
         with var:
-            top = t.beginRead()
+            top = beginRead(t)
         echo(string("tagName(top) = "), tagName(top))
-        echo(string("tagIs top/top = "), top.tagIs(string("top")), string(", top/x = "), top.tagIs(string("x")))
-        _show(string("findChildTag x"), top.findChildTag(string("x")))
-        _show(string("findChildTag y"), top.findChildTag(string("y")))
-        _show(string("findChildTag z (only nested)"), top.findChildTag(string("z")))
-        _show(string("findChildTag missing"), top.findChildTag(string("missing")))
-        _show(string("findDescendantTag y"), top.findDescendantTag(string("y")))
-        _show(string("findDescendantTag z"), top.findDescendantTag(string("z")))
-        _show(string("findDescendantTag missing"), top.findDescendantTag(string("missing")))
-        _show(string("findChildKind StrLit"), top.findChildKind(NifKind.StrLit))
-        _show(string("findChildKind IntLit"), top.findChildKind(NifKind.IntLit))
-        _show(string("findChildKind Ident"), top.findChildKind(NifKind.Ident))
-        _show(string("findChildKind TagLit"), top.findChildKind(NifKind.TagLit))
-        _show(string("findChildKind FloatLit"), top.findChildKind(NifKind.FloatLit))
-        _show(string("findLastChildKind StrLit"), top.findLastChildKind(NifKind.StrLit))
-        _show(string("findLastChildKind TagLit"), top.findLastChildKind(NifKind.TagLit))
-        _show(string("findLastChildKind IntLit"), top.findLastChildKind(NifKind.IntLit))
-        _show(string("findLastChildKind CharLit"), top.findLastChildKind(NifKind.CharLit))
+        echo(string("tagIs top/top = "), tagIs(top, string("top")), string(", top/x = "), tagIs(top, string("x")))
+        _show(string("findChildTag x"), findChildTag(top, string("x")))
+        _show(string("findChildTag y"), findChildTag(top, string("y")))
+        _show(string("findChildTag z (only nested)"), findChildTag(top, string("z")))
+        _show(string("findChildTag missing"), findChildTag(top, string("missing")))
+        _show(string("findDescendantTag y"), findDescendantTag(top, string("y")))
+        _show(string("findDescendantTag z"), findDescendantTag(top, string("z")))
+        _show(string("findDescendantTag missing"), findDescendantTag(top, string("missing")))
+        _show(string("findChildKind StrLit"), findChildKind(top, NifKind.StrLit))
+        _show(string("findChildKind IntLit"), findChildKind(top, NifKind.IntLit))
+        _show(string("findChildKind Ident"), findChildKind(top, NifKind.Ident))
+        _show(string("findChildKind TagLit"), findChildKind(top, NifKind.TagLit))
+        _show(string("findChildKind FloatLit"), findChildKind(top, NifKind.FloatLit))
+        _show(string("findLastChildKind StrLit"), findLastChildKind(top, NifKind.StrLit))
+        _show(string("findLastChildKind TagLit"), findLastChildKind(top, NifKind.TagLit))
+        _show(string("findLastChildKind IntLit"), findLastChildKind(top, NifKind.IntLit))
+        _show(string("findLastChildKind CharLit"), findLastChildKind(top, NifKind.CharLit))
         # queries on an atom find nothing; tagIs on an atom and on a nil cursor is false
         with let:
-            atom = top.findChildKind(NifKind.StrLit)
-        echo(string("tagIs atom = "), atom.tagIs(string("s1")))
-        _show(string("findChildTag on atom"), atom.findChildTag(string("x")))
-        _show(string("findDescendantTag on atom"), atom.findDescendantTag(string("x")))
-        _show(string("findChildKind on atom"), atom.findChildKind(NifKind.StrLit))
-        _show(string("findLastChildKind on atom"), atom.findLastChildKind(NifKind.StrLit))
+            atom = findChildKind(top, NifKind.StrLit)
+        echo(string("tagIs atom = "), tagIs(atom, string("s1")))
+        _show(string("findChildTag on atom"), findChildTag(atom, string("x")))
+        _show(string("findDescendantTag on atom"), findDescendantTag(atom, string("x")))
+        _show(string("findChildKind on atom"), findChildKind(atom, NifKind.StrLit))
+        _show(string("findLastChildKind on atom"), findLastChildKind(atom, NifKind.StrLit))
         with let:
             nilCursor = default(Cursor)
-        echo(string("tagIs nil = "), nilCursor.tagIs(string("top")))
+        echo(string("tagIs nil = "), tagIs(nilCursor, string("top")))
         # the queries don't consume: `top` is still at the tree's head
         echo(string("top after the queries: "), tagName(top), string(" "), cursorIsNil(top))
-        top.endRead()
+        endRead(top)
 
     _addedTests()

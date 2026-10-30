@@ -3840,8 +3840,7 @@ def _star_imported_procs(tree, module) -> tuple:
 def free_call_overlaps(tree, module) -> list:
     """rule:methodcall: Nim overloads plain procs of one name from two imported modules by type (nifcore's
     `addIdent(b: var TokenBuf)`, nifbuilder's `addIdent(b: var Builder)`); in Python the later star import binds
-    the name. A method call `b.addIdent(s)` reaches the proc of the receiver type's module, a free call
-    `addIdent(b, s)` only the last import's. Returns (line, message) for each free call of such a name: one that
+    the name, so a free call `addIdent(b, s)` reaches only the last import's. Returns (line, message) for each free call of such a name: one that
     two star imports bind to different procs, at least one of them plain (two @dispatch sets are one overload
     set; a plain proc a @dispatch set extends belongs to it), and that the module itself doesn't define. A name
     bound in the calling function shadows the proc. Only the star imports that ran count. The module's own
@@ -3884,9 +3883,8 @@ def free_call_overlaps(tree, module) -> list:
                 and node.func.id not in shadowed):
             procs, why = overlaps[node.func.id]
             modules = sorted({getattr(p, "__module__", "?") for p in procs})
-            receiver = ast.unparse(node.args[0]) if node.args else "x"
             found.append((node.lineno, f"{node.func.id}(...) is a proc of {', '.join(modules)}; {why}: write "
-                                       f"{receiver}.{node.func.id}(...)"))
+                                       f"`{node.func.id} = overloads(...)`"))
         for child in iter_child_nodes(node):
             scan(child, shadowed)
 
@@ -3951,7 +3949,10 @@ def import_problems(tree, module) -> list:
     - notexported: the binding is an object Nim's imports don't bring (a module that only imports it);
     - unbound: a name the module reads, which Nim's imports bring and Python binds to nothing;
     - ambiguous: a type or value the binding holds, while another visible object has the name (Nim: ambiguous);
-    - qualified: `m.f` reaches one routine, while Nim's `m.f` overloads those `m` exports.
+    - qualified: `m.f` reaches one routine, while Nim's `m.f` overloads those `m` exports;
+    - shadowed: a free call `f(x)` of a name a proc's parameter (of a type that is no proc) or a module-level value
+      holds, while Nim sees a routine f (Nim's call resolution passes over a symbol that is no routine; Python calls
+      the value).
     And the import hygiene: starimport (a star import of a nimic module that isn't the core: it also binds what that
     module imported), doubleimport (one name imported from two modules), importorder (a core star import rebinding
     a name imported before it). Only the imports that ran count; the module's own names come from its source."""
@@ -3983,7 +3984,7 @@ def import_problems(tree, module) -> list:
                                           f"them qualified"))
     for imp in imports:
         if imp.star and is_core(imp.module.__name__):
-            rebound = sorted(n for n, entries in named.items() if entries[0][0] < imp.line
+            rebound = sorted(n for n, entries in named.items() if entries[0][0] < imp.line and own.get(n) != "overloads"
                              and hasattr(imp.module, n) and getattr(imp.module, n) is not entries[-1][2])
             if rebound:
                 found.append((imp.line, f"importorder: `from {imp.module.__name__} import *` rebinds "
@@ -4029,7 +4030,7 @@ def import_problems(tree, module) -> list:
                                               f"it doesn't bring it: import it from {home}"))
             continue
         if name not in read:
-            continue  # imported only for method syntax (`b.addIdent()`, which Object.__getattr__ resolves)
+            continue  # imported, never read: no call can reach the wrong proc
         if not [m for _, m in seen if not is_core(m.__name__)]:
             continue  # duplicates within the core (std/os's fmRead next to syncio's) are nimic's to resolve
         if is_routine(binding):
@@ -4045,6 +4046,37 @@ def import_problems(tree, module) -> list:
             if others:
                 found.append((line, f"ambiguous: {name} is a type or value of several imports ({', '.join(others)}, "
                                     f"and Python's): Nim reports an ambiguity: import one of them qualified"))
+    # a free call of a name a value or a proc's local holds, while Nim sees a routine of the name: Nim's call
+    # resolution passes over a symbol that is no routine (a parameter `kind: NifKind` next to the proc `kind`, bif's
+    # module-level `let tags`), Python calls the value
+    def no_routine(annotation) -> bool:
+        """Whether a parameter's annotation names a class whose values can't be called (a proc type can)."""
+        text = annotation.value if isinstance(annotation, Constant) and isinstance(annotation.value, str) else (
+            ast.unparse(annotation) if annotation is not None else "")
+        cls = vars(module).get(text.split("@")[-1].strip().split("[")[0])
+        return isinstance(cls, type) and not any("__call__" in vars(k) for k in cls.__mro__[:-1])
+
+    def shadow_scan(node, local):
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
+            a = node.args
+            params = a.posonlyargs + a.args + a.kwonlyargs
+            local = (local - {x.arg for x in params}) | {x.arg for x in params if no_routine(x.annotation)}
+        if isinstance(node, Call) and isinstance(node.func, Name):
+            name = node.func.id
+            holder = ("a local" if name in local else "the module's value" if own.get(name) == "value"
+                      and not isinstance(vars(module).get(name), type) else None)
+            routines = sorted({m.__name__ for obj, m in visible(imports, name) if is_routine(obj)})
+            if holder and routines and (node.lineno, name) not in shadowed:
+                shadowed.add((node.lineno, name))
+                found.append((node.lineno, f"shadowed: {name}(...) calls {holder} {name}, while Nim calls the proc "
+                                           f"{name} of {', '.join(routines)} (a symbol that is no routine is no "
+                                           f"candidate in Nim): call it qualified, {routines[-1].rsplit('.', 1)[-1]}"
+                                           f".{name}(...)"))
+        for child in iter_child_nodes(node):
+            shadow_scan(child, local)
+
+    shadowed = set()
+    shadow_scan(tree, frozenset())
     qualified = set()
     for node in walk(tree):
         if not (isinstance(node, Attribute) and isinstance(node.ctx, Load) and isinstance(node.value, Name)):

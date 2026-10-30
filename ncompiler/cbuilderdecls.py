@@ -40,7 +40,7 @@ def _addVarHeader(builder: mut @ Builder, kind: _VarKind):
 def _addVar(builder: mut @ Builder, kind: _VarKind = _VarKind.Local, name: string = string(""),
            typ: Snippet = string(""), initializer: Snippet = string("")):
     ## adds a variable declaration to the builder
-    builder._addVarHeader(kind)
+    _addVarHeader(builder, kind)
     builder.add(typ)
     builder.add(string(" "))
     builder.add(name)
@@ -54,7 +54,7 @@ def _addVar(builder: mut @ Builder, kind: _VarKind = _VarKind.Local, name: strin
 def _addVarWithType(builder: mut @ Builder, kind: _VarKind = _VarKind.Local, name: string = string(""),
                    body: typed = None):
     ## adds a variable declaration to the builder, with the `body` building the type
-    builder._addVarHeader(kind)
+    _addVarHeader(builder, kind)
     body
     builder.add(string(" "))
     builder.add(name)
@@ -66,7 +66,7 @@ def _addVarWithInitializer(builder: mut @ Builder, kind: _VarKind = _VarKind.Loc
                           typ: Snippet = string(""), initializerBody: typed = None):
     ## adds a variable declaration to the builder, with
     ## `initializerBody` building the initializer. initializer must be provided
-    builder._addVarHeader(kind)
+    _addVarHeader(builder, kind)
     builder.add(typ)
     builder.add(string(" "))
     builder.add(name)
@@ -80,7 +80,7 @@ def _addVarWithTypeAndInitializer(builder: mut @ Builder, kind: _VarKind = _VarK
                                  typeBody: typed = None, initializerBody: typed = None):
     ## adds a variable declaration to the builder, with `typeBody` building the type, and
     ## `initializerBody` building the initializer. initializer must be provided
-    builder._addVarHeader(kind)
+    _addVarHeader(builder, kind)
     typeBody
     builder.add(string(" "))
     builder.add(name)
@@ -92,7 +92,7 @@ def _addVarWithTypeAndInitializer(builder: mut @ Builder, kind: _VarKind = _VarK
 def _addArrayVar(builder: mut @ Builder, kind: _VarKind = _VarKind.Local, name: string = string(""),
                 elementType: Snippet = string(""), len: nint = 0, initializer: Snippet = string("")):
     ## adds an array variable declaration to the builder
-    builder._addVarHeader(kind)
+    _addVarHeader(builder, kind)
     builder.add(elementType)
     builder.add(string(" "))
     builder.add(name)
@@ -109,7 +109,7 @@ def _addArrayVar(builder: mut @ Builder, kind: _VarKind = _VarKind.Local, name: 
 def _addArrayVarWithInitializer(builder: mut @ Builder, kind: _VarKind = _VarKind.Local, name: string = string(""),
                                elementType: Snippet = string(""), len: nint = 0, body: typed = None):
     ## adds an array variable declaration to the builder with the initializer built according to `body`
-    builder._addVarHeader(kind)
+    _addVarHeader(builder, kind)
     builder.add(elementType)
     builder.add(string(" "))
     builder.add(name)
@@ -215,9 +215,9 @@ def _addStructInitializer(builder: mut @ Builder, constr: out @ _StructInitializ
     ## builds a struct initializer, i.e. `{ field1, field2 }`
     ## a `var StructInitializer` must be declared and passed as a parameter so
     ## that it can be used with `addField`
-    constr <<= builder._initStructInitializer(kind)
+    constr <<= _initStructInitializer(builder, kind)
     body
-    builder._finishStructInitializer(constr)
+    _finishStructInitializer(builder, constr)
 
 
 @dispatch
@@ -304,7 +304,7 @@ class _StructBuilderInfo(Object):
 
 def _structOrUnion(t: PType) -> Snippet:
     with let:
-        t = t.skipTypes(TTypeKinds({TTypeKind.tyAlias, TTypeKind.tySink}))
+        t = skipTypes(t, TTypeKinds({TTypeKind.tyAlias, TTypeKind.tySink}))
     if TTypeFlag.tfUnion in t.flags: return string("union")
     else: return string("struct")
 
@@ -327,14 +327,14 @@ def _startSimpleStruct(obj: mut @ Builder, m: BModule, name: string, baseType: S
     obj.add(string("{\n"))
     result._preFieldsLen = obj.buf.len
     if result._baseKind == _BaseClassKind.bcSupField:
-        obj._addField(name=string("Sup"), typ=baseType)
+        _addField(obj, name=string("Sup"), typ=baseType)
     return result
 
 
 def _finishSimpleStruct(obj: mut @ Builder, m: BModule, info: _StructBuilderInfo):
     if info._baseKind == _BaseClassKind.bcNone and info._preFieldsLen == obj.buf.len:
         # no fields were added, add dummy field
-        obj._addField(name=string("dummy"), typ=CChar)
+        _addField(obj, name=string("dummy"), typ=CChar)
     if info._named:
         obj.add(string("};\n"))
     else:
@@ -395,17 +395,17 @@ def _startStruct(obj: mut @ Builder, m: BModule, t: PType, name: string, baseTyp
             # so that it remains trailing
             if (t.itemId not in m.g.graph.memberProcsPerType and
                     t.n is not None and t.n.len == 1 and t.n[0].kind == TNodeKind.nkSym and
-                    t.n[0].sym.typ.skipTypes(abstractInst).kind == TTypeKind.tyUncheckedArray):
+                    skipTypes(t.n[0].sym.typ, abstractInst).kind == TTypeKind.tyUncheckedArray):
                 # only consists of flexible array field, add *initial* dummy field
-                obj._addField(name=string("dummy"), typ=CChar)
+                _addField(obj, name=string("dummy"), typ=CChar)
         case _BaseClassKind.bcCppInherit:
             discard
         case _BaseClassKind.bcNoneRtti:
-            obj._addField(name=string("m_type"), typ=_ptrType(cgsymValue(m, string("TNimType"))))
+            _addField(obj, name=string("m_type"), typ=_ptrType(cgsymValue(m, string("TNimType"))))
         case _BaseClassKind.bcNoneTinyRtti:
-            obj._addField(name=string("m_type"), typ=_ptrType(cgsymValue(m, string("TNimTypeV2"))))
+            _addField(obj, name=string("m_type"), typ=_ptrType(cgsymValue(m, string("TNimTypeV2"))))
         case _BaseClassKind.bcSupField:
-            obj._addField(name=string("Sup"), typ=baseType)
+            _addField(obj, name=string("Sup"), typ=baseType)
     return result
 
 
@@ -413,7 +413,7 @@ def _finishStruct(obj: mut @ Builder, m: BModule, t: PType, info: _StructBuilder
     if (info._baseKind == _BaseClassKind.bcNone and info._preFieldsLen == obj.buf.len and
             t.itemId not in m.g.graph.memberProcsPerType):
         # no fields were added, add dummy field
-        obj._addField(name=string("dummy"), typ=CChar)
+        _addField(obj, name=string("dummy"), typ=CChar)
     if info._named:
         obj.add(string("};\n"))
     else:
@@ -502,7 +502,7 @@ def _addVisibilityPrefix(builder: mut @ Builder, visibility: _DeclVisibility):
 @template
 def _addDeclWithVisibility(builder: mut @ Builder, visibility: _DeclVisibility, declBody: typed):
     ## adds a declaration as in `declBody` with the given visibility
-    builder._addVisibilityPrefix(visibility)
+    _addVisibilityPrefix(builder, visibility)
     declBody
 
 
@@ -776,7 +776,7 @@ def _addVar(builder: mut @ Builder, m: BModule, s: PSym, name: string, typ: Snip
         return
     if s.kind in Tset[TSymKind]({TSymKind.skLet, TSymKind.skVar, TSymKind.skField, TSymKind.skForVar}) and s.alignment > 0:
         builder.add(string("NIM_ALIGN(") + str(s.alignment) + ") ")
-    builder._addVisibilityPrefix(visibility)
+    _addVisibilityPrefix(builder, visibility)
     if kind == _VarKind.Threadvar:
         if TGlobalOption.optThreads in m.config.globalOptions:
             with let:
@@ -785,7 +785,7 @@ def _addVar(builder: mut @ Builder, m: BModule, s: PSym, name: string, typ: Snip
                 builder.add(string("NIM_THREAD_LOCAL "))
             else: builder.add(string("NIM_THREADVAR "))
     else:
-        builder._addVarHeader(kind)
+        _addVarHeader(builder, kind)
     builder.add(typ)
     if TSymFlag.sfRegister in s.flags: builder.add(string(" register"))
     if TSymFlag.sfVolatile in s.flags: builder.add(string(" volatile"))

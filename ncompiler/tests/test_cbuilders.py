@@ -73,23 +73,23 @@ if comptime(__name__ == "__main__"):
     # 6. Builder procs (method call syntax as in cgen)
     with var:
         b = newBuilder(string(""))
-    b._addSizeof(string("int"))
+    _addSizeof(b, string("int"))
     b.add(string(" "))
-    b._addAlignof(string("int"))
+    _addAlignof(b, string("int"))
     b.add(string(" "))
-    b._addOffsetof(string("Type"), string("field"))
+    _addOffsetof(b, string("Type"), string("field"))
     b.add(string(" "))
-    b._addCall(string("bar"), string("x"), string("y"))
+    _addCall(b, string("bar"), string("x"), string("y"))
     doAssert(b.extract() == string("sizeof(int) NIM_ALIGNOF(int) offsetof(Type, field) bar(x, y)"),
              string("builder procs"))
 
     # 7. Operators
     with var:
         bo = newBuilder(string(""))
-    bo._addOp(_TypedBinaryOp.Add, string("int"), string("a"), string("b"))
-    bo._addOp(_TypedUnaryOp.Neg, string("int"), string("a"))
-    bo._addOp(_UntypedBinaryOp.Equal, string("a"), string("b"))
-    bo._addOp(_UntypedUnaryOp.Not, string("a"))
+    _addOp(bo, _TypedBinaryOp.Add, string("int"), string("a"), string("b"))
+    _addOp(bo, _TypedUnaryOp.Neg, string("int"), string("a"))
+    _addOp(bo, _UntypedBinaryOp.Equal, string("a"), string("b"))
+    _addOp(bo, _UntypedUnaryOp.Not, string("a"))
     doAssert(bo.extract() == string("(a + b)(-(a))(a == b)(!(a))"), string("addOp"))
     doAssert(_cOp(_TypedBinaryOp.Mul, string("int"), string("a"), string("b")) == string("(a * b)"), string("cOp typed binary"))
     doAssert(_cOp(_TypedUnaryOp.BitNot, string("int"), string("a")) == string("(~(a))"), string("cOp typed unary"))
@@ -99,23 +99,23 @@ if comptime(__name__ == "__main__"):
     # 8. Templates with code blocks (Nim `b.addCast(t): ...`)
     with var:
         bc = newBuilder(string(""))
-    with bc._addCast(string("char*")):
+    with _addCast(bc, string("char*")):
         bc.add(string("p"))
     doAssert(bc.extract() == string("((char*) p)"), string("addCast"))
 
     with var:
         bcall = newBuilder(string(""))
         call = _CallBuilder()
-    with bcall._addCall(call, string("func")):
-        with bcall._addArgument(call):
+    with _addCall(bcall, call, string("func")):
+        with _addArgument(bcall, call):
             bcall.add(string("1"))
-        with bcall._addArgument(call):
+        with _addArgument(bcall, call):
             bcall.add(string("2"))
     doAssert(bcall.extract() == string("func(1, 2)"), string("addCall + addArgument"))
 
     with var:
         bl = newBuilder(string(""))
-    with bl._addCppLambda(_CppCaptureKind.ByReference, string("(int x)")):
+    with _addCppLambda(bl, _CppCaptureKind.ByReference, string("(int x)")):
         bl.addLineEnd(string("return x;"))
     doAssert(bl.extract() == string("[&] (int x) {\n\treturn x;\n}\n"), string("addCppLambda"))
 
@@ -126,45 +126,45 @@ if comptime(__name__ == "__main__"):
     # 1. Assignments (templates over templates; Snippet and integer overloads)
     with var:
         b1 = newBuilder(string(""))
-    b1._addAssignment(string("x"), string("42"))
-    b1._addFieldAssignment(string("o"), string("f"), string("v"))
-    b1._addMutualFieldAssignment(string("dst"), string("src"), string("data"))
-    b1._addAssignment(string("n"), nint(100))
-    b1._addFieldAssignment(string("o"), string("count"), uint64(7))
-    b1._addDerefFieldAssignment(string("p"), string("item"), string("v"))
-    b1._addSubscriptAssignment(string("arr"), string("i"), string("e"))
+    _addAssignment(b1, string("x"), string("42"))
+    _addFieldAssignment(b1, string("o"), string("f"), string("v"))
+    _addMutualFieldAssignment(b1, string("dst"), string("src"), string("data"))
+    _addAssignment(b1, string("n"), nint(100))
+    _addFieldAssignment(b1, string("o"), string("count"), uint64(7))
+    _addDerefFieldAssignment(b1, string("p"), string("item"), string("v"))
+    _addSubscriptAssignment(b1, string("arr"), string("i"), string("e"))
     doAssert(b1.extract() == string("x = 42;\no.f = v;\ndst.data = src.data;\nn = 100;\no.count = 7;\np->item = v;\narr[i] = e;\n"),
              string("assignments"))
 
     # 2. Call statement (varargs passed on)
     with var:
         bc2 = newBuilder(string(""))
-    bc2._addCallStmt(string("doSomething"), string("a"), string("b"))
+    _addCallStmt(bc2, string("doSomething"), string("a"), string("b"))
     doAssert(bc2.extract() == string("doSomething(a, b);\n"), string("addCallStmt"))
 
     # 3. If statements: single, and with branches (out parameter stmt)
     with var:
         bif = newBuilder(string(""))
-    with bif._addSingleIfStmt(string("x > 0")):
-        bif._addAssignment(string("y"), string("1"))
+    with _addSingleIfStmt(bif, string("x > 0")):
+        _addAssignment(bif, string("y"), string("1"))
     doAssert(bif.extract() == string("if (x > 0) {\n\ty = 1;\n}\n"), string("addSingleIfStmt"))
     with var:
         bif2 = newBuilder(string(""))
         stmt = IfBuilder()
-    with bif2._addIfStmt(stmt):
-        with bif2._addElifBranch(stmt, string("a < b")):
-            bif2._addAssignment(string("m"), string("a"))
-        with bif2._addElseBranch(stmt):
-            bif2._addAssignment(string("m"), string("b"))
+    with _addIfStmt(bif2, stmt):
+        with _addElifBranch(bif2, stmt, string("a < b")):
+            _addAssignment(bif2, string("m"), string("a"))
+        with _addElseBranch(bif2, stmt):
+            _addAssignment(bif2, string("m"), string("b"))
     doAssert(bif2.extract() == string("if (a < b) {\n\tm = a;\n} else {\n\tm = b;\n}\n"), string("addIfStmt"))
 
     # 4. Loops
     with var:
         bfor = newBuilder(string(""))
-    with bfor._addForRangeExclusive(string("i"), string("0"), string("10")):
-        bfor._addIncr(string("s"))
-    with bfor._addWhileStmt(string("c")):
-        bfor._addDecr(string("t"))
+    with _addForRangeExclusive(bfor, string("i"), string("0"), string("10")):
+        _addIncr(bfor, string("s"))
+    with _addWhileStmt(bfor, string("c")):
+        _addDecr(bfor, string("t"))
     doAssert(bfor.extract() == string("for (i = 0; i < 10; i++) {\n\ts++;\n}\nwhile (c) {\n\tt--;\n}\n"),
              string("loops"))
 
@@ -172,27 +172,27 @@ if comptime(__name__ == "__main__"):
     with var:
         bsw = newBuilder(string(""))
         caseBuilder = _SwitchCaseBuilder()
-    with bsw._addSwitchStmt(string("v")):
-        with bsw._addSwitchCase(caseBuilder):
-            bsw._addCase(caseBuilder, string("1"))
+    with _addSwitchStmt(bsw, string("v")):
+        with _addSwitchCase(bsw, caseBuilder):
+            _addCase(bsw, caseBuilder, string("1"))
             with do:
                 doAssert(caseBuilder._state == _SwitchCaseState.Finished, string("state between the blocks"))
-                bsw._addBreak()
-        with bsw._addSwitchElse():
-            bsw._addReturn(string("0"))
+                _addBreak(bsw)
+        with _addSwitchElse(bsw):
+            _addReturn(bsw, string("0"))
     doAssert(bsw.extract() == string("switch (v) {\ncase 1:\n\tbreak;\n\ndefault:\n\treturn 0;\n\n}\n"),
              string("switch"))
 
     # 6. Scope, labels, gotos, in-place operators, pragmas
     with var:
         bm = newBuilder(string(""))
-    with bm._addScope():
-        bm._addLabel(string("L"))
-        bm._addGoto(string("L"))
-    bm._addInPlaceOp(_TypedBinaryOp.Add, string("int"), string("x"), string("1"))
-    bm._addInPlaceOp(_UntypedBinaryOp.And, string("f"), string("m"))
-    bm._addCPragma(string("once"))
-    bm._addDiscard(string("g()"))
+    with _addScope(bm):
+        _addLabel(bm, string("L"))
+        _addGoto(bm, string("L"))
+    _addInPlaceOp(bm, _TypedBinaryOp.Add, string("int"), string("x"), string("1"))
+    _addInPlaceOp(bm, _UntypedBinaryOp.And, string("f"), string("m"))
+    _addCPragma(bm, string("once"))
+    _addDiscard(bm, string("g()"))
     doAssert(bm.extract() == string("{\n\tL: ;\n\tgoto L;\n}\nx += 1;\nf &&= m;\n\n#pragma once\n(void)g();\n"),
              string("misc statements"))
     doAssert(_cInPlaceOp(_TypedBinaryOp.Mul, string("int"), string("a"), string("b")) == string("a *= b;\n"), string("cInPlaceOp"))

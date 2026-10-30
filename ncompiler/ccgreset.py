@@ -40,21 +40,21 @@ def _specializeResetN(p: BProc, accessor: Rope, n: PNode, typ: PType) -> None:
                 internalError(p.config, n.info, string("specializeResetN()"))
             with let:
                 discField = _dotField(accessor, disc.loc.snippet)
-            with p.s(TCProcSection.cpsStmts)._addSwitchStmt(discField):
+            with _addSwitchStmt(p.s(TCProcSection.cpsStmts), discField):
                 for i in range(1, n.len):
                     with let:
                         branch = n[i]
                     assert branch.kind in {TNodeKind.nkOfBranch, TNodeKind.nkElse}
                     with var:
                         caseBuilder = _SwitchCaseBuilder()
-                    with p.s(TCProcSection.cpsStmts)._addSwitchCase(caseBuilder):
+                    with _addSwitchCase(p.s(TCProcSection.cpsStmts), caseBuilder):
                         if branch.kind == TNodeKind.nkOfBranch:
                             _genCaseRange(p, branch, caseBuilder)
                         else:
-                            p.s(TCProcSection.cpsStmts)._addCaseElse(caseBuilder)
+                            _addCaseElse(p.s(TCProcSection.cpsStmts), caseBuilder)
                         with do:
                             _specializeResetN(p, accessor, lastSon(branch), typ)
-                            p.s(TCProcSection.cpsStmts)._addBreak()
+                            _addBreak(p.s(TCProcSection.cpsStmts))
             _specializeResetT(p, discField, disc.loc.t)
         case TNodeKind.nkSym:
             with let:
@@ -83,18 +83,18 @@ def _specializeResetT(p: BProc, accessor: Rope, typ: PType) -> None:
                 arraySize = lengthOrd(p.config, typ.indexType)
             with var:
                 i: TLoc = _getTemp(p, getSysType(p.module.g.graph, unknownLineInfo, TTypeKind.tyInt))
-            with p.s(TCProcSection.cpsStmts)._addForRangeExclusive(i.snippet, cIntValue(0), cIntValue(arraySize)):
+            with _addForRangeExclusive(p.s(TCProcSection.cpsStmts), i.snippet, cIntValue(0), cIntValue(arraySize)):
                 _specializeResetT(p, _subscript(accessor, i.snippet), typ.elementType)
         case TTypeKind.tyObject:
             with var:
                 x = typ.baseClass
             if x is not None:
-                x = x.skipTypes(skipPtrs)
+                x = skipTypes(x, skipPtrs)
             _specializeResetT(p, accessor._parentObj(p.module), x)
             if typ.n is not None:
                 if typ.sym is not None and TSymFlag.sfImportc in typ.sym.flags:
                     # imported C struct, nimZeroMem
-                    p.s(TCProcSection.cpsStmts)._addCallStmt(cgsymValue(p.module, string("nimZeroMem")),
+                    _addCallStmt(p.s(TCProcSection.cpsStmts), cgsymValue(p.module, string("nimZeroMem")),
                         _cCast(_ptrType(CPointer), _cAddr(accessor)),
                         _cSizeof(getTypeDesc(p.module, typ)))
                 else:
@@ -106,35 +106,35 @@ def _specializeResetT(p: BProc, accessor: Rope, typ: PType) -> None:
                 _specializeResetT(p, _dotField(accessor, string("Field") + string(str(i))), a)
 
         case TTypeKind.tyString | TTypeKind.tyRef | TTypeKind.tySequence:
-            p.s(TCProcSection.cpsStmts)._addCallStmt(cgsymValue(p.module, string("unsureAsgnRef")),
+            _addCallStmt(p.s(TCProcSection.cpsStmts), cgsymValue(p.module, string("unsureAsgnRef")),
                 _cCast(_ptrType(CPointer), _cAddr(accessor)),
                 NimNil)
 
         case TTypeKind.tyProc:
             if typ.callConv == TCallingConvention.ccClosure:
-                p.s(TCProcSection.cpsStmts)._addCallStmt(cgsymValue(p.module, string("unsureAsgnRef")),
+                _addCallStmt(p.s(TCProcSection.cpsStmts), cgsymValue(p.module, string("unsureAsgnRef")),
                     _cCast(_ptrType(CPointer), _cAddr(_dotField(accessor, string("ClE_0")))),
                     NimNil)
-                p.s(TCProcSection.cpsStmts)._addFieldAssignment(accessor, string("ClP_0"), NimNil)
+                _addFieldAssignment(p.s(TCProcSection.cpsStmts), accessor, string("ClP_0"), NimNil)
             else:
-                p.s(TCProcSection.cpsStmts)._addAssignment(accessor, NimNil)
+                _addAssignment(p.s(TCProcSection.cpsStmts), accessor, NimNil)
         case (TTypeKind.tyChar | TTypeKind.tyBool | TTypeKind.tyEnum | TTypeKind.tyRange | TTypeKind.tyInt |
               TTypeKind.tyInt8 | TTypeKind.tyInt16 | TTypeKind.tyInt32 | TTypeKind.tyInt64 | TTypeKind.tyFloat |
               TTypeKind.tyFloat32 | TTypeKind.tyFloat64 | TTypeKind.tyFloat128 | TTypeKind.tyUInt |
               TTypeKind.tyUInt8 | TTypeKind.tyUInt16 | TTypeKind.tyUInt32 | TTypeKind.tyUInt64):
-            p.s(TCProcSection.cpsStmts)._addAssignment(accessor, cIntValue(0))
+            _addAssignment(p.s(TCProcSection.cpsStmts), accessor, cIntValue(0))
         case TTypeKind.tyCstring | TTypeKind.tyPointer | TTypeKind.tyPtr | TTypeKind.tyVar | TTypeKind.tyLent:
-            p.s(TCProcSection.cpsStmts)._addAssignment(accessor, NimNil)
+            _addAssignment(p.s(TCProcSection.cpsStmts), accessor, NimNil)
         case TTypeKind.tySet:
             match mapSetType(p.config, typ):
                 case TCTypeKind.ctArray:
                     with let:
                         t = getTypeDesc(p.module, typ)
-                    p.s(TCProcSection.cpsStmts)._addCallStmt(cgsymValue(p.module, string("nimZeroMem")),
+                    _addCallStmt(p.s(TCProcSection.cpsStmts), cgsymValue(p.module, string("nimZeroMem")),
                         accessor,
                         _cSizeof(t))
                 case TCTypeKind.ctInt8 | TCTypeKind.ctInt16 | TCTypeKind.ctInt32 | TCTypeKind.ctInt64:
-                    p.s(TCProcSection.cpsStmts)._addAssignment(accessor, cIntValue(0))
+                    _addAssignment(p.s(TCProcSection.cpsStmts), accessor, cIntValue(0))
                 case _:
                     raiseAssert(string("unexpected set type kind"))
         case (TTypeKind.tyNone | TTypeKind.tyEmpty | TTypeKind.tyNil | TTypeKind.tyUntyped | TTypeKind.tyTyped |

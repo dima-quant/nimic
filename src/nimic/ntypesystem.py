@@ -3145,60 +3145,6 @@ def _n_is_routine(value: object) -> bool:
     return callable(value) and not isinstance(value, type)
 
 
-def _n_first_param_takes(fn: callable, cls: type) -> bool:
-    """Whether a proc's first parameter takes an instance of `cls`: false only when its annotation names a class
-    `cls` isn't a subclass of, for every overload of a @dispatch set. A generic type, a missing annotation or a
-    non-function take anything here (they resolve, or fail, as before)."""
-    if isinstance(fn, _DispatchedCallable):
-        return any(_n_first_param_takes(o, cls) for o in _n_set_procs(fn))
-    fn = ins.unwrap(fn)  # an overload returning a named tuple is wrapped (_n_named_tuple_result)
-    if not isinstance(fn, types.FunctionType) or not fn.__code__.co_argcount:
-        return True
-    annotation = fn.__annotations__.get(fn.__code__.co_varnames[0])
-    if isinstance(annotation, str):
-        annotation = fn.__globals__.get(_n_strip_type_modifier(annotation).strip())
-    return not isinstance(annotation, type) or issubclass(cls, annotation)
-
-
-def _n_method_call_proc(name: str, proc: callable, cls: type) -> callable:
-    """Nim resolves `x.f(args)` among every visible `f`. Two imported modules' plain procs of one name are
-    overloads (nifcore's `addIdent(b: var TokenBuf)`, nifbuilder's `addIdent(b: var Builder)`), but in Python
-    the later star import rebinds the name. When the caller's proc doesn't take the receiver, the call reaches
-    the proc `name` of the module defining the receiver's class (or a base class) that does: a proc the methods
-    rule would make a method of the type, but for a later definition it uses. Otherwise the caller's proc.
-    `proc` is None when the caller binds `name` only to a value (no candidate): then the module's proc, or None."""
-    if proc is not None and _n_first_param_takes(proc, cls):
-        return proc
-    for base in cls.__mro__:
-        own = getattr(sys.modules.get(base.__module__), name, None)
-        if _n_is_routine(own) and _n_first_param_takes(own, cls):
-            return own
-    return proc
-
-
-class _NMethodCall(functools.partial):
-    """`b.f` of an Object, `f` a proc of the caller's scope (UFCS): the proc bound to `b`, to be called. Nim's `b.f`
-    without parentheses is the call `f(b)` itself, so using the bound proc as a value (a condition, a comparison,
-    arithmetic) is a missing `()`: `b.count != 0` would be always true. It raises TypeError instead (rules §4:
-    write `b.f()`, or declare `f` a @property of the class)."""
-
-    def _n_misused(self, *_):
-        name = getattr(self.func, "__name__", "f")
-        raise TypeError(f"{type(self.args[0]).__name__}.{name} without parentheses is the proc {name}, not its "
-                        f"result: write .{name}() or declare {name} a @property of the class (rules §4)")
-
-    __bool__ = __lt__ = __le__ = __gt__ = __ge__ = _n_misused
-    __add__ = __radd__ = __sub__ = __rsub__ = __mul__ = __rmul__ = __index__ = __int__ = _n_misused
-
-    def __eq__(self, other):
-        return self is other if callable(other) else self._n_misused()
-
-    def __ne__(self, other):
-        return self is not other if callable(other) else self._n_misused()
-
-    __hash__ = functools.partial.__hash__
-
-
 def _n_coerce_int_field(cls: type, name: str, value: object) -> object:
     """A plain int stored in a Python-side integer field becomes the field's declared type (a
     mutable NInteger, so the field can be passed as `var int`)."""
@@ -3380,25 +3326,16 @@ class _Object(Ntype):
         if not name.startswith(("__", "_n_")) and name not in getattr(type(self), "_n_annotations", ()):
             # (a declared field not bound yet, e.g. during __init__, is no proc: looking for one would read the
             # caller's f_locals, whose snapshot keeps every local of that frame alive in Python 3.12)
-            # Nim method-call syntax (UFCS): `obj.f(args)` calls the proc `f(obj, args)` visible in the
-            # caller's scope (e.g. `builder.addArgumentSeparator()`, `b.addCast(t):` for a template),
-            # private procs (`_sdata`) included; dunders and nimic internals (`_n_*`) are never procs
+            # The call syntax follows the Python definition (rules §4): a module-level proc is called free,
+            # `f(obj, args)`, not `obj.f(args)` (Nim's method-call syntax for any proc). The caller binding a routine
+            # of the name is the likely intent: say so (only on this error path)
             frame = sys._getframe(1)
             while frame is not None and frame.f_code.co_filename.startswith(_N_RUNTIME_DIR):
                 frame = frame.f_back
-            if frame is not None:
-                # a local that is no routine (a parameter `kind` next to the proc `kind(Cursor)`) is no
-                # candidate of Nim's call resolution: the proc of the module scope is. Nor is a global that is
-                # no routine (a module-level block's `let tags`, a Python global): the receiver's module's proc is
-                proc = frame.f_locals.get(name)
-                if not _n_is_routine(proc):
-                    proc = frame.f_globals.get(name)
-                if _n_is_routine(proc):
-                    return _NMethodCall(_n_method_call_proc(name, proc, type(self)), self)
-                if proc is not None:
-                    proc = _n_method_call_proc(name, None, type(self))
-                    if proc is not None:
-                        return _NMethodCall(proc, self)
+            proc = None if frame is None else frame.f_locals.get(name, frame.f_globals.get(name))
+            if _n_is_routine(proc):
+                raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}: {name} is a "
+                                     f"module-level proc, call it free: {name}(x, ...) (translation rules, section 4)")
         raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
     @property

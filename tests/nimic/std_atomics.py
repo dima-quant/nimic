@@ -8,6 +8,7 @@
 from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std.atomics import *
+from nimic.std.atomics import fetchAdd
 
 
 if comptime(__name__ == "__main__"):
@@ -15,7 +16,7 @@ if comptime(__name__ == "__main__"):
         with var:
             counter = Atomic[nint]()
         echo(string("default "), load(counter))
-        echo(string("fetchAdd "), counter.fetchAdd(1), string(" "), counter.fetchAdd(1), string(" now "), load(counter))
+        echo(string("fetchAdd "), fetchAdd(counter, 1), string(" "), fetchAdd(counter, 1), string(" now "), load(counter))
         store(counter, 10)
         echo(string("exchange "), exchange(counter, 20), string(" now "), load(counter))
         with var:
@@ -39,11 +40,11 @@ if comptime(__name__ == "__main__"):
         with var:
             small = Atomic[uint8]()
         store(small, uint8(255))
-        echo(string("uint8 wraps "), small.fetchAdd(uint8(1)), string(" now "), load(small))
+        echo(string("uint8 wraps "), fetchAdd(small, uint8(1)), string(" now "), load(small))
         with var:
             signed = Atomic[int8]()
         store(signed, int8(127))
-        echo(string("int8 wraps "), signed.fetchAdd(int8(1)), string(" now "), load(signed))
+        echo(string("int8 wraps "), fetchAdd(signed, int8(1)), string(" now "), load(signed))
         with var:
             flag = AtomicFlag()
         echo(string("flag "), testAndSet(flag), string(" "), testAndSet(flag))

@@ -529,7 +529,7 @@ def newTagPool() -> TagPool:
 def registerTag(tp: TagPool, tag: string) -> TagId:
     ## Intern a tag string. Adapters call this in enum-ordinal order at
     ## startup so the returned TagId equals the enum ordinal (1-based).
-    return tp.tags.getOrIncl(tag)
+    return getOrIncl(tp.tags, tag)
 
 
 with const:
@@ -557,7 +557,7 @@ def createTags[E: enum]() -> TagPool:
     result = newTagPool()
     for e in inrange(low(E), high(E)):
         with let:
-            id = result.registerTag(str(e))
+            id = registerTag(result, str(e))
         assert uint32(id) == uint32(e) + u32(1), (
             string("createTags: enum/TagId misalignment for ") + str(e) + string(" (got id ") + str(id) + string(")"))
     return result
@@ -861,13 +861,13 @@ def symRecord(p: Pool, s: string) -> NifSymbol:
         string("a symbol reaches the pool with its module suffix expanded, never as `") + s + string("`"))
     with let:
         sl = _splitSpelling(s)
-    result = NifSymbol(name=p.strings.getOrIncl(substr(s, 0, sl._nameLen - 1)),
+    result = NifSymbol(name=getOrIncl(p.strings, substr(s, 0, sl._nameLen - 1)),
                        disamb=sl._disamb, dedup=StrId(u32(0)), module=StrId(u32(0)))
     if sl._dedupLen > 0:
-        result.dedup = p.strings.getOrIncl(substr(s, sl._dedupStart,
+        result.dedup = getOrIncl(p.strings, substr(s, sl._dedupStart,
                                                   sl._dedupStart + sl._dedupLen - 1))
     if sl._moduleLen > 0:
-        result.module = p.strings.getOrIncl(substr(s, sl._moduleStart,
+        result.module = getOrIncl(p.strings, substr(s, sl._moduleStart,
                                                    sl._moduleStart + sl._moduleLen - 1))
     return result
 
@@ -878,27 +878,27 @@ def symId(p: Pool, s: string) -> SymId:
     ## Intern a symbol given its whole spelling. This is what the reader and the
     ## deserializers have; code that MINTS a symbol should say what its parts are
     ## instead (the overload below).
-    return p.symbols.getOrIncl(symRecord(p, s))
+    return getOrIncl(p.symbols, symRecord(p, s))
 
 
 @dispatch
 def symId(p: Pool, name: string, disamb: nint, module: string = string(""), dedup: string = string("")) -> SymId:
     ## Intern a symbol from its parts. `module` empty means a local symbol.
     with var:
-        r = NifSymbol(name=p.strings.getOrIncl(name), disamb=int32(disamb),
+        r = NifSymbol(name=getOrIncl(p.strings, name), disamb=int32(disamb),
                       dedup=StrId(u32(0)), module=StrId(u32(0)))
     if dedup.len > 0:
-        r.dedup = p.strings.getOrIncl(dedup)
+        r.dedup = getOrIncl(p.strings, dedup)
     if module.len > 0:
-        r.module = p.strings.getOrIncl(module)
-    result = p.symbols.getOrIncl(r)
+        r.module = getOrIncl(p.strings, module)
+    result = getOrIncl(p.symbols, r)
     return result
 
 
 @dispatch
 def symId(p: Pool, s: NifSymbol) -> SymId:
     """{.inline.}"""
-    return p.symbols.getOrIncl(s)
+    return getOrIncl(p.symbols, s)
 
 
 def isLocal(s: NifSymbol) -> bool:
@@ -952,21 +952,21 @@ class SymPool(Object):
         with let:
             sl = _splitSpelling(name)
         with var:
-            r = NifSymbol(name=s._pool.strings.getKeyId(substr(name, 0, sl._nameLen - 1)),
+            r = NifSymbol(name=getKeyId(s._pool.strings, substr(name, 0, sl._nameLen - 1)),
                           disamb=sl._disamb, dedup=StrId(u32(0)), module=StrId(u32(0)))
         if sl._dedupLen > 0:
-            r.dedup = s._pool.strings.getKeyId(substr(name, sl._dedupStart,
+            r.dedup = getKeyId(s._pool.strings, substr(name, sl._dedupStart,
                                                       sl._dedupStart + sl._dedupLen - 1))
             if r.dedup == StrId(u32(0)):
                 return SymId(u32(0))
         if sl._moduleLen > 0:
-            r.module = s._pool.strings.getKeyId(substr(name, sl._moduleStart,
+            r.module = getKeyId(s._pool.strings, substr(name, sl._moduleStart,
                                                        sl._moduleStart + sl._moduleLen - 1))
             if r.module == StrId(u32(0)):
                 return SymId(u32(0))
         if r.name == StrId(u32(0)):
             return SymId(u32(0))
-        result = s._pool.symbols.getKeyId(r)
+        result = getKeyId(s._pool.symbols, r)
         return result
 
 
@@ -1417,7 +1417,7 @@ def strId(c: Cursor, pool: Pool) -> StrId:
     with let:
         payload = uoperand(load(c))
     if (payload & StrInlineFlag) != u32(0):
-        return pool.strings.getOrIncl(_readInlineStr(payload))
+        return getOrIncl(pool.strings, _readInlineStr(payload))
     else:
         return StrId(uint32(combinedPayload(c) >> 1))
 
@@ -1804,7 +1804,7 @@ def rootOf(c: Cursor) -> SymId:
             result = SymId(u32(0))
             with var:
                 n = c.copy()
-            for _ in n.loopInto():
+            for _ in loopInto(n):
                 if result == SymId(u32(0)):
                     with let:
                         inner = rootOf(n)
@@ -2152,15 +2152,15 @@ def appendLineInfo(b: mut @ TokenBuf, file: FileId, line: int32, col: int32,
     with let:
         cid = uint32(comment)
     if cid == u32(0) and _fitsCommonLineInfo(file, line, col):
-        b.add(NifToken(_toX(NifKind.LineInfoLit, _encodeLineInfoCommon(file, line, col))))
+        add(b, NifToken(_toX(NifKind.LineInfoLit, _encodeLineInfoCommon(file, line, col))))
     else:
         assert uint64(uint32(file)) <= _LiFileMaskX, "too many files for LineInfoLit"
         with let:
             combined = _encodeLineInfoWide(file, line, col)
-        b.add(NifToken(_toX(NifKind.LineInfoLit, uint32(combined & uint64(PayloadMask)))))
-        b.add(extendedSuffixToken(uint32((combined >> PayloadBits) & uint64(PayloadMask))))
+        add(b, NifToken(_toX(NifKind.LineInfoLit, uint32(combined & uint64(PayloadMask)))))
+        add(b, extendedSuffixToken(uint32((combined >> PayloadBits) & uint64(PayloadMask))))
         if cid != u32(0):
-            b.add(extendedSuffixToken(cid & PayloadMask))
+            add(b, extendedSuffixToken(cid & PayloadMask))
             if uint64(cid) > uint64(PayloadMask):
                 b.add(extendedSuffixToken(cid >> PayloadBits))
 
@@ -2193,13 +2193,13 @@ def _lowBits(x: uint64) -> uint32:
 def addDotToken(b: mut @ TokenBuf):
     """{.inline, nifEmits: "Dot".}"""
     ## Appends an empty dot placeholder.
-    b.add(dotToken())
+    add(b, dotToken())
 
 
 def addCharLit(b: mut @ TokenBuf, c: char):
     """{.inline, nifEmits: "LIT".}"""
     ## Appends a character literal.
-    b.add(charToken(c))
+    add(b, charToken(c))
 
 
 def _encodeInlineStr(s: string) -> uint32:
@@ -2217,13 +2217,13 @@ def _addStringLike(b: mut @ TokenBuf, kind: NifKind, s: string, pool: untyped):
     ## `s.len <= 3`; otherwise interns in the given `pool` BiTable.
     requirePools(b)
     if s.len <= StrInlineMaxLen:
-        b.add(NifToken(_toX(kind, _encodeInlineStr(s))))
+        add(b, NifToken(_toX(kind, _encodeInlineStr(s))))
     else:
         with let:
-            id = uint32(pool.getOrIncl(s))
+            id = uint32(getOrIncl(pool, s))
         with let:
             payload = uint64(id) << u64(1)               # bit 0 = 0 ⇒ pool ref
-        b.add(NifToken(_toX(kind, _lowBits(payload))))
+        add(b, NifToken(_toX(kind, _lowBits(payload))))
         _addSuffixIfNeeded(b, payload)
 
 
@@ -2277,11 +2277,11 @@ def _addSymLike(b: mut @ TokenBuf, kind: NifKind, s: string):
     ## pool stores the taken-apart form, so interning goes through `symId`.
     requirePools(b)
     if s.len <= StrInlineMaxLen:
-        b.add(NifToken(_toX(kind, _encodeInlineStr(s))))
+        add(b, NifToken(_toX(kind, _encodeInlineStr(s))))
     else:
         with let:
             payload = uint64(uint32(symId(b.pool, s))) << u64(1)  # bit 0 = 0 => pool ref
-        b.add(NifToken(_toX(kind, _lowBits(payload))))
+        add(b, NifToken(_toX(kind, _lowBits(payload))))
         _addSuffixIfNeeded(b, payload)
 
 
@@ -2309,7 +2309,7 @@ def _addInternedSymbol(b: mut @ TokenBuf, kind: NifKind, id: SymId):
     else:
         with let:
             payload = uint64(uint32(id)) << u64(1)
-        b.add(NifToken(_toX(kind, _lowBits(payload))))
+        add(b, NifToken(_toX(kind, _lowBits(payload))))
         _addSuffixIfNeeded(b, payload)
 
 
@@ -2349,12 +2349,12 @@ def _emitChained(b: mut @ TokenBuf, kind: NifKind, bits: uint64):
     ## Emit a value carrier (kinded token plus 0/1/2 ExtendedSuffix
     ## tokens) holding `bits`. Picks the minimum chain length whose
     ## carrier width covers all the set bits.
-    b.add(NifToken(_toX(kind, uint32(bits & uint64(PayloadMask)))))
+    add(b, NifToken(_toX(kind, uint32(bits & uint64(PayloadMask)))))
     if bits > uint64(PayloadMask):
-        b.add(extendedSuffixToken(uint32((bits >> PayloadBits) &
+        add(b, extendedSuffixToken(uint32((bits >> PayloadBits) &
                                          uint64(PayloadMask))))
         if bits >> (PayloadBits * u32(2)) != u64(0):
-            b.add(extendedSuffixToken(uint32(bits >> (PayloadBits * u32(2)))))
+            add(b, extendedSuffixToken(uint32(bits >> (PayloadBits * u32(2)))))
 
 
 def addIntLit(b: mut @ TokenBuf, v: int64):
@@ -2370,14 +2370,14 @@ def addIntLit(b: mut @ TokenBuf, v: int64):
     ## trims by magnitude — correct for unsigned/float, wrong for signed.)
     with let:
         bits = cast[uint64](v)
-    b.add(NifToken(_toX(NifKind.IntLit, uint32(bits & uint64(PayloadMask)))))
+    add(b, NifToken(_toX(NifKind.IntLit, uint32(bits & uint64(PayloadMask)))))
     if v >= -(i64(1) << 27) and v < (i64(1) << 27):
         pass                                   # 28-bit: one token suffices
     elif v >= -(i64(1) << 55) and v < (i64(1) << 55):
-        b.add(extendedSuffixToken(uint32((bits >> PayloadBits) & uint64(PayloadMask))))
+        add(b, extendedSuffixToken(uint32((bits >> PayloadBits) & uint64(PayloadMask))))
     else:
-        b.add(extendedSuffixToken(uint32((bits >> PayloadBits) & uint64(PayloadMask))))
-        b.add(extendedSuffixToken(uint32(bits >> (PayloadBits * u32(2)))))
+        add(b, extendedSuffixToken(uint32((bits >> PayloadBits) & uint64(PayloadMask))))
+        add(b, extendedSuffixToken(uint32(bits >> (PayloadBits * u32(2)))))
 
 
 def addUIntLit(b: mut @ TokenBuf, v: uint64):
@@ -2407,7 +2407,7 @@ def _openTagEscaped(b: mut @ TokenBuf, t: TagId):
     b._openTags.add(b._len)
     b._data[b._len] = tagLitToken(b.tags.escapeTag, u32(0))
     b._len += 1
-    b.addIntLit(int64(uint32(t)))
+    addIntLit(b, int64(uint32(t)))
 
 
 def openTag(b: mut @ TokenBuf, t: TagId):
@@ -2484,9 +2484,9 @@ def closeTag(b: mut @ TokenBuf):
 
 @template
 def buildTree(b: mut @ TokenBuf, tag: TagId, body: untyped):
-    b.openTag(tag)
+    openTag(b, tag)
     body
-    b.closeTag()
+    closeTag(b)
 
 # ── Cursor construction ──────────────────────────────────────────────────
 
@@ -2671,8 +2671,8 @@ def _reinternLineInfo(dest: mut @ TokenBuf, c: Cursor,
     with var:
         comment = StrId(u32(0))
     if uint32(li.comment) != u32(0) and srcPool is not None:
-        comment = dest.pool.strings.getOrIncl(srcPool.strings[li.comment])
-    result = NifLineInfo(file=dest.pool.filenames.getOrIncl(fname),
+        comment = getOrIncl(dest.pool.strings, srcPool.strings[li.comment])
+    result = NifLineInfo(file=getOrIncl(dest.pool.filenames, fname),
                          line=li.line, col=li.col, comment=comment)
     return result
 
@@ -2696,31 +2696,31 @@ def _addAcrossPools(dest: mut @ TokenBuf, c: mut @ Cursor,
             with let:
                 tagStr = srcTags.tags[cursorTagId(c)]
             with let:
-                newTag = dest.tags.tags.getOrIncl(tagStr)
-            dest.openTag(TagId(newTag))
-            dest.appendLineInfo(destLi)          # right after the tag head
-            with c.into():
+                newTag = getOrIncl(dest.tags.tags, tagStr)
+            openTag(dest, TagId(newTag))
+            appendLineInfo(dest, destLi)          # right after the tag head
+            with into(c):
                 while hasMore(c):
                     _addAcrossPools(dest, c, srcPool, srcTags)
-            dest.closeTag()
+            closeTag(dest)
         case NifKind.StrLit:
-            dest.addStrLit(strVal(c, srcPool)); dest.appendLineInfo(destLi); inc(c)
+            addStrLit(dest, strVal(c, srcPool)); appendLineInfo(dest, destLi); inc(c)
         case NifKind.IntLit:
-            dest.addIntLit(intVal(c)); dest.appendLineInfo(destLi); inc(c)
+            addIntLit(dest, intVal(c)); appendLineInfo(dest, destLi); inc(c)
         case NifKind.UIntLit:
-            dest.addUIntLit(uintVal(c)); dest.appendLineInfo(destLi); inc(c)
+            addUIntLit(dest, uintVal(c)); appendLineInfo(dest, destLi); inc(c)
         case NifKind.FloatLit:
-            dest.addFloatLit(floatVal(c)); dest.appendLineInfo(destLi); inc(c)
+            addFloatLit(dest, floatVal(c)); appendLineInfo(dest, destLi); inc(c)
         case NifKind.Symbol:
-            dest.addSymUse(symName(c, srcPool)); dest.appendLineInfo(destLi); inc(c)
+            addSymUse(dest, symName(c, srcPool)); appendLineInfo(dest, destLi); inc(c)
         case NifKind.SymbolDef:
-            dest.addSymDef(symName(c, srcPool)); dest.appendLineInfo(destLi); inc(c)
+            addSymDef(dest, symName(c, srcPool)); appendLineInfo(dest, destLi); inc(c)
         case NifKind.Ident:
-            dest.addIdent(strVal(c, srcPool)); dest.appendLineInfo(destLi); inc(c)
+            addIdent(dest, strVal(c, srcPool)); appendLineInfo(dest, destLi); inc(c)
         case NifKind.CharLit:
-            dest.addCharLit(charLit(c)); dest.appendLineInfo(destLi); inc(c)
+            addCharLit(dest, charLit(c)); appendLineInfo(dest, destLi); inc(c)
         case NifKind.DotToken:
-            dest.addDotToken(); dest.appendLineInfo(destLi); inc(c)
+            addDotToken(dest); appendLineInfo(dest, destLi); inc(c)
         case NifKind.LineInfoLit:
             dest.add(load(c)); inc(c)              # defensive: not a valid head token
         case NifKind.ExtendedSuffix:
@@ -2804,13 +2804,13 @@ def addBuffer(dest: mut @ TokenBuf, src: mut @ TokenBuf):
     if src._len == 0:
         return
     if dest.pool == src.pool and dest.tags == src.tags:
-        dest.addBufferSamePool(src)
+        addBufferSamePool(dest, src)
     else:
         with var:
-            c = src.beginRead()
+            c = beginRead(src)
         while hasMore(c):
-            dest.addSubtree(c)
-            c.skip()
+            addSubtree(dest, c)
+            skip(c)
 
 
 def _addWithSparseLineInfo(dest: mut @ TokenBuf, c: mut @ Cursor,
@@ -2818,19 +2818,19 @@ def _addWithSparseLineInfo(dest: mut @ TokenBuf, c: mut @ Cursor,
     with let:
         info = rawLineInfo(c)
     if kind(c) == NifKind.TagLit:
-        dest.openTag(cursorTagId(c))
+        openTag(dest, cursorTagId(c))
         if info.isValid() and info != last:
-            dest.appendLineInfo(info)
+            appendLineInfo(dest, info)
             last <<= info
-        with c.into():
+        with into(c):
             while hasMore(c):
                 _addWithSparseLineInfo(dest, c, last)
-        dest.closeTag()
+        closeTag(dest)
     else:
         for i in range(0, valueWidth(c)):
-            dest.add(_peekAhead(c, i))
+            add(dest, _peekAhead(c, i))
         if info.isValid() and info != last:
-            dest.appendLineInfo(info)
+            appendLineInfo(dest, info)
             last <<= info
         inc(c)
 
@@ -2874,7 +2874,7 @@ if comptime(__name__ == "__main__"):
             with let:
                 tp = newTagPool()
             with let:
-                tFoo = tp.registerTag(string("foo"))
+                tFoo = registerTag(tp, string("foo"))
             with var:
                 n = tagLitToken(tFoo, u32(0))
             test(kind(n), NifKind.TagLit)
@@ -2889,28 +2889,28 @@ if comptime(__name__ == "__main__"):
             with var:
                 b = createTokenBuf(8)
             with let:
-                tFoo = b.tags.registerTag(string("foo"))
+                tFoo = registerTag(b.tags, string("foo"))
             with let:
-                tBar = b.tags.registerTag(string("bar"))
-            with b.buildTree(tFoo):
-                with b.buildTree(tBar):
-                    b.addStrLit(string("hi"))
-                    b.addIntLit(42)
-                b.addFloatLit(3.14)
+                tBar = registerTag(b.tags, string("bar"))
+            with buildTree(b, tFoo):
+                with buildTree(b, tBar):
+                    addStrLit(b, string("hi"))
+                    addIntLit(b, 42)
+                addFloatLit(b, 3.14)
             # 1 foo + (1 bar + 1 "hi" + 1 (small int 42)) + 3 (3.14 needs 3 tokens
             # for the full float64 bit pattern) = 7 tokens.
             test(b._len, 7)
 
             with var:
-                c = b.beginRead()
+                c = beginRead(b)
             test(kind(c), NifKind.TagLit)
             test(cursorTagId(c), tFoo)
             test(cursorJump(c), u64(6))
-            with c.into():
+            with into(c):
                 test(kind(c), NifKind.TagLit)
                 test(cursorTagId(c), tBar)
                 test(cursorJump(c), u64(2))
-                with c.into():
+                with into(c):
                     test(kind(c), NifKind.StrLit)
                     test(strVal(c), string("hi")); inc(c)
                     test(kind(c), NifKind.IntLit)
@@ -2922,22 +2922,22 @@ if comptime(__name__ == "__main__"):
             with var:
                 src = createTokenBuf(4)
             with let:
-                tFoo = src.tags.registerTag(string("foo"))
-            with src.buildTree(tFoo):
-                src.addStrLit(string("hello"))
-                src.addIntLit(7)
+                tFoo = registerTag(src.tags, string("foo"))
+            with buildTree(src, tFoo):
+                addStrLit(src, string("hello"))
+                addIntLit(src, 7)
             with var:
                 dest = createTokenBuf(4)
             test((src.pool == dest.pool), False)
             test((src.tags == dest.tags), False)
             with var:
-                c = src.beginRead()
-            dest.addSubtree(c)                       # re-interns via cross-pool path
+                c = beginRead(src)
+            addSubtree(dest, c)                       # re-interns via cross-pool path
             with var:
-                d = dest.beginRead()
+                d = beginRead(dest)
             test(kind(d), NifKind.TagLit)
-            test(dest.tags.tagName(cursorTagId(d)), string("foo"))
-            with d.into():
+            test(tagName(dest.tags, cursorTagId(d)), string("foo"))
+            with into(d):
                 test(strVal(d), string("hello")); inc(d)
                 test(intVal(d), 7); inc(d)
 
@@ -2950,23 +2950,23 @@ if comptime(__name__ == "__main__"):
             with var:
                 src = createTokenBuf(4, p, tp)
             with let:
-                tBar = tp.registerTag(string("bar"))
-            with src.buildTree(tBar):
-                src.addStrLit(string("longish"))   # > 3 bytes → pool path, exercises sharing
-                src.addIntLit(9)
+                tBar = registerTag(tp, string("bar"))
+            with buildTree(src, tBar):
+                addStrLit(src, string("longish"))   # > 3 bytes → pool path, exercises sharing
+                addIntLit(src, 9)
             with var:
                 dest = createTokenBuf(4, p, tp)
             test((src.pool == dest.pool), True)
             test((src.tags == dest.tags), True)
             with let:
-                srcStrId = uint32(p.strings.getOrIncl(string("longish")))
+                srcStrId = uint32(getOrIncl(p.strings, string("longish")))
             with var:
-                c = src.beginRead()
-            dest.addSubtree(c)
+                c = beginRead(src)
+            addSubtree(dest, c)
             with var:
-                d = dest.beginRead()
+                d = beginRead(dest)
             test(kind(d), NifKind.TagLit)
-            with d.into():
+            with into(d):
                 # Same pool → bulk-copied; the token payload's pool id is preserved.
                 test((uoperand(load(d)) >> 1), srcStrId)
                 inc(d)
@@ -2980,34 +2980,34 @@ if comptime(__name__ == "__main__"):
             with var:
                 src = createTokenBuf(4, p)            # gets its own fresh tag pool
             with let:
-                tJ = src.tags.registerTag(string("oconstr"))
-            with src.buildTree(tJ):
-                src.addStrLit(string("sharedlonger"))
+                tJ = registerTag(src.tags, string("oconstr"))
+            with buildTree(src, tJ):
+                addStrLit(src, string("sharedlonger"))
             with var:
                 dest = createTokenBuf(4, p)           # different tag pool
             with var:
-                c = src.beginRead()
-            dest.addSubtree(c)                          # must re-intern the tag…
+                c = beginRead(src)
+            addSubtree(dest, c)                          # must re-intern the tag…
             with var:
-                d = dest.beginRead()
-            test(dest.tags.tagName(cursorTagId(d)), string("oconstr"))
+                d = beginRead(dest)
+            test(tagName(dest.tags, cursorTagId(d)), string("oconstr"))
             # …but the literal "sharedlonger" stays at the same StrId in p.
-            with d.into():
-                test((uoperand(load(d)) >> 1), uint32(p.strings.getOrIncl(string("sharedlonger"))))
+            with into(d):
+                test((uoperand(load(d)) >> 1), uint32(getOrIncl(p.strings, string("sharedlonger"))))
                 inc(d)
 
         with block("inline_short_str"):
             # Strings ≤ 3 bytes inline directly into the token. No pool touch.
             with var:
                 b = createTokenBuf(8)
-            b.addStrLit(string(""))
-            b.addStrLit(string("x"))
-            b.addStrLit(string("ab"))
-            b.addStrLit(string("abc"))
-            b.addStrLit(string("abcd"))   # length 4 → pool
+            addStrLit(b, string(""))
+            addStrLit(b, string("x"))
+            addStrLit(b, string("ab"))
+            addStrLit(b, string("abc"))
+            addStrLit(b, string("abcd"))   # length 4 → pool
             test(len(b.pool.strings), 1)     # only "abcd" interned
             with var:
-                c = b.beginRead()
+                c = beginRead(b)
             test(isInlineLit(c), True);  test(strVal(c, b.pool), string(""));    inc(c)
             test(isInlineLit(c), True);  test(strVal(c, b.pool), string("x"));   inc(c)
             test(isInlineLit(c), True);  test(strVal(c, b.pool), string("ab"));  inc(c)
@@ -3021,22 +3021,22 @@ if comptime(__name__ == "__main__"):
                 b = createTokenBuf(16)
             with let:
                 beforeShort = b._len.copy()
-            b.addIntLit(0);                  test(b._len - beforeShort, 1)
+            addIntLit(b, 0);                  test(b._len - beforeShort, 1)
             with let:
                 beforeSmall = b._len.copy()
-            b.addIntLit(1_000_000);          test(b._len - beforeSmall, 1)
+            addIntLit(b, 1_000_000);          test(b._len - beforeSmall, 1)
             with let:
                 beforeWide = b._len.copy()
-            b.addIntLit(i64(1) << 40);       test(b._len - beforeWide, 2)
+            addIntLit(b, i64(1) << 40);       test(b._len - beforeWide, 2)
             with let:
                 beforeVeryWide = b._len.copy()
-            b.addIntLit(high(int64));        test(b._len - beforeVeryWide, 3)
+            addIntLit(b, high(int64));        test(b._len - beforeVeryWide, 3)
             with let:
                 beforeNeg = b._len.copy()
-            b.addIntLit(low(int64));         test(b._len - beforeNeg, 3)
+            addIntLit(b, low(int64));         test(b._len - beforeNeg, 3)
 
             with var:
-                c = b.beginRead()
+                c = beginRead(b)
             test(intVal(c), i64(0));            inc(c)
             test(intVal(c), i64(1_000_000));    inc(c)
             test(intVal(c), i64(1) << 40);     inc(c)
@@ -3046,12 +3046,12 @@ if comptime(__name__ == "__main__"):
         with block("inline_uint_chain"):
             with var:
                 b = createTokenBuf(8)
-            b.addUIntLit(u64(0))
-            b.addUIntLit(u64(1) << 27)         # 2 tokens (just past 28-bit unsigned cap)
-            b.addUIntLit(u64(1) << 50)         # 2 tokens
-            b.addUIntLit(high(uint64))         # 3 tokens
+            addUIntLit(b, u64(0))
+            addUIntLit(b, u64(1) << 27)         # 2 tokens (just past 28-bit unsigned cap)
+            addUIntLit(b, u64(1) << 50)         # 2 tokens
+            addUIntLit(b, high(uint64))         # 3 tokens
             with var:
-                c = b.beginRead()
+                c = beginRead(b)
             test(uintVal(c), u64(0));            inc(c)
             test(uintVal(c), u64(1) << 27);     inc(c)
             test(uintVal(c), u64(1) << 50);     inc(c)
@@ -3060,11 +3060,11 @@ if comptime(__name__ == "__main__"):
         with block("inline_float_chain"):
             with var:
                 b = createTokenBuf(6)
-            b.addFloatLit(0.0)     # all-zero bit pattern → 1 token
-            b.addFloatLit(3.14)    # all 64 bits used → 3 tokens
-            b.addFloatLit(-0.5)    # 3 tokens
+            addFloatLit(b, 0.0)     # all-zero bit pattern → 1 token
+            addFloatLit(b, 3.14)    # all 64 bits used → 3 tokens
+            addFloatLit(b, -0.5)    # 3 tokens
             with var:
-                c = b.beginRead()
+                c = beginRead(b)
             test(floatVal(c), 0.0);  inc(c)
             test(floatVal(c), 3.14); inc(c)
             test(floatVal(c), -0.5); inc(c)
@@ -3077,10 +3077,10 @@ if comptime(__name__ == "__main__"):
             with var:
                 b = createTokenBuf(big + 4)
             with let:
-                tT = b.tags.registerTag(string("t"))
-            with b.buildTree(tT):
+                tT = registerTag(b.tags, string("t"))
+            with buildTree(b, tT):
                 for _ in range(0, big):
-                    b.addDotToken()
+                    addDotToken(b)
             # After splice: 1 (TagLit) + 1 (suffix) + big body = big + 2
             test(b._len, big + 2)
             test(kind(b[0]), NifKind.TagLit)
@@ -3088,31 +3088,31 @@ if comptime(__name__ == "__main__"):
             test(kind(b[1]), NifKind.ExtendedSuffix)
 
             with var:
-                c = b.beginRead()
+                c = beginRead(b)
             test(kind(c), NifKind.TagLit)                          # one load, no branch
             test(cursorTagId(c), tT)
             test(cursorJump(c), uint64(big))               # body count (suffix is head)
-            c.skip()
+            skip(c)
             test(c._rem, 0)
 
         with block("line_info_common_and_overflow"):
             with var:
                 b = createTokenBuf(16)
             with let:
-                fA = b.pool.filenames.getOrIncl(string("a.nim"))
+                fA = getOrIncl(b.pool.filenames, string("a.nim"))
             with let:
-                fB = b.pool.filenames.getOrIncl(string("b.nim"))
+                fB = getOrIncl(b.pool.filenames, string("b.nim"))
             # common layout (fits 7/7/14)
-            b.addStrLit(string("x"));  b.appendLineInfo(fA, i32(100), i32(12))
+            addStrLit(b, string("x"));  appendLineInfo(b, fA, i32(100), i32(12))
             # a value with its own ExtendedSuffix chain, plus line info after it
-            b.addIntLit(i64(1) << 40);  b.appendLineInfo(fA, i32(101), i32(1))
+            addIntLit(b, i64(1) << 40);  appendLineInfo(b, fA, i32(101), i32(1))
             # overflow layout (line beyond 14 bits → wide)
-            b.addStrLit(string("y"));  b.appendLineInfo(fB, i32(200000), i32(5))
+            addStrLit(b, string("y"));  appendLineInfo(b, fB, i32(200000), i32(5))
             # a head with no line info
-            b.addCharLit(ch("z"))
+            addCharLit(b, ch("z"))
 
             with var:
-                c = b.beginRead()
+                c = beginRead(b)
             with block:
                 test(kind(c), NifKind.StrLit); test(strVal(c), string("x"))
                 with let:
@@ -3142,18 +3142,18 @@ if comptime(__name__ == "__main__"):
             with var:
                 b = createTokenBuf(16)
             with let:
-                f = b.pool.filenames.getOrIncl(string("c.nim"))
+                f = getOrIncl(b.pool.filenames, string("c.nim"))
             with let:
-                doc = b.pool.strings.getOrIncl(string("## a doc comment"))
+                doc = getOrIncl(b.pool.strings, string("## a doc comment"))
             # comment on a head whose position would fit the common layout → forced wide
-            b.addStrLit(string("x"));          b.appendLineInfo(f, i32(10), i32(4), doc)
+            addStrLit(b, string("x"));          appendLineInfo(b, f, i32(10), i32(4), doc)
             # comment alongside a value that has its OWN ExtendedSuffix chain
-            b.addIntLit(i64(1) << 40); b.appendLineInfo(f, i32(11), i32(2), doc)
+            addIntLit(b, i64(1) << 40); appendLineInfo(b, f, i32(11), i32(2), doc)
             # line info without a comment still reports comment 0
-            b.addStrLit(string("y"));          b.appendLineInfo(f, i32(12), i32(1))
+            addStrLit(b, string("y"));          appendLineInfo(b, f, i32(12), i32(1))
 
             with var:
-                c = b.beginRead()
+                c = beginRead(b)
             with block:
                 test(kind(c), NifKind.StrLit); test(strVal(c), string("x"))
                 with let:
@@ -3179,10 +3179,10 @@ if comptime(__name__ == "__main__"):
             with var:
                 dest = createTokenBuf(16)
             with var:
-                cc = b.beginRead()
-            dest.addSubtree(cc)                    # different pools → addAcrossPools
+                cc = beginRead(b)
+            addSubtree(dest, cc)                    # different pools → addAcrossPools
             with var:
-                d = dest.beginRead()
+                d = beginRead(dest)
             test(kind(d), NifKind.StrLit); test(strVal(d), string("x"))
             with let:
                 dli = rawLineInfo(d)
@@ -3194,39 +3194,39 @@ if comptime(__name__ == "__main__"):
             with var:
                 src = createTokenBuf(8)
             with let:
-                t = src.tags.registerTag(string("stmt"))
+                t = registerTag(src.tags, string("stmt"))
             with let:
-                f = src.pool.filenames.getOrIncl(string("m.nim"))
-            src.openTag(t)
-            src.appendLineInfo(f, i32(7), i32(3))       # line info on the tag head
-            src.addIntLit(42)
-            src.closeTag()
+                f = getOrIncl(src.pool.filenames, string("m.nim"))
+            openTag(src, t)
+            appendLineInfo(src, f, i32(7), i32(3))       # line info on the tag head
+            addIntLit(src, 42)
+            closeTag(src)
             # tag jump must count only the body (the IntLit), not the LineInfoLit head
             with block:
                 with var:
-                    c = src.beginRead()
+                    c = beginRead(src)
                 test(kind(c), NifKind.TagLit); test(cursorJump(c), u64(1))
                 with let:
                     li = rawLineInfo(c)
                 test(li.line, i32(7)); test(li.col, i32(3)); test(lineInfoFile(c), string("m.nim"))
-                with c.into():
+                with into(c):
                     test(intVal(c), i64(42)); inc(c)       # into must land past the tag head
             # cross-pool copy must re-intern the filename and preserve line/col
             with var:
                 dest = createTokenBuf(8)
             with block:
                 with var:
-                    c = src.beginRead()
-                dest.addSubtree(c)                       # different pools → addAcrossPools
+                    c = beginRead(src)
+                addSubtree(dest, c)                       # different pools → addAcrossPools
             with var:
-                d = dest.beginRead()
+                d = beginRead(dest)
             test(kind(d), NifKind.TagLit)
-            test(dest.tags.tagName(cursorTagId(d)), string("stmt"))
+            test(tagName(dest.tags, cursorTagId(d)), string("stmt"))
             with let:
                 dli = rawLineInfo(d)
             test(dli.line, i32(7)); test(dli.col, i32(3))
             test(lineInfoFile(d), string("m.nim"))
-            with d.into():
+            with into(d):
                 test(intVal(d), i64(42)); inc(d)
 
         echo(string("nifcore self-tests passed"))
@@ -3251,8 +3251,8 @@ if comptime(__name__ == "__main__"):
         with block("ownership"):
             with var:
                 b = createTokenBuf(4)
-            b.addIntLit(10)
-            b.addIntLit(20)
+            addIntLit(b, 10)
+            addIntLit(b, 20)
             echo(string("built: rc "), _rc(b))
             with var:
                 c = beginRead(b)
@@ -3270,7 +3270,7 @@ if comptime(__name__ == "__main__"):
             # a mutation while a cursor reads: prepareMutation copies, the old owner stays with the cursor
             with var:
                 c2 = beginRead(b)
-            b.addIntLit(30)
+            addIntLit(b, 30)
             echo(string("mutation while reading: buffer rc "), _rc(b), string(", cursor rc "), c2._owner._rc,
                  string(", cursor still reads "), intVal(c2))
             endRead(c2)
@@ -3280,23 +3280,23 @@ if comptime(__name__ == "__main__"):
                 c3 = beginRead(b)
             endRead(c3)
             echo(string("before reclaim: rc "), _rc(b))
-            b.addIntLit(40)
+            addIntLit(b, 40)
             echo(string("after reclaim: rc "), _rc(b), string(", len "), len(b))
 
             with var:
                 b2 = createTokenBuf(4)
             with let:
-                t = b2.tags.registerTag(string("t"))
-            with b2.buildTree(t):
-                b2.addIntLit(1)
-                b2.addIntLit(2)
+                t = registerTag(b2.tags, string("t"))
+            with buildTree(b2, t):
+                addIntLit(b2, 1)
+                addIntLit(b2, 2)
             with var:
                 tree = beginRead(b2)
             with var:
                 child = childCursor(tree)
             echo(string("childCursor: rc "), _rc(b2), string(", rem "), child._rem, string(", first "), intVal(child))
             with var:
-                second = child.plus_bang(1)
+                second = plus_bang(child, 1)
             echo(string("+!: rc "), _rc(b2), string(", rem "), second._rem, string(", value "), intVal(second))
             endRead(second)
             endRead(child)
@@ -3327,7 +3327,7 @@ if comptime(__name__ == "__main__"):
                  string(" "), kind(symdefToken(SymId(u32(9)))), string(" "), kind(identToken(StrId(u32(9)))))
             with var:
                 b = createTokenBuf(4)
-            b.addIntLit(-5)
+            addIntLit(b, -5)
             echo(soperand(b[0]), string(" "), kind(b[0]))
 
         # the symbol API
@@ -3364,15 +3364,15 @@ if comptime(__name__ == "__main__"):
         with block("tag_pools"):
             with let:
                 tp = createTags[_Color]()
-            echo(tp.tagName(TagId(u32(1))), string(" "), tp.tagName(TagId(u32(3))), string(" "), hasEscapes(tp))
+            echo(tagName(tp, TagId(u32(1))), string(" "), tagName(tp, TagId(u32(3))), string(" "), hasEscapes(tp))
             with let:
                 esc = newTagPool()
-            esc.escapeTag = esc.registerTag(string("esc"))
+            esc.escapeTag = registerTag(esc, string("esc"))
             with var:
                 b = createTokenBuf(4, None, esc)
-            b.openTag(TagId(FirstEscapeId + u32(5)))
-            b.addIntLit(999)
-            b.closeTag()
+            openTag(b, TagId(FirstEscapeId + u32(5)))
+            addIntLit(b, 999)
+            closeTag(b)
             with var:
                 c = beginRead(b)
             echo(hasEscapes(esc), string(" "), isEscapedTag(c), string(" "), uint32(resolvedTagId(c)),
@@ -3383,20 +3383,20 @@ if comptime(__name__ == "__main__"):
         with block("builders_and_positions"):
             with var:
                 b = createTokenBuf(4)
-            b.addDotToken()
-            b.addCharLit(ch("k"))
-            b.addIdent(string("myIdent"))
+            addDotToken(b)
+            addCharLit(b, ch("k"))
+            addIdent(b, string("myIdent"))
             with let:
                 sid = symId(b.pool, string("sym.0"))
-            b.addSymUse(sid)
-            b.addSymDef(sid)
-            b.addSymUse(string("use.1"))
-            b.addSymDef(string("def.2"))
-            b.addUIntLit(u64(100))
+            addSymUse(b, sid)
+            addSymDef(b, sid)
+            addSymUse(b, string("use.1"))
+            addSymDef(b, string("def.2"))
+            addUIntLit(b, u64(100))
             echo(string("builder tokens: len "), len(b))
             with var:
                 c = cursorAt(b, 2)
-            echo(kind(c), string(" "), strVal(c), string(" "), strId(c) == b.pool.strings.getOrIncl(string("myIdent")),
+            echo(kind(c), string(" "), strVal(c), string(" "), strId(c) == getOrIncl(b.pool.strings, string("myIdent")),
                  string(" "), cursorToPosition(b, c), string(" "), toUniqueId(c) == toUniqueId(cursorAt(b, 2)))
             inc(c)
             echo(symName(c), string(" "), symId(c) == sid, string(" "), internedSymToken(b.pool, NifKind.Symbol, sid) == load(c))
@@ -3408,14 +3408,14 @@ if comptime(__name__ == "__main__"):
                  string(" "), sharesPools(c, newPool(), b.tags), string(" "), pool(c) == b.pool, string(" "), tags(c) == b.tags)
             endRead(c)
             endRead(tail)
-            b.shrink(len(b) - 2)
+            shrink(b, len(b) - 2)
             echo(string("after shrink: len "), len(b))
 
             with var:
                 b2 = createTokenBuf(4)
-            b2.addIntLit(111)
-            b2.addIntLit(222)
-            b.insert(b2, 1)
+            addIntLit(b2, 111)
+            addIntLit(b2, 222)
+            insert(b, b2, 1)
             echo(string("after insert: len "), len(b), string(", at 1: "), intVal(cursorAt(b, 1)))
 
             # readonlyCursorAt on a buffer that already has an owner
@@ -3429,8 +3429,8 @@ if comptime(__name__ == "__main__"):
             # on a fresh buffer: the owner is minted through the cast view of `b`, and both cursors share it
             with var:
                 fresh = createTokenBuf(4)
-            fresh.addIntLit(5)
-            fresh.addIntLit(6)
+            addIntLit(fresh, 5)
+            addIntLit(fresh, 6)
             with var:
                 ro1 = readonlyCursorAt(fresh, 0)
             with var:
@@ -3446,15 +3446,15 @@ if comptime(__name__ == "__main__"):
             with var:
                 b = createTokenBuf(8)
             with let:
-                t = b.tags.registerTag(string("t"))
+                t = registerTag(b.tags, string("t"))
             with let:
-                u = b.tags.registerTag(string("u"))
-            with b.buildTree(t):
-                b.addIntLit(1)
-            b.reopenLastTree(0)
-            b.addIntLit(2)
-            b.closeTag()
-            b.addIntLit(3)
+                u = registerTag(b.tags, string("u"))
+            with buildTree(b, t):
+                addIntLit(b, 1)
+            reopenLastTree(b, 0)
+            addIntLit(b, 2)
+            closeTag(b)
+            addIntLit(b, 3)
             with var:
                 c = beginRead(b)
             echo(string("reopened jump "), cursorJump(c), string(", width "), subtreeWidth(c))
@@ -3466,24 +3466,24 @@ if comptime(__name__ == "__main__"):
             skip(first)
             skip(first)
             echo(string("peekPastEnd: "), intVal(peekPastEnd(first)))
-            with c.peekInto():
+            with peekInto(c):
                 echo(string("peekInto first child "), intVal(c))
             echo(string("after peekInto: "), intVal(c), string(" rem "), c._rem)
             endRead(c)
 
             with var:
                 by = createTokenBuf(4, b.pool, b.tags)
-            with by.buildTree(u):
-                by.addIntLit(7)
-                by.addIntLit(8)
-                by.addIntLit(9)
+            with buildTree(by, u):
+                addIntLit(by, 7)
+                addIntLit(by, 8)
+                addIntLit(by, 9)
             with var:
                 cb = beginRead(by)
-            b.replace(cb, 0)
+            replace(b, cb, 0)
             endRead(cb)
             with var:
                 r = beginRead(b)
-            echo(string("replace: len "), len(b), string(", tag "), b.tags.tagName(cursorTagId(r)), string(", jump "), cursorJump(r))
+            echo(string("replace: len "), len(b), string(", tag "), tagName(b.tags, cursorTagId(r)), string(", jump "), cursorJump(r))
             skip(r)
             echo(string("after replaced tree: "), intVal(r))
             endRead(r)
@@ -3492,15 +3492,15 @@ if comptime(__name__ == "__main__"):
             with var:
                 lv = createTokenBuf(8)
             with let:
-                dot = lv.tags.registerTag(string("dot"))
+                dot = registerTag(lv.tags, string("dot"))
             with let:
-                bracket = lv.tags.registerTag(string("at"))
-            with lv.buildTree(dot):
-                lv.addIntLit(1)
-                with lv.buildTree(bracket):
-                    lv.addSymUse(string("abcd.1"))
-                lv.addSymUse(string("zz.2"))
-            lv.addIntLit(5)
+                bracket = registerTag(lv.tags, string("at"))
+            with buildTree(lv, dot):
+                addIntLit(lv, 1)
+                with buildTree(lv, bracket):
+                    addSymUse(lv, string("abcd.1"))
+                addSymUse(lv, string("zz.2"))
+            addIntLit(lv, 5)
             with var:
                 lc = beginRead(lv)
             echo(string("rootOf: "), symString(lv.pool, rootOf(lc)))
@@ -3512,13 +3512,13 @@ if comptime(__name__ == "__main__"):
         with block("foreign_tokens"):
             with var:
                 src = createTokenBuf(4)
-            src.addIntLit(5)
-            src.addIntLit(6)
+            addIntLit(src, 5)
+            addIntLit(src, 6)
             with var:
                 adopted = adoptForeignTokens(rawTokenPtr(src), len(src), src.pool, src.tags)
             echo(string("adopted: len "), len(adopted), string(", rc "), _rc(adopted), string(", same block "),
                  rawTokenPtr(adopted) == rawTokenPtr(src))
-            adopted.addIntLit(7)
+            addIntLit(adopted, 7)
             echo(string("after mutation: rc "), _rc(adopted), string(", same block "), rawTokenPtr(adopted) == rawTokenPtr(src),
                  string(", len "), len(adopted), string(", src len "), len(src))
             with var:
@@ -3526,20 +3526,20 @@ if comptime(__name__ == "__main__"):
             with let:
                 raw = growRawUninit(g, 3)
             echo(string("growRawUninit: len "), len(g), string(", nil "), isNil(raw))
-            g.shrink(0)
+            shrink(g, 0)
             echo(string("shrunk: len "), len(g))
 
         # addBuffer, addBufferSamePool, withSparseLineInfo (and the constant NoNifLineInfo stays untouched)
         with block("buffers_and_sparse_info"):
             with var:
                 srcB = createTokenBuf(4)
-            srcB.addStrLit(string("hello_buf"))
+            addStrLit(srcB, string("hello_buf"))
             with var:
                 dstB = createTokenBuf(4)
-            dstB.addBuffer(srcB)
+            addBuffer(dstB, srcB)
             with var:
                 same = createTokenBuf(4, srcB.pool, srcB.tags)
-            same.addBufferSamePool(srcB)
+            addBufferSamePool(same, srcB)
             with var:
                 cd = beginRead(dstB)
             with var:
@@ -3551,10 +3551,10 @@ if comptime(__name__ == "__main__"):
             with var:
                 dense = createTokenBuf(8)
             with let:
-                f = dense.pool.filenames.getOrIncl(string("s.nim"))
-            dense.addIntLit(1); dense.appendLineInfo(f, i32(7), i32(1))
-            dense.addIntLit(2); dense.appendLineInfo(f, i32(7), i32(1))
-            dense.addIntLit(3); dense.appendLineInfo(f, i32(8), i32(1))
+                f = getOrIncl(dense.pool.filenames, string("s.nim"))
+            addIntLit(dense, 1); appendLineInfo(dense, f, i32(7), i32(1))
+            addIntLit(dense, 2); appendLineInfo(dense, f, i32(7), i32(1))
+            addIntLit(dense, 3); appendLineInfo(dense, f, i32(8), i32(1))
             with var:
                 sparse = withSparseLineInfo(dense)
             echo(string("withSparseLineInfo: len "), len(dense), string(" -> "), len(sparse))

@@ -123,7 +123,7 @@ def _tGAdd[Id, T](t: mut @ _TGTab[Id, T], v: T) -> Id:
 
 @dispatch
 def _tGAdd[Id](t: mut @ _TGTabF[Id], v: float64) -> Id:
-    return _TGTab[Id, uint64](t)._tGAdd(cast[uint64](v))
+    return _tGAdd(_TGTab[Id, uint64](t), cast[uint64](v))
 
 
 # nifpools' `template buildTree*[T: enum](dest: var TokenBuf; tag: T; info; body: untyped)`: a generic block
@@ -3463,18 +3463,44 @@ class TestNTypes(unittest.TestCase):
         f.addFloat(1e20)
         self.assertEqual(f, "45.67 0.5 1e+20")
 
-    def test_method_call_syntax_private_proc(self):
-        """`arg.sdata(3)` with a private proc/template (`_sdata`, Nim without `*`) is method-call syntax too."""
-        class _Pair(Object):
-            a: nint
-            b: nint
+    def test_call_syntax_follows_the_definition(self):
+        """The call syntax follows the Python definition (rules §4): a method of the class is called as a method,
+        a module-level proc or template free, `f(obj, args)` / `with t(obj):`, private ones too. Nim's method-call
+        syntax for a module-level proc is an AttributeError, whose message names the free call when the caller
+        binds a routine of that name; without parentheses too (no bound proc is returned). nimic internals
+        (`_n_*`) are never procs."""
+        class _TCallB(Object):
+            buf: string
 
-        def _second(p: _Pair, add: nint) -> nint:
-            return p.b + add
+            def addWord(b: _TCallB, w: string) -> None:
+                b.buf.add(w)
 
-        self.assertEqual(_Pair(a=1, b=2)._second(10), 12)
-        with self.assertRaises(AttributeError):
-            _Pair()._n_missing_internal  # nimic internals are never procs
+        def addSpace(b: _TCallB) -> None:
+            b.buf.add(string(" "))
+
+        def _second(b: _TCallB, add: nint) -> nint:
+            return nint(len(b.buf)) + add
+
+        @template
+        def addParens(b: mut@_TCallB, body: typed):
+            b.buf.add(string("("))
+            body
+            b.buf.add(string(")"))
+
+        b = _TCallB()
+        with addParens(b):
+            b.addWord(string("x"))
+            addSpace(b)
+        self.assertEqual(str(b.buf), "(x )")
+        self.assertEqual(_second(b, nint(10)), 14)
+        with self.assertRaisesRegex(AttributeError, r"addSpace is a module-level proc, call it free: addSpace\(x"):
+            b.addSpace()
+        with self.assertRaisesRegex(AttributeError, "_second is a module-level proc"):
+            b._second  # without parentheses: no bound proc either
+        with self.assertRaisesRegex(AttributeError, r"has no attribute 'noSuchProc'$"):
+            b.noSuchProc()
+        with self.assertRaisesRegex(AttributeError, r"has no attribute '_n_missing_internal'$"):
+            b._n_missing_internal
 
     def test_set_literal_with_ranges(self):
         """Nim `{'-', '0'..'9'}`: Tset[T] takes elements and inrange(...) ranges, as arguments or in a
@@ -3561,7 +3587,7 @@ class TestNTypes(unittest.TestCase):
                 from _n_px_std import *
                 from _n_px_reexport import *
                 def run(b: Buf) -> list:
-                    return [wf(b, string("p")), b.wf(string("q")), wf(string("r"), string("text"))]
+                    return [wf(b, string("p")), wf(b, string("q")), wf(string("r"), string("text"))]
                 """,
         }
         try:
@@ -3586,61 +3612,6 @@ class TestNTypes(unittest.TestCase):
                 return string("local")
             self.assertIsNot(std.join, join)
             self.assertEqual(std.join(string("a"), string("b")), "ab")
-        finally:
-            for name in sources:
-                sys.modules.pop(name, None)
-
-    def test_method_call_reaches_the_extending_set_past_another_modules_proc(self):
-        """`import nifpools, nifbuilder` then `tb.addIdent(s, info)`: nifbuilder's plain `addIdent(b: var Builder)`,
-        star-imported last, doesn't take a TokenBuf, so the method call reaches the binding of TokenBuf's module
-        (nifcore), the extended proc. Nim sees nifpools' overloads there: the call reaches the set, not nifcore's
-        plain proc. A free call of the class's module's proc, and its own qualified call, still reach the plain proc."""
-        modules = {}
-        sources = {
-            "_n_xs_core": """
-                class Buf(Object):
-                    n: nint
-                def mark(b: Buf, s: string) -> string:
-                    return string("core ") + s
-                def markCore(b: Buf) -> string:
-                    return b.mark(string("own"))
-                """,
-            "_n_xs_pools": """
-                from _n_xs_core import *
-                import _n_xs_core
-                @dispatch
-                def mark(b: Buf, s: string, info: nint) -> string:
-                    return _n_xs_core.mark(b, string("pools ")) + s
-                @dispatch
-                def mark(b: Buf, s: nint, info: nint) -> string:
-                    return string("pools int")
-                """,
-            "_n_xs_builder": """
-                class Bld(Object):
-                    n: nint
-                def mark(b: Bld, s: string) -> string:
-                    return string("builder ") + s
-                """,
-            "_n_xs_prelude": """
-                from _n_xs_pools import *
-                from _n_xs_builder import *
-                import _n_xs_core
-                def run(b: Buf, d: Bld) -> list:
-                    return [b.mark(string("a"), 1), b.mark(string("b")), d.mark(string("c")),
-                            _n_xs_core.mark(b, string("d"))]
-                """,
-        }
-        try:
-            for module_name, body in sources.items():
-                module = types.ModuleType(module_name)
-                sys.modules[module_name] = module
-                exec("from __future__ import annotations\nfrom nimic.ntypes import *\n" + textwrap.dedent(body),
-                     module.__dict__)
-                modules[module_name] = module
-            core, prelude = modules["_n_xs_core"], modules["_n_xs_prelude"]
-            self.assertEqual(prelude.run(core.Buf(), modules["_n_xs_builder"].Bld()),
-                             ["core pools a", "core b", "builder c", "core d"])
-            self.assertEqual(core.markCore(core.Buf()), "core own")
         finally:
             for name in sources:
                 sys.modules.pop(name, None)
@@ -3673,148 +3644,6 @@ class TestNTypes(unittest.TestCase):
         setFilePos(f, 0, fspSet)
         self.assertEqual(int(getFilePos(f)), 0)
         nclose(f)
-
-    def test_syncio_close_takes_only_a_file(self):
-        """syncio's `close(f: File)` doesn't take an Object: a later star import that rebinds `close` to it (a
-        module re-exporting nimic.ntypes) leaves `bld.close()` to the proc of the receiver's module, as in Nim."""
-        module = types.ModuleType("_n_cl_builder")
-        sys.modules["_n_cl_builder"] = module
-        try:
-            exec(textwrap.dedent("""
-                from __future__ import annotations
-                from nimic.ntypes import *
-                class Bld(Object):
-                    n: nint
-                def close(b: mut @ Bld):
-                    b.n = 7
-                """), module.__dict__)
-            scope = {}
-            exec(textwrap.dedent("""
-                from __future__ import annotations
-                from _n_cl_builder import *
-                from nimic.ntypes import *
-                bld = Bld()
-                bld.close()
-                """), scope)
-            self.assertEqual(scope["bld"].n, 7)
-        finally:
-            sys.modules.pop("_n_cl_builder", None)
-
-    def test_method_call_reaches_the_receiver_types_module(self):
-        """Two imported modules' plain procs of one name are overloads in Nim (nifcore's `addIdent(b: var
-        TokenBuf)`, nifbuilder's `addIdent(b: var Builder)`); the later star import rebinds the name in Python.
-        A method call whose receiver the caller's proc doesn't take reaches the proc of the receiver type's module
-        (also through a base class); a proc that takes the receiver, or isn't annotated, is called as before."""
-        modules = {}
-        for module_name, cls_name in (("_n_mc_core", "Buf"), ("_n_mc_builder", "Bld")):
-            module = types.ModuleType(module_name)
-            exec(textwrap.dedent(f"""
-                from __future__ import annotations
-                from nimic.ntypes import *
-                class {cls_name}(Object):
-                    n: nint
-                def tag(b: mut @ {cls_name}, v: nint) -> string:
-                    return string("{module_name}:") + str(v)
-                """), module.__dict__)
-            modules[module_name] = module
-        sys.modules.update(modules)
-        try:
-            core, builder = modules["_n_mc_core"], modules["_n_mc_builder"]
-            tag = builder.tag  # `from core import *` then `from builder import *`
-
-            class _Sub(core.Buf):
-                pass
-
-            self.assertEqual(core.Buf().tag(1), "_n_mc_core:1")
-            self.assertEqual(builder.Bld().tag(2), "_n_mc_builder:2")
-            self.assertEqual(_Sub().tag(3), "_n_mc_core:3")
-            tag = core.tag  # the other import order
-            self.assertEqual(builder.Bld().tag(4), "_n_mc_builder:4")
-
-            # a @dispatch set of the caller's scope without an overload for the receiver (nifbuilder's addUIntLit)
-            exec(textwrap.dedent("""
-                @dispatch
-                def mcLitProbe(b: mut @ Bld, v: nint) -> string:
-                    return string("builder")
-                @dispatch
-                def mcLitProbe(b: mut @ Bld, v: nint, suffix: string) -> string:
-                    return string("builder suffix")
-                """), builder.__dict__)
-            exec("def mcLitProbe(b: mut @ Buf, v: nint) -> string:\n    return string('core')", core.__dict__)
-            mcLitProbe = builder.mcLitProbe
-            self.assertEqual(core.Buf().mcLitProbe(1), "core")
-            self.assertEqual(builder.Bld().mcLitProbe(1), "builder")
-
-            def tag(b, v):  # not annotated: takes anything
-                return string("local")
-            self.assertEqual(builder.Bld().tag(5), "local")
-        finally:
-            for name in modules:
-                sys.modules.pop(name)
-
-    def test_method_call_skips_a_local_that_is_no_routine(self):
-        """nifqueries' `findChildKind(node: Cursor; kind: NifKind)` compares `children.kind == kind`: Nim's call
-        resolution skips the parameter `kind` (no routine) and reaches the proc `kind(Cursor)`. A local routine
-        still shadows the module's proc."""
-        module = types.ModuleType("_n_mc_shadow")
-        exec(textwrap.dedent("""
-            from __future__ import annotations
-            from nimic.ntypes import *
-            class C(Object):
-                v: nint
-            def kind(c: C) -> nint:
-                return c.v
-            def same(c: C, kind: nint) -> bool:
-                return c.kind() == kind
-            def local_proc(c: C) -> nint:
-                def kind(c: C) -> nint:
-                    return c.v + 1
-                return c.kind()
-            """), module.__dict__)
-        sys.modules[module.__name__] = module
-        try:
-            self.assertTrue(module.same(module.C(v=3), 3))
-            self.assertEqual(module.local_proc(module.C(v=3)), 4)
-        finally:
-            sys.modules.pop(module.__name__)
-
-    def test_method_call_skips_a_global_that_is_no_routine(self):
-        """bif's self-test: a `let tags` of a module-level `block` is a Python global, and rebinds the star-imported
-        proc `tags(Cursor)`. In Nim the block's variable is out of scope in `sameValue`'s `a.tags`, and no variable
-        is a candidate of call resolution anyway: the call reaches the proc of the receiver's module. A name the
-        caller doesn't bind at all still has no method call."""
-        defs = types.ModuleType("_n_mc_defs")
-        exec(textwrap.dedent("""
-            from __future__ import annotations
-            from nimic.ntypes import *
-            class C(Object):
-                v: nint
-            def tags(c: C) -> nint:
-                return c.v
-            """), defs.__dict__)
-        user = types.ModuleType("_n_mc_user")
-        sys.modules[defs.__name__] = defs
-        sys.modules[user.__name__] = user
-        try:
-            exec(textwrap.dedent("""
-                from __future__ import annotations
-                from nimic.ntypes import *
-                from _n_mc_defs import *
-                def show(c: C) -> nint:
-                    return c.tags()
-                def unbound(c: C) -> bool:
-                    return hasattr(c, "nosuchproc")
-                first = show(C(v=1))
-                with block("one"):
-                    with let:
-                        tags = nint(5)
-                second = show(C(v=2))
-                """), user.__dict__)
-            self.assertEqual((user.first, user.second), (1, 2))
-            self.assertFalse(user.unbound(defs.C(v=1)))
-        finally:
-            sys.modules.pop(defs.__name__)
-            sys.modules.pop(user.__name__)
 
     def test_transpile_rejects_free_calls_of_overlapping_star_imports(self):
         """rule:methodcall: two star imports binding one name to different procs, one of them plain (nifcore's and
@@ -3870,7 +3699,7 @@ class TestNTypes(unittest.TestCase):
             overlaps = free_call_overlaps(tree, module)
             self.assertEqual([line for line, _ in overlaps], [9])
             self.assertIn("_n_fc_builder, _n_fc_core", overlaps[0][1])
-            self.assertIn("write b.addThing(...)", overlaps[0][1])
+            self.assertIn("write `addThing = overloads(...)`", overlaps[0][1])
             with self.assertRaisesRegex(ValueError, "line 9: addThing"):
                 check_imported_module(tree, module)
             self.assertIn("addThing(b, 1)", unparse(tree)[0])  # unparse() itself doesn't need the module
@@ -3966,8 +3795,8 @@ class TestNTypes(unittest.TestCase):
                                     "def use(b):\n    addThing(b, nint(1))\n"
                                     "if comptime(__name__ == '__main__'):\n    from nimic.std.os import *\n"
                                     "    echo('ran')\n",
-            "sc_method.py": header + "from sc_core import Buf, addThing\nimport sc_builder\n"
-                                     "if comptime(__name__ == '__main__'):\n    b = Buf()\n    b.addThing(nint(1))\n"
+            "sc_method.py": header + "from sc_core import Buf, addThing\n"
+                                     "if comptime(__name__ == '__main__'):\n    b = Buf()\n    addThing(b, nint(1))\n"
                                      "    echo(b.n)\n",
             # nothing after its imports
             "sc_lib.py": header + "def use(b):\n    addThing(b, nint(1))\nfrom sc_core import Buf\n"
@@ -4033,8 +3862,9 @@ class TestNTypes(unittest.TestCase):
             "nx_parse_name.py": header + "import nx_builder\nexportFrom(nx_builder, 'addThing')\n",
             "nx_leak.py": header + "from nx_parse import parseThing\nfrom nx_core import addThing\n" + main,
             "nx_except.py": header + "from nx_parse_except import Bld\nfrom nx_core import addThing\n" + main,
+            # method syntax of a module-level proc (rules §4: call it free): no import problem, an AttributeError
             "nx_method.py": header + "from nx_core import Buf, addThing\nimport nx_builder\n"
-                                     "echo(Buf().addThing(nint(1)), nx_builder.Bld().addThing(nint(1)))\n",
+                                     "echo(Buf().addThing(nint(1)))\n",
             "nx_dispatch.py": header + "from nx_core import addThing\n@dispatch\n"
                                        "def addThing(b: string, v: nint) -> nint:\n    return nint(3)\n" + main,
             # the set extends nx_core's addThing, and misses nx_builder's (imported too)
@@ -4062,6 +3892,14 @@ class TestNTypes(unittest.TestCase):
             "nx_coreshadow.py": header + "from nimic.std.syncio import *\nfrom nx_plainlib import Pb\n"
                                          "def f(p):\n    def g(open):\n        return open\n    return open(p)\n"
                                          "echo('ran')\n",
+            # a parameter, and a module-level value, named like the proc called free: Nim calls the proc
+            "nx_shadowparam.py": header + "from nx_core import Buf, addThing\n"
+                                          "def f(b: Buf, addThing: nint):\n    return addThing(b, addThing)\n",
+            "nx_shadowvalue.py": header + "from nx_core import Buf, addThing\naddThing = nint(3)\n"
+                                          "def f(b: Buf):\n    return addThing(b, nint(1))\n",
+            "nx_shadowqualified.py": header + "from nx_core import Buf\nimport nx_core\n"
+                                              "def f(b: Buf, addThing: nint):\n"
+                                              "    return nx_core.addThing(b, addThing)\necho('ran')\n",
             # read, never bound in Python, while Nim's import of nx_core brings it
             "nx_unbound.py": header + "from nx_core import Buf\ndef f(b):\n    return addThing(b, nint(1))\n"
                                       "echo('ran')\n",
@@ -4085,12 +3923,15 @@ class TestNTypes(unittest.TestCase):
                 return subprocess.run([sys.executable, os.path.join(tmp, name)], capture_output=True, text=True,
                                       cwd=tmp, env=env)
 
-            for name, out in (("nx_leak.py", "ran\n"), ("nx_except.py", "ran\n"), ("nx_method.py", "12\n"),
+            for name, out in (("nx_leak.py", "ran\n"), ("nx_except.py", "ran\n"),
                               ("nx_corelocal.py", "ran\n"), ("nx_plainunread.py", "ran\n"),
+                              ("nx_shadowqualified.py", "ran\n"),
                               ("nx_dispatch.py", "ran\n"), ("nx_overloads.py", "12\n")):
                 passed = run(name)
                 self.assertEqual((passed.returncode, passed.stdout), (0, out), f"{name}: {passed.stderr}")
             for name, message in (
+                    ("nx_method.py", "AttributeError: 'Buf' object has no attribute 'addThing': addThing is a "
+                                     "module-level proc, call it free: addThing(x, ...)"),
                     ("nx_ownset.py", "nx_ownset.py:8: ownset: the module's @dispatch addThing extends nx_core's, and "
                                      "nx_builder has a addThing too"),
                     ("nx_export.py", "nx_export.py:8: hiddenoverload: addThing is imported from nx_core, and "
@@ -4102,6 +3943,10 @@ class TestNTypes(unittest.TestCase):
                     ("nx_double.py", "nx_double.py:6: doubleimport: addThing is imported from nx_builder, nx_core"),
                     ("nx_plaindef.py", "nx_plaindef.py:6: plaindef: the module defines a plain addThing"),
                     ("nx_order.py", "nx_order.py:6: importorder: `from nimic.std.syncio import *` rebinds open"),
+                    ("nx_shadowparam.py", "nx_shadowparam.py:7: shadowed: addThing(...) calls a local addThing, "
+                                          "while Nim calls the proc addThing of nx_core"),
+                    ("nx_shadowvalue.py", "nx_shadowvalue.py:8: shadowed: addThing(...) calls the module's value "
+                                          "addThing"),
                     ("nx_unbound.py", "nx_unbound.py:7: unbound: addThing is read, Nim's import of nx_core brings "
                                       "it, Python binds nothing"),
                     ("nx_ambiguous.py", "nx_ambiguous.py:7: ambiguous: Buf is a type or value of several imports "
@@ -6229,7 +6074,7 @@ class TestNTypes(unittest.TestCase):
 
     def test_explicit_imports_tool(self):
         """nnimony/tools/explicit_imports.py rewrites a module's star imports of nimic modules into name imports: the
-        names the module uses (code, annotations, method syntax of a nimic proc it binds) that each import binds, from
+        names the module uses (code, annotations, the names its overload sets extend) that each import binds, from
         the module defining or re-exporting them; a name another star import only leaks comes from its defining
         module; an import no name is used from stays a module import (Nim's import); core imports stay. It reports
         the names two imports bind to different routines (Nim overloads them)."""
@@ -6242,7 +6087,7 @@ class TestNTypes(unittest.TestCase):
             "eb.py": header + "from .ea import *\nclass B(Object):\n    n: nint\n"
                               "def fb(x: B) -> nint:\n    return x.n\ndef shared(x: B) -> nint:\n    return nint(2)\n",
             "ec.py": header + "from .ea import *\nfrom .eb import *  # the b side\n"
-                              "def use(a: A, b: B) -> nint:\n    return fa(a) + b.fb() + b.shared()\n",
+                              "def use(a: A, b: B) -> nint:\n    return fa(a) + fb(b) + shared(b)\n",
             "ed.py": header + "from .eb import *\ndef use(b: B) -> nint:\n    return fa(b)\n",
             "ee.py": header + "from .ea import *\nfrom nimic.std.os import *\ndef f() -> nint:\n    return nint(0)\n",
         }
@@ -6514,34 +6359,6 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual((m.len(), len(m)), (4, 4))
         self.assertTrue(bool(_TLenProp(n=nint(0))))
         self.assertTrue(bool(_TLenMethod(n=nint(0))))
-
-    def test_method_call_without_parentheses_fails_loudly(self):
-        """`b.count` without parentheses, where `count` is a proc and no @property, is the bound proc in Python
-        but the call `count(b)` in Nim. Using it as a value (a condition, a comparison, arithmetic) raises
-        TypeError instead of being silently true (`b.count != 0` was always true in nifindexes)."""
-        module = types.ModuleType("_n_mc_noparens")
-        exec(textwrap.dedent("""
-            from __future__ import annotations
-            from nimic.ntypes import *
-            class Buf(Object):
-                n: nint
-            def count(b: Buf) -> nint:
-                return b.n
-            b = Buf(n=nint(0))
-            called = b.count()
-            def as_bool():
-                return bool(b.count)
-            def compared():
-                return b.count != 0
-            def ordered():
-                return b.count > 0
-            def added():
-                return b.count + 1
-            """), module.__dict__)
-        self.assertEqual(module.called, 0)
-        for probe in ("as_bool", "compared", "ordered", "added"):
-            with self.subTest(probe), self.assertRaisesRegex(TypeError, r"count\(\)|@property"):
-                getattr(module, probe)()
 
     def test_ref_object_int_fields_hold_declared_type(self):
         """A plain int assigned to an integer field of a ref object becomes the declared type, so the
@@ -6859,28 +6676,6 @@ def addWord(b: mut@Builder, w: string) -> None:
                 initializerBody
             ''')
         self.assertIn("name: string = string(\"\"), initializerBody: typed, other: untyped) =", unparse(ast.parse(src))[0])
-
-    def test_method_call_syntax_ufcs(self):
-        """Nim method-call syntax: `obj.f(args)` calls a proc `f(obj, args)` visible in the caller's scope
-        (module or local), including block templates (`with b.t(x):`); real attributes win."""
-        class _TUfcsB(Object):
-            buf: string
-
-        def addWord(b: _TUfcsB, w: string) -> None:
-            b.buf.add(w)
-
-        @template
-        def addParens(b: mut@_TUfcsB, body: typed):
-            b.buf.add(string("("))
-            body
-            b.buf.add(string(")"))
-
-        b = _TUfcsB()
-        with b.addParens():
-            b.addWord(string("x"))
-        self.assertEqual(str(b.buf), "(x)")
-        with self.assertRaises(AttributeError):
-            b.noSuchProc()
 
     def test_to_float_to_int(self):
         """Nim toFloat(int): float and toInt(float): int (rounds half away from zero)."""

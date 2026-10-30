@@ -48,7 +48,7 @@ class HtmlBuilder(Object):
                 b._buf.add(tag)
                 b._buf.add(ch('>'))
             case HtmlOutFormat.hofNif:
-                b._nif.addTree(tag)
+                addTree(b._nif, tag)
 
     def emitClose(b: mut @ HtmlBuilder, tag: string):
         match b.format:
@@ -57,7 +57,7 @@ class HtmlBuilder(Object):
                 b._buf.add(tag)
                 b._buf.add(ch('>'))
             case HtmlOutFormat.hofNif:
-                b._nif.endTree()
+                endTree(b._nif)
 
     @template
     def emitTag(b: mut @ HtmlBuilder, tag: string, body: untyped):
@@ -78,7 +78,7 @@ class HtmlBuilder(Object):
                         case _ if c == ch('&'): b._buf.add(string("&amp;"))
                         case _: b._buf.add(c)
             case HtmlOutFormat.hofNif:
-                b._nif.addStrLit(s)
+                addStrLit(b._nif, s)
 
     def emitVoid(b: mut @ HtmlBuilder, tag: string):
         ## Self-closing tag (`<br>` / `(br)`).
@@ -88,7 +88,7 @@ class HtmlBuilder(Object):
                 b._buf.add(tag)
                 b._buf.add(ch('>'))
             case HtmlOutFormat.hofNif:
-                b._nif.addKeyw(tag)
+                addKeyw(b._nif, tag)
 
     def _emitAttrValueHtml(b: mut @ HtmlBuilder, v: string):
         for c in v:
@@ -116,11 +116,11 @@ class HtmlBuilder(Object):
                     b._buf.add(ch('"'))
                 b._buf.add(ch('>'))
             case HtmlOutFormat.hofNif:
-                b._nif.addTree(tag)
+                addTree(b._nif, tag)
                 for (k, v) in attrs:
-                    b._nif.addTree(k)
-                    b._nif.addStrLit(v)
-                    b._nif.endTree()
+                    addTree(b._nif, k)
+                    addStrLit(b._nif, v)
+                    endTree(b._nif)
 
     @template
     def emitTagAttr(b: mut @ HtmlBuilder, tag: string,
@@ -160,7 +160,7 @@ def initHtmlBuilder(format: HtmlOutFormat, sizeHint=1024) -> HtmlBuilder:
         case HtmlOutFormat.hofNif:
             with var:
                 nif = nifbuilder.open(sizeHint)
-            nif.addHeader(string("Dagon"), string("doc"))
+            addHeader(nif, string("Dagon"), string("doc"))
             result = HtmlBuilder(format=HtmlOutFormat.hofNif, _nif=nif)
     return result
 
@@ -210,7 +210,7 @@ if comptime(__name__ == "__main__"):
         with var:
             h = initHtmlBuilder(HtmlOutFormat.hofHtml)
         try:
-            echo(h._nif.attachedToFile())
+            echo(attachedToFile(h._nif))
         except FieldDefect:
             echo(string("FieldDefect: nif of hofHtml"))
         with var:

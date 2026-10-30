@@ -19,6 +19,7 @@ from .nifpools import (
     ErrT, floatVal, globalTags, hasMore, inc, into, intVal, isCharLit, isDotToken, isFloatLit, isIdent, isIntLit,
     isStringLit, isSymbol, isSymbolDef, isTagLit, isUIntLit, NoLineInfo, parseFromBuffer, pool, registerTag, strId,
     symId, symString, TagId, tags, toString, uintVal, uoperand)
+from nimic.std.sha1 import finalize, update
 
 if comptime(defined("nimony")):
     from nimic.std.sha1 import *
@@ -35,23 +36,23 @@ else:
 def _updateAtom(dest: mut @ Sha1State, n: Cursor):
     ## Hashes one leaf token (build-agnostic: the hashed content is the tag/sym
     ## name, string, or numeric value, so the digest matches classic byte-for-byte).
-    if n.isSymbolDef():
-        update(dest, " :"); update(dest, pool.symString(n.symId()))
-    elif n.isSymbol():
-        update(dest, " "); update(dest, pool.symString(n.symId()))
-    elif n.isIdent():
-        update(dest, " "); update(dest, pool.strings[n.strId()])
-    elif n.isIntLit():
-        update(dest, " "); update(dest, str(n.intVal()))
-    elif n.isUIntLit():
-        update(dest, " "); update(dest, str(n.uintVal()))
-    elif n.isFloatLit():
-        update(dest, " "); update(dest, str(n.floatVal()))
-    elif n.isStringLit():
-        update(dest, " "); update(dest, pool.strings[n.strId()])
-    elif n.isCharLit():
-        update(dest, " "); update(dest, str(n.uoperand()))
-    elif n.isDotToken():
+    if isSymbolDef(n):
+        update(dest, " :"); update(dest, symString(pool, symId(n)))
+    elif isSymbol(n):
+        update(dest, " "); update(dest, symString(pool, symId(n)))
+    elif isIdent(n):
+        update(dest, " "); update(dest, pool.strings[strId(n)])
+    elif isIntLit(n):
+        update(dest, " "); update(dest, str(intVal(n)))
+    elif isUIntLit(n):
+        update(dest, " "); update(dest, str(uintVal(n)))
+    elif isFloatLit(n):
+        update(dest, " "); update(dest, str(floatVal(n)))
+    elif isStringLit(n):
+        update(dest, " "); update(dest, pool.strings[strId(n)])
+    elif isCharLit(n):
+        update(dest, " "); update(dest, str(uoperand(n)))
+    elif isDotToken(n):
         update(dest, ".")
 
 
@@ -59,12 +60,12 @@ def updateLoop(dest: mut @ Sha1State, n: mut @ Cursor, inlineT: TagId, foundInli
     ## Hashes the single tree/token at `n`, advancing past it. The digest is
     ## the same with and without ParRi elision: the close is hashed as ")"
     ## whether or not its token physically exists.
-    if n.isTagLit():
+    if isTagLit(n):
         update(dest, "(")
-        update(dest, globalTags.tags[n.cursorTagId()])
-        if n.cursorTagId() == inlineT: foundInline <<= True
-        with n.into():
-            while n.hasMore():
+        update(dest, globalTags.tags[cursorTagId(n)])
+        if cursorTagId(n) == inlineT: foundInline <<= True
+        with into(n):
+            while hasMore(n):
                 updateLoop(dest, n, inlineT, foundInline)
         update(dest, ")")
     else:
@@ -86,7 +87,7 @@ def computeChecksum(n: Cursor) -> string:
         dummy = nbool(False)
     updateLoop(checksum, n, _NoInlineTag, dummy)
     with let:
-        final = SecureHash(checksum.finalize())
+        final = SecureHash(finalize(checksum))
     result = string(str(final))
     return result
 
@@ -95,8 +96,8 @@ def computeChecksum(n: Cursor) -> string:
 def computeChecksum(s: string) -> string:
     with var:
         state = newSha1State()
-    state.update(s)
-    return string(str(SecureHash(state.finalize())))
+    update(state, s)
+    return string(str(SecureHash(finalize(state))))
 
 
 if comptime(__name__ == "__main__"):
@@ -104,9 +105,9 @@ if comptime(__name__ == "__main__"):
         with var:
             b = parseFromBuffer(text, string("cs"))
         with var:
-            c = b.beginRead()
+            c = beginRead(b)
         result = computeChecksum(c)
-        c.endRead()
+        endRead(c)
         return result
 
     def _hashedText(text: string, inlineT: TagId) -> string:
@@ -114,16 +115,16 @@ if comptime(__name__ == "__main__"):
         with var:
             b = parseFromBuffer(text, string("cs"))
         with var:
-            c = b.beginRead()
+            c = beginRead(b)
         with var:
             st = newSha1State()
         with var:
             found = nbool(False)
         echo(string("  foundInline before: "), found)
         updateLoop(st, c, inlineT, found)
-        echo(string("  foundInline after: "), found, string(" at end: "), not c.hasMore())
-        c.endRead()
-        return string(str(SecureHash(st.finalize())))
+        echo(string("  foundInline after: "), found, string(" at end: "), not hasMore(c))
+        endRead(c)
+        return string(str(SecureHash(finalize(st))))
 
     def _testChecksums():
         # every atom kind, nested tags
@@ -150,21 +151,21 @@ if comptime(__name__ == "__main__"):
         with var:
             fb = createTokenBuf(8)
         with buildTree(fb, ErrT, NoLineInfo):
-            fb.addFloatLit(0.1)
-            fb.addFloatLit(1e100)
-            fb.addFloatLit(-0.0)
-            fb.addFloatLit(1.0)
-            fb.addFloatLit(1e309)
-            fb.addFloatLit(-1e309)
-            fb.addFloatLit(1e309 - 1e309)
-            fb.addIntLit(int64(-42))
-            fb.addUIntLit(high(uint64))
-            fb.addCharLit(ch("z"))
+            addFloatLit(fb, 0.1)
+            addFloatLit(fb, 1e100)
+            addFloatLit(fb, -0.0)
+            addFloatLit(fb, 1.0)
+            addFloatLit(fb, 1e309)
+            addFloatLit(fb, -1e309)
+            addFloatLit(fb, 1e309 - 1e309)
+            addIntLit(fb, int64(-42))
+            addUIntLit(fb, high(uint64))
+            addCharLit(fb, ch("z"))
         echo(string("built: "), toString(fb, False))
         with var:
-            fc = fb.beginRead()
+            fc = beginRead(fb)
         echo(string("built -> "), computeChecksum(fc))
-        fc.endRead()
+        endRead(fc)
 
         # inline tag found / not found
         with let:

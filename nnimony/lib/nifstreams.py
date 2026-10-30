@@ -312,13 +312,13 @@ class Stream(Object):
             case NifKind.ParLe:
                 result = tagLitToken(registerTag(globalTags, decodeStr(s.r, t)))
             case NifKind.Ident:
-                result = identToken(pool.strings.getOrIncl(decodeStr(s.r, t)))
+                result = identToken(getOrIncl(pool.strings, decodeStr(s.r, t)))
             case NifKind.StrLit:
-                result = strLitToken(pool.strings.getOrIncl(decodeStr(s.r, t)))
+                result = strLitToken(getOrIncl(pool.strings, decodeStr(s.r, t)))
             case NifKind.Symbol:
-                result = symToken(pool.syms().getOrIncl(decodeStr(s.r, t)))
+                result = symToken(syms(pool).getOrIncl(decodeStr(s.r, t)))
             case NifKind.SymbolDef:
-                result = symdefToken(pool.syms().getOrIncl(decodeStr(s.r, t)))
+                result = symdefToken(syms(pool).getOrIncl(decodeStr(s.r, t)))
             case _:
                 # ParRi/EofToken/DotToken/CharLit/numbers: correct kind, no payload.
                 result = NifToken(uint32(t.tk))
@@ -353,12 +353,12 @@ if comptime(__name__ == "__main__"):
             with let:
                 k = kind(t)
             if k == NifKind.TagLit:
-                echo(string("  "), k, string(" "), pool.tags()[tagId(t)])
+                echo(string("  "), k, string(" "), tags(pool)[tagId(t)])
             elif k == NifKind.Ident or k == NifKind.StrLit:
                 echo(string("  "), k, string(" "), pool.strings[litId(t)])
             elif k == NifKind.Symbol or k == NifKind.SymbolDef:
-                echo(string("  "), k, string(" "), pool.syms()[symId(t)],
-                     string(" key "), pool.syms().getKeyId(pool.syms()[symId(t)]) == symId(t))
+                echo(string("  "), k, string(" "), syms(pool)[symId(t)],
+                     string(" key "), syms(pool).getKeyId(syms(pool)[symId(t)]) == symId(t))
             else:
                 echo(string("  "), k, string(" (kind only) "), uoperand(t))
             echo(string("    info valid: "), isValid(info(t)), string(" "), info(t) == lineinfos.NoLineInfo)
@@ -369,27 +369,27 @@ if comptime(__name__ == "__main__"):
 
     def _testFloats():
         with let:
-            a = pool.floats().getOrIncl(1.5)
-            b = pool.floats().getOrIncl(1.5)
-            z = pool.floats().getOrIncl(0.0)
-            nz = pool.floats().getOrIncl(-0.0)
-            big = pool.floats().getOrIncl(1e100)
+            a = floats(pool).getOrIncl(1.5)
+            b = floats(pool).getOrIncl(1.5)
+            z = floats(pool).getOrIncl(0.0)
+            nz = floats(pool).getOrIncl(-0.0)
+            big = floats(pool).getOrIncl(1e100)
         echo(string("float ids: "), uint32(a), string(" "), uint32(b), string(" "), uint32(z), string(" "),
              uint32(nz), string(" "), uint32(big))
         echo(string("same value same id: "), a == b, string(" -0.0 vs 0.0 differ: "), not (z == nz))
-        echo(string("decoded: "), pool.floats()[a], string(" "), pool.floats()[z], string(" "),
-             pool.floats()[nz], string(" "), pool.floats()[big])
+        echo(string("decoded: "), floats(pool)[a], string(" "), floats(pool)[z], string(" "),
+             floats(pool)[nz], string(" "), floats(pool)[big])
         echo(string("globalFloats shared: "), globalFloats[big])
         with let:
             ft = floatToken(big, lineinfos.NoLineInfo)
         echo(string("floatToken: "), kind(ft), string(" "), floatId(ft) == big, string(" "),
-             pool.floats()[floatId(ft)])
+             floats(pool)[floatId(ft)])
 
     def _testIntegers():
         with let:
-            i = pool.integers().getOrIncl(int64(-7))
-            u = pool.uintegers().getOrIncl(high(uint64))
-        echo(string("integers: "), pool.integers()[i], string(" "), pool.uintegers()[u])
+            i = integers(pool).getOrIncl(int64(-7))
+            u = uintegers(pool).getOrIncl(high(uint64))
+        echo(string("integers: "), integers(pool)[i], string(" "), uintegers(pool)[u])
         echo(string("IntId ==: "), i == IntId(-7), string(" "), i == IntId(7), string(" UIntId ==: "),
              u == UIntId(high(uint64)))
         with let:
@@ -398,43 +398,43 @@ if comptime(__name__ == "__main__"):
         with var:
             b = parseFromBuffer(string("(nums -42 18446744073709551615u)"), string("m"))
         with var:
-            c = b.beginRead()
+            c = beginRead(b)
         inc(c)
         echo(string("intId(cursor): "), int64(intId(c)))
         inc(c)
         echo(string("uintId(cursor): "), uint64(uintId(c)))
-        c.endRead()
+        endRead(c)
 
     def _testInfo():
         echo(string("info(token) valid: "), isValid(info(dotToken())))
         with var:
             b = parseFromBuffer(string("(stmts@3,7,a.nim x (call y))"), string("m"))
         with var:
-            c = b.beginRead()
+            c = beginRead(b)
         with let:
             pi = info(c)
         with let:
             u = unpack(lineMan, pi)
-        echo(string("info(cursor) valid: "), isValid(pi), string(" "), pool.files()[u.file],
+        echo(string("info(cursor) valid: "), isValid(pi), string(" "), files(pool)[u.file],
              string(" line "), u.line, string(" col "), u.col)
-        echo(string("man is lineMan: "), memSize(pool.man()) == memSize(lineMan))
+        echo(string("man is lineMan: "), memSize(man(pool)) == memSize(lineMan))
         with var:
             ch2 = firstSon(c)
         echo(string("firstSon: "), toString(ch2, False), string(" litId "), pool.strings[litId(ch2)])
         inc(c)
         inc(c)
         echo(string("nifcore tags(c) still: "), tags(c).tags[cursorTagId(c)])
-        c.endRead()
+        endRead(c)
         with var:
             b0 = parseFromBuffer(string("(stmts 1 2)"), string("m"))
         with var:
-            c0 = b0.beginRead()
+            c0 = beginRead(b0)
         echo(string("info(cursor) without line info valid: "), isValid(info(c0)))
-        c0.endRead()
+        endRead(c0)
 
     def _testAddIntLit():
         with let:
-            fid = pool.filenames.getOrIncl(string("b.nim"))
+            fid = getOrIncl(pool.filenames, string("b.nim"))
         with let:
             good = pack(lineMan, fid, i32(10), i32(4))
         with var:
@@ -446,8 +446,8 @@ if comptime(__name__ == "__main__"):
 
     def _testConstructors():
         with let:
-            sid = pool.strings.getOrIncl(string("hello"))
-            yid = pool.syms().getOrIncl(string("sym.1.m"))
+            sid = getOrIncl(pool.strings, string("hello"))
+            yid = syms(pool).getOrIncl(string("sym.1.m"))
         with let:
             st = strToken(sid, lineinfos.NoLineInfo)
             sy = symToken(yid, lineinfos.NoLineInfo)
@@ -455,7 +455,7 @@ if comptime(__name__ == "__main__"):
             dt = dotToken(lineinfos.NoLineInfo)
             ct = charToken(ch("q"), lineinfos.NoLineInfo)
         echo(string("strToken: "), kind(st), string(" "), pool.strings[litId(st)])
-        echo(string("symToken: "), kind(sy), string(" "), pool.syms()[symId(sy)])
+        echo(string("symToken: "), kind(sy), string(" "), syms(pool)[symId(sy)])
         echo(string("identToken: "), kind(it), string(" "), pool.strings[litId(it)])
         echo(string("dotToken: "), kind(dt), string(" "), dt == dotToken())
         echo(string("charToken: "), kind(ct), string(" "), uoperand(ct))

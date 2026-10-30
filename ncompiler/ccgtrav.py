@@ -36,7 +36,7 @@ def _getTemp(p: BProc, t: PType, needsInit: bool = False) -> TLoc:
 
 
 def _visit(p: BProc, data: Snippet, visitor: Snippet) -> None:
-    p.s(TCProcSection.cpsStmts)._addCallStmt(cgsymValue(p.module, string("nimGCvisit")),
+    _addCallStmt(p.s(TCProcSection.cpsStmts), cgsymValue(p.module, string("nimGCvisit")),
         _cCast(CPointer, data),
         visitor)
 
@@ -62,21 +62,21 @@ def _genTraverseProc(c: _TTraversalClosure, accessor: Rope, n: PNode, typ: PType
                 internalError(c._p.config, n.info, string("genTraverseProc()"))
             with let:
                 discField = _dotField(accessor, disc.loc.snippet)
-            with p.s(TCProcSection.cpsStmts)._addSwitchStmt(discField):
+            with _addSwitchStmt(p.s(TCProcSection.cpsStmts), discField):
                 for i in range(1, n.len):
                     with let:
                         branch = n[i]
                     assert branch.kind in {TNodeKind.nkOfBranch, TNodeKind.nkElse}
                     with var:
                         caseBuilder = _SwitchCaseBuilder()
-                    with p.s(TCProcSection.cpsStmts)._addSwitchCase(caseBuilder):
+                    with _addSwitchCase(p.s(TCProcSection.cpsStmts), caseBuilder):
                         if branch.kind == TNodeKind.nkOfBranch:
                             _genCaseRange(c._p, branch, caseBuilder)
                         else:
-                            p.s(TCProcSection.cpsStmts)._addCaseElse(caseBuilder)
+                            _addCaseElse(p.s(TCProcSection.cpsStmts), caseBuilder)
                         with do:
                             _genTraverseProc(c, accessor, lastSon(branch), typ)
-                            p.s(TCProcSection.cpsStmts)._addBreak()
+                            _addBreak(p.s(TCProcSection.cpsStmts))
         case TNodeKind.nkSym:
             with let:
                 field = n.sym
@@ -124,7 +124,7 @@ def _genTraverseProc(c: _TTraversalClosure, accessor: Rope, typ: PType) -> None:
                 oldCode = p.s(TCProcSection.cpsStmts).copy()
                 oldLen = nint(0)
                 newLen = nint(0)
-            with p.s(TCProcSection.cpsStmts)._addForRangeExclusive(i.snippet, cIntValue(0), cIntValue(arraySize)):
+            with _addForRangeExclusive(p.s(TCProcSection.cpsStmts), i.snippet, cIntValue(0), cIntValue(arraySize)):
                 oldLen = p.s(TCProcSection.cpsStmts).buf.len
                 _genTraverseProc(c, _subscript(accessor, i.snippet), typ.elementType)
                 newLen = p.s(TCProcSection.cpsStmts).buf.len
@@ -135,7 +135,7 @@ def _genTraverseProc(c: _TTraversalClosure, accessor: Rope, typ: PType) -> None:
             with var:
                 x = typ.baseClass
             if x is not None:
-                x = x.skipTypes(skipPtrs)
+                x = skipTypes(x, skipPtrs)
             _genTraverseProc(c, accessor._parentObj(c._p.module), x)
             if typ.n is not None:
                 _genTraverseProc(c, accessor, typ.n, typ)
@@ -152,7 +152,7 @@ def _genTraverseProc(c: _TTraversalClosure, accessor: Rope, typ: PType) -> None:
             elif containsGarbageCollectedRef(typ.elementType):
                 # destructor based seqs are themselves not traced but their data is, if
                 # they contain a GC'ed type:
-                p.s(TCProcSection.cpsStmts)._addCallStmt(cgsymValue(p.module, string("nimGCvisitSeq")),
+                _addCallStmt(p.s(TCProcSection.cpsStmts), cgsymValue(p.module, string("nimGCvisitSeq")),
                     _cCast(CPointer, accessor),
                     c._visitorFrmt)
                 # genTraverseProcSeq(c, accessor, typ)
@@ -179,7 +179,7 @@ def _genTraverseProcSeq(c: _TTraversalClosure, accessor: Rope, typ: PType) -> No
     with let:
         le = lenExpr(c._p, a)
 
-    with p.s(TCProcSection.cpsStmts)._addForRangeExclusive(i.snippet, cIntValue(0), le):
+    with _addForRangeExclusive(p.s(TCProcSection.cpsStmts), i.snippet, cIntValue(0), le):
         oldLen = p.s(TCProcSection.cpsStmts).buf.len
         _genTraverseProc(c, _subscript(dataField(c._p, accessor), i.snippet), typ.elementType)
         newLen = p.s(TCProcSection.cpsStmts).buf.len
@@ -195,12 +195,12 @@ def _genTraverseProc(m: BModule, origTyp: PType, sig: SigHash) -> Rope:
     result = string("Marker_") + getTypeName(m, origTyp, sig)
     with let:
         hcrOn = m.hcrOn
-        typ = origTyp.skipTypes(abstractInstOwned)
+        typ = skipTypes(origTyp, abstractInstOwned)
         markerName = result + string("_actual") if hcrOn else result
         t = getTypeDesc(m, typ)
 
-    p.s(TCProcSection.cpsLocals)._addVar(kind=_VarKind.Local, name=string("a"), typ=t)
-    p.s(TCProcSection.cpsInit)._addAssignment(string("a"), _cCast(t, string("p")))
+    _addVar(p.s(TCProcSection.cpsLocals), kind=_VarKind.Local, name=string("a"), typ=t)
+    _addAssignment(p.s(TCProcSection.cpsInit), string("a"), _cCast(t, string("p")))
 
     with var:
         c = _TTraversalClosure(_p=p,
@@ -219,21 +219,21 @@ def _genTraverseProc(m: BModule, origTyp: PType, sig: SigHash) -> Rope:
 
     with var:
         headerBuilder = newBuilder(string(""))
-    with headerBuilder._addProcHeaderWithParams(TCallingConvention.ccNimCall, markerName, CVoid):
+    with _addProcHeaderWithParams(headerBuilder, TCallingConvention.ccNimCall, markerName, CVoid):
         with var:
             paramBuilder = _ProcParamBuilder()
-        with headerBuilder._addProcParams(paramBuilder):
-            headerBuilder._addParam(paramBuilder, name=string("p"), typ=CPointer)
-            headerBuilder._addParam(paramBuilder, name=string("op"), typ=NimInt)
+        with _addProcParams(headerBuilder, paramBuilder):
+            _addParam(headerBuilder, paramBuilder, name=string("p"), typ=CPointer)
+            _addParam(headerBuilder, paramBuilder, name=string("op"), typ=NimInt)
     with let:
         header = headerBuilder.extract()
 
-    with m.s[TCFileSection.cfsProcHeaders]._addDeclWithVisibility(_DeclVisibility.StaticProc):
+    with _addDeclWithVisibility(m.s[TCFileSection.cfsProcHeaders], _DeclVisibility.StaticProc):
         m.s[TCFileSection.cfsProcHeaders].add(header)
-        m.s[TCFileSection.cfsProcHeaders]._finishProcHeaderAsProto()
-    with m.s[TCFileSection.cfsProcs]._addDeclWithVisibility(_DeclVisibility.StaticProc):
+        _finishProcHeaderAsProto(m.s[TCFileSection.cfsProcHeaders])
+    with _addDeclWithVisibility(m.s[TCFileSection.cfsProcs], _DeclVisibility.StaticProc):
         m.s[TCFileSection.cfsProcs].add(header)
-        with m.s[TCFileSection.cfsProcs]._finishProcHeaderWithBody():
+        with _finishProcHeaderWithBody(m.s[TCFileSection.cfsProcs]):
             m.s[TCFileSection.cfsProcs].add(p.s(TCProcSection.cpsLocals).extract())
             m.s[TCFileSection.cfsProcs].add(p.s(TCProcSection.cpsInit).extract())
             m.s[TCFileSection.cfsProcs].add(p.s(TCProcSection.cpsStmts).extract())
@@ -279,21 +279,21 @@ def _genTraverseProcForGlobal(m: BModule, s: PSym, info: TLineInfo) -> Rope:
 
     with var:
         headerBuilder = newBuilder(string(""))
-    with headerBuilder._addProcHeaderWithParams(TCallingConvention.ccNimCall, result, CVoid):
+    with _addProcHeaderWithParams(headerBuilder, TCallingConvention.ccNimCall, result, CVoid):
         with var:
             paramBuilder = _ProcParamBuilder()
-        with headerBuilder._addProcParams(paramBuilder):
+        with _addProcParams(headerBuilder, paramBuilder):
             # (void)
             discard
     with let:
         header = headerBuilder.extract()
 
-    with m.s[TCFileSection.cfsProcHeaders]._addDeclWithVisibility(_DeclVisibility.StaticProc):
+    with _addDeclWithVisibility(m.s[TCFileSection.cfsProcHeaders], _DeclVisibility.StaticProc):
         m.s[TCFileSection.cfsProcHeaders].add(header)
-        m.s[TCFileSection.cfsProcHeaders]._finishProcHeaderAsProto()
-    with m.s[TCFileSection.cfsProcs]._addDeclWithVisibility(_DeclVisibility.StaticProc):
+        _finishProcHeaderAsProto(m.s[TCFileSection.cfsProcHeaders])
+    with _addDeclWithVisibility(m.s[TCFileSection.cfsProcs], _DeclVisibility.StaticProc):
         m.s[TCFileSection.cfsProcs].add(header)
-        with m.s[TCFileSection.cfsProcs]._finishProcHeaderWithBody():
+        with _finishProcHeaderWithBody(m.s[TCFileSection.cfsProcs]):
             m.s[TCFileSection.cfsProcs].add(p.s(TCProcSection.cpsLocals).extract())
             m.s[TCFileSection.cfsProcs].add(p.s(TCProcSection.cpsInit).extract())
             m.s[TCFileSection.cfsProcs].add(p.s(TCProcSection.cpsStmts).extract())

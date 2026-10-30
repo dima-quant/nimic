@@ -51,7 +51,7 @@ def createLengTagPool() -> TagPool:
         if e == TagEnum.InvalidTagId:
             continue
         with let:
-            id = result.registerTag(TagData[e][0])
+            id = registerTag(result, TagData[e][0])
         assert uint32(id) == uint32(TagData[e][1]), (
             string("nifc tag pool misalignment for ") + TagData[e][0])
     return result
@@ -59,8 +59,8 @@ def createLengTagPool() -> TagPool:
 
 @template
 def tagEnumOf(c: Cursor) -> TagEnum:
-    return (cast[TagEnum](uint32(c.cursorTagId()))
-            if c.kind() == NifKind.TagLit else TagEnum.InvalidTagId)
+    return (cast[TagEnum](uint32(cursorTagId(c)))
+            if kind(c) == NifKind.TagLit else TagEnum.InvalidTagId)
 
 
 @template
@@ -105,7 +105,7 @@ def substructureKind(c: Cursor) -> LengOther:
 
 def typeKind(c: Cursor) -> LengType:
     """{.inline.}"""
-    if c.kind() == NifKind.DotToken:
+    if kind(c) == NifKind.DotToken:
         return LengType.VoidT       # an empty type slot reads as void
     with let:
         e = tagEnumOf(c)
@@ -175,8 +175,8 @@ class TypeDecl(Object):
 
 def _asTypeDeclImpl(n: mut @ Cursor) -> TypeDecl:
     ## Reads child positions; advances `n` past the (type) scope close.
-    assert n.stmtKind() == LengStmt.TypeS
-    with n.into():
+    assert stmtKind(n) == LengStmt.TypeS
+    with into(n):
         result = TypeDecl(name=n)
         skip(n)
         result.pragmas = n
@@ -205,8 +205,8 @@ class FieldDecl(Object):
 
 
 def takeFieldDecl(n: mut @ Cursor) -> FieldDecl:
-    assert n.substructureKind() == LengOther.FldU
-    with n.into():
+    assert substructureKind(n) == LengOther.FldU
+    with into(n):
         result = FieldDecl(name=n)
         skip(n)
         result.pragmas = n
@@ -227,7 +227,7 @@ def isUnionBranch(n: Cursor) -> bool:
     ## True if `n` is a discriminated-union branch, i.e. a case object lowered by
     ## hexer rather than the untagged `{.union.}` form. The two shapes never mix,
     ## so testing the child tag is enough - see `doc/leng-spec.md`, UnionBranch.
-    return n.substructureKind() in Tset[LengOther](LengOther.OfU, LengOther.ElseU)
+    return substructureKind(n) in Tset[LengOther](LengOther.OfU, LengOther.ElseU)
 
 
 def takeUnionBranch(n: mut @ Cursor) -> UnionBranch:
@@ -241,9 +241,9 @@ def takeUnionBranch(n: mut @ Cursor) -> UnionBranch:
     ## `llvmdebug` tell the two shapes apart. `strictdefs` rejects the field
     ## write into an uninitialized `result` for that reason.
     with let:
-        isOf = n.substructureKind() == LengOther.OfU
+        isOf = substructureKind(n) == LengOther.OfU
     result = default(UnionBranch)
-    with n.into():
+    with into(n):
         if isOf:
             result.ranges = n
             skip(n)
@@ -266,8 +266,8 @@ class ParamDecl(Object):
 
 
 def takeParamDecl(n: mut @ Cursor) -> ParamDecl:
-    assert n.substructureKind() == LengOther.ParamU
-    with n.into():
+    assert substructureKind(n) == LengOther.ParamU
+    with into(n):
         result = ParamDecl(name=n)
         skip(n)
         result.pragmas = n
@@ -284,32 +284,32 @@ class ProcType(Object):
 
 
 def takeProcType(n: mut @ Cursor) -> ProcType:
-    if n.typeKind() == LengType.ParamsT:
+    if typeKind(n) == LengType.ParamsT:
         # Already inside a (proc/proctype) scope; the caller entered. Read the
         # remaining sibling cursors without entering a new scope.
-        assert n.typeKind() == LengType.ParamsT or n.kind() == NifKind.DotToken
+        assert typeKind(n) == LengType.ParamsT or n.kind() == NifKind.DotToken
         result = ProcType(params=n)
         skip(n)
         result.returnType = n
         skip(n)
         result.pragmas = n
         skip(n)
-        if n.kind() == NifKind.DotToken:
+        if kind(n) == NifKind.DotToken:
             inc(n)
     else:
-        assert n.stmtKind() == LengStmt.ProcS or n.typeKind() == LengType.ProctypeT
-        with n.into():  # enter (proc ...) / (proctype ...)
+        assert stmtKind(n) == LengStmt.ProcS or typeKind(n) == LengType.ProctypeT
+        with into(n):  # enter (proc ...) / (proctype ...)
             skip(n)  # name
-            assert n.typeKind() == LengType.ParamsT or n.kind() == NifKind.DotToken
+            assert typeKind(n) == LengType.ParamsT or n.kind() == NifKind.DotToken
             result = ProcType(params=n)
             skip(n)
             result.returnType = n
             skip(n)
             result.pragmas = n
             skip(n)
-            if n.hasMore() and n.kind() == NifKind.DotToken:
+            if hasMore(n) and kind(n) == NifKind.DotToken:
                 inc(n)
-            while n.hasMore():
+            while hasMore(n):
                 skip(n)
     return result
 
@@ -323,8 +323,8 @@ class ProcDecl(Object):
 
 
 def takeProcDecl(n: mut @ Cursor) -> ProcDecl:
-    assert n.stmtKind() == LengStmt.ProcS
-    with n.into():
+    assert stmtKind(n) == LengStmt.ProcS
+    with into(n):
         result = ProcDecl(name=n)
         skip(n)
         result.params = n
@@ -346,9 +346,9 @@ class VarDecl(Object):
 
 
 def takeVarDecl(n: mut @ Cursor) -> VarDecl:
-    assert n.stmtKind() in Tset[LengStmt](
+    assert stmtKind(n) in Tset[LengStmt](
         LengStmt.GvarS, LengStmt.TvarS, LengStmt.VarS, LengStmt.ConstS)
-    with n.into():
+    with into(n):
         result = VarDecl(name=n)
         skip(n)
         result.pragmas = n
@@ -379,17 +379,17 @@ else:
 def _kindMatches(c: Cursor, expected: LengTagKind) -> bool:
     """{.tagDispatch.}"""
     if comptime(isinstance(expected, LengStmt)):
-        return c.stmtKind() == expected
+        return stmtKind(c) == expected
     elif comptime(isinstance(expected, LengExpr)):
-        return c.exprKind() == expected
+        return exprKind(c) == expected
     elif comptime(isinstance(expected, LengType)):
-        return c.typeKind() == expected
+        return typeKind(c) == expected
     elif comptime(isinstance(expected, LengOther)):
-        return c.substructureKind() == expected
+        return substructureKind(c) == expected
     elif comptime(isinstance(expected, LengPragma)):
-        return c.pragmaKind() == expected
+        return pragmaKind(c) == expected
     elif comptime(isinstance(expected, LengSym)):
-        return c.symKind() == expected
+        return symKind(c) == expected
     else:
         return False
 
@@ -443,156 +443,156 @@ if comptime(__name__ == "__main__"):
         echo(tagName(tags, TagId(uint32(ord(TagEnum.ProcTagId)))))
 
         # Root (stmts ...)
-        b.openTag(_tid(TagEnum.StmtsTagId))
+        openTag(b, _tid(TagEnum.StmtsTagId))
 
         # 1. (type :MyType.0.m (pragmas (packed)) (object . (fld :x.0.m . (i +32))))
-        b.openTag(_tid(TagEnum.TypeTagId))
-        b.addSymDef(string("MyType.0.m"))
-        b.openTag(_tid(TagEnum.PragmasTagId))
-        b.openTag(_tid(TagEnum.PackedTagId))
-        b.closeTag()
-        b.closeTag()
-        b.openTag(_tid(TagEnum.ObjectTagId))
-        b.addDotToken()
-        b.openTag(_tid(TagEnum.FldTagId))
-        b.addSymDef(string("x.0.m"))
-        b.addDotToken()
-        b.openTag(_tid(TagEnum.ITagId))
-        b.addIntLit(i64(32))
-        b.closeTag()
-        b.closeTag()
-        b.closeTag()
-        b.closeTag()
+        openTag(b, _tid(TagEnum.TypeTagId))
+        addSymDef(b, string("MyType.0.m"))
+        openTag(b, _tid(TagEnum.PragmasTagId))
+        openTag(b, _tid(TagEnum.PackedTagId))
+        closeTag(b)
+        closeTag(b)
+        openTag(b, _tid(TagEnum.ObjectTagId))
+        addDotToken(b)
+        openTag(b, _tid(TagEnum.FldTagId))
+        addSymDef(b, string("x.0.m"))
+        addDotToken(b)
+        openTag(b, _tid(TagEnum.ITagId))
+        addIntLit(b, i64(32))
+        closeTag(b)
+        closeTag(b)
+        closeTag(b)
+        closeTag(b)
 
         # 2. Union branches: (of (ranges +1) (object .)) and (else .)
-        b.openTag(_tid(TagEnum.OfTagId))
-        b.openTag(_tid(TagEnum.RangesTagId))
-        b.addIntLit(i64(1))
-        b.closeTag()
-        b.openTag(_tid(TagEnum.ObjectTagId))
-        b.addDotToken()
-        b.closeTag()
-        b.closeTag()
+        openTag(b, _tid(TagEnum.OfTagId))
+        openTag(b, _tid(TagEnum.RangesTagId))
+        addIntLit(b, i64(1))
+        closeTag(b)
+        openTag(b, _tid(TagEnum.ObjectTagId))
+        addDotToken(b)
+        closeTag(b)
+        closeTag(b)
 
-        b.openTag(_tid(TagEnum.ElseTagId))
-        b.addDotToken()
-        b.closeTag()
+        openTag(b, _tid(TagEnum.ElseTagId))
+        addDotToken(b)
+        closeTag(b)
 
         # 3. (proc :fn.0.m (params (param :a.0.m . (ptr (i +32)))) . (pragmas (inline) (cdecl)) (stmts (ret .)))
-        b.openTag(_tid(TagEnum.ProcTagId))
-        b.addSymDef(string("fn.0.m"))
-        b.openTag(_tid(TagEnum.ParamsTagId))
-        b.openTag(_tid(TagEnum.ParamTagId))
-        b.addSymDef(string("a.0.m"))
-        b.addDotToken()
-        b.openTag(_tid(TagEnum.PtrTagId))
-        b.openTag(_tid(TagEnum.ITagId))
-        b.addIntLit(i64(32))
-        b.closeTag()
-        b.closeTag()
-        b.closeTag()
-        b.closeTag()
-        b.addDotToken()
-        b.openTag(_tid(TagEnum.PragmasTagId))
-        b.openTag(_tid(TagEnum.InlineTagId))
-        b.closeTag()
-        b.openTag(_tid(TagEnum.CdeclTagId))
-        b.closeTag()
-        b.closeTag()
-        b.openTag(_tid(TagEnum.StmtsTagId))
-        b.openTag(_tid(TagEnum.RetTagId))
-        b.addDotToken()
-        b.closeTag()
-        b.closeTag()
-        b.closeTag()
+        openTag(b, _tid(TagEnum.ProcTagId))
+        addSymDef(b, string("fn.0.m"))
+        openTag(b, _tid(TagEnum.ParamsTagId))
+        openTag(b, _tid(TagEnum.ParamTagId))
+        addSymDef(b, string("a.0.m"))
+        addDotToken(b)
+        openTag(b, _tid(TagEnum.PtrTagId))
+        openTag(b, _tid(TagEnum.ITagId))
+        addIntLit(b, i64(32))
+        closeTag(b)
+        closeTag(b)
+        closeTag(b)
+        closeTag(b)
+        addDotToken(b)
+        openTag(b, _tid(TagEnum.PragmasTagId))
+        openTag(b, _tid(TagEnum.InlineTagId))
+        closeTag(b)
+        openTag(b, _tid(TagEnum.CdeclTagId))
+        closeTag(b)
+        closeTag(b)
+        openTag(b, _tid(TagEnum.StmtsTagId))
+        openTag(b, _tid(TagEnum.RetTagId))
+        addDotToken(b)
+        closeTag(b)
+        closeTag(b)
+        closeTag(b)
 
         # 4. (proctype . (params) (u +64) (pragmas (fastcall)) .)
-        b.openTag(_tid(TagEnum.ProctypeTagId))
-        b.addDotToken()
-        b.openTag(_tid(TagEnum.ParamsTagId))
-        b.closeTag()
-        b.openTag(_tid(TagEnum.UTagId))
-        b.addIntLit(i64(64))
-        b.closeTag()
-        b.openTag(_tid(TagEnum.PragmasTagId))
-        b.openTag(_tid(TagEnum.FastcallTagId))
-        b.closeTag()
-        b.closeTag()
-        b.addDotToken()
-        b.closeTag()
+        openTag(b, _tid(TagEnum.ProctypeTagId))
+        addDotToken(b)
+        openTag(b, _tid(TagEnum.ParamsTagId))
+        closeTag(b)
+        openTag(b, _tid(TagEnum.UTagId))
+        addIntLit(b, i64(64))
+        closeTag(b)
+        openTag(b, _tid(TagEnum.PragmasTagId))
+        openTag(b, _tid(TagEnum.FastcallTagId))
+        closeTag(b)
+        closeTag(b)
+        addDotToken(b)
+        closeTag(b)
 
         # 5. (gvar :gv.0.m . (ro (i +32)) (addr g)) and (var :lv.0.m . (atomic (i +32)) (haddr g))
-        b.openTag(_tid(TagEnum.GvarTagId))
-        b.addSymDef(string("gv.0.m"))
-        b.addDotToken()
-        b.openTag(_tid(TagEnum.RoTagId))
-        b.openTag(_tid(TagEnum.ITagId))
-        b.addIntLit(i64(32))
-        b.closeTag()
-        b.closeTag()
-        b.openTag(_tid(TagEnum.AddrTagId))
-        b.addSymUse(string("g.0.m"))
-        b.closeTag()
-        b.closeTag()
+        openTag(b, _tid(TagEnum.GvarTagId))
+        addSymDef(b, string("gv.0.m"))
+        addDotToken(b)
+        openTag(b, _tid(TagEnum.RoTagId))
+        openTag(b, _tid(TagEnum.ITagId))
+        addIntLit(b, i64(32))
+        closeTag(b)
+        closeTag(b)
+        openTag(b, _tid(TagEnum.AddrTagId))
+        addSymUse(b, string("g.0.m"))
+        closeTag(b)
+        closeTag(b)
 
-        b.openTag(_tid(TagEnum.VarTagId))
-        b.addSymDef(string("lv.0.m"))
-        b.addDotToken()
-        b.openTag(_tid(TagEnum.AtomicTagId))
-        b.openTag(_tid(TagEnum.ITagId))
-        b.addIntLit(i64(32))
-        b.closeTag()
-        b.closeTag()
-        b.openTag(_tid(TagEnum.HaddrTagId))
-        b.addSymUse(string("g.0.m"))
-        b.closeTag()
-        b.closeTag()
+        openTag(b, _tid(TagEnum.VarTagId))
+        addSymDef(b, string("lv.0.m"))
+        addDotToken(b)
+        openTag(b, _tid(TagEnum.AtomicTagId))
+        openTag(b, _tid(TagEnum.ITagId))
+        addIntLit(b, i64(32))
+        closeTag(b)
+        closeTag(b)
+        openTag(b, _tid(TagEnum.HaddrTagId))
+        addSymUse(b, string("g.0.m"))
+        closeTag(b)
+        closeTag(b)
 
-        b.closeTag()  # end root (stmts ...)
+        closeTag(b)  # end root (stmts ...)
 
         with var:
-            c = b.beginRead()
+            c = beginRead(b)
 
         # Root tag decoders
-        echo(c.tagEnumOf(), " ", c.tagEnum(), " ", c.stmtKind(), " ", c.exprKind(),
-             " ", c.typeKind(), " ", c.substructureKind(), " ", c.pragmaKind(),
-             " ", c.symKind(), " ", c.typeQual(), " ", c.callConvKind())
+        echo(tagEnumOf(c), " ", tagEnum(c), " ", stmtKind(c), " ", exprKind(c),
+             " ", typeKind(c), " ", substructureKind(c), " ", pragmaKind(c),
+             " ", symKind(c), " ", typeQual(c), " ", callConvKind(c))
 
-        with c.into(LengStmt.StmtsS):
+        with into(c, LengStmt.StmtsS):
             # 1. TypeDecl via asTypeDecl (non-advancing) and takeTypeDecl (advancing)
-            echo("type symKind=", c.symKind())
+            echo("type symKind=", symKind(c))
             with let:
                 tdPeek = asTypeDecl(c)
                 td = takeTypeDecl(c)
             echo("td=", symName(tdPeek.name), " ", symName(td.name),
-                 " ", td.pragmas.substructureKind(), " ", td.body.typeKind())
+                 " ", substructureKind(td.pragmas), " ", typeKind(td.body))
             with var:
                 pcur = td.pragmas.copy()
-            for _ in pcur.loopInto(LengOther.PragmasU):
-                echo("type pragma=", pcur.pragmaKind())
-                pcur.skip(LengPragma.PackedP)
+            for _ in loopInto(pcur, LengOther.PragmasU):
+                echo("type pragma=", pragmaKind(pcur))
+                skip(pcur, LengPragma.PackedP)
             with var:
                 ocur = td.body.copy()
-            with ocur.into(LengType.ObjectT):
-                echo("obj base typeKind=", ocur.typeKind())
+            with into(ocur, LengType.ObjectT):
+                echo("obj base typeKind=", typeKind(ocur))
                 skip(ocur)  # dot
                 echo("isUnionBranch on fld=", isUnionBranch(ocur))
                 with let:
                     fd = takeFieldDecl(ocur)
-                echo("fld=", symName(fd.name), " ", fd.pragmas.kind(), " ", fd.typ.typeKind())
+                echo("fld=", symName(fd.name), " ", kind(fd.pragmas), " ", typeKind(fd.typ))
 
             # 2. Union branches (OfU and ElseU)
             echo("isUnionBranch of=", isUnionBranch(c))
             with let:
                 ubPeek = asUnionBranch(c)
                 ubOf = takeUnionBranch(c)
-            echo("ubOf=", cursorIsNil(ubPeek.ranges), " ", ubOf.ranges.substructureKind(),
-                 " ", ubOf.body.typeKind())
+            echo("ubOf=", cursorIsNil(ubPeek.ranges), " ", substructureKind(ubOf.ranges),
+                 " ", typeKind(ubOf.body))
             echo("isUnionBranch else=", isUnionBranch(c))
             with let:
                 ubElse = takeUnionBranch(c)
-            echo("ubElse=", cursorIsNil(ubElse.ranges), " ", ubElse.body.kind(),
-                 " ", ubElse.body.typeKind())
+            echo("ubElse=", cursorIsNil(ubElse.ranges), " ", kind(ubElse.body),
+                 " ", typeKind(ubElse.body))
 
             # 3. ProcS: test takeProcType (both from ProcS and from ParamsT) and takeProcDecl
             with var:
@@ -600,44 +600,44 @@ if comptime(__name__ == "__main__"):
                 procCopy2 = c.copy()
             with let:
                 ptFromProc = takeProcType(procCopy1)
-            echo("ptFromProc=", ptFromProc.params.typeKind(), " ",
-                 ptFromProc.returnType.typeKind(), " ", ptFromProc.pragmas.substructureKind())
+            echo("ptFromProc=", typeKind(ptFromProc.params), " ",
+                 typeKind(ptFromProc.returnType), " ", substructureKind(ptFromProc.pragmas))
 
-            with procCopy2.into(LengStmt.ProcS):
+            with into(procCopy2, LengStmt.ProcS):
                 skip(procCopy2)  # name
                 with let:
                     ptFromParams = takeProcType(procCopy2)
-                echo("ptFromParams=", ptFromParams.params.typeKind(), " ",
-                     ptFromParams.returnType.typeKind(), " ", ptFromParams.pragmas.substructureKind())
-                while procCopy2.hasMore():
+                echo("ptFromParams=", typeKind(ptFromParams.params), " ",
+                     typeKind(ptFromParams.returnType), " ", substructureKind(ptFromParams.pragmas))
+                while hasMore(procCopy2):
                     skip(procCopy2)
 
             with let:
                 pd = takeProcDecl(c)
-            echo("pd=", symName(pd.name), " ", pd.params.typeKind(), " ",
-                 pd.returnType.typeKind(), " ", pd.pragmas.substructureKind(), " ",
-                 pd.body.stmtKind())
+            echo("pd=", symName(pd.name), " ", typeKind(pd.params), " ",
+                 typeKind(pd.returnType), " ", substructureKind(pd.pragmas), " ",
+                 stmtKind(pd.body))
             with var:
                 paramsCur = pd.params.copy()
-            for _ in paramsCur.loopInto(LengType.ParamsT):
+            for _ in loopInto(paramsCur, LengType.ParamsT):
                 with let:
                     param = takeParamDecl(paramsCur)
                     elem = elementType(param.typ)
-                echo("param=", symName(param.name), " ", param.pragmas.kind(),
-                     " ", param.typ.typeKind(), " elem=", elem.typeKind())
+                echo("param=", symName(param.name), " ", kind(param.pragmas),
+                     " ", typeKind(param.typ), " elem=", typeKind(elem))
             with var:
                 procPragmas = pd.pragmas.copy()
-            with procPragmas.into(LengOther.PragmasU):
-                echo("proc pragma1=", procPragmas.pragmaKind())
-                procPragmas.skip(LengPragma.InlineP)
-                echo("proc callconv=", procPragmas.callConvKind())
+            with into(procPragmas, LengOther.PragmasU):
+                echo("proc pragma1=", pragmaKind(procPragmas))
+                skip(procPragmas, LengPragma.InlineP)
+                echo("proc callconv=", callConvKind(procPragmas))
                 skip(procPragmas)
 
             # 4. ProctypeT via takeProcType
             with let:
                 pt2 = takeProcType(c)
-            echo("pt2=", pt2.params.typeKind(), " ", pt2.returnType.typeKind(),
-                 " ", pt2.pragmas.substructureKind())
+            echo("pt2=", typeKind(pt2.params), " ", typeKind(pt2.returnType),
+                 " ", substructureKind(pt2.pragmas))
 
             # 5. VarDecl (GvarS and VarS), typeQual, AddrKinds, 2-arg inc
             with let:
@@ -645,19 +645,19 @@ if comptime(__name__ == "__main__"):
             with var:
                 vt1 = vd1.typ.copy()
                 vv1 = vd1.value.copy()
-            echo("vd1=", symName(vd1.name), " qual=", vt1.typeQual(),
-                 " elem=", elementType(vt1).typeKind(),
-                 " valKind=", vv1.exprKind(), " inAddr=", vv1.exprKind() in AddrKinds)
-            vv1.inc(LengExpr.AddrC)
-            echo("vd1 target=", symName(vv1), " tagEnumOnSym=", vv1.tagEnumOf())
+            echo("vd1=", symName(vd1.name), " qual=", typeQual(vt1),
+                 " elem=", typeKind(elementType(vt1)),
+                 " valKind=", exprKind(vv1), " inAddr=", exprKind(vv1) in AddrKinds)
+            inc(vv1, LengExpr.AddrC)
+            echo("vd1 target=", symName(vv1), " tagEnumOnSym=", tagEnumOf(vv1))
 
             with let:
                 vd2 = takeVarDecl(c)
             with var:
                 vt2 = vd2.typ.copy()
                 vv2 = vd2.value.copy()
-            echo("vd2=", symName(vd2.name), " qual=", vt2.typeQual(),
-                 " valKind=", vv2.exprKind(), " inAddr=", vv2.exprKind() in AddrKinds)
+            echo("vd2=", symName(vd2.name), " qual=", typeQual(vt2),
+                 " valKind=", exprKind(vv2), " inAddr=", exprKind(vv2) in AddrKinds)
 
         endRead(c)
 

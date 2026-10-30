@@ -150,7 +150,7 @@ def _addArgumentSeparator(builder: mut@Builder) -> None:
 @template
 def _addArgument(builder: mut@Builder, call: mut@_CallBuilder, valueBody: typed):
     if call._needsComma:
-        builder._addArgumentSeparator()
+        _addArgumentSeparator(builder)
     else:
         call._needsComma = True
     valueBody

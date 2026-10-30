@@ -227,9 +227,9 @@ def _escape(b: mut @ Builder, c: char):
         _HexChars = string("0123456789ABCDEF")
     with var:
         n = nint(c)
-    b._put(char('\\'))
-    b._put(_HexChars[(n >> 4) & 0xF])
-    b._put(_HexChars[n & 0xF])
+    _put(b, char('\\'))
+    _put(b, _HexChars[(n >> 4) & 0xF])
+    _put(b, _HexChars[n & 0xF])
 
 
 @ufcs(char)
@@ -253,7 +253,7 @@ def _addSep(b: mut @ Builder):
     elif b._raw[b._offs - 1] in Tset[char](char('\n'), char(' '), char('('), char(')')):
         _ = string("no separator required")
     else:
-        b._put(char(' '))
+        _put(b, char(' '))
 
 
 def addNumber(b: mut @ Builder, s: string):
@@ -272,16 +272,16 @@ def addIdent(b: mut @ Builder, s: string):
             src = _readRawData(s)
             c0 = src[0]
         if c0 < char(' ') or c0 in Tset[char](char('.'), inrange(char('0'), char('9')), char('+'), char('-'), char('~')) or c0._needsEscape():
-            b._escape(c0)
+            _escape(b, c0)
         else:
-            b._put(c0)
+            _put(b, c0)
         for i in range(1, sLen):
             with let:
                 c = src[i]
             if c < char(' ') or (c in (ControlChars + Tset[char](char('.')))):
-                b._escape(c)
+                _escape(b, c)
             else:
-                b._put(c)
+                _put(b, c)
 
 
 def _addSymbolImpl(b: mut @ Builder, s: string, len: nint) -> nint:
@@ -293,18 +293,18 @@ def _addSymbolImpl(b: mut @ Builder, s: string, len: nint) -> nint:
             src = _readRawData(s)
             c0 = src[0]
         if c0 in Tset[char](char('.'), inrange(char('0'), char('9')), char('+'), char('-'), char('~')) or c0._needsEscape():
-            b._escape(c0)
+            _escape(b, c0)
         else:
-            b._put(c0)
+            _put(b, c0)
         for i in range(1, len):
             with let:
                 c = src[i]
             # Symbols imported from C can have a space like "struct foo".
             if c == char(' ') or c._needsEscape():
-                b._escape(c)
+                _escape(b, c)
             else:
                 if c == char('.'): result += 1
-                b._put(c)
+                _put(b, c)
     return result
 
 
@@ -316,7 +316,7 @@ def addSymbol(b: mut @ Builder, s: string):
 
 def addSymbolDef(b: mut @ Builder, s: string):
     _addSep(b)
-    b._put(char(':'))
+    _put(b, char(':'))
     _ = _addSymbolImpl(b, s, s.len)
 
 
@@ -334,7 +334,7 @@ def addSymbol(b: mut @ Builder, s: string, dottedSuffix: string):
 def addSymbolDefRetIsGlobal(b: mut @ Builder, s: string, dottedSuffix = string("")) -> bool:
     ## Returns true if the symbol is global.
     _addSep(b)
-    b._put(char(':'))
+    _put(b, char(':'))
     with var:
         L = nint(s.len)
     if dottedSuffix.len > 0 and s.endsWith(dottedSuffix):
@@ -347,41 +347,41 @@ def addSymbolDefRetIsGlobal(b: mut @ Builder, s: string, dottedSuffix = string("
 @dispatch
 def addStrLit(b: mut @ Builder, s: string):
     _addSep(b)
-    b._put(char('"'))
+    _put(b, char('"'))
     for c in s:
         if _needsEscape(c):
-            b._escape(c)
+            _escape(b, c)
         else:
-            b._put(c)
-    b._put(char('"'))
+            _put(b, c)
+    _put(b, char('"'))
 
 
 def addEmpty(b: mut @ Builder, count = 1):
     _addSep(b)
     for i in inrange(1, count):
-        b._put(char('.'))
+        _put(b, char('.'))
 
 
 def addCharLit(b: mut @ Builder, c: char):
     _addSep(b)
-    b._put(char("'"))
+    _put(b, char("'"))
     if c._needsEscape():
         _escape(b, c)
     else:
-        b._put(c)
-    b._put(char("'"))
+        _put(b, c)
+    _put(b, char("'"))
 
 
 def addIntLit(b: mut @ Builder, i: int64):
     _addSep(b)
-    b._put(str(i))
+    _put(b, str(i))
 
 
 @dispatch
 def addUIntLit(b: mut @ Builder, u: uint64):
     _addSep(b)
-    b._put(str(u))
-    b._put(char('u'))
+    _put(b, str(u))
+    _put(b, char('u'))
 
 
 def attachLineInfo(b: mut @ Builder, col: int32, line: int32, file = string("")):
@@ -399,20 +399,20 @@ def addFloatLit(b: mut @ Builder, f: float, col: int32 = 0, line: int32 = 0, fil
         hasInfo = col != 0 or line != 0 or file.len > 0
     match classify(f):
         case FloatClass.fcInf:
-            b._put(string("(inf"))
-            if hasInfo: b.attachLineInfo(col, line, file)
-            b._put(char(')'))
+            _put(b, string("(inf"))
+            if hasInfo: attachLineInfo(b, col, line, file)
+            _put(b, char(')'))
         case FloatClass.fcNan:
-            b._put(string("(nan"))
-            if hasInfo: b.attachLineInfo(col, line, file)
-            b._put(char(')'))
+            _put(b, string("(nan"))
+            if hasInfo: attachLineInfo(b, col, line, file)
+            _put(b, char(')'))
         case FloatClass.fcNegInf:
-            b._put(string("(neginf"))
-            if hasInfo: b.attachLineInfo(col, line, file)
-            b._put(char(')'))
+            _put(b, string("(neginf"))
+            if hasInfo: attachLineInfo(b, col, line, file)
+            _put(b, char(')'))
         case FloatClass.fcNegZero:
-            b._put(string("-0.0"))
-            if hasInfo: b.attachLineInfo(col, line, file)
+            _put(b, string("-0.0"))
+            if hasInfo: attachLineInfo(b, col, line, file)
         case FloatClass.fcNormal | FloatClass.fcSubnormal | FloatClass.fcZero:
             # Format into a scratch string: the builder's storage is capacity-sized, so
             # `addFloat` cannot append to it directly.
@@ -421,10 +421,10 @@ def addFloatLit(b: mut @ Builder, f: float, col: int32 = 0, line: int32 = 0, fil
             tmp.addFloat(f)
             with let:
                 myLen = b._offs.copy()
-            b._put(tmp)
+            _put(b, tmp)
             for i in range(myLen, b._offs):
                 if b._raw[i] == char('e'): b._raw[i] = char('E')
-            if hasInfo: b.attachLineInfo(col, line, file)
+            if hasInfo: attachLineInfo(b, col, line, file)
 
 
 def _b62Char(d: nint) -> char:
@@ -439,7 +439,7 @@ def _addB62Unsigned(b: mut @ Builder, n0: uint64):
     ## least one digit (even for zero) so the line-info parser sees a non-empty
     ## diff segment.
     if n0 == 0:
-        b._put(char('0'))
+        _put(b, char('0'))
     else:
         with var:
             buf: pragma("noinit") @ array[12, char] = array[12, char]()  # 62^12 > 2^64
@@ -451,7 +451,7 @@ def _addB62Unsigned(b: mut @ Builder, n0: uint64):
             i += 1
         while i > 0:
             i -= 1
-            b._put(buf[i])
+            _put(b, buf[i])
 
 
 def _addLineDiff(b: mut @ Builder, x: int32, emitZero: bool):
@@ -459,12 +459,12 @@ def _addLineDiff(b: mut @ Builder, x: int32, emitZero: bool):
     ## Emit one base62 line-info diff. If `emitZero` is false and `x == 0`,
     ## emit nothing (the segment is implicitly zero between two commas).
     if x < 0:
-        b._put(char('~'))
-        b._addB62Unsigned(uint64(-int64(x)))
+        _put(b, char('~'))
+        _addB62Unsigned(b, uint64(-int64(x)))
     elif x > 0:
-        b._addB62Unsigned(uint64(x))
+        _addB62Unsigned(b, uint64(x))
     elif emitZero:
-        b._put(char('0'))
+        _put(b, char('0'))
 
 
 def attachLineInfo(b: mut @ Builder, col: int32, line: int32, file = string("")):
@@ -477,23 +477,23 @@ def attachLineInfo(b: mut @ Builder, col: int32, line: int32, file = string(""))
     _drainPending(b)
     if col < 0:
         # Use the bare-`~` shorthand (no `@` introducer).
-        b._put(char('~'))
-        b._addB62Unsigned(uint64(-int64(col)))
+        _put(b, char('~'))
+        _addB62Unsigned(b, uint64(-int64(col)))
     else:
-        b._put(char('@'))
+        _put(b, char('@'))
         if col > 0:
-            b._addB62Unsigned(uint64(col))
+            _addB62Unsigned(b, uint64(col))
         # else: empty first diff segment, allowed by `B62Digit*` in the grammar.
     if line != 0 or file.len > 0:
-        b._put(char(','))
-        b._addLineDiff(line, emitZero=False)
+        _put(b, char(','))
+        _addLineDiff(b, line, emitZero=False)
     if file.len > 0:
-        b._put(char(','))
+        _put(b, char(','))
         for c in file:
             if c._needsEscape():
-                b._escape(c)
+                _escape(b, c)
             else:
-                b._put(c)
+                _put(b, c)
 
 
 @template
@@ -509,21 +509,21 @@ def attachComment(b: mut @ Builder, s: string):
     ## or tag name (or directly after a preceding `attachLineInfo`). No
     ## whitespace allowed before the `#`.
     _drainPending(b)
-    b._put(char('#'))
+    _put(b, char('#'))
     for c in s:
         if c._needsEscape():
-            b._escape(c)
+            _escape(b, c)
         else:
-            b._put(c)
-    b._put(char('#'))
+            _put(b, c)
+    _put(b, char('#'))
 
 
 def addKeyw(b: mut @ Builder, keyw: string):
     ## Adds a complete compound node that has no children like `(nil)`.
     _drainPending(b)
-    b._put(char('('))
-    b._put(keyw)
-    b._put(char(')'))
+    _put(b, char('('))
+    _put(b, keyw)
+    _put(b, char(')'))
 
 
 def addTree(b: mut @ Builder, kind: string):
@@ -533,12 +533,12 @@ def addTree(b: mut @ Builder, kind: string):
     _drainPending(b)
     if not b._compact:
         if b._nesting > 0:
-            b._put(string("\n"))
-            for i in inrange(1, b._nesting): b._put(char(' '))
-        b._put(char('('))
+            _put(b, string("\n"))
+            for i in inrange(1, b._nesting): _put(b, char(' '))
+        _put(b, char('('))
     else:
-        b._put(string("\n("))
-    b._put(kind)
+        _put(b, string("\n("))
+    _put(b, kind)
     b._nesting += 1
 
 
@@ -548,7 +548,7 @@ def endTree(b: mut @ Builder):
     if b._nesting >= 0:
         b._nesting -= 1
     _undoWhitespace(b)
-    b._put(char(')'))
+    _put(b, char(')'))
 
 
 @template
@@ -563,42 +563,42 @@ def withTree(b: mut @ Builder, kind: string, body: untyped = None):
 @dispatch
 def addUIntLit(b: mut @ Builder, u: uint64, suffix: string,
                col: int32 = 0, line: int32 = 0, file = string("")):
-    b.addTree(string("suf"))
+    addTree(b, string("suf"))
     if col != 0 or line != 0 or file.len > 0:
-        b.attachLineInfo(col, line, file)
-    b.addUIntLit(u)
-    b.addStrLit(suffix)
-    b.endTree()
+        attachLineInfo(b, col, line, file)
+    addUIntLit(b, u)
+    addStrLit(b, suffix)
+    endTree(b)
 
 
 @dispatch
 def addStrLit(b: mut @ Builder, s: string, suffix: string,
               col: int32 = 0, line: int32 = 0, file = string("")):
-    b.addTree(string("suf"))
+    addTree(b, string("suf"))
     if col != 0 or line != 0 or file.len > 0:
-        b.attachLineInfo(col, line, file)
-    b.addStrLit(s)
-    b.addStrLit(suffix)
-    b.endTree()
+        attachLineInfo(b, col, line, file)
+    addStrLit(b, s)
+    addStrLit(b, suffix)
+    endTree(b)
 
 
 def addHeader(b: mut @ Builder, vendor = string(""), dialect = string("")):
-    b._put(string("(.nif27)\n"))
+    _put(b, string("(.nif27)\n"))
     if vendor.len > 0:
-        b._put(string("(.vendor "))
-        b.addStrLit(vendor)
-        b._put(string(")\n"))
+        _put(b, string("(.vendor "))
+        addStrLit(b, vendor)
+        _put(b, string(")\n"))
     if dialect.len > 0:
-        b._put(string("(.dialect "))
-        b.addStrLit(dialect)
-        b._put(string(")\n"))
+        _put(b, string("(.dialect "))
+        addStrLit(b, dialect)
+        _put(b, string(")\n"))
 
 
 def addHeader27(b: mut @ Builder) -> nint:
     ## Returns the patch position for the indexat overwrite.
-    b._put(string("(.nif27)\n"))
+    _put(b, string("(.nif27)\n"))
     result = b._offs + len(string("(.indexat "))
-    b._put(string("(.indexat                  )\n"))
+    _put(b, string("(.indexat                  )\n"))
     #                 ^ whitespace essential here for patching without reallocations!
     return result
 
@@ -622,23 +622,23 @@ def offset(b: Builder) -> nint:
 
 if comptime(__name__ == "__main__" and not defined("nimony")):
     def _test(b: sink @ Builder):
-        b.addHeader(string("tester"), string("niftest"))
-        b.addTree(string("stmts"))
-        b.attachLineInfo(4, 5, string("mymodb.nim"))
+        addHeader(b, string("tester"), string("niftest"))
+        addTree(b, string("stmts"))
+        attachLineInfo(b, 4, 5, string("mymodb.nim"))
         with block:
-            b.addTree(string("call"))
-            b.attachLineInfo(1, 3, string("mymod.nim"))
-            b.addSymbolDef(string("oh.0.my.god"))
-            b.addSymbol(string("foo.3.mymod"))
-            b.addIntLit(3423)
-            b.addFloatLit(50.4)
+            addTree(b, string("call"))
+            attachLineInfo(b, 1, 3, string("mymod.nim"))
+            addSymbolDef(b, string("oh.0.my.god"))
+            addSymbol(b, string("foo.3.mymod"))
+            addIntLit(b, 3423)
+            addFloatLit(b, 50.4)
             # issue #1313
-            b.addFloatLit(-0.0)
-            b.endTree()
-        b.endTree()
+            addFloatLit(b, -0.0)
+            endTree(b)
+        endTree(b)
 
-        if b.attachedToFile():
-            b.close()
+        if attachedToFile(b):
+            close(b)
         else:
             echo(b.extract())
 
@@ -663,53 +663,53 @@ if comptime(__name__ == "__main__"):
 
         with var:
             bm = open(10)
-        echo(bm.attachedToFile())
-        bm.addHeader(string("v"), string("d"))
-        with bm.withTree(string("stmts")):
-            bm.addLineInfo(1, 2, string("a.nim"))
-            bm.attachComment(string("hello #1"))
-            bm.addRaw(string(" "))
-            bm.addNumber(string("42"))
-            bm.addIdent(string("my_ident"))
-            bm.addIdent(string("9bad.id"))
-            bm.addSymbol(string("sym.1.mod"))
-            bm.addSymbol(string("sym.1.mod"), string(".mod"))
-            bm.addSymbol(string("struct foo.1.c"))
-            bm.addSymbolDef(string("def.0.mod"))
-            echo(bm.addSymbolDefRetIsGlobal(string("loc.0")))
-            echo(bm.addSymbolDefRetIsGlobal(string("glob.0.mod")))
-            echo(bm.addSymbolDefRetIsGlobal(string("glob.0.mod"), string(".mod")))
-            bm.addStrLit(string("hi \"world\"\n"))
-            bm.addStrLit(string("raw"), string("R"), 2, 3, string("s.nim"))
-            bm.addEmpty(2)
-            bm.addCharLit(char('x'))
-            bm.addCharLit(char('\n'))
-            bm.addIntLit(i64(-12345))
-            bm.addUIntLit(u64(999))
-            bm.addUIntLit(u64(42), string("u8"), -3, -4, string("u.nim"))
-            bm.addKeyw(string("nil"))
-            bm.addFloatLit(0.1)
-            bm.addFloatLit(-1.5)
-            bm.addFloatLit(1e300)
-            bm.addFloatLit(-0.0)
-            bm.addFloatLit(5e-324)
-            bm.addFloatLit(Inf, 1, 1)
-            bm.addFloatLit(-Inf, 0, -2)
-            bm.addFloatLit(NaN)
-        echo(bm.extract())
+        echo(attachedToFile(bm))
+        addHeader(bm, string("v"), string("d"))
+        with withTree(bm, string("stmts")):
+            addLineInfo(bm, 1, 2, string("a.nim"))
+            attachComment(bm, string("hello #1"))
+            addRaw(bm, string(" "))
+            addNumber(bm, string("42"))
+            addIdent(bm, string("my_ident"))
+            addIdent(bm, string("9bad.id"))
+            addSymbol(bm, string("sym.1.mod"))
+            addSymbol(bm, string("sym.1.mod"), string(".mod"))
+            addSymbol(bm, string("struct foo.1.c"))
+            addSymbolDef(bm, string("def.0.mod"))
+            echo(addSymbolDefRetIsGlobal(bm, string("loc.0")))
+            echo(addSymbolDefRetIsGlobal(bm, string("glob.0.mod")))
+            echo(addSymbolDefRetIsGlobal(bm, string("glob.0.mod"), string(".mod")))
+            addStrLit(bm, string("hi \"world\"\n"))
+            addStrLit(bm, string("raw"), string("R"), 2, 3, string("s.nim"))
+            addEmpty(bm, 2)
+            addCharLit(bm, char('x'))
+            addCharLit(bm, char('\n'))
+            addIntLit(bm, i64(-12345))
+            addUIntLit(bm, u64(999))
+            addUIntLit(bm, u64(42), string("u8"), -3, -4, string("u.nim"))
+            addKeyw(bm, string("nil"))
+            addFloatLit(bm, 0.1)
+            addFloatLit(bm, -1.5)
+            addFloatLit(bm, 1e300)
+            addFloatLit(bm, -0.0)
+            addFloatLit(bm, 5e-324)
+            addFloatLit(bm, Inf, 1, 1)
+            addFloatLit(bm, -Inf, 0, -2)
+            addFloatLit(bm, NaN)
+        echo(extract(bm))
 
         with var:
             bc = open(16, compact=True)
         with let:
-            patchPos = bc.addHeader27()
-        with bc.withTree(string("top")):
-            with bc.withTree(string("inner")):
-                bc.addIntLit(i64(7))
+            patchPos = addHeader27(bc)
+        with withTree(bc, string("top")):
+            with withTree(bc, string("inner")):
+                addIntLit(bc, i64(7))
         with let:
-            idxOff = bc.offset()
-        bc.patchIndexAt(patchPos, idxOff)
+            idxOff = offset(bc)
+        patchIndexAt(bc, patchPos, idxOff)
         echo(idxOff)
-        echo(bc.extract())
+        echo(extract(bc))
 
         with let:
             tmpFile = getTempDir() + string("nimic_nifbuilder_test.nif")
@@ -717,18 +717,18 @@ if comptime(__name__ == "__main__"):
             vfsRemove(tmpFile)
         with var:
             bf1 = open(tmpFile, compact=False, writeMode=FileWriteMode.OnlyIfChanged)
-        echo(bf1.attachedToFile())
-        with bf1.withTree(string("filetest")):
-            bf1.addIntLit(i64(100))
-        bf1.close()
+        echo(attachedToFile(bf1))
+        with withTree(bf1, string("filetest")):
+            addIntLit(bf1, i64(100))
+        close(bf1)
         echo(vfsRead(tmpFile))
         with let:
             mtime1 = vfsMtime(tmpFile)
         with var:
             bf2 = open(tmpFile, compact=False, writeMode=FileWriteMode.OnlyIfChanged)
-        with bf2.withTree(string("filetest")):
-            bf2.addIntLit(i64(100))
-        bf2.close()
+        with withTree(bf2, string("filetest")):
+            addIntLit(bf2, i64(100))
+        close(bf2)
         with let:
             mtime2 = vfsMtime(tmpFile)
         echo(mtime1 == mtime2)

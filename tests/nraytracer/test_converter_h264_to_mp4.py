@@ -8,7 +8,11 @@ from nimic.std.os import *
 from nimic.std.strutils import *
 from nimic.std.strformat import *
 from nimic.std.algorithm import *
-from mp4 import close, initialize, MP4Muxer, writeMP4_from
+from mp4 import initialize, MP4Muxer, writeMP4_from
+import mp4
+from nimic.std import syncio
+# one name of two imports, called free: Nim overloads them (rule:overloads)
+close = overloads(syncio.close, mp4.close)
 
 
 with const:
@@ -33,7 +37,7 @@ def main():
         mp4File = open(mp4Path, fmWrite)
     initialize(muxer, mp4File, int32(Width), int32(Height))
     writeMP4_from(muxer, tmp264)
-    muxer.close()
+    close(muxer)
     mp4File.close()
 
     print(f"Reference MP4 written to {mp4Path}")
