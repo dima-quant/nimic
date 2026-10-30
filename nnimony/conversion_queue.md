@@ -24,13 +24,9 @@
 
 | Module | Size | Std imports (✗ = no nimic shim yet) | Agent |
 |---|---|---|---|
-| `lib/lengiface` | 3,852 bytes | assertions, formatfloat, sha1, syncio |  |
-| `lib/htmlbuilder` | 4,222 bytes |  |  |
-| `lib/nifindexes` | 12,090 bytes | assertions, hashes, os, sha1, strutils, syncio, tables |  |
-| `lib/legacy/nif26reader` | 13,861 bytes | assertions, memfiles, parseutils |  |
-| `lib/bif` | 52,325 bytes | assertions, strutils, syncio, varints |  |
+| `lib/foreignmodules` | 7,572 bytes | tables |  |
 
-## All modules of `src/lib` (32/38 converted, 1 legacy)
+## All modules of `src/lib` (36/37 converted, 2 legacy)
 
 | Module | Tier | Size | Depends on | Std imports | Status |
 |---|---|---|---|---|---|
@@ -54,15 +50,15 @@
 | `models/tags` | 0 | 13,811 bytes |  |  | ✅ Converted |
 | `lib/filelinecache` | 1 | 2,028 bytes | lib/compat2 | hashes, strutils, syncio, tables | ✅ Converted |
 | `lib/keymatcher` | 1 | 5,934 bytes | lib/stringtrees, lib/stringviews | assertions, macros (legacy: expand the calls) | ⛔ Legacy: macro machinery (`declareMatcher`), called only by its own tests; macros are legacy |
-| `lib/legacy/nif26reader` | 1 | 13,861 bytes | lib/stringviews, lib/vfs | assertions, memfiles, parseutils | 🔲 Pending |
+| `lib/legacy/nif26reader` | 1 | 13,861 bytes | lib/stringviews, lib/vfs | assertions, memfiles, parseutils | ⛔ Legacy: NIF26 reader, used only by the nif26 -> nif27 migration tool, which nimic doesn't need (also not for a newer nimony) |
 | `lib/nifbuilder` | 1 | 16,576 bytes | lib/vfs | assertions, formatfloat, math, strutils, syncio | ✅ Converted |
 | `lib/nifcore` | 1 | 111,775 bytes | lib/bitabs, lib/lineinfos, lib/nifroles | assertions, formatfloat, hashes | ✅ Converted |
 | `models/callconv_tags` | 1 | 921 bytes | models/tags |  | ✅ Converted |
 | `models/leng_tags` | 1 | 24,091 bytes | models/tags |  | ✅ Converted |
 | `models/nifindex_tags` | 1 | 4,112 bytes | models/tags |  | ✅ Converted |
-| `lib/bif` | 2 | 52,325 bytes | lib/compat2, lib/nifcore, lib/vfs | assertions, strutils, syncio, varints | 🔲 Pending |
-| `lib/htmlbuilder` | 2 | 4,222 bytes | lib/nifbuilder |  | 🔲 Pending |
-| `lib/lengiface` | 2 | 3,852 bytes | lib/nifbuilder, lib/nifcore, lib/vfs | assertions, formatfloat, sha1, syncio | 🔲 Pending |
+| `lib/bif` | 2 | 52,325 bytes | lib/compat2, lib/nifcore, lib/vfs | assertions, strutils, syncio, varints | ✅ Converted |
+| `lib/htmlbuilder` | 2 | 4,222 bytes | lib/nifbuilder |  | ✅ Converted |
+| `lib/lengiface` | 2 | 3,852 bytes | lib/nifbuilder, lib/nifcore, lib/vfs | assertions, formatfloat, sha1, syncio | ✅ Converted |
 | `lib/nifcdecl` | 2 | 10,477 bytes | lib/nifcore, models/callconv_tags, models/leng_tags, models/tags | assertions | ✅ Converted |
 | `lib/nifreader` | 2 | 38,779 bytes | lib/nifcore, lib/stringviews, lib/vfs | assertions, memfiles, parseutils | ✅ Converted |
 | `lib/nifcoreparse` | 3 | 26,586 bytes | lib/comesfrom, lib/lineinfos, lib/nifbuilder, lib/nifcore, lib/nifreader, lib/stringviews | assertions, math, strutils, syncio | ✅ Converted |
@@ -72,4 +68,4 @@
 | `lib/nifchecksums` | 5 | 2,565 bytes | lib/bitabs, lib/nifpools, lib/nifreader | formatfloat, sha1 | ✅ Converted |
 | `lib/nifprelude` | 5 | 372 bytes | lib/bitabs, lib/nifbuilder, lib/nifpools, lib/nifreader, lib/nifroles |  | ✅ Converted |
 | `lib/nifstreams` | 5 | 8,456 bytes | lib/lineinfos, lib/nifpools, lib/nifreader | tables | ✅ Converted |
-| `lib/nifindexes` | 6 | 12,090 bytes | lib/bitabs, lib/compat2, lib/lineinfos, lib/nifchecksums, lib/nifcoreparse, lib/nifpools, lib/nifreader, lib/stringviews, lib/symparser, lib/vfs, models/nifindex_tags, models/tags | assertions, hashes, os, sha1, strutils, syncio, tables | 🔲 Pending |
+| `lib/nifindexes` | 6 | 12,090 bytes | lib/bitabs, lib/compat2, lib/lineinfos, lib/nifchecksums, lib/nifcoreparse, lib/nifpools, lib/nifreader, lib/stringviews, lib/symparser, lib/vfs, models/nifindex_tags, models/tags | assertions, hashes, os, sha1, strutils, syncio, tables | ✅ Converted |

@@ -99,6 +99,23 @@ is added to the core.
 | nimony's standard library (`lib/std`, 64k lines) | std shims for Nim 3 where it differs, as modules need them | M–L |
 | Verification | a `nimony c` check in `verify_transpiled` (build nimony with hastur next to the project) | S–M |
 
+## From Phase A to Phase B (decided 2026-10-29)
+
+`src/lib` is complete with `lib/bif` (batch 15). `lib/keymatcher` and `lib/legacy/nif26reader` are legacy, not
+converted (`nnimony/tools/queue.py`). Then, in this order:
+
+1. **The Phase A milestone:** an end-to-end check in `tests/verify_transpiled.py` that NIF files round-trip
+   identically in Python and in compiled Nim (nifreader → nifbuilder, and bif's store → load).
+2. **The upstream tool** (`nnimony/tools/upstream.py`), then **the first re-pin** of nimony while `src/lib` is
+   complete and small: each converted module takes the upstream diff since the commit its header records.
+3. **Before Phase B:**
+   - revisit [a nimic backend for nimony](#idea-for-later-a-nimic-backend-for-nimony), now that the rules
+     change less per batch;
+   - land the module-scoped dispatch proposal (`ncompiler/proposals/feature_module_scoped_dispatch.md`), or
+     the parts nifler2's module graph needs. Include batch 14's gap 3: `importFrom(m, names...)` should also
+     bind `m` for qualified calls.
+4. **Phase B, `src/nifler2`:** the Nim 3 alignment items (table below) as its modules hit them.
+
 ## Core roadmap, in order of need
 
 1. **What Phase A needs:**
