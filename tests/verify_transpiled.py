@@ -102,17 +102,21 @@ tree = transpiler.parse(inspect.getsource(mod))
 transpiler.check_private_names(tree)
 transpiler.check_imported_module(tree, mod)
 # UTF-8 like nimic's own writer (stdout is byte-transparent: Latin-1 for chars below 0x100)
-sys.stdout.buffer.write(transpiler.unparse(tree, _n_registry)[0].encode("utf-8"))
+sys.stdout.buffer.write(transpiler.unparse(tree, _n_registry, mod.__package__)[0].encode("utf-8"))
 """
 # transpile a source file (include files can't be imported on their own)
 TRANSPILE_SOURCE = """
 import importlib, pathlib, sys
 from nimic import transpiler
 from nimic.ntypesystem import _n_registry
-importlib.import_module(sys.argv[2])  # registers the types, as nimic.nimp does (a harness for include files)
+harness = importlib.import_module(sys.argv[2])  # registers the types, as nimic.nimp does (a harness for include files)
 tree = transpiler.parse(pathlib.Path(sys.argv[1]).read_text())
 transpiler.check_private_names(tree)
-sys.stdout.buffer.write(transpiler.unparse(tree, _n_registry)[0].encode("utf-8"))
+# an include file's code runs in its includer's namespace: its relative imports are the includer's
+path = str(pathlib.Path(sys.argv[1]).resolve())
+includer = next((sys.modules.get(m._n_included_by) for m in list(sys.modules.values())
+                 if getattr(m, "__file__", None) == path and hasattr(m, "_n_included_by")), harness)
+sys.stdout.buffer.write(transpiler.unparse(tree, _n_registry, includer.__package__)[0].encode("utf-8"))
 """
 NTRANSPILE = "import importlib, sys; from nimic import ntranspile; ntranspile([importlib.import_module(sys.argv[1])])"
 

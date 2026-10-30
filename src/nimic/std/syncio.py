@@ -10,7 +10,7 @@ import ctypes
 import os
 from enum import auto
 from nimic.ntypes import File, NIntEnum, ufcs, int64
-from nimic.ntypesystem import string, _n_encode_str, _n_decode_bytes, _n_os_arg
+from nimic.ntypesystem import string, _n_encode_str, _n_decode_bytes, _n_os_arg, _n_file_mode
 
 
 
@@ -40,13 +40,10 @@ fspEnd = FileSeekPos.fspEnd
 
 def open(*args):
     """Nim-style open — supports both open(path, mode) and open(f, path, mode)."""
-    _binary_map = {"w": "wb", "a": "ab", "r+": "r+b", "w+": "w+b", "r": "rb"}
     if len(args) >= 2 and isinstance(args[0], File):
         f = args[0]
         filename = _n_os_arg(args[1])
-        raw_mode = args[2] if len(args) > 2 else "r"
-        mode = str(raw_mode.value if hasattr(raw_mode, "value") else raw_mode)
-        actual_mode = _binary_map.get(mode, mode)
+        actual_mode = _n_file_mode(args[2] if len(args) > 2 else "r")
         try:
             handle = builtins.open(filename, actual_mode)
             f._n_handle = handle
@@ -57,10 +54,7 @@ def open(*args):
             return False
     elif len(args) >= 1:
         path = _n_os_arg(args[0])
-        raw_mode = args[1] if len(args) > 1 else "r"
-        mode = str(raw_mode.value if hasattr(raw_mode, "value") else raw_mode)
-        actual_mode = _binary_map.get(mode, mode)
-        handle = builtins.open(path, actual_mode)
+        handle = builtins.open(path, _n_file_mode(args[1] if len(args) > 1 else "r"))
         return File(handle)
 
 

@@ -14,9 +14,11 @@ Contents:
   Re-exports           — all core types and decorators from ntypesystem.
   Type aliases         — SomeInteger, SomeFloat, BiggestInt, BiggestFloat,
                          untyped, u64, i64, f64.
-  Compiler hints       — const, let, var, block, export, alias
+  Compiler hints       — const, let, var, block, alias
                          Implemented as contextlib.nullcontext() (no-ops in
                          Python, transpiled to Nim scope qualifiers).
+  Imports and exports  — importFrom, importExcept, export, exportFrom, exportExcept,
+                         overloads (from nimic.nsystem).
   Reference types      — ref, ptr, mut (SomeRefClass instances)
                          The @ operator returns identity; transpiled to
                          Nim ref/ptr/var annotations.
@@ -95,7 +97,10 @@ from nimic.nsystem import (
     include,
     importExcept,
     importFrom,
+    export,
+    exportFrom,
     exportExcept,
+    overloads,
     slurp,
     staticRead,
     hook,
@@ -251,7 +256,6 @@ let = contextlib.nullcontext()
 var = contextlib.nullcontext()
 Type = contextlib.nullcontext()
 template_inline = contextlib.nullcontext()
-export = contextlib.nullcontext()
 alias = contextlib.nullcontext()
 
 

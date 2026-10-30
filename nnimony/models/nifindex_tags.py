@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from .tags import *
+from .tags import TagEnum
 
 
 class NifIndexKind(NStrEnum):

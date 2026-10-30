@@ -21,15 +21,15 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-from .options import *
-from .msgs import *
-from .platform import *
-from .idents import *
-from .nimlexbase import *
-from .llstream import *
-from .wordrecg import *
-from .lineinfos import *
-from .pathutils import *
+from .options import ConfigRef, IdeCmd, newConfigRef, TGlobalOption
+from .msgs import fileInfoIdx, internalError, lintReport, message, msgWriteln, newLineInfo
+from . import platform
+from .idents import getIdent, IdentCache, newIdentCache, PIdent
+from .nimlexbase import BACKSPACE, BEL, CR, ESC, FF, LF, TBaseLexer, VT
+from .llstream import llStreamOpen, PLLStream
+from .wordrecg import oprHigh, oprLow
+from .lineinfos import FileIndex, TLineInfo, TMsgKind, trackPosInvalidFileIdx
+from .pathutils import AbsoluteFile
 from . import msgs        # qualified: msgs.message
 from . import nimlexbase  # qualified: nimlexbase.EndOfFile
 

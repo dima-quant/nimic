@@ -28,7 +28,12 @@ from __future__ import annotations
 from nimic.ntypes import *
 
 from nimic.std.tables import *
-from .nifpools import *
+from .nifpools import (
+    add, addIntLit, appendLineInfo, beginRead, buildTree, charToken, childCursor, createTokenBuf, Cursor, cursorTagId,
+    dotToken, endRead, ErrT, getKeyId, getOrIncl, globalTags, identToken, inc, info, int28Token, intVal, kind, KindBits,
+    len, NifKind, NifToken, NoNifLineInfo, parseFromBuffer, Pool, pool, rawLineInfo, registerTag, soperand, StrId,
+    strId, strLitToken, symdefToken, SymId, symId, syms, symToken, tagId, tagLitToken, tags, TokenBuf, toString,
+    uintVal, uoperand)
 from . import nifpools
 # `except`: the frontend went all-NifLineInfo; the classic side keeps speaking
 # PackedLineInfo, so nifpools' same-name/same-params variants must not leak
@@ -36,10 +41,9 @@ from . import nifpools
 # same-name const of a different type — either would be ambiguous or wrong for
 # ast2nif). The classic replacements are defined below / come from lineinfos.
 exportExcept(nifpools, "info", "NoLineInfo")
-from .lineinfos import *
+from .lineinfos import isValid, LineInfoManager, pack, PackedLineInfo, unpack
 from . import lineinfos
-with export:
-    lineinfos
+export(lineinfos)
 
 importFrom(".nifreader", "Reader", "ExpandedToken", "decodeStr")
 
@@ -329,6 +333,9 @@ def open(filename: string) -> Stream:
 if comptime(__name__ == "__main__"):
     from nimic.std.formatfloat import *
     importFrom("nimic.std.os", "getTempDir", "removeFile")
+    from . import bitabs
+    # Nim overloads lineinfos' memSize and bitabs' (nifpools exports nifcore, which exports bitabs)
+    memSize = overloads(lineinfos.memSize, bitabs.memSize)
 
     def _testStream():
         # a small .nif file under getTempDir(), read back token by token

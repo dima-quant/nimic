@@ -18,7 +18,7 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-from .llstream import *
+from .llstream import llStreamOpen, PLLStream
 
 from nimic.std.strutils import *
 

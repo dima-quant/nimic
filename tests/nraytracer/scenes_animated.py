@@ -10,12 +10,12 @@ from nimic.ntypes import *
 
 from math import *
 # Internal
-from hittables import *
-from materials import *
-from cameras import *
-from core import *
-from primitives import *
-from sampling import *
+from hittables import Scene, sphere
+from materials import dielectric, lambertian, metal
+from cameras import Camera, camera
+from core import Material, material
+from primitives import Attenuation, attenuation, Degrees, point3, Radians, vec3
+from sampling import random, Rng
 
 # Animated scene from book 1
 # ------------------------------------------------------------------------

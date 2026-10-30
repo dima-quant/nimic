@@ -8,14 +8,9 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-from hittables_lists import *
-from hittables_variants import *
-from spheres import *
-from moving_spheres import *
 
 import hittables_lists, hittables_variants, spheres, moving_spheres
-with export:
-  hittables_lists, hittables_variants, spheres, moving_spheres
+export(hittables_lists, hittables_variants, spheres, moving_spheres)
 
 # Trace of Radiance
 # Copyright (c) 2020 Mamy André-Ratsimbazafy

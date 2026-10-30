@@ -12,9 +12,13 @@ from nimic.ntypes import *
 
 from nimic.std.formatfloat import *
 
-from .bitabs import *
-from .nifreader import *
-from .nifpools import *
+from . import bitabs
+from . import nifreader
+from .nifpools import (
+    addCharLit, addFloatLit, addIntLit, addUIntLit, beginRead, buildTree, createTokenBuf, Cursor, cursorTagId, endRead,
+    ErrT, floatVal, globalTags, hasMore, inc, into, intVal, isCharLit, isDotToken, isFloatLit, isIdent, isIntLit,
+    isStringLit, isSymbol, isSymbolDef, isTagLit, isUIntLit, NoLineInfo, parseFromBuffer, pool, registerTag, strId,
+    symId, symString, TagId, tags, toString, uintVal, uoperand)
 
 if comptime(defined("nimony")):
     from nimic.std.sha1 import *

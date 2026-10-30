@@ -69,16 +69,12 @@ else:
 
 from nimic.std.assertions import *
 from nimic.std.hashes import *
-from .bitabs import *
-from .lineinfos import *
-from .nifroles import *
+from .bitabs import BiTable, ensureIndexed, getKeyId, getOrIncl, initBiTable, len
+from .lineinfos import FileId, isValid, NoFile
 from . import bitabs, lineinfos, nifroles
-with export:
-    nifroles  # a `{.nifWrap.}` in a template body is resolved where it expands
-with export:
-    bitabs  # adapters touching pool.strings / tags need getOrIncl etc.
-with export:
-    lineinfos.FileId, lineinfos.NoFile, lineinfos.isValid, lineinfos.__eq__, lineinfos.hash
+export(nifroles)  # a `{.nifWrap.}` in a template body is resolved where it expands
+export(bitabs)  # adapters touching pool.strings / tags need getOrIncl etc.
+exportFrom(lineinfos, "FileId", "NoFile", "isValid", "==", "hash")
 
 
 class NifKind(NIntEnum):

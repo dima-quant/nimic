@@ -2002,14 +2002,14 @@ class TestNTypes(unittest.TestCase):
             self.assertIn("conversion", str(cm.exception))
         self.assertIn("float64(...)", str(cm.exception))  # the last one, f64(x.y)
 
-    def test_export_of_operator(self):
-        """`with export:` names another module's operator by its dunder: lineinfos.__eq__ is
-        lineinfos.`==` (Nim's `export lineinfos.`==``); other attributes keep their names."""
-        out = unparse(ast.parse("from nimic.ntypes import *\nfrom . import lineinfos\n"
-                                "with export:\n    lineinfos.FileId, lineinfos.__eq__, lineinfos.__str__, lineinfos.hash\n"
-                                "def f(a, b) -> bool:\n    return a.__eq__(b)\n"))[0]
-        self.assertIn("lineinfos.FileId, lineinfos.`==`, lineinfos.`$`, lineinfos.hash", out)
-        self.assertNotIn("a.`==`", out)  # outside `with export:` an attribute keeps its name
+    def test_export_transpiles(self):
+        """export(m1, m2) is Nim's `export m1, m2`; exportFrom(m, "a", "==") names symbols of a module, operators by
+        their Nim names: `export lineinfos.FileId, lineinfos.`==`` (rule:writeexport)."""
+        out = unparse(ast.parse("from nimic.ntypes import *\nfrom . import lineinfos, bitabs\n"
+                                "export(lineinfos, bitabs)\n"
+                                "exportFrom(lineinfos, 'FileId', '==', '$', 'hash')\n"))[0]
+        self.assertIn("export lineinfos, bitabs\n", out)
+        self.assertIn("export lineinfos.FileId, lineinfos.`==`, lineinfos.`$`, lineinfos.hash", out)
 
     def test_operator_decorator(self):
         """@operator("+!") gives a letter-named proc its Nim operator: Python calls it by name, the transpiler
@@ -3948,25 +3948,26 @@ class TestNTypes(unittest.TestCase):
     def test_source_checks_run_at_import(self):
         """The transpiler's source checks run when a nimic module runs, as the main program or imported, in every
         NIMIC_VALUECHECK mode: Python finds what transpiling would reject. rule:localname before the module runs;
-        rule:methodcall once its imports have run (before the next line, so before its main block), also for a
-        module with no line after its imports. The messages give the file and line."""
+        rule:methodcall and rule:import once its imports have run (before the next line, so before its main block),
+        also for a module with no line after its imports. The messages give the file and line."""
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         header = "# /// nimic\n#\n# ///\nfrom nimic.ntypes import *\n"
         files = {
             "sc_core.py": header + "class Buf(Object):\n    n: nint\ndef addThing(b: mut @ Buf, v: nint):\n    b.n += v\n",
             "sc_builder.py": header + "class Bld(Object):\n    n: nint\ndef addThing(b: mut @ Bld, v: nint):\n    b.n -= v\n",
-            "sc_free.py": header + "from sc_core import *\nfrom sc_builder import *\n"
+            "sc_free.py": header + "from sc_core import Buf\nfrom sc_builder import addThing\n"
                                    "if comptime(__name__ == '__main__'):\n    echo('ran')\n    addThing(Buf(), nint(1))\n",
             # a main block that imports (a module's tests) is no import: checked before it, imported too
-            "sc_tests.py": header + "from sc_core import *\nfrom sc_builder import *\n"
+            "sc_tests.py": header + "from sc_core import Buf\nfrom sc_builder import addThing\n"
                                     "def use(b):\n    addThing(b, nint(1))\n"
                                     "if comptime(__name__ == '__main__'):\n    from nimic.std.os import *\n"
                                     "    echo('ran')\n",
-            "sc_method.py": header + "from sc_core import *\nfrom sc_builder import *\n"
+            "sc_method.py": header + "from sc_core import Buf, addThing\nimport sc_builder\n"
                                      "if comptime(__name__ == '__main__'):\n    b = Buf()\n    b.addThing(nint(1))\n"
                                      "    echo(b.n)\n",
             # nothing after its imports
-            "sc_lib.py": header + "def use(b):\n    addThing(b, nint(1))\nfrom sc_core import *\nfrom sc_builder import *\n",
+            "sc_lib.py": header + "def use(b):\n    addThing(b, nint(1))\nfrom sc_core import Buf\n"
+                                  "from sc_builder import addThing\n",
             "sc_private.py": header + "_x = nint(1)\nx = nint(2)\necho('ran')\n",
         }
         with tempfile.TemporaryDirectory() as tmp:
@@ -3982,8 +3983,8 @@ class TestNTypes(unittest.TestCase):
             for mode in ("error", "off"):
                 free = run([os.path.join(tmp, "sc_free.py")], mode)
                 self.assertEqual((free.stdout, free.returncode != 0), ("", True), free.stderr)
-                self.assertIn(f"{os.path.join(tmp, 'sc_free.py')}:9: addThing(...) is a proc of sc_builder, "
-                              f"sc_core", free.stderr)
+                self.assertIn(f"{os.path.join(tmp, 'sc_free.py')}:6: hiddenoverload: addThing is imported from "
+                              f"sc_builder, and sc_core has a addThing too", free.stderr)
                 private = run([os.path.join(tmp, "sc_private.py")], mode)
                 self.assertEqual(private.stdout, "", private.stderr)
                 self.assertIn(f"{os.path.join(tmp, 'sc_private.py')}:5 [module]: _x and x are both defined",
@@ -3991,40 +3992,62 @@ class TestNTypes(unittest.TestCase):
             method = run([os.path.join(tmp, "sc_method.py")])
             self.assertEqual((method.returncode, method.stdout), (0, "1\n"), method.stderr)
             imported = run(["-c", "import nimic, sc_free"])
-            self.assertIn("sc_free.py:9: addThing(...)", imported.stderr)
+            self.assertIn("sc_free.py:6: hiddenoverload: addThing", imported.stderr)
             lib = run(["-c", "import nimic, sc_lib; print('imported')"])  # checked once it ran
             self.assertEqual(lib.stdout, "", lib.stderr)
-            self.assertIn("sc_lib.py:6: addThing(...)", lib.stderr)
+            self.assertIn("sc_lib.py:8: hiddenoverload: addThing", lib.stderr)
             for args in ([os.path.join(tmp, "sc_tests.py")], ["-c", "import sc_tests; print('imported')"],
                          ["-c", "import nimic, sc_tests; print('imported')"]):
                 tests = run(args)
                 self.assertEqual(tests.stdout, "", tests.stderr)
-                self.assertIn("sc_tests.py:8: addThing(...)", tests.stderr)
+                self.assertIn("sc_tests.py:6: hiddenoverload: addThing", tests.stderr)
 
-    def test_free_call_check_counts_only_nim_exports(self):
-        """rule:methodcall counts what Nim's import brings: a module's own procs and its exports. Python's star
-        import also brings what the module star-imported (nifcoreparse's `from .nifbuilder import *` brings
-        nifbuilder's `offset` to foreignmodules; Nim's nifcoreparse doesn't export nifbuilder). Such a leaked proc
-        is no overload: a free call Python binds to the one proc Nim sees passes. Reported: a free call Python binds
-        to the leaked proc while Nim sees another, and one where the module exports the other (`with export:`,
-        `exportExcept` unless it hides the name)."""
+    def test_import_checks(self):
+        """rule:import / rule:methodcall: Python binds one object per name, Nim overloads every proc of a name its
+        imports make visible (a module's own names and its exports: export, exportFrom, exportExcept; not what the
+        module only imports). Rejected at import: a star import of a nimic module (starimport), a name imported from
+        two modules (doubleimport), a name that another imported module also makes visible as a different routine
+        when the module calls it free, also one a core star import binds (hiddenoverload; a local of a proc named so
+        doesn't count), a name imported from a module that only imports it
+        (notexported), a plain def of an imported name (plaindef), a core star import rebinding an imported name
+        (importorder). Accepted: a leaked proc (no overload in Nim), a hidden one (exportExcept), a name imported
+        only for method syntax, a @dispatch extending the import, `overloads(...)`."""
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         header = "# /// nimic\n#\n# ///\nfrom nimic.ntypes import *\n"
-        main = "def use(b):\n    addThing(b, nint(1))\necho('ran')\n"
+        main = "def use(b):\n    return addThing(b, nint(1))\necho('ran')\n"
         files = {
-            "nx_core.py": header + "class Buf(Object):\n    n: nint\ndef addThing(b: mut @ Buf, v: nint):\n    b.n += v\n",
-            "nx_builder.py": header + "class Bld(Object):\n    n: nint\ndef addThing(b: mut @ Bld, v: nint):\n    b.n -= v\n",
-            "nx_parse.py": header + "from nx_builder import *\ndef parseThing():\n    pass\n",
-            "nx_parse_export.py": header + "from nx_builder import *\nimport nx_builder\nwith export:\n    nx_builder\n",
-            "nx_parse_except.py": header + "from nx_builder import *\nimport nx_builder\n"
-                                           "exportExcept(nx_builder, 'addThing')\n",
-            "nx_parse_name.py": header + "from nx_builder import *\nimport nx_builder\n"
-                                         "with export:\n    nx_builder.addThing\n",
-            "nx_leak.py": header + "from nx_parse import *\nfrom nx_core import *\n" + main,
-            "nx_leak_binds.py": header + "from nx_core import *\nfrom nx_parse import *\n" + main,
-            "nx_except.py": header + "from nx_parse_except import *\nfrom nx_core import *\n" + main,
-            "nx_export.py": header + "from nx_parse_export import *\nfrom nx_core import *\n" + main,
-            "nx_name.py": header + "from nx_parse_name import *\nfrom nx_core import *\n" + main,
+            "nx_core.py": header + "class Buf(Object):\n    n: nint\n"
+                                   "def addThing(b: mut @ Buf, v: nint) -> nint:\n    return nint(1)\n"
+                                   "def open(b: Buf) -> nint:\n    return nint(0)\n",
+            "nx_builder.py": header + "class Bld(Object):\n    n: nint\n"
+                                      "def addThing(b: mut @ Bld, v: nint) -> nint:\n    return nint(2)\n",
+            "nx_parse.py": header + "from nx_builder import Bld, addThing\ndef parseThing():\n    pass\n",
+            "nx_parse_export.py": header + "import nx_builder\nexport(nx_builder)\n",
+            "nx_parse_except.py": header + "import nx_builder\nexportExcept(nx_builder, 'addThing')\n",
+            "nx_parse_name.py": header + "import nx_builder\nexportFrom(nx_builder, 'addThing')\n",
+            "nx_leak.py": header + "from nx_parse import parseThing\nfrom nx_core import addThing\n" + main,
+            "nx_except.py": header + "from nx_parse_except import Bld\nfrom nx_core import addThing\n" + main,
+            "nx_method.py": header + "from nx_core import Buf, addThing\nimport nx_builder\n"
+                                     "echo(Buf().addThing(nint(1)), nx_builder.Bld().addThing(nint(1)))\n",
+            "nx_dispatch.py": header + "from nx_core import addThing\nimport nx_builder\n@dispatch\n"
+                                       "def addThing(b: nx_builder.Bld, v: nint) -> nint:\n    return nint(3)\n" + main,
+            "nx_overloads.py": header + "import nx_core, nx_builder\n"
+                                        "addThing = overloads(nx_core.addThing, nx_builder.addThing)\n"
+                                        "echo(addThing(nx_core.Buf(), nint(1)), addThing(nx_builder.Bld(), nint(1)))\n",
+            "nx_export.py": header + "from nx_parse_export import Bld\nfrom nx_core import addThing\n" + main,
+            "nx_name.py": header + "import nx_parse_name\nfrom nx_core import addThing\n" + main,
+            "nx_notexported.py": header + "from nx_parse import addThing\n" + main,
+            "nx_star.py": header + "from nx_core import *\n" + main,
+            "nx_double.py": header + "from nx_core import addThing\nfrom nx_builder import addThing\n" + main,
+            "nx_plaindef.py": header + "from nx_core import addThing\n"
+                                       "def addThing(b, v: nint) -> nint:\n    return nint(4)\n",
+            "nx_order.py": header + "from nx_core import open\nfrom nimic.std.syncio import *\necho('ran')\n",
+            # syncio's open, called free, while nx_core (imported for Buf) has an open too
+            "nx_coreshadow.py": header + "from nimic.std.syncio import *\nfrom nx_core import Buf\n"
+                                         "def f(p):\n    def g(open):\n        return open\n    return open(p)\n"
+                                         "echo('ran')\n",
+            "nx_corelocal.py": header + "from nimic.std.syncio import *\nfrom nx_core import Buf\n"
+                                        "def f(open):\n    return open(1)\necho('ran')\n",
         }
         with tempfile.TemporaryDirectory() as tmp:
             for name, text in files.items():
@@ -4037,17 +4060,26 @@ class TestNTypes(unittest.TestCase):
                 return subprocess.run([sys.executable, os.path.join(tmp, name)], capture_output=True, text=True,
                                       cwd=tmp, env=env)
 
-            for name in ("nx_leak.py", "nx_except.py"):
+            for name, out in (("nx_leak.py", "ran\n"), ("nx_except.py", "ran\n"), ("nx_method.py", "12\n"),
+                              ("nx_corelocal.py", "ran\n"),
+                              ("nx_dispatch.py", "ran\n"), ("nx_overloads.py", "12\n")):
                 passed = run(name)
-                self.assertEqual((passed.returncode, passed.stdout), (0, "ran\n"), passed.stderr)
-            leak = run("nx_leak_binds.py")
-            self.assertEqual(leak.stdout, "", leak.stderr)
-            self.assertIn("nx_leak_binds.py:8: addThing(...) is a proc of nx_core; Python calls nx_builder's, which "
-                          "a star import leaks (Nim's import doesn't export it): write b.addThing(...)", leak.stderr)
-            for name in ("nx_export.py", "nx_name.py"):
-                exported = run(name)
-                self.assertEqual(exported.stdout, "", exported.stderr)
-                self.assertIn(f"{name}:8: addThing(...) is a proc of nx_builder, nx_core; Nim picks", exported.stderr)
+                self.assertEqual((passed.returncode, passed.stdout), (0, out), f"{name}: {passed.stderr}")
+            for name, message in (
+                    ("nx_export.py", "nx_export.py:6: hiddenoverload: addThing is imported from nx_core, and "
+                                     "nx_parse_export has a addThing too"),
+                    ("nx_name.py", "nx_name.py:6: hiddenoverload: addThing is imported from nx_core, and "
+                                   "nx_parse_name has a addThing too"),
+                    ("nx_notexported.py", "nx_notexported.py:5: notexported: nx_parse only imports addThing"),
+                    ("nx_star.py", "nx_star.py:5: starimport: `from nx_core import *`"),
+                    ("nx_double.py", "nx_double.py:6: doubleimport: addThing is imported from nx_builder, nx_core"),
+                    ("nx_plaindef.py", "nx_plaindef.py:5: plaindef: the module defines a plain addThing"),
+                    ("nx_order.py", "nx_order.py:6: importorder: `from nimic.std.syncio import *` rebinds open"),
+                    ("nx_coreshadow.py", "nx_coreshadow.py:10: hiddenoverload: open is nimic.std.syncio's (its star "
+                                         "import), and nx_core has a open too")):
+                failed = run(name)
+                self.assertEqual(failed.stdout, "", f"{name}: {failed.stderr}")
+                self.assertIn(message, failed.stderr, name)
 
     def test_dispatch_unannotated_int_default_is_nint(self):
         """An unannotated default `cap = 16` has the literal's Nim type, `int` (nifpools' `createTokenBuf(cap =
@@ -6089,8 +6121,8 @@ class TestNTypes(unittest.TestCase):
 
     def test_import_module_of_nimic_package(self):
         """`from nimic.std import memfiles` (a std module used qualified, memfiles.open) is `import std/memfiles`,
-        once even next to `from nimic.std.memfiles import *`; `as` keeps its name; `from . import m` (a sibling)
-        emits nothing, as before."""
+        once even next to `from nimic.std.memfiles import *`; `as` keeps its name; `from . import m` (a sibling) is
+        `import m`."""
         out = unparse(ast.parse("from nimic.ntypes import *\n"
                                 "from nimic.std.memfiles import *\n"
                                 "from nimic.std import memfiles\n"
@@ -6098,7 +6130,7 @@ class TestNTypes(unittest.TestCase):
                                 "from . import msgs\n"))[0]
         self.assertEqual(out.count("import std/memfiles"), 1)
         self.assertIn("import std/os as nos", out)
-        self.assertNotIn("msgs", out)
+        self.assertIn("import msgs", out.splitlines())
         self.assertNotIn("import std\n", out)
 
     def test_import_module_of_relative_package(self):
@@ -6109,13 +6141,111 @@ class TestNTypes(unittest.TestCase):
                                 "from ..models.leng_tags import *\n"
                                 "from ..models import leng_tags, tags\n"
                                 "from ..options import *\n"
-                                "with export:\n"
-                                "    leng_tags\n"))[0]
+                                "export(leng_tags)\n"))[0]
         self.assertEqual(out.count("import ../models/leng_tags"), 1)
         self.assertIn("import ../models/tags\n", out)
         self.assertNotIn("import ../models\n", out)
         self.assertIn("import ../options", out)
-        self.assertIn("export\n  leng_tags", out)
+        self.assertIn("export leng_tags", out)
+
+    def test_relative_name_import(self):
+        """A relative name import `from .nifcore import TokenBuf, Cursor` is a full `import nifcore` (rule:import);
+        unparse()'s `package` tells it from a module import of a package's modules (`from ..models import tags`),
+        and `from . import nifreader` is `import nifreader`. Each path is imported once."""
+        out = unparse(ast.parse("from nimic.ntypes import *\n"
+                                "from .nifcore import TokenBuf, Cursor\n"
+                                "from . import nifcore, nifreader\n"
+                                "from .nifcore import *\n"
+                                "from ..models import tags\n"
+                                "from ..models.tags import TagEnum\n"), package="nnimony.lib")[0]
+        lines = out.splitlines()
+        self.assertEqual(lines.count("import nifcore"), 1)
+        self.assertIn("import nifreader", lines)
+        self.assertEqual(lines.count("import ../models/tags"), 1)
+        self.assertNotIn("TokenBuf", out)
+
+    def test_overloads(self):
+        """`addIdent = overloads(nifcore.addIdent, nifbuilder.addIdent)`: Nim overloads plain procs of one name of
+        two imported modules, Python binds one per name; the set resolves by the argument types (rule:overloads)
+        and the assignment emits nothing. The procs must share their name."""
+        modules = []
+        for module_name, cls_name in (("_n_ov_core", "Buf"), ("_n_ov_builder", "Bld")):
+            module = types.ModuleType(module_name)
+            exec(textwrap.dedent(f"""
+                from __future__ import annotations
+                from nimic.ntypes import *
+                class {cls_name}(Object):
+                    n: nint
+                def ovAdd(b: mut @ {cls_name}, v: nint) -> string:
+                    return string("{module_name}")
+                def other(b: {cls_name}) -> nint:
+                    return nint(0)
+                """), module.__dict__)
+            modules.append(module)
+        core, builder = modules
+        both = overloads(core.ovAdd, builder.ovAdd)
+        self.assertEqual((both(core.Buf(), nint(1)), both(builder.Bld(), nint(2))), ("_n_ov_core", "_n_ov_builder"))
+        with self.assertRaisesRegex(TypeError, "procs of one name"):
+            overloads(core.ovAdd, builder.other)
+        with self.assertRaisesRegex(TypeError, "procs of one name"):
+            overloads(core.ovAdd)
+        out = unparse(ast.parse("from . import nifcore, nifbuilder\n"
+                                "addIdent = overloads(nifcore.addIdent, nifbuilder.addIdent)\n"), package="nnimony.lib")[0]
+        self.assertNotIn("overloads", out)
+        self.assertNotIn("addIdent", out)
+
+    def test_explicit_imports_tool(self):
+        """nnimony/tools/explicit_imports.py rewrites a module's star imports of nimic modules into name imports: the
+        names the module uses (code, annotations, method syntax of a nimic proc it binds) that each import binds, from
+        the module defining or re-exporting them; a name another star import only leaks comes from its defining
+        module; an import no name is used from stays a module import (Nim's import); core imports stay. It reports
+        the names two imports bind to different routines (Nim overloads them)."""
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        header = "# /// nimic\n#\n# ///\nfrom __future__ import annotations\nfrom nimic.ntypes import *\n"
+        files = {
+            "__init__.py": "",
+            "ea.py": header + "class A(Object):\n    n: nint\ndef fa(x: A) -> nint:\n    return x.n\n"
+                              "def shared(x: A) -> nint:\n    return nint(1)\nunused = nint(0)\n",
+            "eb.py": header + "from .ea import *\nclass B(Object):\n    n: nint\n"
+                              "def fb(x: B) -> nint:\n    return x.n\ndef shared(x: B) -> nint:\n    return nint(2)\n",
+            "ec.py": header + "from .ea import *\nfrom .eb import *  # the b side\n"
+                              "def use(a: A, b: B) -> nint:\n    return fa(a) + b.fb() + b.shared()\n",
+            "ed.py": header + "from .eb import *\ndef use(b: B) -> nint:\n    return fa(b)\n",
+            "ee.py": header + "from .ea import *\nfrom nimic.std.os import *\ndef f() -> nint:\n    return nint(0)\n",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            os.mkdir(os.path.join(tmp, "eipkg"))
+            for name, text in files.items():
+                with open(os.path.join(tmp, "eipkg", name), "w") as f:
+                    f.write(text)
+            env = dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(root, "src"), root, tmp)))
+            script = ("import sys\nfrom nnimony.tools.explicit_imports import plan\n"
+                      "for m in sys.argv[1:]:\n    path, new, report = plan(m)\n"
+                      "    print('==', m)\n    print(new.split('from nimic.ntypes import *\\n', 1)[1].split('\\ndef')[0])\n"
+                      "    print('\\n'.join(report))\n")
+            run = subprocess.run([sys.executable, "-c", script, "eipkg.ec", "eipkg.ed", "eipkg.ee"],
+                                 capture_output=True, text=True, cwd=tmp, env=env)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            out = run.stdout
+            self.assertIn("== eipkg.ec\nfrom .ea import A, fa\nfrom .eb import B, fb, shared  # the b side\n", out)
+            self.assertIn("  ! shared: routines of eipkg.ea, eipkg.eb (Nim overloads them; Python binds eipkg.eb's)", out)
+            self.assertIn("== eipkg.ed\nfrom .eb import B\nfrom .ea import fa\n", out)
+            self.assertIn("  + fa: leaked by eipkg.eb; imported from eipkg.ea (an added Nim import)", out)
+            self.assertIn("== eipkg.ee\nfrom . import ea\nfrom nimic.std.os import *\n", out)
+
+    def test_file_open_takes_file_mode(self):
+        """`open(f, path, fmRead)` with syncio's FileMode opens the file like the mode's string "r": also through
+        File's own `open` method (the overload sets' method fallback reaches it, e.g. when a @dispatch `open` of
+        another module extends syncio's). It used to read str(FileMode.fmRead), no Python mode, and fail."""
+        from nimic.std.syncio import FileMode, fmRead
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "m.txt")
+            with builtins.open(path, "w") as f:
+                f.write("x")
+            for mode in (FileMode.fmRead, fmRead, "r"):
+                handle = File()
+                self.assertTrue(handle.open(path, mode), mode)
+                handle._n_handle.close()
 
     def test_import_module_alias(self):
         """`from . import nifreader as rd` (nifcoreparse's `import nifreader as rd`, used qualified: rd.next) is
@@ -6194,12 +6324,45 @@ class TestNTypes(unittest.TestCase):
 
     def test_export_except(self):
         """Nim's `export nifcore except createTokenBuf, pool` is exportExcept(nifcore, "createTokenBuf", "pool")
-        (rule:exportexcept; operators by their Nim names). In Python it only checks its argument is a module."""
+        (rule:exportexcept; operators by their Nim names). Its argument must be a module."""
         out = unparse(ast.parse("from . import nifcore\nexportExcept(nifcore, 'createTokenBuf', 'pool', '%')\n"))[0]
         self.assertIn("export nifcore except createTokenBuf, pool, `%`", out)
-        exportExcept(textwrap, "dedent")
+        namespace = {"__name__": "_n_ee_probe"}
         with self.assertRaisesRegex(TypeError, "is no module"):
-            exportExcept("textwrap", "dedent")
+            exec("exportExcept('textwrap', 'dedent')", {**namespace, "exportExcept": exportExcept})
+
+    def test_exports_reach_the_importers(self):
+        """export(m), exportFrom(m, "a") and exportExcept(m, "a") are Nim's re-exports, also in Python: the calling
+        module's importers can import the re-exported names from it (`from .nifcoreparse import TokenBuf`,
+        nifcoreparse's `export nifcore`) and reach them qualified (`nifcoreparse.TokenBuf`), through the module's
+        `__getattr__`, transitively. exportFrom forwards only its names, exportExcept all but its names, and a name
+        the module binds itself is its own. A name no export forwards is an ImportError, as in Python."""
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        header = "# /// nimic\n#\n# ///\nfrom nimic.ntypes import *\n"
+        files = {
+            "ex_core.py": header + "def a() -> nint:\n    return nint(1)\ndef b() -> nint:\n    return nint(2)\n"
+                                   "def c() -> nint:\n    return nint(3)\nK = nint(7)\n",
+            "ex_all.py": header + "import ex_core\nexport(ex_core)\ndef c() -> nint:\n    return nint(30)\n",
+            "ex_from.py": header + "import ex_core\nexportFrom(ex_core, 'a', 'K', '==')\n",
+            "ex_except.py": header + "import ex_core\nexportExcept(ex_core, 'b')\n",
+            "ex_chain.py": header + "import ex_all\nexport(ex_all)\n",
+            "ex_user.py": header + "from ex_all import a, b, c\nimport ex_all\necho(a(), b(), c(), ex_all.b())\n",
+            "ex_user_from.py": header + "from ex_from import a, K\nfrom ex_chain import b\necho(a(), K, b())\n",
+            "ex_user_except.py": header + "from ex_except import a, c\necho(a(), c())\n"
+                                          "for m, n in (('ex_from', 'b'), ('ex_except', 'b')):\n"
+                                          "    try:\n        exec(f'from {m} import {n}')\n"
+                                          "    except ImportError:\n        echo(m, ' hides ', n)\n",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, text in files.items():
+                with open(os.path.join(tmp, name), "w") as f:
+                    f.write(text)
+            env = dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(root, "src"), root, tmp)))
+            for name, out in (("ex_user.py", "12302\n"), ("ex_user_from.py", "172\n"),
+                              ("ex_user_except.py", "13\nex_from hides b\nex_except hides b\n")):
+                run = subprocess.run([sys.executable, os.path.join(tmp, name)], capture_output=True, text=True,
+                                     cwd=tmp, env=env)
+                self.assertEqual((run.returncode, run.stdout), (0, out), f"{name}: {run.stderr}")
 
     def test_strtabs_modes(self):
         """std/strtabs: keys compare by the table's mode (case / style insensitive)."""

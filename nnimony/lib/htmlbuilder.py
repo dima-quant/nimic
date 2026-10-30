@@ -17,7 +17,7 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-from .nifbuilder import *
+from .nifbuilder import addHeader, addKeyw, addStrLit, addTree, attachedToFile, endTree, extract, open
 from . import nifbuilder
 
 

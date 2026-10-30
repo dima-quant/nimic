@@ -665,12 +665,12 @@ def importFrom(module: str, *names: str) -> None:
     """Nim: from m import a, b — binds only `names` of `module` (relative to the calling module's package
     for a leading dot) in the caller's namespace; operator names have no Python binding. Transpiles to
     `from m import a, b` (rule:importfrom). A name can be a member of an enum the module binds (Nim's
-    `from vfs import FileWriteMode, AlwaysWrite`: a non-pure enum's members are symbols of its module). Without
-    names it is `from m import nil`: it binds the module's name, for qualified use (`m.a`) only."""
+    `from vfs import FileWriteMode, AlwaysWrite`: a non-pure enum's members are symbols of its module). It also binds
+    the module's name: Nim's `from m import a` makes `m.b` valid too (nifindexes' `nifcoreparse.parse(...)`). Without
+    names it is `from m import nil`: only the module's name, for qualified use (`m.a`)."""
     namespace = sys._getframe(1).f_globals
     mod = _importlib.import_module(module, namespace.get("__package__") or None)
-    if not names:
-        namespace[module.rsplit(".", 1)[-1]] = mod
+    namespace[module.rsplit(".", 1)[-1]] = mod
     for n in names:
         if n.isidentifier():
             namespace[n] = getattr(mod, n) if hasattr(mod, n) else _n_enum_member(mod, n)
@@ -688,15 +688,71 @@ def _n_enum_member(mod: _types.ModuleType, name: str) -> _enum.Enum:
     return next(iter(members.values()))
 
 
+class _NExports:
+    """A module's re-exports (export, exportFrom, exportExcept), installed as its PEP 562 `__getattr__`: a name the
+    module doesn't bind is looked up in the modules it re-exports, in the order of the calls, so its importers'
+    `from .nifcoreparse import TokenBuf` finds nifcore's (Nim's `export nifcore`). A name the module binds itself
+    is its own (Python looks there first), as Nim prefers a module's own symbol."""
+
+    def __init__(self, module_name: str):
+        self._n_module = module_name
+        self._n_entries = []  # (module, names or None for all, hidden names)
+
+    def __call__(self, name: str) -> object:
+        for module, names, hidden in self._n_entries:
+            if (names is None or name in names) and name not in hidden and hasattr(module, name):
+                return getattr(module, name)
+        raise AttributeError(f"module {self._n_module!r} has no attribute {name!r}")
+
+
+def _n_add_export(namespace: dict, module: object, names, hidden, call: str) -> None:
+    """Records a re-export of `module` in the calling module's namespace (its `__getattr__`)."""
+    if not isinstance(module, _types.ModuleType):
+        raise TypeError(f"{call}: {module!r} is no module (import it: `from . import m`)")
+    exports = namespace.get("__getattr__")
+    if not isinstance(exports, _NExports):
+        exports = namespace["__getattr__"] = _NExports(namespace.get("__name__", "?"))
+    exports._n_entries.append((module, names, hidden))
+
+
+def export(*modules: _types.ModuleType) -> None:
+    """Nim: export m1, m2 — re-exports the imported modules (rule:writeexport): the calling module's importers
+    can import their names from it (`from .nifcoreparse import TokenBuf`, nifcoreparse's `export nifcore`), and
+    `nifcoreparse.TokenBuf` works. Transpiles to `export m1, m2`. A module only: name a symbol with exportFrom."""
+    namespace = sys._getframe(1).f_globals
+    for module in modules:
+        _n_add_export(namespace, module, None, frozenset(), "export")
+
+
+def exportFrom(module: _types.ModuleType, *names: str) -> None:
+    """Nim: export m.a, m.b — re-exports these names of the imported module `m` (operators by their Nim names:
+    "==", which in Python come with their class). Transpiles to `export m.a, m.b` (rule:writeexport)."""
+    _n_add_export(sys._getframe(1).f_globals, module, frozenset(n for n in names if n.isidentifier()),
+                  frozenset(), "exportFrom")
+
+
 def exportExcept(module: _types.ModuleType, *names: str) -> None:
     """Nim: export m except a, b — re-exports the imported module `m` except `names` (operators by their Nim
-    names, as importExcept). Transpiles to `export m except a, b` (rule:exportexcept). Python's star import of
-    the calling module gives its importers all of its names, as `with export:` does: the hidden names stay visible
-    to them, unless the calling module defines them itself (nifpools' createTokenBuf). The call takes the module
-    and runs in the calling module, so it can later hide them from Python importers too (an `__all__`); for now
-    it only checks that `m` is a module."""
-    if not isinstance(module, _types.ModuleType):
-        raise TypeError(f"exportExcept: {module!r} is no module (import it: `from . import m`)")
+    names, as importExcept). Transpiles to `export m except a, b` (rule:exportexcept). The hidden names are not
+    forwarded to the calling module's importers; a name the calling module defines itself is its own
+    (nifpools' createTokenBuf)."""
+    _n_add_export(sys._getframe(1).f_globals, module, None, frozenset(names), "exportExcept")
+
+
+def overloads(*procs: object) -> object:
+    """Nim overloads the procs of one name that two imported modules define (nifcore's `addIdent(b: var TokenBuf)`,
+    nifbuilder's `addIdent(b: var Builder)`); Python binds one per name. `addIdent = overloads(nifcore.addIdent,
+    nifbuilder.addIdent)` binds a set over both, resolved by the argument types (rule:overloads: the assignment
+    emits nothing, Nim imports both modules). The procs share their Nim name; a plain proc needs annotations for
+    all its parameters, as @dispatch does."""
+    names = {getattr(p, "__name__", None) for p in procs}
+    if len(procs) < 2 or len(names) != 1 or not all(callable(p) for p in procs):
+        raise TypeError(f"overloads: needs two or more procs of one name, got {procs!r}")
+    result = None
+    for proc in procs:
+        overload_set = proc if isinstance(proc, _ntypesystem._DispatchedCallable) else _ntypesystem.dispatch(proc)
+        result = result or overload_set
+    return result  # the @dispatch sets of a name are one set (rule:overloads)
 
 
 _n_hooks = ("copy", "sink", "destroy", "wasMoved", "dup", "trace")

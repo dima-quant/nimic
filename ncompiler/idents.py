@@ -5,7 +5,7 @@ from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std.hashes import *
 
-from .wordrecg import *
+from .wordrecg import TSpecialWord
 
 if comptime(defined("nimPreviewSlimSystem")):
     from nimic.std.assertions import *

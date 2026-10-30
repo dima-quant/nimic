@@ -4,7 +4,7 @@
 from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std.strutils import *
-from .nodekinds import *
+from .nodekinds import TNodeKind
 
 #
 #

@@ -11,7 +11,9 @@
 from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std.assertions import *
-from .nifcore import *
+from .nifcore import (
+    beginRead, childCursor, Cursor, cursorIsNil, cursorTagId, endRead, hasMore, kind, NifKind, skip, strVal, tagName,
+    tags)
 
 
 @dispatch
@@ -90,7 +92,7 @@ def findLastChildKind(node: Cursor, kind: NifKind) -> Cursor:
 
 
 if comptime(__name__ == "__main__"):
-    from .nifcoreparse import *
+    from .nifcoreparse import parseFromBuffer, toString
 
     with var:
         tree = parseFromBuffer(

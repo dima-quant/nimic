@@ -19,17 +19,15 @@ Formatting:
   rule:nonlocal -> suppress "nonlocal" declarations (Nim closures capture by reference)
 
 Scope qualifiers:
-  rule:dropwith -> drop "with" for "const", "let", "var", "export", "block", "static"; a block or static body
+  rule:dropwith -> drop "with" for "const", "let", "var", "block", "static"; a block or static body
     is a scope (its variables are not exported, also at module level)
-  rule:writeexport -> write no parentheses for "export" by assigning low priority
   rule:looptemplate -> for _ in c.loopInto(): body (a template running its code block in a loop) is the block
     call c.loopInto(): body, as `with` is for a template running its block once. A block parameter is one used
     as a bare statement; `return x` is the template's value
   rule:operator -> @operator("+!") def plus_bang(...) is proc `+!`*(...); its calls plus_bang(a, b) / a.plus_bang(b)
     are a +! b (Nim's precedence of the operator), plus_bang(a) is +!a, a bare plus_bang is `+!`; calls of
     @operator procs of other modules are found through the registry
-  rule:exportoperator -> an operator in `with export:` is named by its dunder: lineinfos.__eq__ -> lineinfos.`==`
-  feature:subscriptrename -> subscript can be renamed if in keywords_no_with context ("const", "let", "var", "export")
+  feature:subscriptrename -> subscript can be renamed if in keywords_no_with context ("const", "let", "var")
 
 Type system:
   rule:classdef -> interpret class definition as type (object or tuple, depending on base class)
@@ -173,8 +171,9 @@ Operators & renaming:
 
 Imports:
   rule:import -> write import from as import, drop from __future__ import ...; a relative `from ..models import m`
-    binds module names: import ../models/m (nothing if a star import already imports it); `from . import m as x`
-    is import m as x
+    and `from . import m` bind module names: import ../models/m, import m; `from . import m as x` is import m as x;
+    a relative name import `from .nifcore import TokenBuf` is import nifcore (unparse()'s `package` tells the two
+    apart); each path is imported once
   rule:nodoubleimport -> do not write import module if already imported (also `from nimic.std import m`, which
     is `import std/m` for qualified use, m.proc)
   rule:labeledblock -> with block("name"): ... is `block name:`; breakBlock("name") is `break name`
@@ -185,7 +184,12 @@ Imports:
     Python it binds only those names (a Python `from m import a` is a full `import m`); importFrom("..m")
     without names is `from ../m import nil` and binds only `m` (qualified use)
   rule:exportexcept -> exportExcept(nifcore, "pool", "%") transpiles as `export nifcore except pool, `%``; in
-    Python it only checks that nifcore is a module: importers still see the hidden names
+    Python the module's importers get nifcore's names from it except those (its `__getattr__`)
+  rule:writeexport -> export(nifcore, comesfrom) transpiles as `export nifcore, comesfrom`, exportFrom(lineinfos,
+    "FileId", "==") as `export lineinfos.FileId, lineinfos.`==``; in Python the module's importers get those
+    names from it (`from .nifcoreparse import TokenBuf`), through the module's `__getattr__`
+  rule:overloads -> a module-level `f = overloads(a.f, b.f)` emits nothing: Nim overloads the procs of one name
+    of two imported modules; in Python the name is bound to a set over both
   rule:include -> include("x", "y") transpiles as `include x, y`; in Python the files run in the includer's
     namespace
   rule:modulepath -> nimic.x.y import paths transpile as x/y, with module renaming (e.g. syncio -> io)
@@ -200,7 +204,7 @@ Memory & variables:
   rule:methodcall -> not a rewrite: check_imported_module() (before unparse(), with the imported module) rejects a free
     call f(x, ...) of a name that two star imports bind to different procs, one of them plain (Python calls the last
     import's); write x.f(...). A name the module defines a routine of (in its source, also later) is its own
-    overload. Only what Nim's import brings counts (a nimic module's own procs and its `with export:` /
+    overload. Only what Nim's import brings counts (a nimic module's own procs and its export / exportFrom /
     exportExcept, from its source); a free call Python binds to a proc a star import leaks while Nim sees another
     is rejected too. A nimic module is checked once its imports have run too (its main block doesn't count)
   rule:privatepragma -> a {.private.} docstring pragma keeps a proc (an operator, which can't take a _
@@ -250,6 +254,7 @@ import importlib.util
 import inspect
 import keyword as pykeyword
 import re
+import symtable
 import sys
 import types
 import warnings
@@ -257,6 +262,7 @@ from _ast import *
 from collections import deque
 from contextlib import contextmanager, nullcontext
 from enum import IntEnum, _simple_enum, auto
+from nimic.imports import is_overloads, module_level_routines, nim_exports, star_imports
 from nimic.valuecheck import is_nimic_file
 
 
@@ -945,7 +951,9 @@ class _Unparser(NodeVisitor):
     output source code for the abstract syntax; original formatting
     is disregarded."""
 
-    def __init__(self, *, type_registry: dict[str, ] | None = None, _avoid_backslashes=False):
+    def __init__(self, *, type_registry: dict[str, ] | None = None, package: str | None = None,
+                 _avoid_backslashes=False):
+        self._package = package  # rule:import: the transpiled module's package, to resolve `from .m import a`
         self._scope_depth = 0
         self._source = []
         self._precedences = {}
@@ -976,7 +984,7 @@ class _Unparser(NodeVisitor):
                         if getattr(tp, "_n_is_ref", False):
                             self._ref_types.add(name)
         self._no_bracket_subscript = ["ptr", "ref"]  # rule:dropbrackets
-        self._keywords_no_with = ["const", "let", "var", "export"]  # rule:dropwith
+        self._keywords_no_with = ["const", "let", "var"]  # rule:dropwith
         self._template_tail_returns = []  # rule:templatereturn, one set of Return ids per open template
         self._keywords_rename = {}
         self._keywords_no_with_colon = ["block", "static"]  # rule:dropwith
@@ -988,7 +996,6 @@ class _Unparser(NodeVisitor):
         self._case_assign_values = []  # rule:caseassign: ids of the assignments written as branch values
         self._block_nodes = []
         self._attribute_replace = {"copy": "", "contents": "[]"}
-        self._set_low_precedence = ["export"]
         self._class_def_methods = []
         self._type_suffixes = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"] #, "u", "f", "d"]
         self._suffix_types = {"i8": "int8", "i16": "int16", "i32": "int32", "i64": "int64", "u8": "uint8",
@@ -1297,6 +1304,19 @@ class _Unparser(NodeVisitor):
             names = ", ".join(n if n.isidentifier() else f"`{n}`" for n in (a.value for a in value.args[1:]))
             self.fill(f"export {value.args[0].id} except {names}")
             return
+        if (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id == "export" and value.args
+                and all(isinstance(a, Name) for a in value.args)):
+            # rule:writeexport -> export(nifcore, comesfrom) is `export nifcore, comesfrom`
+            self.fill("export " + ", ".join(a.id for a in value.args))
+            return
+        if (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id == "exportFrom"
+                and len(value.args) > 1 and isinstance(value.args[0], Name)
+                and all(isinstance(a, Constant) and isinstance(a.value, str) for a in value.args[1:])):
+            # rule:writeexport -> exportFrom(lineinfos, "FileId", "==") is `export lineinfos.FileId, lineinfos.`==``
+            module = value.args[0].id
+            self.fill("export " + ", ".join(f"{module}.{n}" if n.isidentifier() else f"{module}.`{n}`"
+                                            for n in (a.value for a in value.args[1:])))
+            return
         if (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id == "assign"
                 and len(value.args) == 2 and not value.keywords):
             # rule:assigncall -> assign(p.s(sec), x) is `p.s(sec) = x` (assignment through a var T result)
@@ -1306,11 +1326,7 @@ class _Unparser(NodeVisitor):
             self.traverse(value.args[1])
             return
         self.fill()
-        # rule:writeexport
-        if self._context_stack and self._context_stack[-1] in self._set_low_precedence:
-            self.set_precedence(_Precedence.NAMED_EXPR, node.value)
-        else:
-            self.set_precedence(_Precedence.YIELD, node.value)
+        self.set_precedence(_Precedence.YIELD, node.value)
         self.traverse(node.value)
 
     def visit_NamedExpr(self, node):
@@ -1352,6 +1368,28 @@ class _Unparser(NodeVisitor):
             return False
         return spec is not None and spec.submodule_search_locations is not None
 
+    def _import_once(self, path: str) -> None:
+        """rule:nodoubleimport -> `import path`, unless the module already imports it at its top level. In a `when`
+        branch the import is always written: another branch may import the same module."""
+        if self._indent or path not in self._import_paths:
+            if not self._indent:
+                self._import_paths.add(path)
+            self.fill("import " + path)
+
+    def _names_modules(self, node: ImportFrom) -> bool:
+        """Whether a relative `from .m import a, b` imports modules a, b of the package m (`from ..models import
+        leng_tags`), not names of the module m. Without the transpiled module's package, every name is a
+        module (rule:import)."""
+        if self._package is None:
+            return True
+        base = importlib.util.resolve_name("." * node.level + node.module, self._package)
+        try:
+            spec = importlib.util.find_spec(base)
+        except ModuleNotFoundError:
+            return False
+        return (spec is not None and spec.submodule_search_locations is not None
+                and all(importlib.util.find_spec(f"{base}.{a.name}") is not None for a in node.names))
+
     def visit_ImportFrom(self, node):
         # rule:import -> `from m import ...` is `import m` (a class comes with its methods, which are procs
         # in Nim); Nim's selective `from m import a` is importFrom("m", "a") (rule:importfrom)
@@ -1367,25 +1405,22 @@ class _Unparser(NodeVisitor):
                     self.fill("import " + path)
             return
         if node.level and node.names[0].name != "*":
-            # rule:import -> `from ..models import leng_tags` binds the module name (as `from . import m`):
-            # `import ../models/leng_tags`, unless a star import of it is already there; `from . import m as x`
-            # is `import m as x` (nifcoreparse's `import nifreader as rd`)
+            # rule:import -> `from ..models import leng_tags` and `from . import m` bind module names:
+            # `import ../models/leng_tags`, `import m`; `from . import m as x` is `import m as x` (nifcoreparse's
+            # `import nifreader as rd`). `from .nifcore import TokenBuf, Cursor` binds names of a module:
+            # `import nifcore` (a Python `from m import ...` is a full Nim import)
+            if node.module and not self._names_modules(node):
+                self._import_once(self._import_path(node.module, node.level))
+                return
             for alias in node.names:
                 name = f"{node.module}.{alias.name}" if node.module else alias.name
                 if alias.asname:
                     self.fill(f"import {self._import_path(name, node.level)} as {alias.asname}")
-                    continue
-                if not node.module:
-                    continue  # `from . import m`: the module's star import imports it
-                path = self._import_path(name, node.level)
-                if path not in self._import_paths:
-                    self._import_paths.add(path)
-                    self.fill("import " + path)
+                else:
+                    self._import_once(self._import_path(name, node.level))
             return
         if node.module and not node.module in ["__future__"]:
-            path = self._import_path(node.module, node.level or 0)
-            self._import_paths.add(path)
-            self.fill("import " + path)
+            self._import_once(self._import_path(node.module, node.level or 0))
         # self.write("import ")
         # self.interleave(lambda: self.write(", "), self.traverse, node.names)
 
@@ -1405,6 +1440,11 @@ class _Unparser(NodeVisitor):
                         self.traverse(body[-1].value)
 
     def visit_Assign(self, node):
+        if (isinstance(node.value, Call) and isinstance(node.value.func, Name) and node.value.func.id == "overloads"
+                and len(node.targets) == 1 and isinstance(node.targets[0], Name)):
+            # rule:overloads -> `addIdent = overloads(nifcore.addIdent, nifbuilder.addIdent)` emits nothing: Nim
+            # overloads the procs of the imported modules by itself
+            return
         if isinstance(node.value, Call) and isinstance(node.value.func, Name) and node.value.func.id == "string":
             # rule:strformat -> a name assigned string(...) is a string
             self._string_names[-1].update(t.id for t in node.targets if isinstance(t, Name))
@@ -2039,7 +2079,7 @@ class _Unparser(NodeVisitor):
         # rule:procvar: a def written directly in a `with var:` / `with let:` section (not one in a value block
         # the section's expression expands to) is a variable of the section
         section = self._context_stack[-1] if id(node) in self._proc_var_defs else None
-        if section not in ("var", "let", "const"):  # `with export:` defs are procs
+        if section not in ("var", "let", "const"):
             self.maybe_newline()
         decl_str = "proc"
         # rule:funcdefdecorated
@@ -2606,13 +2646,7 @@ class _Unparser(NodeVisitor):
                 self.write(":")
                 self._write_fstring_inner(node.format_spec, is_format_spec=True)
 
-    def _in_export(self) -> bool:
-        return bool(self._context_stack) and self._context_stack[-1] == "export"
-
     def visit_Name(self, node):
-        if self._in_export() and node.id in self.dunder_ops:
-            self.write(self.dunder_ops[node.id])  # rule:exportoperator -> with export: __eq__  is  export `==`
-            return
         if isinstance(node.ctx, Load) and node.id in self._operator_procs:
             self.write(f"`{self._operator_procs[node.id]}`")  # rule:operator: the proc as a value
             return
@@ -3057,10 +3091,7 @@ class _Unparser(NodeVisitor):
         # it or add an extra space to get 3 .__abs__().
         if isinstance(node.value, Constant) and isinstance(node.value.value, int):
             self.write(" ")
-        if self._in_export() and node.attr in self.dunder_ops:
-            # rule:exportoperator -> with export: lineinfos.__eq__  is  export lineinfos.`==`
-            self.write("." + self.dunder_ops[node.attr])
-        elif node.attr in self._attribute_replace:
+        if node.attr in self._attribute_replace:
             # rule:deref and rule:copy
             self.write(self._attribute_replace[node.attr])
         else:
@@ -3786,102 +3817,18 @@ def private_name_collisions(tree):
     return sorted(found)
 
 
-def _star_imports(tree, module) -> list:
-    """The modules the module's star imports bind (`from .nifcore import *`), those that ran."""
-    found = []
-    for node in walk(tree):
-        if not (isinstance(node, ImportFrom) and node.names[0].name == "*" and node.module != "__future__"):
-            continue
-        name = importlib.util.resolve_name("." * node.level + (node.module or ""), module.__package__ or "")
-        imported = sys.modules.get(name)
-        if imported is not None:  # else in a branch that didn't run (`if comptime(...)`): it binds nothing
-            found.append(imported)
-    return found
-
-
-_nimic_trees = {}  # path -> the source tree of a nimic module
-
-
-def _nimic_tree(module):
-    """The source tree of a nimic module (`# /// nimic` header); None for any other (nimic.ntypes, a std shim)."""
-    path = getattr(module, "__file__", None) or ""
-    if not (path.endswith(".py") and is_nimic_file(path)):
-        return None
-    if path not in _nimic_trees:
-        with open(path, encoding="utf-8") as f:
-            _nimic_trees[path] = parse(f.read(), path)
-    return _nimic_trees[path]
-
-
-def _module_exports(tree, module) -> tuple:
-    """What a nimic module re-exports, from its source: (modules, names, hidden). `with export: m` exports the
-    module bound to `m`, `with export: m.X` or `with export: X` (no module) the name X; `exportExcept(m, "a")`
-    exports `m` but hides `a` (hidden: module name -> names)."""
-    modules, names, hidden = [], set(), {}
-    for node in walk(tree):
-        if isinstance(node, With) and any(isinstance(i.context_expr, Name) and i.context_expr.id == "export"
-                                          for i in node.items):
-            for stmt in node.body:
-                if not isinstance(stmt, Expr):
-                    continue
-                for item in stmt.value.elts if isinstance(stmt.value, Tuple) else [stmt.value]:
-                    if isinstance(item, Attribute):
-                        names.add(item.attr)
-                    elif isinstance(item, Name):
-                        bound = getattr(module, item.id, None)
-                        modules.append(bound) if isinstance(bound, types.ModuleType) else names.add(item.id)
-        elif (isinstance(node, Call) and isinstance(node.func, Name) and node.func.id == "exportExcept"
-              and node.args and isinstance(node.args[0], Name)):
-            bound = getattr(module, node.args[0].id, None)
-            if isinstance(bound, types.ModuleType):
-                modules.append(bound)
-                hidden[bound.__name__] = {a.value for a in node.args[1:] if isinstance(a, Constant)}
-    return modules, names, hidden
-
-
-def _nim_exports(module, name: str, proc, seen: frozenset = frozenset()) -> bool:
-    """Whether Nim's `import module` brings `proc` as `name`: the module's own names and what it re-exports
-    (`with export:`, `exportExcept`), not what it only imports. Python's star import re-exports all of a module's
-    names, also those of its own star imports (nifcoreparse's `from .nifbuilder import *` brings nifbuilder's
-    `offset` to its importers; Nim's nifcoreparse doesn't export nifbuilder). A module that isn't nimic, and a name
-    the module doesn't take from one of its star imports (an `include`), count as exported."""
-    tree = _nimic_tree(module)
-    if tree is None or module.__name__ in seen or name in _module_level_routines(tree):
-        return True
-    if not any(getattr(m, name, None) is proc for m in _star_imports(tree, module)):
-        return True
-    modules, names, hidden = _module_exports(tree, module)
-    return name in names or any(
-        getattr(m, name, None) is proc and name not in hidden.get(m.__name__, ())
-        and _nim_exports(m, name, proc, seen | {module.__name__}) for m in modules)
-
-
 def _star_imported_procs(tree, module) -> tuple:
     """The procs the module's star imports bind: (visible, leaked), each name -> {id: proc}, one entry per
-    distinct proc. Leaked: a star import binds it in Python, but Nim's import doesn't bring it (_nim_exports).
-    Classes and non-callables are left out."""
+    distinct proc. Leaked: a star import binds it in Python, but Nim's import doesn't bring it
+    (nimic.imports.nim_exports). Classes and non-callables are left out."""
     visible, leaked = {}, {}
-    for imported in _star_imports(tree, module):
+    for imported in star_imports(tree, module):
         public = getattr(imported, "__all__", None) or [n for n in vars(imported) if not n.startswith("_")]
         for n in public:
             proc = getattr(imported, n, None)
             if callable(proc) and not isinstance(proc, type):
-                (visible if _nim_exports(imported, n, proc) else leaked).setdefault(n, {})[id(proc)] = proc
+                (visible if nim_exports(imported, n, proc) else leaked).setdefault(n, {})[id(proc)] = proc
     return visible, leaked
-
-
-def _module_level_routines(tree) -> set:
-    """The names of the routines a module defines at its top level, also in `when` branches and `with` blocks
-    (not in a proc or class): from the source, so they count before their `def` has run."""
-    names = set()
-    stack = list(tree.body) if isinstance(tree, Module) else [tree]
-    while stack:
-        node = stack.pop()
-        if isinstance(node, (FunctionDef, AsyncFunctionDef)):
-            names.add(node.name)
-        elif not isinstance(node, (ClassDef, Lambda)):
-            stack.extend(child for child in iter_child_nodes(node) if isinstance(child, ast.stmt))
-    return names
 
 
 def free_call_overlaps(tree, module) -> list:
@@ -3893,10 +3840,10 @@ def free_call_overlaps(tree, module) -> list:
     set; a plain proc a @dispatch set extends belongs to it), and that the module itself doesn't define. A name
     bound in the calling function shadows the proc. Only the star imports that ran count. The module's own
     routines come from its source: the import-time check runs before their `def`s (nimic.nsystem).
-    Only the procs Nim's imports bring count as overloads (_nim_exports); a free call is also reported when the
-    name is bound to a proc a star import leaks (not exported in Nim) while Nim calls another one."""
+    Only the procs Nim's imports bring count as overloads (nimic.imports.nim_exports); a free call is also
+    reported when the name is bound to a proc a star import leaks (not exported in Nim) while Nim calls another."""
     overlaps = {}
-    own = _module_level_routines(tree)
+    own = module_level_routines(tree)
     visible, leaked = _star_imported_procs(tree, module)
     for n, procs in visible.items():
         if n in own:
@@ -3941,6 +3888,178 @@ def free_call_overlaps(tree, module) -> list:
     return sorted(found)
 
 
+def _is_core_module(name: str) -> bool:
+    """The nimic core (nimic.ntypes, nimic.std.*): its imports stay star imports."""
+    return name == "nimic" or name.startswith("nimic.")
+
+
+def _is_routine(value) -> bool:
+    return callable(value) and not isinstance(value, (type, types.ModuleType))
+
+
+def _includes(binding, proc) -> bool:
+    """Whether a call of `binding` can reach `proc` (an overload set's `_n_includes` protocol)."""
+    return binding is proc or bool(getattr(binding, "_n_includes", lambda _: False)(proc))
+
+
+_import_checks_off = []  # set while migrating_imports() runs
+
+
+@contextmanager
+def migrating_imports():
+    """Turns import_problems() off while a tool imports modules that still have star imports of nimic modules
+    (nnimony/tools/explicit_imports.py rewrites them)."""
+    _import_checks_off.append(True)
+    try:
+        yield
+    finally:
+        _import_checks_off.pop()
+
+
+def _globals_read(tree) -> set:
+    """The global names the module's code reads, in any scope (a local of a proc doesn't count)."""
+    names = set()
+
+    def scan(table):
+        names.update(s.get_name() for s in table.get_symbols() if s.is_referenced() and s.is_global())
+        for child in table.get_children():
+            scan(child)
+
+    scan(symtable.symtable(ast.unparse(tree), "<module>", "exec"))
+    return names
+
+
+def import_problems(tree, module) -> list:
+    """rule:methodcall, rule:import: Python binds one object per name, Nim overloads every visible proc of a name.
+    Returns (line, message) for each import that makes Python's binding differ from Nim's:
+    - starimport: a star import of a nimic module that is not the core (Python's star import also brings what that
+      module imported; list the names: `from .nifcore import TokenBuf, Cursor`);
+    - doubleimport: one name imported from two modules as different objects (Python keeps the later);
+    - hiddenoverload: a name the module reads, imported from one module or bound by a core star import, while
+      another imported module makes a different routine of that name visible in Nim (nimic.imports.nim_exports):
+      Nim overloads them, Python calls the bound one;
+    - notexported: a name imported from a module that only imports it itself (Nim's import of that module doesn't
+      bring it);
+    - plaindef: a module-level plain `def f` while the module imports a routine `f` (Python replaces it, Nim
+      overloads it: write @dispatch);
+    - importorder: a core star import after a name import that it rebinds.
+    Only the imports that ran count; the module's own names and @dispatch overloads come from its source."""
+    if _import_checks_off:
+        return []
+    package = module.__package__ or ""
+    found, bindings, imported, core_stars = [], {}, [], []
+    for node in walk(tree):
+        if isinstance(node, ImportFrom) and node.module != "__future__":
+            base = importlib.util.resolve_name("." * node.level + (node.module or ""), package)
+            source = sys.modules.get(base)
+            if node.names[0].name == "*":
+                if source is None:
+                    continue
+                imported.append((source, None, frozenset()))
+                if _is_core_module(base):
+                    core_stars.append((node.lineno, source))
+                elif is_nimic_file(getattr(source, "__file__", None) or ""):
+                    found.append((node.lineno, f"starimport: `from {'.' * node.level}{node.module or ''} import *` "
+                                               f"also binds what {base} imported; list the names it uses"))
+                continue
+            for alias in node.names:
+                sub = sys.modules.get(f"{base}.{alias.name}")
+                if source is not None and hasattr(source, alias.name) and not isinstance(
+                        getattr(source, alias.name), types.ModuleType):
+                    if not nim_exports(source, alias.name, getattr(source, alias.name)):
+                        home = getattr(getattr(source, alias.name), "__module__", None) or "the module defining it"
+                        found.append((node.lineno, f"notexported: {base} only imports {alias.name}, Nim's import of it "
+                                                   f"doesn't bring it: import it from {home}"))
+                    imported.append((source, None, frozenset()))
+                    bindings.setdefault(alias.asname or alias.name, []).append(
+                        (node.lineno, source, getattr(source, alias.name), alias.name))
+                elif sub is not None:
+                    imported.append((sub, None, frozenset()))
+                    bindings.setdefault(alias.asname or alias.name, []).append((node.lineno, None, sub, alias.name))
+        elif isinstance(node, Import):
+            imported += [(sys.modules[a.name], None, frozenset()) for a in node.names if a.name in sys.modules]
+        elif (isinstance(node, Call) and isinstance(node.func, Name) and node.func.id in ("importFrom", "importExcept")
+              and node.args and all(isinstance(a, Constant) and isinstance(a.value, str) for a in node.args)):
+            source = sys.modules.get(importlib.util.resolve_name(node.args[0].value, package))
+            if source is None:
+                continue
+            names = frozenset(a.value for a in node.args[1:])
+            imported.append((source, names, frozenset()) if node.func.id == "importFrom"
+                            else (source, None, names))
+            for n in names if node.func.id == "importFrom" else ():
+                if n.isidentifier() and hasattr(source, n):
+                    bindings.setdefault(n, []).append((node.lineno, source, getattr(source, n), n))
+    own = module_level_routines(tree)
+    dispatched = {node.name for node in walk(tree) if isinstance(node, (FunctionDef, AsyncFunctionDef))
+                  and any(isinstance(f := d.func if isinstance(d, Call) else d, Name) and f.id in ("dispatch", "template")
+                          for d in node.decorator_list)}  # overload sets: they extend the imported proc
+    # names the module reads as values (free calls); a name it imports only for method syntax (`b.addIdent()`, which
+    # Object.__getattr__ resolves by the receiver) is no free call
+    read = {n.id for n in walk(tree) if isinstance(n, Name) and isinstance(n.ctx, Load)}
+    merged = {t.id for node in walk(tree) if is_overloads(node) for t in node.targets if isinstance(t, Name)}
+    for name, entries in bindings.items():
+        if name in merged:
+            continue  # `name = overloads(...)` binds the procs Nim overloads (rule:overloads)
+        objects = {id(obj): (line, src) for line, src, obj, _ in entries}
+        if len(objects) > 1:
+            line, _ = max(objects.values(), key=lambda e: e[0])
+            sources = ", ".join(sorted({src.__name__ for _, src, _, _ in entries if src is not None}))
+            found.append((line, f"doubleimport: {name} is imported from {sources} as different objects; Python keeps "
+                                f"the later: write `{name} = overloads(...)`, or call one of them qualified"))
+            continue
+        line, source, proc, attr = entries[-1]
+        if not _is_routine(proc) or name in dispatched:
+            continue  # the module's @dispatch extends the imported proc
+        if name in own:
+            found.append((line, f"plaindef: the module defines a plain {name} and imports {source.__name__}'s; Python "
+                                f"replaces it, Nim overloads them: write @dispatch"))
+            continue
+        if name not in read:
+            continue
+        others = sorted({m.__name__ for m, names, hidden in imported
+                         if m is not source and (names is None or attr in names) and attr not in hidden
+                         and _is_routine(q := getattr(m, attr, None)) and not _includes(proc, q)
+                         and nim_exports(m, attr, q)})
+        if others:
+            found.append((line, f"hiddenoverload: {name} is imported from {source.__name__}, and {', '.join(others)} "
+                                f"has a {name} too: Nim overloads them, Python calls {source.__name__}'s: write "
+                                f"`{name} = overloads(...)`, or a method call"))
+    # a name the core's star import binds, read by the module, while another import has a routine of that name too
+    first_read = {}
+
+    def reads(node, local):
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
+            a = node.args
+            local = local | {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs + [a.vararg, a.kwarg] if x}
+            local |= {n.id for n in walk(node) if isinstance(n, Name) and isinstance(n.ctx, Store)}
+        elif isinstance(node, Name) and isinstance(node.ctx, Load) and node.id not in local:
+            first_read[node.id] = min(first_read.get(node.id, node.lineno), node.lineno)
+        for child in iter_child_nodes(node):
+            reads(child, local)
+
+    reads(tree, frozenset())
+    for name in sorted(_globals_read(tree) - set(bindings) - merged - own - dispatched):
+        proc = vars(module).get(name)
+        cores = [core.__name__ for _, core in core_stars if getattr(core, name, None) is proc]
+        if not (_is_routine(proc) and cores):
+            continue
+        others = sorted({m.__name__ for m, names, hidden in imported
+                         if not _is_core_module(m.__name__) and (names is None or name in names) and name not in hidden
+                         and _is_routine(q := getattr(m, name, None)) and not _includes(proc, q)
+                         and nim_exports(m, name, q)})
+        if others:
+            found.append((first_read.get(name, 0), f"hiddenoverload: {name} is {cores[-1]}'s (its star import), and "
+                                                   f"{', '.join(others)} has a {name} too: Nim overloads them, Python "
+                                                   f"calls {cores[-1]}'s: write `{name} = overloads(...)`"))
+    for line, core in core_stars:
+        rebound = sorted(n for n, entries in bindings.items() if entries[0][0] < line and hasattr(core, n)
+                         and getattr(core, n) is not entries[-1][2])
+        if rebound:
+            found.append((line, f"importorder: `from {core.__name__} import *` rebinds {', '.join(rebound)}, imported "
+                                f"before it: put the core's star imports first"))
+    return sorted(found)
+
+
 def _located(file: str, line: int) -> str:
     return f"{file}:{line}" if file else f"line {line}"
 
@@ -3955,14 +4074,23 @@ def check_private_names(ast_obj, file: str = "") -> None:
 
 def check_imported_module(ast_obj, module, file: str = "") -> None:
     """The checks of a module's AST that need the imported module (what its imports bind), run before unparse(),
-    and when a nimic module's imports have run (nimic.nsystem): rule:methodcall."""
+    and when a nimic module's imports have run (nimic.nsystem): rule:methodcall, rule:import. Off while
+    migrating_imports() runs."""
+    if _import_checks_off:
+        return
     if overlaps := free_call_overlaps(ast_obj, module):
         raise ValueError("free calls of procs that star imports overload:\n" +
                          "\n".join(f"  {_located(file, line)}: {msg}" for line, msg in overlaps))
+    if problems := import_problems(ast_obj, module):
+        raise ValueError("imports that bind other procs than Nim's imports:\n" +
+                         "\n".join(f"  {_located(file, line)}: {msg}" for line, msg in problems))
 
 
-def unparse(ast_obj, type_registry: dict[str, ] | None = None):
-    unparser = _Unparser(type_registry=type_registry)
+def unparse(ast_obj, type_registry: dict[str, ] | None = None, package: str | None = None):
+    """Nim source of a nimic module's tree, and the modules it imports. `package` is the module's `__package__`:
+    it tells a relative name import `from .nifcore import TokenBuf` (`import nifcore`) from a module import
+    `from ..models import leng_tags` (`import ../models/leng_tags`); without it every relative name is a module."""
+    unparser = _Unparser(type_registry=type_registry, package=package)
     return unparser.visit(ast_obj), unparser.module_names
 
 

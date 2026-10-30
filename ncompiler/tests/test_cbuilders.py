@@ -5,12 +5,12 @@ from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std.intsets import *
 from nimic.std.tables import *
-from ..options import *
-from ..lineinfos import *
-from ..nodekinds import *
-from ..ropes import *
-from ..int128 import *
-from ..cbuilderbase import *
+from ..options import ConfigRef, ExceptionSystem, TBackend, TGlobalOption, TSystemCC
+from ..lineinfos import TLineInfo, unknownLineInfo
+from ..nodekinds import TNodeKind
+from ..ropes import Rope, rope, runtimeFormat
+from ..int128 import Int128, toInt128
+from ..cbuilderbase import Builder, CChar, IfBuilder, IfBuilderState, newBuilder, Snippet
 
 # Test harness of the C builder include files of cgen.nim (cbuilderexprs, cbuilderstmts). Like cgen.nim
 # it provides their context (cgen_context: stand-ins for modules not converted yet; the imports:

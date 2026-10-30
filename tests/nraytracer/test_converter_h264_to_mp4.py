@@ -8,7 +8,7 @@ from nimic.std.os import *
 from nimic.std.strutils import *
 from nimic.std.strformat import *
 from nimic.std.algorithm import *
-from mp4 import *
+from mp4 import close, initialize, MP4Muxer, writeMP4_from
 
 
 with const:

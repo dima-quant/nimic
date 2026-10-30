@@ -50,10 +50,16 @@ Follow the `nimic-convert` skill (`.agents/skills/nimic-convert/SKILL.md`) with 
 
   It is followed by the original header comments, then `from __future__ import annotations` and
   `from nimic.ntypes import *`.
-- **Imports keep nimony's paths:**
-  - `import std/assertions` → `from nimic.std.assertions import *`;
-  - a sibling `import x` → `from .x import *`;
-  - `import ".." / models / [tags]` → `from ..models.tags import *`.
+- **Imports keep nimony's paths** (`nimic_translation_rules_nimony.md` §8):
+  - `import std/assertions` → `from nimic.std.assertions import *` (the nimic core is star-imported);
+  - a sibling `import x` → `from .x import A, b, C`, the names the module uses (a nimic module is imported by name,
+    never `*`), or `from . import x` when only qualified calls (`x.f()`) and methods use it;
+  - `import ".." / models / [tags]` → `from ..models.tags import TagEnum, ...`;
+  - `export x` → `export(x)`; `export x.a` → `exportFrom(x, "a")`;
+  - a name a module only imports itself is imported from the module defining it;
+  - `nnimony/tools/explicit_imports.py` lists the names a draft with star imports uses; the import checks (§8) reject
+    what Python would bind differently from Nim, e.g. a free call of a name two imports provide: `f = overloads(a.f,
+    b.f)`.
 - **`when defined(nimony)` / `when not defined(nimony)`:** convert like any `when`, i.e. `if comptime(...)`
   with every branch, the inactive ones included. Python runs the host-Nim (Nim 2) build, where
   `defined("nimony")` is false.

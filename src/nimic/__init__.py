@@ -37,7 +37,7 @@ def nimp(obj: object, srcs: dict, wdir: str=None):
         if meta == "nimic":
             transpiler.check_private_names(aast)
             transpiler.check_imported_module(aast, obj)
-            nim_src, modules_names = transpiler.unparse(aast, _n_registry)
+            nim_src, modules_names = transpiler.unparse(aast, _n_registry, obj.__package__)
             srcs[obj.__name__] = nim_src
             for module_name in modules_names:
                 if module_name in sys.modules and module_name not in srcs:

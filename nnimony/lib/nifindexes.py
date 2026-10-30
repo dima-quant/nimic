@@ -18,14 +18,18 @@ from nimic.std.assertions import *
 from nimic.std.hashes import *
 from nimic.std.syncio import *
 from nimic.std.strutils import *
-from .bitabs import *
-from .nifreader import *
+from .bitabs import getOrIncl, len
+from .nifreader import decodeFilename, decodeInt, decodeStr, ExpandedToken, indexStartsAt, jumpTo, next, offset, Reader
 from . import nifreader
-from .nifpools import *
-from .nifchecksums import *
-from .symparser import *
-from .vfs import *
-from .stringviews import *
+from .nifpools import (
+    addDotToken, addIdent, addParLe, addParRi, addStrLit, addSymUse, beginRead, createTokenBuf, Cursor, cursorAt,
+    cursorTagId, hasMore, inc, info, into, isDotToken, isIdent, isStringLit, isSymbol, isTagLit, isValid, loopInto,
+    NifKind, NifLineInfo, NoLineInfo, NoNifLineInfo, parseFromBuffer, pool, skip, StrId, strId, SymId, symId, symString,
+    TagId, TokenBuf, toString)
+from .nifchecksums import updateLoop
+from .symparser import changeModuleExt
+from .vfs import vfsRead, vfsWrite
+from .stringviews import add
 importFrom(".lineinfos", "PackedLineInfo")  # only for NifIndexEntry.info (frozen Nim side)
 
 if comptime(defined("nimony")):
@@ -36,8 +40,8 @@ else:
     # a git/devel layout). Same SHA-1 fork → identical digests.
     with push("warning[Deprecated]: off"):
         from nimic.std.sha1 import *
-from ..models.tags import *
-from ..models.nifindex_tags import *
+from ..models.tags import TagEnum
+from ..models.nifindex_tags import NifIndexKind, rawTagIsNifIndexKind
 
 include("compat2")
 

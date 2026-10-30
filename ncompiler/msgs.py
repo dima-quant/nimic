@@ -18,9 +18,14 @@ from nimic.std.tables import *
 from nimic.std.terminal import *
 from nimic.std.times import *
 from nimic.std.private.miscdollars import *
-from .options import *
-from .lineinfos import *
-from .pathutils import *
+from .options import (
+    canonicalImportAux, cmdBackends, cmdDocLike, Command, ConfigRef, FilenameOption, IdeCmd, newConfigRef, quitOrRaise,
+    StdOrrKind, TBackend, TGlobalOption, TOption)
+from .lineinfos import (
+    commandLineIdx, createDocLink, ERecoverableError, errMax, errMin, ESuggestDone, fatalMsgs, FileIndex, FileInfoKind,
+    hintMax, hintMin, InvalidFileIdx, MsgKindToStr, raiseRecoverableError, Severity, TErrorOutput, TFileInfo, TLineInfo,
+    TMsgKind, unknownLineInfo, warnMax, warnMin)
+from .pathutils import AbsoluteDir, isEmpty, RelativeFile, relativeTo
 # TODO: requires nimic feature macros (G17): import std/macros
 
 importExcept(".ropes", "%")

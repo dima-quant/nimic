@@ -14,8 +14,7 @@ from primitives import Vec3, vec3, UnitVector, Attenuation, attenuation
 from rng import Rng
 
 import rng
-with export:
-    rng
+export(rng)
 
 # Random routines
 # ------------------------------------------------------

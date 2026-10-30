@@ -28,13 +28,18 @@ from __future__ import annotations
 from nimic.ntypes import *
 
 from nimic.std.assertions import *
-from .nifcore import *
-from ..models.leng_tags import *
-from ..models.callconv_tags import *
-from ..models.tags import *
+from .nifcore import (
+    addDotToken, addIntLit, addSymDef, addSymUse, beginRead, closeTag, createTokenBuf, Cursor, cursorIsNil, cursorTagId,
+    endRead, hasMore, inc, into, kind, loopInto, newPool, newTagPool, NifKind, openTag, registerTag, skip, symName,
+    TagId, tagName, TagPool)
+from ..models.leng_tags import (
+    LengExpr, LengOther, LengPragma, LengStmt, LengSym, LengType, LengTypeQualifier, rawTagIsLengExpr,
+    rawTagIsLengOther, rawTagIsLengPragma, rawTagIsLengStmt, rawTagIsLengSym, rawTagIsLengType,
+    rawTagIsLengTypeQualifier)
+from ..models.callconv_tags import CallConv, rawTagIsCallConv
+from ..models.tags import TagData, TagEnum
 from ..models import leng_tags, callconv_tags
-with export:
-    leng_tags, callconv_tags
+export(leng_tags, callconv_tags)
 
 
 def createLengTagPool() -> TagPool:

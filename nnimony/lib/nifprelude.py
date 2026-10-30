@@ -8,13 +8,11 @@ from nimic.ntypes import *
 
 with push("warning[UnusedImport]: off"):
 
-    from .bitabs import *
-    from .nifpools import *
-    from .nifbuilder import *
-    from .nifroles import *           # role pragmas the validator reads off declarations
+    from .bitabs import getOrIncl
+    from .nifpools import buildTree, createTokenBuf, ErrT, globalTags, NifKind, NoLineInfo, pool, tags, toString
+    from .nifbuilder import addHeader, addIdent, addIntLit, addStrLit, extract, withTree
     from . import nifroles
-    with export:
-        nifroles
+    export(nifroles)
     importFrom(".nifreader")   # text reader; qualified-only: its NifKind must
                                # not shadow nifcore's token kinds
 

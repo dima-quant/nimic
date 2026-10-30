@@ -9,7 +9,12 @@ from nimic.std.strutils import *
 from nimic.std.strformat import *
 from nimic.std.algorithm import *
 from h264 import H264Encoder, init, getFrameBuffers, flushFrame, finish
-from mp4 import *
+from mp4 import MP4Muxer, writeMP4_from
+import h264, mp4
+from nimic.std import syncio
+# one name of two imports, called free: Nim overloads them (rule:overloads)
+close = overloads(syncio.close, mp4.close)
+initialize = overloads(h264.initialize, mp4.initialize)
 from color_conversions import RGB_Raw, initChannelDesc, rgbRaw_to_ycbcr420, YCbCrKind
 
 # class RGB_Raw(Object):

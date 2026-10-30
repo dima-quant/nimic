@@ -96,8 +96,15 @@ from nimic.std.syncio import *
 from nimic.std.assertions import *
 from nimic.std.strutils import *
 from nimic.std.varints import *
-from .nifcore import *
-from .vfs import *
+from .nifcore import (
+    add, addCharLit, addDotToken, addFloatLit, addIdent, addIntLit, addOrdered, addStrLit, addSymDef, addSymUse,
+    addUIntLit, adoptForeignTokens, appendLineInfo, beginRead, buildTree, charLit, closeTag, combinedPayload,
+    createTokenBuf, Cursor, cursorAt, cursorIsNil, cursorTagId, cursorToPosition, endRead, FileId, floatVal, getOrIncl,
+    growRawUninit, hasMore, IdPayloadMax, inc, into, intVal, isInlineLit, isValid, kind, KindBits, len, LiFileMaxC,
+    lineInfoFile, load, newPool, newTagPool, NifKind, NifLineInfo, NifToken, NoNifLineInfo, openTag, peekInto, Pool,
+    rawLineInfo, rawTokenPtr, registerTag, StrId, strVal, sub, sym, SymId, symId, symName, symRecord, syms, symString,
+    TagId, TagMask, tagName, TagPool, TokenBuf, toUniqueId, uintVal)
+from .vfs import vfsOpenMmap, vfsWrite
 
 include("compat2")   # `onRaiseQuit`: run a raising call and `quit` on failure; identity under Nim
 

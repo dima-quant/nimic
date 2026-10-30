@@ -28,8 +28,10 @@ from nimic.ntypes import *
 from nimic.std.syncio import *
 from nimic.std.assertions import *
 from nimic.std.formatfloat import *
-from .nifcore import *
-from .nifbuilder import *
+from .nifcore import (
+    beginRead, charLit, Cursor, cursorTagId, endRead, floatVal, hasMore, inc, into, intVal, kind, NifKind, skip, strVal,
+    symName, tagName, tags, TokenBuf, uintVal)
+from .nifbuilder import addHeader, addStrLit, withTree
 from . import nifbuilder
 importFrom(".vfs", "OnlyIfChanged")
 
@@ -156,7 +158,7 @@ def writeLengInterface(buf: mut @ TokenBuf, lengFile: string):
 
 
 if comptime(__name__ == "__main__"):
-    from .nifcoreparse import *
+    from .nifcoreparse import len, parseFromBuffer
     importFrom("nimic.std.os", "getTempDir", "removeFile", "fileExists", "getLastModificationTime")
 
     def _digestOf(text: string) -> string:

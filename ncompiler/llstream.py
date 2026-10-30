@@ -14,7 +14,7 @@ from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std.strutils import *
 
-from .pathutils import *
+from .pathutils import AbsoluteFile
 
 
 if comptime(defined("nimPreviewSlimSystem")):

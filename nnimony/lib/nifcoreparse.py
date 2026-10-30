@@ -24,24 +24,29 @@ from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std.assertions import *
 from nimic.std.math import *
-from .nifcore import *
+from .nifcore import (
+    addDotToken, addSymDef, addSymUse, appendLineInfo, beginRead, charLit, closeTag, createTokenBuf, Cursor,
+    cursorTagId, FirstEscapeId, floatVal, getOrIncl, getOrInclFromView, hasMore, inc, InlineJumpCap, into, intVal,
+    isEscapedTag, kind, len, newTagPool, NifKind, NifLineInfo, NifSymbol, NoDisamb, NoNifLineInfo, openTag, parseDisamb,
+    Pool, pool, rawLineInfo, registerTag, resolvedTagId, skip, StrId, StrInlineMaxLen, strVal, subtreeWidth, symId,
+    symName, TagMask, TagPool, tags, TokenBuf, uintVal)
 from . import nifcore
 from . import nifreader as rd
-from .nifbuilder import *
+from .nifbuilder import (
+    addCharLit, addEmpty, addFloatLit, addHeader27, addIdent, addIntLit, addRaw, addStrLit, addSymbol, addSymbolDef,
+    addSymbolDefRetIsGlobal, addTree, addUIntLit, attachComment, attachLineInfo, Builder, endTree, extract, offset,
+    patchIndexAt)
 from . import nifbuilder
-from .stringviews import *
-from .lineinfos import *  # for `==`(FileId) used by NifLineInfo's structural `==`
+from .stringviews import add
+from .lineinfos import FileId, isValid  # for `==`(FileId) used by NifLineInfo's structural `==`
 
-with export:
-    nifcore
-from .comesfrom import *
+export(nifcore)
 from . import comesfrom
 
 # Travels with the reader for the same reason it travels with the pool API:
 # any consumer of a line-info filename may need `realFile` to strip the
 # template-expansion provenance the front end forged into it.
-with export:
-    comesfrom
+export(comesfrom)
 
 
 class _Parent(NTuple):

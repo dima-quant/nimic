@@ -6,13 +6,6 @@
 # ///
 
 from nimic.ntypes import *
-from safe_math import *
-from rays import *
-from vec3s import *
-from point3s import *
-from colors import *
-from canvas import *
-from timing import *
 
 import safe_math
 import rays
@@ -22,8 +15,7 @@ import colors
 import canvas
 import timing
 
-with export:
-    safe_math, rays, vec3s, point3s, colors, canvas, timing
+export(safe_math, rays, vec3s, point3s, colors, canvas, timing)
 
 # Trace of Radiance
 # Copyright (c) 2020 Mamy André-Ratsimbazafy

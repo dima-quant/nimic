@@ -15,12 +15,12 @@ from nimic.std.memfiles import *
 from nimic.std.parseutils import *
 from nimic.std import parseutils
 from nimic.std.assertions import *
-from .stringviews import *
-from .vfs import *
-from .nifcore import *  # the ONE token-kind enum, shared with the binary token model
+from .stringviews import beginStore, endStore, pchar, StringView
+from .vfs import initBlob, VfsBlob, vfsOpenMmap
+from .nifcore import add, len, NifKind  # the ONE token-kind enum, shared with the binary token model
+from . import nifcore
 
-with export:
-    NifKind
+exportFrom(nifcore, "NifKind")
 
 with const:
     StringLit = NifKind.StrLit

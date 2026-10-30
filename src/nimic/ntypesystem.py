@@ -1296,6 +1296,12 @@ class _DispatchedCallable:
         """The imported proc this overload set extends (calls no overload takes go to it), or None."""
         return _n_imported_procs.get(self.__name__)
 
+    def _n_includes(self, proc: callable) -> bool:
+        """Whether a call of this set can reach `proc`: another binding of the set (the @dispatch sets of a name are
+        one set), one of its overloads, or the imported proc it extends (the import checks, rule:methodcall)."""
+        return (proc is self or (isinstance(proc, _DispatchedCallable) and proc.__name__ == self.__name__)
+                or any(proc is p or ins.unwrap(proc) is ins.unwrap(p) for p in _n_set_procs(self)))
+
     def __get__(self, instance, owner=None):
         if instance is None:
             return self
@@ -4887,6 +4893,12 @@ def calltype(fn=None, *, inline: bool = False):
 
 # --- Type Aliases & Convenience Constructors ---
 
+def _n_file_mode(mode: object) -> str:
+    """The binary Python mode of a Nim file mode: syncio's FileMode (fmRead) or its value ("r")."""
+    mode = str(getattr(mode, "value", mode))
+    return {"w": "wb", "a": "ab", "r+": "r+b", "w+": "w+b", "r": "rb"}.get(mode, mode)
+
+
 class File:
     """Nim File type — wraps a Python file handle.
 
@@ -4905,8 +4917,7 @@ class File:
             File._n_files[self._n_id] = self
 
     def open(self, filename: str, mode: str = "r") -> bool:
-        _binary_map = {"w": "wb", "a": "ab", "r+": "r+b", "w+": "w+b", "r": "rb"}
-        actual_mode = _binary_map.get(str(mode), str(mode))
+        actual_mode = _n_file_mode(mode)
         try:
             path = _n_os_arg(filename)
             self._n_handle = __builtins__["open"](path, actual_mode) if isinstance(__builtins__, dict) else __builtins__.open(path, actual_mode)

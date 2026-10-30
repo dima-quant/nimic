@@ -3,8 +3,8 @@
 # ///
 from __future__ import annotations
 from nimic.ntypes import *
-from .nodekinds import *
-from .ropes import *
+from .nodekinds import TNodeKind
+from .ropes import addf, FormatStr, prepend, Rope, rope
 from nimic.std.intsets import *
 
 #

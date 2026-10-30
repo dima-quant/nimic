@@ -29,12 +29,14 @@ from __future__ import annotations
 from nimic.ntypes import *
 
 from nimic.std.tables import *
-from .nifcore import *
-from .nifcoreparse import *
-from .nifreader import *
+from .nifcore import (
+    add, addSubtree, beginRead, createTokenBuf, Cursor, cursorAt, inc, lineInfoFile, newPool, newTagPool, NifKind, Pool,
+    pool, rawLineInfo, sym, symId, symName, symString, TagPool, TokenBuf)
+from .nifcoreparse import len, parse, parseFromBuffer, peekRootInfo, toModuleString, toString
+from .nifreader import decodeInt, decodeStr, ExpandedToken, indexStartsAt, jumpTo, next, offset, Reader
 from . import nifreader
-from .stringviews import *
-from .bif import *
+from . import stringviews
+from .bif import getOrQuit, isBifFile, load, store
 from . import bif
 
 

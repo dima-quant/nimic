@@ -40,20 +40,23 @@ if comptime(defined("nimony")):
     pragma('feature: "assumeSync"')  # compiler-internal globals; single threaded
 
 from nimic.std.assertions import *
-from .nifcore import *
+from .nifcore import (
+    add, addBufferSamePool, addCharLit, addDotToken, addFloatLit, addIdent, addIntLit, addStrLit, addSubtree, addSymDef,
+    addSymUse, addUIntLit, appendLineInfo, beginRead, buildTree, charLit, closeTag, createTokenBuf, Cursor, cursorTagId,
+    cursorToPosition, endRead, enterScope, getOrIncl, hasMore, inc, initTokenBuf, insert, internedSymToken, into,
+    isValid, JumpShift, kind, KindBits, len, load, newPool, newTagPool, NifKind, NifLineInfo, NifToken, NoNifLineInfo,
+    openTag, PayloadMask, Pool, rawLineInfo, readonlyCursorAt, registerTag, setJump, skip, soperand, StrId,
+    subtreeWidth, SymId, symId, TagId, TagMask, tagName, TagPool, tags, TagShift, TokenBuf, tokenWidth, toUniqueId,
+    uoperand)
 from . import nifcore
-from .comesfrom import *
 from . import comesfrom
-from .nifroles import *
 from . import nifroles
-with export:
-    nifroles
+export(nifroles)
 # Template-expansion provenance rides in the line-info filename, so every
 # consumer of a filename may need to strip it (`realFile`). Plain string
 # handling with no NIF dependency of its own; re-exported here so it travels
 # with the pool API rather than being imported separately everywhere.
-with export:
-    comesfrom
+export(comesfrom)
 # Re-export nifcore verbatim except the two helpers whose shim versions below
 # thread the global pool. `kind`/`NifKind`/its members are re-exported AS-IS:
 # the sem port uses nifcore's own kind model directly (`TagLit`, `StrLit`,
@@ -63,7 +66,7 @@ exportExcept(nifcore, "createTokenBuf", "pool", "addIdent")
 # nifcore re-exports bitabs and lineinfos.{FileId,NoFile,isValid} — all the
 # lineinfos surface the frontend still needs. PackedLineInfo/LineInfoManager/
 # pack/unpack stay out of scope here (nifstreams keeps them for the Nim side).
-from ..models.tags import *   # TagEnum + TagData (the master tag namespace)
+from ..models.tags import TagData, TagEnum  # TagEnum + TagData (the master tag namespace)
 
 # ── Global pool / tags / line-info manager ───────────────────────────────
 

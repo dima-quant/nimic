@@ -1,10 +1,11 @@
 from __future__ import annotations
 from nimic.ntypes import *
-from .lineinfos import *
-from .platform import *
-from .prefixmatches import *
-from .pathutils import *
-from .nimpaths import *
+from .lineinfos import (
+    FileIndex, initMsgConfig, MsgConfig, NotesVerbosity, Severity, TLineInfo, TMsgKind, TNoteKind, TNoteKinds)
+from .platform import CPU, OS, setTargetFromSystem, Target, TInfoOSProp, TSystemCPU, TSystemOS
+from .prefixmatches import PrefixMatch
+from .pathutils import AbsoluteDir, AbsoluteFile, isEmpty, RelativeDir, RelativeFile, relativeTo
+from .nimpaths import htmldocsDirname
 
 from nimic.std.tables import *
 from nimic.std.os import *
@@ -856,8 +857,8 @@ if comptime(defined("nimDebugUtils")):
     # this allows inserting debugging utilties in all modules that import `options`
     # with a single switch, which is useful when debugging compiler.
     from .debugutils import *
-    with export:
-        debugutils
+    from . import debugutils
+    export(debugutils)
 
 
 def _initConfigRefCommon(conf: ConfigRef) -> None:

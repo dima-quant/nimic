@@ -6,8 +6,8 @@ from nimic.ntypes import *
 from nimic.std.hashes import *
 from nimic.std.tables import *
 
-from .ropes import *
-from .pathutils import *
+from .ropes import Rope
+from .pathutils import AbsoluteFile, RelativeFile
 
 
 with const:

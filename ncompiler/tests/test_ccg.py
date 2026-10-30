@@ -6,14 +6,16 @@ from nimic.ntypes import *
 from nimic.std.intsets import *
 from nimic.std.tables import *
 from nimic.std.strutils import startsWith
-from ..options import *
-from ..lineinfos import *
-from ..msgs import *
-from ..nodekinds import *
-from ..ropes import *
-from ..int128 import *
-from ..cbuilderbase import *
-from ..platform import *
+from ..options import ConfigRef, ExceptionSystem, newConfigRef, StringsMode, TBackend, TGCMode, TGlobalOption, TSystemCC
+from ..lineinfos import TLineInfo, unknownLineInfo
+from ..msgs import internalError, localError, makeCString
+from ..nodekinds import TNodeKind
+from ..ropes import Rope, rope, runtimeFormat
+from ..int128 import Int128, toInt128
+from ..cbuilderbase import (
+    Builder, CChar, cIntValue, CPointer, CVoid, IfBuilder, IfBuilderState, newBuilder, NimChar, NimInt, NimNil,
+    NimStrlitFlag, NimUint, Snippet)
+from ..platform import CPU, TSystemCPU, TSystemOS
 from nimic.std.tables import *
 
 # Test harness of the ccg* include files of cgen.nim. Like cgen.nim it provides their context

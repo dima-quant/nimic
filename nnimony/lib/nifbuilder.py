@@ -23,10 +23,9 @@ from nimic.std.syncio import *
 from nimic.std.formatfloat import *
 from nimic.std.math import *
 importFrom("nimic.std.strutils", "endsWith")
-from .vfs import *
+from .vfs import FileWriteMode, vfsExists, vfsMtime, vfsRead, vfsRemove, vfsWrite
 from . import vfs
-with export:
-    vfs.FileWriteMode
+exportFrom(vfs, "FileWriteMode")
 
 
 class _Mode(NIntEnum):
