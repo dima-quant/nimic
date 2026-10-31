@@ -3838,9 +3838,11 @@ def _star_imported_procs(tree, module) -> tuple:
 
 
 def free_call_overlaps(tree, module) -> list:
-    """rule:methodcall: Nim overloads plain procs of one name from two imported modules by type (nifcore's
-    `addIdent(b: var TokenBuf)`, nifbuilder's `addIdent(b: var Builder)`); in Python the later star import binds
-    the name, so a free call `addIdent(b, s)` reaches only the last import's. Returns (line, message) for each free call of such a name: one that
+    """rule:methodcall: Nim overloads plain procs of one name from two imported modules by type; in Python the
+    later star import binds the name, so a free call reaches only the last import's. Only the core is star-imported
+    (starimport, rule:import covers name imports), so this guards the core's plain procs of one name in two core
+    modules (syncio's and memfiles' `open`), which are no overload set. Returns (line, message) for each free call
+    of such a name: one that
     two star imports bind to different procs, at least one of them plain (two @dispatch sets are one overload
     set; a plain proc a @dispatch set extends belongs to it), and that the module itself doesn't define. A name
     bound in the calling function shadows the proc. Only the star imports that ran count. The module's own

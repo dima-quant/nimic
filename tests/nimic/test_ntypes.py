@@ -3634,8 +3634,10 @@ class TestNTypes(unittest.TestCase):
         its procs): another module's set of the name with the same signature doesn't replace it (nifpools'
         `info(c: Cursor)` and nifstreams'), generic procs specialize per set, a generic's call of an overloaded
         name reaches the overloads where it is instantiated (Nim's open symbol: bitabs' `hash(v)` of a StringView),
-        a local set sees the module's overloads and leaves them unchanged, and a signature two sets of an
-        `overloads(...)` both define is an ambiguous call."""
+        a local set sees the module's overloads and leaves them unchanged, a signature two sets of an
+        `overloads(...)` both define is an ambiguous call, and a signature the scope defines itself wins over the
+        one it imports (Nim's cmpScopes: the module's own proc, a local proc over the module's; nifstreams'
+        `info(n: NifToken)` over nifpools')."""
         sources = {
             "_n_os_a": """
                 class Cur(Object):
@@ -3681,6 +3683,17 @@ class TestNTypes(unittest.TestCase):
                 import _n_os_a, _n_os_b
                 info = overloads(_n_os_a.info, _n_os_b.info)
                 """,
+            "_n_os_d": """
+                from _n_os_a import Cur, info
+                @dispatch
+                def info(c: Cur) -> string:
+                    return string("d")
+                def local_info() -> list:
+                    @dispatch
+                    def info(c: Cur) -> string:
+                        return string("d local")
+                    return [info(Cur(n=1)), info(nint(1))]
+                """,
             "_n_os_m": """
                 @dispatch
                 def m(k: K, x: nint) -> string:
@@ -3695,7 +3708,7 @@ class TestNTypes(unittest.TestCase):
         }
         try:
             modules = self._run_sources(sources)
-            a, b, c, m = (modules[n] for n in sources)
+            a, b, c, d, m = (modules[n] for n in sources)
             cur = a.Cur(n=1)
             self.assertEqual(a.info(cur), "a")
             self.assertEqual(b.info(cur), "b")
@@ -3708,6 +3721,10 @@ class TestNTypes(unittest.TestCase):
             with self.assertRaisesRegex(TypeError, r"ambiguous call: info\(Cur\).*_n_os_a.*_n_os_b"):
                 c.info(cur)
             self.assertEqual(a.local_info(), ["local", "a"])
+            self.assertEqual(d.info(cur), "d")  # the module's own proc, not the imported one
+            self.assertEqual(d.info(nint(1)), "a nint")
+            self.assertEqual(d.local_info(), ["d local", "a nint"])
+            self.assertEqual(a.info(cur), "a")
             with self.assertRaises(NotImplementedError):
                 a.info(string("s"))
             k = m.K(v=1)

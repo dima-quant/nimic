@@ -3,6 +3,12 @@
 > **Frozen with the Nim 2 conversion (2026-10-20).** This is the rule set the 37 modules of `ncompiler/` were
 > converted with. It is not maintained until that conversion resumes. The nimic language evolves in
 > `nimic_translation_rules_nimony.md`, and changes there will be brought back here later.
+>
+> **Superseded since (2026-10-30, `ncompiler/` already migrated):** nimic modules import each other by name, not
+> `*` (nimony rules §8, §8.1); the call syntax follows the Python definition, so `obj.f(a)` of a module-level proc
+> is `f(obj, a)` and method-call syntax no longer finds the caller's procs (the `obj.f(a)` and `arg.sdata(3)` rows
+> of §4 are void; nimony rules §4); an overload set belongs to its module, which sees the overloads its imports
+> bring (nimony rules §4, `rule:overloads`).
 
 **Contents:** §0–§12 the nimic language, as of 2026-10-20; §13 the conventions of the Nim 2 compiler
 conversion.

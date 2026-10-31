@@ -1314,6 +1314,7 @@ class _NOverloadTable:
         self.extends = None
         self.dependents = []  # the sets including it
         self.prefer = None  # an open set (_n_open_symbol): the set whose own entries win, no ambiguity
+        self.owner = None  # (id of the scope's globals, function path): the scope owning the set (_n_table_of)
         self._view = None
         self.call = _n_dispatcher(self)
 
@@ -1347,20 +1348,32 @@ class _NOverloadTable:
         visit(self)
         return order
 
+    def scope_rank(self, table: "_NOverloadTable") -> int:
+        """Nim's cmpScopes for a call of this set: an included set of another module ranks 1, a set of this set's
+        module 2 plus its function nesting (a local proc over the module's, the module's over an import's)."""
+        if self.owner is None or table.owner is None or table.owner[0] != self.owner[0] \
+                or not self.owner[1].startswith(table.owner[1]):
+            return 1
+        return 2 + table.owner[1].count("<locals>")
+
     def view(self) -> _NOverloadView:
         if self._view is None:
             view, origin = _NOverloadView(), {}
-            tables = self.closure()
+            # an identical signature of a closer scope wins (merged last), of the same rank it is ambiguous
+            tables = sorted(self.closure(), key=self.scope_rank)
             if self.prefer is not None:
                 tables = [t for t in tables if t is not self.prefer] + [self.prefer]
             for table in tables:
+                rank = self.scope_rank(table)
                 for kind in ("resolved", "generic", "genericT"):
                     merged = getattr(view, kind)
                     for sig, fn in getattr(table, kind).items():
-                        defined, prior = table.origins[(kind, sig)], origin.get((kind, sig))
-                        if prior is not None and ins.unwrap(prior) is not ins.unwrap(defined) and self.prefer is None:
+                        defined, (prior, prior_rank) = table.origins[(kind, sig)], origin.get((kind, sig), (None, 0))
+                        if prior_rank < rank:
+                            view.ambiguous.pop(sig, None)
+                        elif prior is not None and ins.unwrap(prior) is not ins.unwrap(defined) and self.prefer is None:
                             view.ambiguous[sig] = (prior, defined)
-                        origin[(kind, sig)] = defined
+                        origin[(kind, sig)] = (defined, rank)
                         merged[sig] = fn
                 view.tdefs.update(table.tdefs)
                 view.arg_names.update(table.arg_names)
@@ -1490,6 +1503,7 @@ def _n_table_of(scope: dict, path: str, name: str) -> tuple:
     if entry is not None and entry[0] is scope:
         return entry[1], False
     table = _NOverloadTable(name)
+    table.owner = (id(scope), path)
     _n_sets[key] = (scope, table)  # holds the globals: their id stays theirs
     if not path:
         _n_module_tables.setdefault(name, []).append(table)
