@@ -62,21 +62,36 @@ def star_imports(tree, module: types.ModuleType) -> list:
     return found
 
 
+_export_calls: dict = {}  # id(tree) -> (tree, its export calls: (function, the names it passes, its strings))
+
+
+def _export_calls_of(tree) -> list:
+    """The `export` / `exportFrom` / `exportExcept` calls of a tree, walked once per tree (the import checks ask
+    for each name they look up)."""
+    entry = _export_calls.get(id(tree))
+    if entry is None or entry[0] is not tree:
+        calls = []
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.args
+                    and node.func.id in ("export", "exportFrom", "exportExcept")):
+                calls.append((node.func.id, [a.id for a in node.args if isinstance(a, ast.Name)],
+                              frozenset(a.value for a in node.args[1:]
+                                        if isinstance(a, ast.Constant) and isinstance(a.value, str))))
+        entry = _export_calls[id(tree)] = (tree, calls)
+    return entry[1]
+
+
 def module_exports(tree, module: types.ModuleType) -> list:
     """What a nimic module re-exports, from its source: (module, names, hidden) per call. `export(m1, m2)` exports
     the modules bound to `m1`, `m2` (names None: all); `exportFrom(m, "X")` the name X of `m`; `exportExcept(m, "a")`
     all of `m` but `a`."""
     found = []
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.args
-                and node.func.id in ("export", "exportFrom", "exportExcept")):
-            continue
-        strings = frozenset(a.value for a in node.args[1:] if isinstance(a, ast.Constant) and isinstance(a.value, str))
-        bound = [getattr(module, a.id, None) for a in node.args if isinstance(a, ast.Name)]
-        if node.func.id == "export":
+    for function, passed, strings in _export_calls_of(tree):
+        bound = [getattr(module, n, None) for n in passed]
+        if function == "export":
             found += [(m, None, frozenset()) for m in bound if isinstance(m, types.ModuleType)]
         elif bound and isinstance(bound[0], types.ModuleType):
-            found.append((bound[0], strings, frozenset()) if node.func.id == "exportFrom"
+            found.append((bound[0], strings, frozenset()) if function == "exportFrom"
                          else (bound[0], None, strings))
     return found
 

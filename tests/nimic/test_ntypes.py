@@ -3463,6 +3463,28 @@ class TestNTypes(unittest.TestCase):
         f.add(ch(" "))
         f.addFloat(1e20)
         self.assertEqual(f, "45.67 0.5 1e+20")
+        f = string("")
+        f.addFloat(1e16)  # Nim writes it fixed (dragonbox: the decimal point within -6..17), Python's repr 1e+16
+        f.add(ch(" "))
+        addFloat(f, float32(0.1))  # float32's own shortest digits, not 0.10000000149011612
+        self.assertEqual(f, "10000000000000000.0 0.1")
+
+    def test_float_dollar_is_nims(self):
+        """Nim's `$` of a float (std/formatfloat: dragonbox for float64, schubfach for float32): the shortest digits
+        that round-trip in the type, written fixed while the decimal point lies within -6..17 places (float32:
+        -4..9) with a trailing `.0` for an integer value, else `d.igitse±X` with an unpadded exponent (the values are Nim 2.2's output). Python's repr
+        switches at 1e16 and 1e-4 and pads the exponent (nimony's tfloatliterals.nif round trip found it)."""
+        cases64 = [(1e16, "10000000000000000.0"), (-1e16, "-10000000000000000.0"), (1e17, "1e+17"),
+                   (1.23e19, "1.23e+19"), (1e-5, "0.00001"), (1.5e-6, "0.0000015"), (1e-7, "0.0000001"), (1e-8, "1e-8"),
+                   (2.5e-10, "2.5e-10"), (123.0, "123.0"), (0.1, "0.1"), (45.67, "45.67"), (0.0, "0.0"),
+                   (-0.0, "-0.0"), (1e300, "1e+300"), (5e-324, "5e-324"), (float("inf"), "inf"),
+                   (float("-inf"), "-inf"), (float("nan"), "nan"), (123456789012345680.0, "1.2345678901234568e+17")]
+        for value, text in cases64:
+            self.assertEqual(str(float64(value)), text, value)
+        cases32 = [(0.1, "0.1"), (1e8, "100000000.0"), (1e9, "1e+9"), (1e10, "1e+10"), (1e-4, "0.0001"), (1e-5, "0.00001"), (1e-6, "1e-6"),
+                   (16777216.0, "16777216.0"), (3.4028234663852886e38, "3.4028235e+38"), (-2.5, "-2.5")]
+        for value, text in cases32:
+            self.assertEqual(str(float32(value)), text, value)
 
     def test_call_syntax_follows_the_definition(self):
         """The call syntax follows the Python definition (rules §4): a method of the class is called as a method,

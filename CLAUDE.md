@@ -100,21 +100,23 @@ For modifications in `src/nimic/ntypesystem.py` and `src/nimic/ntypes.py`:
    .venv/bin/python -m unittest tests/nimic/test_ntypes.py
    .venv/bin/python -m unittest tests.nimic.test_nvariants tests.nimic.test_inliner
    ```
-3. Run compiler module verification loop across all converted modules and the include-file harnesses in
-   `ncompiler/tests/` (Python execution of their `__main__` tests):
+3. Run the self-tests of all converted modules (Python execution of their `__main__` tests): `ncompiler/`
+   (include files run through their includer), the include-file harnesses in `ncompiler/tests/`, and every
+   `nnimony/lib` / `nnimony/models` module (from the nimony clone, with its `# test-args:`):
    ```bash
-   for f in ncompiler/*.py ncompiler/tests/test_*.py; do
-     m=${f#ncompiler/}; m=${m%.py}; m=${m//\//.}
-     # include files (include("...") in a module or harness) run through their includer
-     grep -qE "^include\(.*[\"'/]${m##*.}[\"']" ncompiler/*.py ncompiler/tests/*.py && continue
-     .venv/bin/python -m ncompiler.$m > /dev/null || echo "FAIL: $m"
-   done
+   .venv/bin/python tests/run_selftests.py                            # every adjustment: the slow ones skipped
+   .venv/bin/python tests/run_selftests.py nnimony.lib.nifcoreparse    # a slow one the change concerns
+   .venv/bin/python tests/run_selftests.py --all                      # before a commit
    ```
+   **Slow self-tests:** the modules listed in `tests/slow_selftests.txt` take most of the run time. Regular checks
+   after an adjustment skip them; run them by name when the change concerns them, and all of them (`--all`, here
+   and in `tests/verify_transpiled.py`) before proposing a commit.
 4. **Execution tests in Python and transpiled Nim** (required for every core review; unit tests alone
    missed non-compiling transpiler output and a dispatch regression that broke the converters):
    ```bash
-   .venv/bin/python tests/verify_transpiled.py            # modules + raytracer + converters, several minutes
-   .venv/bin/python tests/verify_transpiled.py modules    # or a single check: modules | raytracer | converters | nimic | nimony
+   .venv/bin/python tests/verify_transpiled.py            # all checks, the slow self-tests skipped
+   .venv/bin/python tests/verify_transpiled.py --all      # before a commit: with the slow self-tests
+   .venv/bin/python tests/verify_transpiled.py modules    # or a single check: modules | raytracer | converters | nimic | nimony | roundtrip
    ```
    - **modules**: each converted `ncompiler/<m>.py` is transpiled, swapped into a copy of the Nim compiler
      sources (`compiler/`) and must pass `nim check`. NEP-1 naming errors (`--styleCheck`) are accepted:
@@ -126,6 +128,9 @@ For modifications in `src/nimic/ntypesystem.py` and `src/nimic/ntypes.py`:
      `tests/nraytracer/ncache/build/rendered_test`, so this check only runs in the main checkout).
    - **nimic**: every nimic program in `tests/nimic` (a `# /// nimic` header and a `__main__` block, e.g. the
      nifcore ownership model `nifcore_ownership.py`) runs in Python and as compiled Nim; stdout must match.
+   - **roundtrip** (the Phase A milestone): `nnimony/checks/nif_roundtrip.py` reads every `.nif` of the nimony
+     clone with nifreader, writes it back with nifbuilder and stores / loads it as bif, in Python and as compiled
+     Nim; each file's texts must agree and both runs' outputs must be byte-identical (Python ~2 min, Nim < 1 s).
    - Pitfalls: never run `tests/nraytracer/test_*.py` (e.g. `test_nast.py`) or `ntranspile` inside the repo
      to check compilation: they regenerate the **tracked** `tests/nraytracer/ncache/*.nim`. The script works
      in `.scratch/verify_transpiled`. Transpile modules the way `nimic.nimp` does (import, then `unparse`
@@ -248,7 +253,7 @@ Whenever adding or remediating a feature in Nimic core:
    Update `nimic_translation_rules_nimony.md` if the change affects user-facing DSL syntax or semantics.
 4. **Step D — Full Verification**:
    Ensure all core unit tests, all 28+ compiler modules and the Python/Nim execution tests
-   (`tests/verify_transpiled.py`, Step 5.4) pass cleanly.
+   (`tests/verify_transpiled.py`, Step 5.4) pass cleanly; before a commit with `--all` (the slow self-tests).
 
 ---
 

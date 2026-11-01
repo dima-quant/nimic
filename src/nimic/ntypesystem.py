@@ -67,6 +67,7 @@ import ctypes
 import collections
 import collections.abc
 import contextvars
+import decimal
 import functools
 import inspect as ins
 import linecache
@@ -6061,6 +6062,7 @@ class NScalar:
 class NFloat(NScalar):
     _n_format = ""  # struct format character
     _n_rank = 10
+    _n_fixed_points = (-6, 17)  # `$` writes a value fixed while its decimal point lies in this range (dragonbox)
 
     def __init_subclass__(cls):
         super().__init_subclass__()
@@ -6091,6 +6093,38 @@ class NFloat(NScalar):
             prefix = "<" + cls._n_format
         val = struct.unpack(prefix, bytes)[0]
         return cls(val)
+
+    @classmethod
+    def _n_shortest(cls, val: float) -> str:
+        """The shortest decimal that reads back as `val` in this type (the closest of that length)."""
+        for precision in range(17):
+            text = f"{val:.{precision}e}"
+            if cls._n_normalize(cls, float(text)) == val:
+                return text
+        return repr(val)
+
+    def __str__(self) -> str:
+        """Nim's `$` (std/formatfloat: dragonbox's toChars, schubfach's for float32): the shortest round-trip
+        digits, fixed while the decimal point lies within the type's _n_fixed_points (`10000000000000000.0`,
+        `0.0000001`, `123.0`), else `d.igitse±X` with an unpadded exponent (`1e+17`, `1e-8`); `nan`, `inf`, `-inf`."""
+        val = self._n_get_value()
+        if val != val or val in (float("inf"), float("-inf")):
+            return str(val)
+        sign = "-" if struct.pack(">d", val)[0] & 0x80 else ""
+        if val == 0:
+            return sign + "0.0"
+        exact = decimal.Decimal(self._n_shortest(abs(val))).normalize().as_tuple()
+        digits = "".join(map(str, exact.digits))
+        point = len(digits) + exact.exponent  # digits * 10**exponent: the decimal point's place
+        low, high = self._n_fixed_points
+        if not low <= point <= high:
+            mantissa = digits[0] + ("." + digits[1:] if len(digits) > 1 else "")
+            return f"{sign}{mantissa}e{'-' if point - 1 < 0 else '+'}{abs(point - 1)}"
+        if point <= 0:
+            return f"{sign}0.{'0' * -point}{digits}"
+        if point < len(digits):
+            return f"{sign}{digits[:point]}.{digits[point:]}"
+        return f"{sign}{digits}{'0' * (point - len(digits))}.0"
 
 
 def _n_trunc_div(a, b):
@@ -6335,6 +6369,7 @@ class float16(NFloat):
 
 class float32(NFloat):
     _n_format, _n_rank = "f", 12
+    _n_fixed_points = (-4, 9)  # schubfach's
 
 
 class float64(NFloat):
@@ -6342,6 +6377,10 @@ class float64(NFloat):
 
     def _n_normalize(self, val):
         return float(val)
+
+    @classmethod
+    def _n_shortest(cls, val: float) -> str:
+        return repr(val)  # Python's repr is the shortest round trip of a double
 
 
 # class nbool:

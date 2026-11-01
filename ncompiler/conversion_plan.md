@@ -105,7 +105,9 @@ is added to the core.
 converted (`nnimony/tools/queue.py`). Then, in this order:
 
 1. **The Phase A milestone:** an end-to-end check in `tests/verify_transpiled.py` that NIF files round-trip
-   identically in Python and in compiled Nim (nifreader → nifbuilder, and bif's store → load).
+   identically in Python and in compiled Nim (nifreader → nifbuilder, and bif's store → load). *Done
+   2026-11-01:* `verify_transpiled.py roundtrip` (`nnimony/checks/nif_roundtrip.py`) over the 45 `.nif` files of
+   the nimony clone; it found nimic's float `$` differing from Nim's (`ncompiler/review_core_2026_11_01.md`).
 2. **The upstream tool** (`nnimony/tools/upstream.py`), then **the first re-pin** of nimony while `src/lib` is
    complete and small: each converted module takes the upstream diff since the commit its header records.
 3. **Before Phase B:**

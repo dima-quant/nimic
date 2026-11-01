@@ -1,13 +1,14 @@
 """Nim std/formatfloat — float formatting utilities."""
 from __future__ import annotations
-from nimic.ntypes import string, ufcs
+from nimic.ntypes import float32, float64, string, ufcs
 
 
 @ufcs(string, aliases=("addFloatRoundtrip",))
 def add_float_roundtrip(result: string, f: float) -> None:
-    """Nim: addFloatRoundtrip — appends shortest roundtrip string representation of float f to result."""
-    s = str(float(f))
-    result.add(s)
+    """Nim: addFloatRoundtrip — appends the shortest round-trip representation of f, as Nim's `$` writes it
+    (NFloat.__str__). Nim overloads it for `float | float32`: a float32 keeps its own digits, any other float is a
+    float64."""
+    result.add(str(f if isinstance(f, float32) else float64(f)))
 
 
 addFloatRoundtrip = add_float_roundtrip
