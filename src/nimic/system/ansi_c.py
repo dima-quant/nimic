@@ -63,15 +63,3 @@ def cmp_mem(a, b, size: int) -> int:
         if a_bytes[i] != b_bytes[i]:
             return 1 if a_bytes[i] > b_bytes[i] else -1
     return 0
-
-def alloc_shared0(size):
-    """Nim: allocShared0 — allocate zero-initialized shared memory."""
-    return c_malloc(size)
-
-def dealloc_shared(p):
-    """Nim: deallocShared — free shared memory."""
-    c_free(p)
-
-# camelCase aliases for Nim compatibility ??
-allocShared0 = alloc_shared0
-deallocShared = dealloc_shared

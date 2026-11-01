@@ -119,9 +119,13 @@ converted (`nnimony/tools/queue.py`). Then, in this order:
 3. **Before Phase B:**
    - revisit [a nimic backend for nimony](#idea-for-later-a-nimic-backend-for-nimony), now that the rules
      change less per batch;
-   - land the module-scoped dispatch proposal (`ncompiler/proposals/feature_module_scoped_dispatch.md`), or
-     the parts nifler2's module graph needs. Include batch 14's gap 3: `importFrom(m, names...)` should also
-     bind `m` for qualified calls.
+   - land the module-scoped dispatch proposal (`ncompiler/proposals/feature_module_scoped_dispatch.md`).
+     *Done 2026-10-31:* all four phases (`ncompiler/review_core_2026_10_30.md`). Batch 14's gap 3 is closed by
+     design: a qualified call imports the module (`from . import m`), so `importFrom` doesn't bind `m`. Its
+     cleanups (std/os' own file modes, ansi_c's copy of `alloc_shared0`) were done 2026-11-01. The limits left,
+     none of which a module has hit: same-signature overloads in two core modules aren't reported as
+     ambiguous; method-syntax calls of a module-level proc not run by the tests fail at their first run with
+     the free call to write; a qualified `m.f` sees what `m` imports, not only what it exports.
 4. **Phase B, `src/nifler2`:** the Nim 3 alignment items (table below) as its modules hit them.
 
 ## Core roadmap, in order of need

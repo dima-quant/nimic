@@ -1,4 +1,4 @@
-"""Nim system/io and os — file mode constants and OS utilities."""
+"""Nim std/os — OS utilities (the file modes are syncio's FileMode)."""
 from __future__ import annotations
 import glob as _glob
 import os as _os
@@ -15,17 +15,6 @@ from nimic.ntypesystem import _n_os_arg, _n_os_result
 from nimic.std.times import Time as _NTime
 
 from nimic.std.syncio import read_file, read_file_bytes, write_buffer, set_file_pos, open
-
-    # "r", "rb":
-fmRead = "r"
-    # "w", "wb":
-fmWrite = "w"
-    # "a", "ab":
-fmAppend = "a"
-    # "r+", "rb+":
-fmReadWriteExisting = "r+"
-    # "w+", "wb+":
-fmReadWrite = "w+"
 
 stderr.flush_file = stderr.flush
 stdout.flush_file = stdout.flush

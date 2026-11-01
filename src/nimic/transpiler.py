@@ -4036,7 +4036,7 @@ def import_problems(tree, module) -> list:
         if name not in read:
             continue  # imported, never read: no call can reach the wrong proc
         if not [m for _, m in seen if not is_core(m.__name__)]:
-            continue  # duplicates within the core (std/os's fmRead next to syncio's) are nimic's to resolve
+            continue  # duplicates within the core are nimic's to resolve
         if is_routine(binding):
             if missing:
                 cores = [c.__name__ for c in core_stars if getattr(c, name, None) is binding]
