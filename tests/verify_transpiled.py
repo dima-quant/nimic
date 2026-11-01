@@ -1,9 +1,14 @@
 """
 Execution verification of converted nimic code: Python run vs transpiled + compiled Nim.
 
-    .venv/bin/python tests/verify_transpiled.py [modules] [fidelity] [tests] [imports] [raytracer] [converters]
+    .venv/bin/python tests/verify_transpiled.py [--all] [modules] [fidelity] [tests] [imports] [raytracer] [converters]
+                                                [nimic] [nimony] [roundtrip] [<module> ...]
 
-(no arguments = all checks; takes several minutes, the Python raytracer is the slow part)
+(no check named = all checks; takes several minutes, the Python raytracer is the slow part)
+
+The modules listed in tests/slow_selftests.txt take most of the self-test time: their tests (Python vs Nim) are
+skipped (SKIP) unless --all is given (before a commit) or the module is named (`nnimony.lib.nifcoreparse`:
+a change that concerns it). Their transpilation and `nim check` still run.
 
   modules     every converted ncompiler/<m>.py is transpiled (as nimic.nimp does: import + unparse
               with the runtime type registry) and swapped into a copy of the Nim compiler sources
@@ -27,6 +32,10 @@ Execution verification of converted nimic code: Python run vs transpiled + compi
   nimic       each nimic module of tests/nimic (a `# /// nimic` header and a `__main__` block, e.g. the nifcore
               ownership model nifcore_ownership.py) runs in Python and as transpiled, compiled Nim; stdout
               must match.
+  roundtrip   the Phase A milestone: nnimony/checks/nif_roundtrip.py reads every .nif file of the nimony clone with
+              nifreader, writes it back with nifbuilder (the text must parse back to the same text) and stores /
+              loads it as bif (the same text again), in Python and as compiled Nim (-d:release); both runs' stdout
+              and output files must be byte-identical. Python and Nim run times are reported.
   nimony      each converted nimony module nnimony/<path>.py is transpiled into a copy of nimony's src/
               (the clone next to the project) and type-checked; its tests run in Python, as the compiled
               transpiled module, and appended to the original nimony module: all three outputs must match.
@@ -51,6 +60,7 @@ from collections import Counter
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -133,6 +143,27 @@ def _rework_modules() -> set[str]:
 
 
 REWORK = _rework_modules()
+SLOW_SELFTESTS = ROOT / "tests" / "slow_selftests.txt"
+
+
+def _slow_selftests() -> set[str]:
+    """The modules (`nnimony.lib.nifcoreparse`) whose Python self-tests take most of the run time
+    (tests/slow_selftests.txt, `#` comments)."""
+    if not SLOW_SELFTESTS.exists():
+        return set()
+    return {line.split("#")[0].strip() for line in SLOW_SELFTESTS.read_text().splitlines()} - {""}
+
+
+SLOW = _slow_selftests()
+run_slow: set[str] | None = set()  # the slow modules to test anyway (main: named ones); None: all (--all)
+
+
+def skip_slow(module: str, what: str) -> bool:
+    """Whether to skip the tests of `module`, a slow one not asked for (reported as SKIP)."""
+    if module in SLOW and run_slow is not None and module not in run_slow:
+        print(f"  SKIP  {what}  — slow self-test (tests/slow_selftests.txt): name it or run with --all", flush=True)
+        return True
+    return False
 
 
 def report(ok: bool, what: str, detail: str = "", module: str | None = None) -> None:
@@ -347,6 +378,8 @@ def check_tests() -> None:
         if m in errors:
             report(False, f"tests {m}", "transpile: " + errors[m], m)
             continue
+        if skip_slow(f"ncompiler.{m}", f"tests {m}"):
+            continue
         py = run([PY, "-m", f"ncompiler.{m}"], ROOT, [ROOT / "src", ROOT])
         if py.returncode != 0:
             report(False, f"tests {m}", "Python: " + first_error(py), m)
@@ -424,6 +457,8 @@ def check_nimic() -> None:
     flags = ["--hints:off", "--warnings:off", "--styleCheck:off", f"--path:{ROOT / 'src/nimic'}"]
     for path in _nimic_models():
         module = f"tests.nimic.{path.stem}"
+        if skip_slow(module, f"nimic {path.stem}"):
+            continue
         py = run([PY, "-m", module], ROOT, [ROOT / "src", ROOT])
         if py.returncode != 0:
             report(False, f"nimic {path.stem}", "Python: " + first_error(py))
@@ -488,7 +523,7 @@ NIMONY_SRC = DIST_PINS["nimony"][0] / "src"
 def _nnimony_modules() -> list[str]:
     """Converted nimony modules, as paths under nimony's src/ (`lib/bitabs`)."""
     return sorted(p.relative_to(NNIMONY).with_suffix("").as_posix() for p in NNIMONY.rglob("*.py")
-                  if "tools" not in p.relative_to(NNIMONY).parts and p.stem != "__init__")
+                  if not {"tools", "checks"} & set(p.relative_to(NNIMONY).parts) and p.stem != "__init__")
 
 
 def _without_main_blocks(source: str) -> str:
@@ -551,6 +586,8 @@ def check_nimony() -> None:
         target.write_text(tr.stdout)
         chk = run(["nim", "check", *flags, target.name], target.parent)
         report(chk.returncode == 0, f"nimony module {key}", "" if chk.returncode == 0 else first_error(chk), key)
+        if skip_slow(module, f"nimony tests {key}"):
+            continue
         # tests run from the nimony checkout, as nimony's own do (filelinecache reads src/lib/...)
         module_file = NNIMONY / f"{key}.py"
         tmp = SCRATCH / "nimony_tmp" / key.replace("/", "_")
@@ -577,6 +614,82 @@ def check_nimony() -> None:
                 (f"py {a!r} / nim {b!r}" for a, b in zip(py.stdout.splitlines(), nim.stdout.splitlines()) if a != b),
                 "different number of lines"))
             report(same, f"nimony {what} {key}", detail[:200], key)
+
+
+# transpile a nimic program and every nnimony module it loads (as nimic.nimp does: import, then unparse with the
+# runtime type registry) into a copy of nimony's src/: argv = program module, the copy's src directory
+TRANSPILE_NNIMONY_PROGRAM = """
+import importlib, inspect, pathlib, sys
+from nimic import transpiler
+from nimic.ntypesystem import _n_registry
+importlib.import_module(sys.argv[1])
+for name, mod in sorted(sys.modules.items()):
+    if name.startswith("nnimony.") and getattr(mod, "__file__", None):
+        tree = transpiler.parse(inspect.getsource(mod))
+        transpiler.check_private_names(tree)
+        transpiler.check_imported_module(tree, mod)
+        target = pathlib.Path(sys.argv[2], *name.split(".")[1:]).with_suffix(".nim")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(transpiler.unparse(tree, _n_registry, mod.__package__)[0].encode("utf-8"))
+"""
+ROUNDTRIP = "nnimony.checks.nif_roundtrip"
+
+
+def _nif_corpus() -> list[Path]:
+    """The `.nif` files of the nimony clone (its tests and examples)."""
+    return sorted(p for p in NIMONY_SRC.parent.rglob("*.nif") if not {"nimcache", ".git"} & set(p.parts))
+
+
+def check_roundtrip() -> None:
+    """The Phase A milestone (ncompiler/conversion_plan.md): nnimony/checks/nif_roundtrip.py reads each `.nif` of the
+    nimony clone with nifreader, writes it back with nifbuilder, and stores / loads it as bif, in Python and as
+    compiled Nim; each file's texts must agree and both runs' outputs must be byte-identical. Timed."""
+    print("== NIF round trip (nifreader -> nifbuilder, bif store -> load): Python vs compiled Nim", flush=True)
+    if not NIMONY_SRC.is_dir():
+        print(f"  note: no nimony clone at {NIMONY_SRC.parent}", flush=True)
+        return
+    work = SCRATCH / "roundtrip"
+    conv = work / "src"
+    shutil.copytree(NIMONY_SRC, conv)
+    tr = run([PY, "-c", TRANSPILE_NNIMONY_PROGRAM, ROUNDTRIP, conv], ROOT, [ROOT / "src", ROOT])
+    if tr.returncode != 0:
+        report(False, "roundtrip transpile", first_error(tr))
+        return
+    corpus = _nif_corpus()
+    for side in ("py", "nim"):
+        (work / side).mkdir()
+    start = time.monotonic()
+    py = run([PY, "-m", ROUNDTRIP, *corpus, work / "py"], ROOT, [ROOT / "src", ROOT])
+    py_time = time.monotonic() - start
+    report(py.returncode == 0, "roundtrip Python run", f"{len(corpus)} files, {py_time:.0f}s"
+           + ("" if py.returncode == 0 else ": " + first_error(py)))
+    flags = ["--hints:off", "--warnings:off", "--styleCheck:off", f"--path:{ROOT / 'src/nimic'}"]
+    program = conv / "checks" / "nif_roundtrip.nim"
+    exe = work / "bin_nif_roundtrip"
+    build = run(["nim", "c", "-d:release", *flags, f"--nimcache:{work / 'cache'}", f"-o:{exe}", program.name],
+                program.parent)
+    report(build.returncode == 0, "roundtrip nim c", "" if build.returncode == 0 else first_error(build))
+    if build.returncode != 0:
+        return
+    start = time.monotonic()
+    nim = run([exe, *corpus, work / "nim"], ROOT)
+    nim_time = time.monotonic() - start
+    report(nim.returncode == 0, "roundtrip Nim run", f"{nim_time:.1f}s"
+           + ("" if nim.returncode == 0 else ": " + first_error(nim)))
+    outputs = {"py": py.stdout.splitlines(), "nim": nim.stdout.splitlines()}
+    for path in corpus:
+        name = path.name
+        lines = {side: next((l for l in out if l.startswith(name + ":")), None) for side, out in outputs.items()}
+        differ = [f.name for f in sorted((work / "py").glob(name + ".*"))
+                  if not filecmp.cmp(f, work / "nim" / f.name, shallow=False)] if (work / "nim").is_dir() else []
+        ok = lines["py"] is not None and lines["py"] == lines["nim"] and "DIFFERS" not in lines["py"] and not differ
+        detail = lines["py"] or "no Python result"
+        if lines["py"] != lines["nim"]:
+            detail += f" / nim: {lines['nim']}"
+        if differ:
+            detail += f"; files differ: {differ}"
+        report(ok, f"roundtrip {path.relative_to(NIMONY_SRC.parent)}", detail[:200])
+    print(f"  time: Python {py_time:.0f}s, Nim {nim_time:.1f}s", flush=True)
 
 
 def link_dist() -> None:
@@ -606,11 +719,15 @@ def _remove_finished_runs() -> None:
 def main() -> int:
     checks = {"modules": check_modules, "fidelity": check_fidelity, "tests": check_tests, "imports": check_imports,
               "raytracer": check_raytracer, "converters": check_converters, "nimic": check_nimic,
-              "nimony": check_nimony}
-    selected = sys.argv[1:] or list(checks)
-    unknown = [s for s in selected if s not in checks]
+              "nimony": check_nimony, "roundtrip": check_roundtrip}
+    global run_slow
+    args = sys.argv[1:]
+    named = {a for a in args if "." in a}  # modules whose tests run even if slow
+    run_slow = None if "--all" in args else named
+    selected = [a for a in args if a != "--all" and a not in named] or list(checks)
+    unknown = [s for s in selected if s not in checks] + sorted(named - SLOW)
     if unknown:
-        print(f"unknown check(s): {unknown}; choose from {list(checks)}")
+        print(f"unknown check(s) or module(s) not in {SLOW_SELFTESTS.name}: {unknown}; checks: {list(checks)}")
         return 2
     _remove_finished_runs()
     shutil.rmtree(SCRATCH, ignore_errors=True)

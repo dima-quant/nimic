@@ -1,0 +1,7 @@
+# Modules whose Python self-tests (`python -m <module>`) take most of the run time: 88% of 672 s for all 67
+# self-tests (tests/run_selftests.py --all, 2026-11-01; the rest take ~80 s together). Regular checks after an
+# adjustment skip them (tests/run_selftests.py, tests/verify_transpiled.py); run one by name when a change concerns
+# it, all of them with --all before a commit. Seconds per module in the comments; the runner prints the slowest
+# modules after each run: re-check the list when they shift.
+nnimony.lib.nifcoreparse    # 450
+nnimony.lib.lineinfos       # 140
