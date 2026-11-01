@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@3f56467ab15a46746c4f2b33a904809a2ffa0a12:src/lib/nifpools.nim
+# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/lib/nifpools.nim
 # ///
 ## nifpools — nifcore plus the process-global literal/tag pools and the
 ## NifLineInfo bridge that nimsem/hexer are architected around. This is the

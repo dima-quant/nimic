@@ -213,7 +213,7 @@ Memory & variables:
   rule:privatepragma -> a {.private.} docstring pragma keeps a proc (an operator, which can't take a _
     prefix) unexported; the pragma itself is not emitted
   rule:deref -> pointer dereference: ".contents" -> "[]"
-  rule:copy -> value types are copied, drop .copy()
+  rule:copy -> value types are copied, drop .copy(); copy(x) (a value that may be nil) is x
   rule:valuecheck -> not a transpiler rule: the copies Nim's assignment makes are written `.copy()` in Python
     where the difference shows (dropped, rule:copy) and checked when the code runs (nimic.valuecheck)
   rule:varini -> var initialization call without arguments with the same name as annotation is interpreted as
@@ -3192,6 +3192,9 @@ class _Unparser(NodeVisitor):
             # rule:deref and rule:copy
             self.traverse(node.func.value)
             self.write(self._attribute_replace[node.func.attr])
+        elif isinstance(node.func, Name) and node.func.id == "copy" and len(node.args) == 1 and not node.keywords:
+            # rule:copy -> copy(x), the copy of a value that may be nil, is x (Nim's assignment copies)
+            self.traverse(node.args[0])
         elif isinstance(node.func, Name) and node.func.id in ("defined", "declared") and len(node.args) == 1 and isinstance(node.args[0], Constant) and isinstance(node.args[0].value, str):
             # rule:defined -> defined("identifier") translates to defined(identifier) in Nim
             # rule:declared -> declared("identifier") translates to declared(identifier) in Nim

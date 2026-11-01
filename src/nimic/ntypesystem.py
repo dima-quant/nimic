@@ -255,6 +255,10 @@ class NilPtr:
     def __hash__(self) -> int:
         return hash(None)
 
+    def copy(self) -> "NilPtr":
+        """A pointer is a value (`p = q.copy()`, rules §1): a copy of nil is nil."""
+        return self
+
     def __repr__(self) -> str:
         return f"NilPtr({self._n_type_name!r})"
 

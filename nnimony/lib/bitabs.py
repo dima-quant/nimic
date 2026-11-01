@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@3f56467ab15a46746c4f2b33a904809a2ffa0a12:src/lib/bitabs.nim
+# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/lib/bitabs.nim
 # ///
 #       Nif library
 # (c) Copyright 2024 Andreas Rumpf
@@ -32,6 +32,7 @@ class BiTable[Id, T](Object):  # Id must be an int/uint or a distinct type there
 
 @generic
 def initBiTable[Id, T]() -> BiTable[Id, T]:
+    """{.noSideEffect.}"""
     return BiTable[Id, T](_vals=seq[T]([]), _keys=seq[Id]([]))
 
 
@@ -53,6 +54,7 @@ def _isFilled(x: untyped) -> bool:
 
 @dispatch
 def len[Id, T](t: BiTable[Id, T]) -> nint:
+    """{.noSideEffect.}"""
     return t._vals.len
 
 
@@ -235,7 +237,7 @@ if comptime(defined("nimony")):
     @ufcs(BiTable)
     @dispatch
     def __getitem__[Id, T](t: BiTable[Id, T], strId: Id) -> mut @ T:
-        """{.inline.}"""
+        """{.inline, noSideEffect.}"""
         with let:
             idx = _idToIdx(strId)
         assert idx < t._vals.len

@@ -35,7 +35,7 @@ see *History*).
 
 | Source | Commit | Use |
 |---|---|---|
-| nimony (github.com/nim-lang/nimony) | `3f56467ab15a46746c4f2b33a904809a2ffa0a12` (master, 2026-10-20) | converted into `nnimony/`; pin in `nnimony/tools/queue.py` |
+| nimony (github.com/nim-lang/nimony) | `8e0321d8917bc55953b17a354f6fd478890d479f` (master, 2026-11-01; before: `3f56467ab15a`, 2026-10-20) | converted into `nnimony/`; pin in `nnimony/tools/queue.py` |
 | Nim compiler (`compiler/`) | `f0c60b06e5cff8064bf0a9a32ec2d2bc14a694d9` (devel, 2026-05-09) | the frozen corpus `ncompiler/` |
 | checksums (github.com/nim-lang/checksums) | `0b8e46379c5bc1bf73d8b3011908389c60fb9b98` (2.0.1) | `ChecksumsStableCommit` of that compiler's `koch.nim` |
 
@@ -92,7 +92,7 @@ is added to the core.
 |---|---|---|
 | Case-sensitive identifiers | Python and converted code are case-sensitive already. The transpiler's snake_case names for Nim std procs (`set_len`, `is_nil`) rely on Nim 2's style insensitivity: emit `{.feature: "ignoreStyle".}`, or the exact names | S–M |
 | Strings: no terminating `'\0'`, no conversion to `cstring` without a copy | nimic's cstring as a view of a string's buffer and `s[len] == '\0'` are Nim 2 semantics: a per-target string model | M |
-| Refs not nil by default (`nil ref T` explicit) | a nilable marker for `@ref` types, fields and parameters, emitted as `nil ref T` | M |
+| Refs not nil by default (`nil ref T` explicit) | a nilable marker for `@ref` types, fields and parameters, emitted as `nil ref T`; decide then how nimic represents nil (`ncompiler/proposals/feature_nil_representation.md`: one `nil` object, or `== nil` tests) | M |
 | Exceptions: `ErrorCode` values, `raise IOError`, `except IOError:` without `as e`, non-raising by default (`{.raises.}`) | nimic's exception model follows | L |
 | New `case`-object syntax | the transpiler's variant output | S–M |
 | No implicit generics, type-checked generics with concepts | emit explicit `[T: ...]` | S–M |
@@ -114,7 +114,8 @@ converted (`nnimony/tools/queue.py`). Then, in this order:
    complete and small: each converted module takes the upstream diff since the commit its header records. *The
    tool: done 2026-11-01.* The first re-pin's target, `8e0321d8` (2026-11-01, 106 commits): 9 of 37 modules
    changed (nifreader +225 -37, nifcore +94 -94, bif, intrinsics, compat2, bitabs, lineinfos, models/leng_tags,
-   models/tags), no file added.
+   models/tags), no file added. *The first re-pin: done 2026-11-01* (`8e0321d8`; all 37 headers moved; it
+   needed two core fixes, `ncompiler/review_core_2026_11_01.md`).
 3. **Before Phase B:**
    - revisit [a nimic backend for nimony](#idea-for-later-a-nimic-backend-for-nimony), now that the rules
      change less per batch;

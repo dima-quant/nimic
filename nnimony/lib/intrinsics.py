@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@3f56467ab15a46746c4f2b33a904809a2ffa0a12:src/lib/intrinsics.nim
+# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/lib/intrinsics.nim
 # ///
 #
 #           The intrinsic table
@@ -261,6 +261,17 @@ class IntrinsicOp(NIntEnum):
     CsellsOp = auto()
     CselhiOp = auto()
     CselhsOp = auto()
+    # ── block memory operations (`{.intrinsic: "Memset".}` …). Portable: C has
+    #    them as builtins, LLVM as `llvm.mem*`, and arkham lowers each as an
+    #    inline loop over the argument registers — which is why arkham treats one
+    #    as a CALL POINT (the loop's scratch takes caller-saved registers). They
+    #    are rows rather than `importc` calls so a pass can emit one in any module
+    #    by declaring it there: shoggoth's `memidioms` turns recognized fill/copy
+    #    loops into them, and an intrinsic declaration has no body for DCE to
+    #    keep alive.
+    MemsetOp = auto()  # Memset(dest: pointer; byte: int; size: int)
+    MemcpyOp = auto()  # Memcpy(dest, src: pointer; size: int) — the regions must not overlap
+    MemcmpOp = auto()  # int32 = Memcmp(a, b: pointer; size: int)
 
     def isMachineQuery(op: IntrinsicOp) -> bool:
         """{.inline.}"""
@@ -277,6 +288,13 @@ class IntrinsicOp(NIntEnum):
         ## SEQUENCE rather than a transliteration, so they branch on this once instead of
         ## listing the opcodes at every site.
         return ord(op) >= ord(IntrinsicOp.AtomicLoadOp) and ord(op) <= ord(IntrinsicOp.AtomicSignalFenceOp)
+
+    def isMemOp(op: IntrinsicOp) -> bool:
+        """{.inline.}"""
+        ## `Memset`/`Memcpy`/`Memcmp`. arkham lowers them as an inline loop that uses
+        ## the argument registers and caller-saved scratch, so its analyser treats one
+        ## as a call point; the other back ends call the C builtin of that name.
+        return ord(op) >= ord(IntrinsicOp.MemsetOp) and ord(op) <= ord(IntrinsicOp.MemcmpOp)
 
     def isVolatile(op: IntrinsicOp) -> bool:
         """{.inline.}"""
@@ -543,7 +561,8 @@ with const:
       string("cmova"), string("cmovbe"), string("cmovl"), string("cmovge"), string("cmovg"), string("cmovle"),
       string("adds3"), string("adcs3"), string("subs3"), string("sbcs3"), string("mul3"), string("umulh"), string("umull"), string("umlal"), string("bic3"),
       string("cseleq"), string("cselne"), string("csellt"), string("cselle"), string("cselgt"), string("cselge"), string("csello"),
-      string("csells"), string("cselhi"), string("cselhs")])
+      string("csells"), string("cselhi"), string("cselhs"),
+      string("Memset"), string("Memcpy"), string("Memcmp")])
 
     _Imm8 = array[MaxOperands, PatKind]([PatKind.ptImmLit, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone])
       ## one operand, and the instruction encodes it — see `ptImmLit`.
@@ -587,6 +606,11 @@ with const:
     _VecFma = array[MaxOperands, PatKind]([PatKind.ptVec128, PatKind.ptVec128, PatKind.ptVec128, PatKind.ptLaneBits, PatKind.ptNone, PatKind.ptNone])
     _VecDup = array[MaxOperands, PatKind]([PatKind.ptFloatW, PatKind.ptLaneBits, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone])
     _VecHAdd = array[MaxOperands, PatKind]([PatKind.ptVec128, PatKind.ptLaneBits, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone])
+
+    _MemFill = array[MaxOperands, PatKind]([PatKind.ptAnyPtr, PatKind.ptAnyInt, PatKind.ptAnyInt, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone])
+      ## `(dest, byte, size)`: only the low 8 bits of `byte` count
+    _MemBin = array[MaxOperands, PatKind]([PatKind.ptAnyPtr, PatKind.ptAnyPtr, PatKind.ptAnyInt, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone])
+      ## `(dest, src, size)` / `(a, b, size)`
 
     _MulShape = array[MaxOperands, PatKind]([PatKind.ptAnyIntW, PatKind.ptAnyIntW, PatKind.ptAnyIntW, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone])
       ## `(lo, hi, s)`, all one width
@@ -1247,12 +1271,22 @@ with const:
                    widths=Tset[uint8](u8(32), u8(64)), tie=-1, effects=Tset[IntrinsicEffect](), uses=Tset[MachineFlag](MachineFlag.mfCF, MachineFlag.mfZF), defs=Tset[MachineFlag]()),
       IntrinsicRow(cls=IntrinsicClass.icPinned, targets=Tset[IntrinsicTarget](IntrinsicTarget.tgA64), arity=2,  # cselhs
                    params=_Bin, roles=_AllIn, ret=PatKind.ptAnyIntW,
-                   widths=Tset[uint8](u8(32), u8(64)), tie=-1, effects=Tset[IntrinsicEffect](), uses=Tset[MachineFlag](MachineFlag.mfCF), defs=Tset[MachineFlag]())
+                   widths=Tset[uint8](u8(32), u8(64)), tie=-1, effects=Tset[IntrinsicEffect](), uses=Tset[MachineFlag](MachineFlag.mfCF), defs=Tset[MachineFlag]()),
+      # ── block memory operations ──
+      IntrinsicRow(cls=IntrinsicClass.icPortable, targets=Tset[IntrinsicTarget](IntrinsicTarget.tgX64, IntrinsicTarget.tgA64, IntrinsicTarget.tgThumbM, IntrinsicTarget.tgRv32), arity=3,  # Memset
+                   params=_MemFill, roles=_AllIn, ret=PatKind.ptVoid,
+                   widths=Tset[uint8](), tie=-1, effects=Tset[IntrinsicEffect](IntrinsicEffect.efWrites), uses=Tset[MachineFlag](), defs=Tset[MachineFlag]()),
+      IntrinsicRow(cls=IntrinsicClass.icPortable, targets=Tset[IntrinsicTarget](IntrinsicTarget.tgX64, IntrinsicTarget.tgA64, IntrinsicTarget.tgThumbM, IntrinsicTarget.tgRv32), arity=3,  # Memcpy
+                   params=_MemBin, roles=_AllIn, ret=PatKind.ptVoid,
+                   widths=Tset[uint8](), tie=-1, effects=Tset[IntrinsicEffect](IntrinsicEffect.efReads, IntrinsicEffect.efWrites), uses=Tset[MachineFlag](), defs=Tset[MachineFlag]()),
+      IntrinsicRow(cls=IntrinsicClass.icPortable, targets=Tset[IntrinsicTarget](IntrinsicTarget.tgX64, IntrinsicTarget.tgA64, IntrinsicTarget.tgThumbM, IntrinsicTarget.tgRv32), arity=3,  # Memcmp
+                   params=_MemBin, roles=_AllIn, ret=PatKind.ptInt32,
+                   widths=Tset[uint8](), tie=-1, effects=Tset[IntrinsicEffect](IntrinsicEffect.efReads), uses=Tset[MachineFlag](), defs=Tset[MachineFlag]())
     ])
 
 
 with const:
-    LastIntrinsicOp = IntrinsicOp.CselhsOp
+    LastIntrinsicOp = IntrinsicOp.MemcmpOp
       ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
       ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
       ## over an enum *type* — hence the ordinal loop below too.

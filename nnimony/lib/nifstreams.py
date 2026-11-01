@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@3f56467ab15a46746c4f2b33a904809a2ffa0a12:src/lib/nifstreams.nim
+# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/lib/nifstreams.nim
 # ///
 ## nifstreams — the classic NIF streaming surface, kept ONLY for external
 ## consumers: the Nim compiler's IC modules (ast2nif / deps / modulegraphs /

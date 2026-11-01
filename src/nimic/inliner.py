@@ -324,10 +324,12 @@ def _n_declared_locals(func_def: ast.FunctionDef) -> set[str]:
 
 def _n_uses_caller_scope(func_def: ast.FunctionDef, module_globals: dict) -> bool:
     """A statement template (no return type) whose body assigns a name that is not its own, assigns one of
-    its parameters, or reads a name that is neither a parameter, its own local, a global of its module nor
+    its parameters, passes one to an expanded template (which may assign it: nifreader's `unsignedSuffix(p)`
+    calls `inc(p)`), or reads a name that is neither a parameter, its own local, a global of its module nor
     a builtin. Nim binds such open symbols at the call site, and a parameter stands for the call's
     argument (`template inc(p) = p = ...` assigns the caller's `p`), so the template is expanded in the
-    caller (@template_expand) like a {.dirty.} one; this also covers the locals of an enclosing proc."""
+    caller (@template_expand) like a {.dirty.} one; this also covers the locals of an enclosing proc. Nim
+    declares a template before its use, so a template called in the body is registered already."""
     if func_def.returns is not None:
         return False
     a = func_def.args
@@ -336,6 +338,10 @@ def _n_uses_caller_scope(func_def: ast.FunctionDef, module_globals: dict) -> boo
     own = params | _n_declared_locals(func_def) | {t.name for t in func_def.type_params}
     for stmt in func_def.body:
         for node in ast.walk(stmt):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id not in own
+                    and any(isinstance(arg, ast.Name) and arg.id in params - blocks for arg in node.args)
+                    and _n_bound_template(module_globals.get(node.func.id)) is not None):
+                return True
             if not isinstance(node, ast.Name):
                 continue
             if isinstance(node.ctx, ast.Store) and node.id in params - blocks:

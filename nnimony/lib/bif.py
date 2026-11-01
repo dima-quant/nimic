@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@3f56467ab15a46746c4f2b33a904809a2ffa0a12:src/lib/bif.nim
+# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/lib/bif.nim
 # ///
 #       Nif library
 # (c) Copyright 2026 Andreas Rumpf
@@ -333,9 +333,19 @@ def _readVarint(f: File) -> uint64:
     return result
 
 
+def _readCount(f: File, elemSize = 1) -> nint:
+    ## A count or length from the file. A corrupt one must not wrap around when
+    ## it is converted to `int` or multiplied by `elemSize`.
+    with let:
+        v = _readVarint(f)
+    assert v <= uint64(high(nint) // elemSize), "bif: corrupt count"
+    result = nint(v)
+    return result
+
+
 def _readStr(f: File) -> string:
     with let:
-        n = nint(_readVarint(f))
+        n = _readCount(f)
     result = newString(n)
     if n > 0:
         _readExact(f, cast[pointer](beginStore(result, n)), n)
@@ -480,7 +490,7 @@ def _readIndex(f: File) -> seq[IndexEntry]:
     ## Read the self-contained index section (`nIndex` followed by the entries),
     ## assuming `f` is already positioned at its start.
     with let:
-        nIndex = nint(_readVarint(f))
+        nIndex = _readCount(f)
     result = newSeq[IndexEntry](nIndex)
     for i in range(nIndex):
         with let:
@@ -541,10 +551,10 @@ def containsSym(filename: string, name: string) -> bool:
         if _readBytes(f, addr(m[0]), _MagicLen) != _MagicLen or m != _magic(): return False
         _ = _readU64(f)                  # indexOffset (fixed 8 bytes)
         with let:
-            tokenCount = nint(_readVarint(f))
-            nTags      = nint(_readVarint(f))
-            nStrings   = nint(_readVarint(f))
-            nSyms      = nint(_readVarint(f))
+            tokenCount = _readCount(f, sizeof(NifToken))
+            nTags      = _readCount(f)
+            nStrings   = _readCount(f)
+            nSyms      = _readCount(f)
         _ = _readVarint(f)               # nFiles
         # Skip the alignment pad, the token block and the tags/strings tables to reach `syms`.
         with let:
@@ -552,12 +562,12 @@ def containsSym(filename: string, name: string) -> bool:
         _setPos(f, _getPos(f) + int64(pad) + int64(tokenCount) * sizeof(NifToken))
         for _ in inrange(1, nTags + nStrings):
             with let:
-                n = nint(_readVarint(f))         # read length first, THEN skip the bytes
+                n = _readCount(f)              # read length first, THEN skip the bytes
             _setPos(f, _getPos(f) + n)
         # Scan the syms table; only entries of matching length can be `name`.
         for _ in inrange(1, nSyms):
             with let:
-                n = nint(_readVarint(f))
+                n = _readCount(f)
             if n == name.len:
                 with var:
                     s = newString(n)
@@ -584,11 +594,11 @@ def loadFromFile(f: File) -> BifModule:
     _ = _readU64(f)               # indexOffset — only `loadIndex*` follows it;
                                   # a full load reaches the index sequentially.
     with let:
-        tokenCount = nint(_readVarint(f))
-        nTags      = nint(_readVarint(f))
-        nStrings   = nint(_readVarint(f))
-        nSyms      = nint(_readVarint(f))
-        nFiles     = nint(_readVarint(f))
+        tokenCount = _readCount(f, sizeof(NifToken))
+        nTags      = _readCount(f)
+        nStrings   = _readCount(f)
+        nSyms      = _readCount(f)
+        nFiles     = _readCount(f)
     # Skip the alignment pad the writer inserted before the token block.
     with let:
         pad = _tokenPad(nint(_getPos(f)))
@@ -652,10 +662,20 @@ class _BifReader(Object):
         _ = readVu64(buf, result)
         return result
 
+    def _rCount(r: mut @ _BifReader, elemSize = 1) -> nint:
+        ## A count or length from the file, checked against the bytes that are left:
+        ## every element takes at least `elemSize` of them, so a larger count is a
+        ## corrupt file — and checked by division, not by `pos + n * elemSize`,
+        ## which a corrupt count would overflow.
+        with let:
+            v = r._rVarint()
+        assert v <= uint64((r._size - r._pos) // elemSize), "bif: count exceeds file"
+        result = nint(v)
+        return result
+
     def _rStr(r: mut @ _BifReader) -> string:
         with let:
-            n = nint(r._rVarint())
-        assert r._pos + n <= r._size, "bif: truncated string"
+            n = r._rCount()
         # `newString(n)` zeros the payload that we immediately overwrite; GCC DSE's
         # that store, arkham emits both. `newStringOfCap` reserves without zeroing.
         result = newStringOfCap(n)
@@ -685,19 +705,20 @@ def load(filename: string) -> BifModule:
     r._pos = _MagicLen
     _ = r._rU64()                    # indexOffset — a full load reaches it linearly
     with let:
-        tokenCount = nint(r._rVarint())
-        nTags      = nint(r._rVarint())
-        nStrings   = nint(r._rVarint())
-        nSyms      = nint(r._rVarint())
-        nFiles     = nint(r._rVarint())
+        tokenCount = r._rCount(sizeof(NifToken))
+        nTags      = r._rCount()
+        nStrings   = r._rCount()
+        nSyms      = r._rCount()
+        nFiles     = r._rCount()
     # Skip the alignment pad so the borrowed token block is NifToken-aligned. The
     # mapping's base is page-aligned, so aligning `r.pos` aligns the absolute address.
     r._pos += _tokenPad(r._pos)
     # token block follows the varint header and is borrowed straight from the mapping.
     result = BifModule()
+    assert r._pos <= r._size and tokenCount <= (r._size - r._pos) // sizeof(NifToken), \
+        "bif: truncated token block"
     with let:
         tokenBytes = tokenCount * sizeof(NifToken)
-    assert r._pos + tokenBytes <= r._size, "bif: truncated token block"
     result.buf = adoptForeignTokens(cast[pointer](r._base + uint(r._pos)), tokenCount)
     r._pos += tokenBytes
     # pools: append in stored (id) order so ids 1,2,… match the token refs. No
@@ -710,7 +731,7 @@ def load(filename: string) -> BifModule:
     for _ in inrange(1, nFiles):   _ = addOrdered(result.buf.pool.filenames, r._rStr())
     # symbol index (we are now positioned exactly at indexOffset).
     with let:
-        nIndex = nint(r._rVarint())
+        nIndex = r._rCount()
     result.index = newSeq[IndexEntry](nIndex)
     for i in range(nIndex):
         with let:

@@ -251,6 +251,13 @@ def default(T: type) -> object:
 
 discard = None
 
+
+def copy(x):
+    """`copy(x)`: `x.copy()` of a value that may be nil (rule:copy). Nim's assignment copies a value, written
+    `.copy()` where the difference shows (rules §1); nil is Python's None, which has no method, and copies to nil.
+    Transpiled to `x`."""
+    return None if x is None else x.copy()
+
 # compiler hints
 let = contextlib.nullcontext()
 var = contextlib.nullcontext()

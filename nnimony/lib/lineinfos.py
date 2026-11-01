@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@3f56467ab15a46746c4f2b33a904809a2ffa0a12:src/lib/lineinfos.nim
+# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/lib/lineinfos.nim
 # ///
 #       Nif library
 # (c) Copyright 2024 Andreas Rumpf
@@ -84,13 +84,13 @@ with const:
 
 @dispatch
 def isValid(x: PackedLineInfo) -> bool:
-    """{.inline.}"""
+    """{.inline, noSideEffect.}"""
     return uint32(x) != uint32(NoLineInfo)
 
 
 @dispatch
 def isValid(x: FileId) -> bool:
-    """{.inline.}"""
+    """{.inline, noSideEffect.}"""
     return x != NoFile
 
 

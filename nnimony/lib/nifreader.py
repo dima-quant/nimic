@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@3f56467ab15a46746c4f2b33a904809a2ffa0a12:src/lib/nifreader.nim
+# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/lib/nifreader.nim
 # ///
 #       Nif library
 # (c) Copyright 2024 Andreas Rumpf
@@ -56,6 +56,9 @@ with const:
         inrange(char("0"), char("9")), inrange(char("A"), char("F"))
     )  # lowercase letters are not in the NIF spec!
     _Digits = Tset(inrange(char("0"), char("9")))
+    _HexNumberDigits = Tset(
+        inrange(char("0"), char("9")), inrange(char("A"), char("F")), inrange(char("a"), char("f"))
+    )  # unlike escapes, numbers accept both cases
     _B62Digits = Tset(
         inrange(char("0"), char("9")),
         inrange(char("A"), char("Z")),
@@ -86,6 +89,7 @@ class _TokenFlag(NIntEnum):
     FilenameHasEscapes = auto()
     TokenHasModuleSuffixExpansion = auto()
     CommentHasEscapes = auto()
+    NumberHasBasePrefix = auto()
 
 
 class ExpandedToken(Object):
@@ -216,7 +220,7 @@ def _useCpuRegisters(body: untyped):
     """{.untyped.}"""
     with var:
         p: pragma("inject") = (
-            r._p
+            copy(r._p)
         )  # encourage the code generator to use a register for this.
     with let:
         eof: pragma("inject") = r._eof
@@ -289,15 +293,20 @@ def _handleHex(p: pchar) -> char:
 
 
 @template_expand
-def _decodeEscape(p: mut @ pchar) -> char:
+def _decodeEscape(p: mut @ pchar, sentinel: pchar) -> char:
     """{.inline.}
     ## Decode a single NIF27 escape body. Caller has already advanced past the
     ## leading `\\`. On return, `p` points just past the escape (advanced by 1
     ## for a shortcut, 2 for a hex pair). The shortcut bodies (`n`, `t`, `r`,
     ## `|`, `^`) are deliberately chosen so that none of them is a hex digit
     ## or a NIF control character, which lets a one-byte look-ahead pick the
-    ## form unambiguously."""
+    ## form unambiguously.
+    ##
+    ## The body never extends past `sentinel` (the end of the token): a token
+    ## that ends in a `\\` or in `\\H` keeps the backslash literally and `p`
+    ## stays put, so the remaining byte, if any, decodes as an ordinary one."""
     result = default(char)
+    if p >= sentinel: return char("\\")
     match _deref(p):
         case _ if _deref(p) == char("n"):
             result = char("\x0a")
@@ -315,8 +324,11 @@ def _decodeEscape(p: mut @ pchar) -> char:
             result = char("\x22")
             _inc(p)
         case _:
-            result = _handleHex(p)
-            _inc(p, 2)
+            if _plus_bang(p, 1) < sentinel:
+                result = _handleHex(p)
+                _inc(p, 2)
+            else:
+                result = char("\\")
     return result
 
 
@@ -329,7 +341,8 @@ def decodeChar(t: ExpandedToken) -> char:
         with var:
             p = t.data.p
         _inc(p)
-        result = _decodeEscape(p)
+        # the lexer only accepts `'\\HH'` as an escaped CharLit
+        result = _decodeEscape(p, _plus_bang(p, 2))
     return result
 
 
@@ -346,7 +359,7 @@ def decodeStr(r: Reader, t: ExpandedToken) -> string:
         while p < sentinel:
             if _deref(p) == char("\\"):
                 _inc(p)
-                result.add(_decodeEscape(p))
+                result.add(_decodeEscape(p, sentinel))
             else:
                 result.add(_deref(p))
                 _inc(p)
@@ -408,7 +421,7 @@ def decodeComment(t: ExpandedToken) -> string:
     while p < sentinel:
         if _deref(p) == char("\\"):
             _inc(p)
-            result.add(_decodeEscape(p))
+            result.add(_decodeEscape(p, sentinel))
         else:
             result.add(_deref(p))
             _inc(p)
@@ -427,7 +440,7 @@ def decodeFilename(t: ExpandedToken) -> string:
         while p < sentinel:
             if _deref(p) == char("\\"):
                 _inc(p)
-                result.add(_decodeEscape(p))
+                result.add(_decodeEscape(p, sentinel))
             else:
                 result.add(_deref(p))
                 _inc(p)
@@ -438,10 +451,66 @@ def decodeFilename(t: ExpandedToken) -> string:
     return result
 
 
+def _digitValue(c: char) -> nint:
+    """{.inline.}"""
+    result = default(nint)
+    match c:
+        case _ if c in inrange(char("0"), char("9")):
+            result = ord(c) - ord(char("0"))
+        case _ if c in inrange(char("A"), char("F")):
+            result = ord(c) - ord(char("A")) + 10
+        case _ if c in inrange(char("a"), char("f")):
+            result = ord(c) - ord(char("a")) + 10
+        case _:
+            result = 0
+    return result
+
+
+def _decodeMagnitude(t: ExpandedToken, negative: mut @ bool) -> BiggestUInt:
+    """Decodes an integer that has a `0x`, `0o` or `0b` prefix. The lexer
+    only produces well-formed spellings, so no validation happens here.
+    Overflow of the 64 bit range is an assertion failure, as it is for the
+    decimal fast path."""
+    result = default(BiggestUInt)
+    result = BiggestUInt(0)
+    with var:
+        i = 0
+    negative <<= False
+    if t.data[i] == char("-"):
+        negative <<= True
+        i += 1
+    with var:
+        base = u64(10)
+    if i + 1 < t.data.len and t.data[i] == char("0"):
+        match t.data[i + 1]:
+            case _ if t.data[i + 1] == char("x"):
+                base = u64(16)
+                i += 2
+            case _ if t.data[i + 1] == char("o"):
+                base = u64(8)
+                i += 2
+            case _ if t.data[i + 1] == char("b"):
+                base = u64(2)
+                i += 2
+            case _:
+                pass
+    while i < t.data.len:
+        with let:
+            c = t.data[i]
+        if c != char("_"):
+            with let:
+                d = BiggestUInt(_digitValue(c))
+            assert result <= (high(BiggestUInt) - d) // base, "integer literal out of range"
+            result = result * base + d
+        i += 1
+    return result
+
+
 def decodeFloat(t: ExpandedToken) -> BiggestFloat:
     result = default(BiggestFloat)
     result = BiggestFloat(0.0)
     assert t.tk == NifKind.FloatLit
+    # `_` separators are skipped by `parseutils` itself
     with let:
         res = parseutils.parseBiggestFloat(
             toOpenArray(t.data.p, 0, t.data.len - 1), result
@@ -454,11 +523,17 @@ def decodeUInt(t: ExpandedToken) -> BiggestUInt:
     result = default(BiggestUInt)
     result = BiggestUInt(0)
     assert t.tk == NifKind.UIntLit
-    with let:
-        res = parseutils.parseBiggestUInt(
-            toOpenArray(t.data.p, 0, t.data.len - 1), result
-        )
-    assert res == t.data.len
+    if _TokenFlag.NumberHasBasePrefix in t._flags:
+        with var:
+            negative = nbool(False)
+        result = _decodeMagnitude(t, negative)
+        assert not negative or result == 0, "negative unsigned integer literal"
+    else:
+        with let:
+            res = parseutils.parseBiggestUInt(
+                toOpenArray(t.data.p, 0, t.data.len - 1), result
+            )
+        assert res == t.data.len
     return result
 
 
@@ -466,11 +541,23 @@ def decodeInt(t: ExpandedToken) -> BiggestInt:
     result = default(BiggestInt)
     result = BiggestInt(0)
     assert t.tk == NifKind.IntLit
-    with let:
-        res = parseutils.parseBiggestInt(
-            toOpenArray(t.data.p, 0, t.data.len - 1), result
-        )
-    assert res == t.data.len
+    if _TokenFlag.NumberHasBasePrefix in t._flags:
+        with var:
+            negative = nbool(False)
+        with let:
+            m = _decodeMagnitude(t, negative)
+        if negative:
+            assert m <= BiggestUInt(high(BiggestInt)) + 1, "integer literal out of range"
+            result = cast[BiggestInt](u64(0) - m)
+        else:
+            assert m <= BiggestUInt(high(BiggestInt)), "integer literal out of range"
+            result = BiggestInt(m)
+    else:
+        with let:
+            res = parseutils.parseBiggestInt(
+                toOpenArray(t.data.p, 0, t.data.len - 1), result
+            )
+        assert res == t.data.len
     return result
 
 
@@ -489,23 +576,68 @@ def decodeDisamb(t: ExpandedToken) -> nint:
 
 
 @template_expand
+def _digitsWithSeparators(p: mut @ pchar, eof: pointer, len: mut @ nint,
+                          digitSet: Tset[char]) -> bool:
+    """{.inline.}
+    ## Consumes `D ('_'? D)*`; false if there is no leading digit or a `_` is
+    ## not followed by a digit."""
+    result = p < eof and _deref(p) in digitSet
+    while result and p < eof:
+        if _deref(p) in digitSet:
+            _inc(p)
+            len += 1
+        elif _deref(p) == char("_"):
+            _inc(p)
+            len += 1
+            if p >= eof or _deref(p) not in digitSet:
+                result = False
+        else:
+            break
+    return result
+
+
+@template
+def _malformedNumber(p: mut @ pchar, eof: pointer, result: mut @ ExpandedToken):
+    # consume the rest of the malformed number so it is one error token
+    while p < eof and _deref(p) not in _ControlCharsOrWhite:
+        _inc(p)
+        result.data.len += 1
+    result.tk = NifKind.UnknownToken
+
+
+@template
+def _unsignedSuffix(p: mut @ pchar, eof: pointer, result: mut @ ExpandedToken):
+    if p < eof and _deref(p) == char("u"):
+        result.tk = NifKind.UIntLit
+        _inc(p)
+        # ignore the suffix 'u'
+
+
+@template
+def _hasBasePrefix(p: pchar, eof: pointer) -> bool:
+    ## `p` starts `0x`, `0o` or `0b`; see `handlePrefixedNumber`.
+    return _deref(p) == char("0") and _plus_bang(p, 1) < eof and \
+        _deref(_plus_bang(p, 1)) in Tset(char("x"), char("o"), char("b"))
+
+
+@template_expand
 def _handleNumber(r: mut @ Reader, result: mut @ ExpandedToken):
+    """Scans a decimal number atom; `_` may separate two digits. A malformed
+    spelling (`1_`, `1__2`, `1._0`, ...) is consumed and reported as
+    `UnknownToken`. Base-prefixed integers are `handlePrefixedNumber`'s."""
     with _useCpuRegisters():
         if p < eof and _deref(p) in _Digits:
             result.tk = NifKind.IntLit  # overwritten if we detect a float or unsigned
-            while p < eof and _deref(p) in _Digits:
-                _inc(p)
-                result.data.len += 1
+            with var:
+                ok = _digitsWithSeparators(p, eof, result.data.len, _Digits)
 
-            if p < eof and _deref(p) == char("."):
+            if ok and p < eof and _deref(p) == char("."):
                 result.tk = NifKind.FloatLit
                 _inc(p)
                 result.data.len += 1
-                while p < eof and _deref(p) in _Digits:
-                    _inc(p)
-                    result.data.len += 1
+                ok = _digitsWithSeparators(p, eof, result.data.len, _Digits)
 
-            if p < eof and _deref(p) == char("E"):
+            if ok and p < eof and _deref(p) == char("E"):
                 result.tk = NifKind.FloatLit
                 _inc(p)
                 result.data.len += 1
@@ -513,14 +645,43 @@ def _handleNumber(r: mut @ Reader, result: mut @ ExpandedToken):
                     if _deref(p) == char("-") or _deref(p) == char("+"):
                         _inc(p)
                         result.data.len += 1
-                while p < eof and _deref(p) in _Digits:
-                    _inc(p)
-                    result.data.len += 1
+                ok = _digitsWithSeparators(p, eof, result.data.len, _Digits)
 
-            if p < eof and _deref(p) == char("u"):
-                result.tk = NifKind.UIntLit
-                _inc(p)
-                # ignore the suffix 'u'
+            if not ok:
+                _malformedNumber(p, eof, result)
+            elif result.tk == NifKind.IntLit:
+                _unsignedSuffix(p, eof, result)
+
+
+@template_expand
+def _handlePrefixedNumber(r: mut @ Reader, result: mut @ ExpandedToken):
+    """Scans an integer with a `0x`, `0o` or `0b` prefix; the caller has checked
+    `hasBasePrefix`. A prefix without digits (`0x`) or a decimal digit outside
+    the base (`0b102`) makes the whole spelling an `UnknownToken`."""
+    with _useCpuRegisters():
+        result.tk = NifKind.IntLit
+        result._flags.incl(_TokenFlag.NumberHasBasePrefix)
+        with var:
+            ok = False
+        match _deref(_plus_bang(p, 1)):
+            case _ if _deref(_plus_bang(p, 1)) == char("x"):
+                _inc(p, 2)
+                result.data.len += 2
+                ok = _digitsWithSeparators(p, eof, result.data.len, _HexNumberDigits)
+            case _ if _deref(_plus_bang(p, 1)) == char("o"):
+                _inc(p, 2)
+                result.data.len += 2
+                ok = _digitsWithSeparators(p, eof, result.data.len, Tset(inrange(char("0"), char("7"))))
+            case _:
+                _inc(p, 2)
+                result.data.len += 2
+                ok = _digitsWithSeparators(p, eof, result.data.len, Tset(char("0"), char("1")))
+        if ok and p < eof and _deref(p) in _Digits: ok = False
+
+        if not ok:
+            _malformedNumber(p, eof, result)
+        else:
+            _unsignedSuffix(p, eof, result)
 
 
 def _decodeB62(c: char) -> nint:
@@ -973,19 +1134,23 @@ def next(r: mut @ Reader, result: mut @ ExpandedToken):
         case _ if _deref(r._p) == char("'"):
             _inc(r._p)
             result.data.p = r._p
-            if _deref(r._p) == char("\\"):
+            if r._p >= r._eof:
+                _ = "keep it as UnknownToken"
+            elif _deref(r._p) == char("\\"):
                 result._flags.incl(_TokenFlag.TokenHasEscapes)
-                _inc(r._p)
-                if r._p[0] in _HexChars and r._p[1] in _HexChars:
-                    _inc(r._p, 2)
+                # `\\HH'` needs four more bytes
+                if _plus_bang(r._p, 3) < r._eof and r._p[1] in _HexChars and r._p[2] in _HexChars:
+                    _inc(r._p, 3)
                     if _deref(r._p) == char("'"):
                         _inc(r._p)
                         result.tk = NifKind.CharLit  # now valid
+                else:
+                    _inc(r._p)
             elif _deref(r._p) in _ControlChars:
-                discard("keep it as UnknownToken")
+                _ = "keep it as UnknownToken"
             else:
                 _inc(r._p)
-                if _deref(r._p) == char("'"):
+                if r._p < r._eof and _deref(r._p) == char("'"):
                     _inc(r._p)
                     result.tk = NifKind.CharLit  # only now valid
             if result.tk == NifKind.CharLit:
@@ -1013,17 +1178,26 @@ def next(r: mut @ Reader, result: mut @ ExpandedToken):
             result.data.p = r._p
             _inc(r._p)
             result.data.len += 1
-            _handleNumber(r, result)
+            if r._p < r._eof and _hasBasePrefix(r._p, r._eof): _handlePrefixedNumber(r, result)
+            else: _handleNumber(r, result)
             if _continuesAsStr(r):
                 _lineStr(r, result)
             else:
                 _handleSuffix(r, result)
 
-        case _ if _deref(r._p) in inrange(char("0"), char("9")):
+        case _ if _deref(r._p) == char("0"):
+            # The only digit that can start `0x`, `0o` or `0b`.
+            result.data.p = r._p
+            if _hasBasePrefix(r._p, r._eof): _handlePrefixedNumber(r, result)
+            else: _handleNumber(r, result)
+            if _continuesAsStr(r):
+                _lineStr(r, result)
+            else:
+                _handleSuffix(r, result)
+
+        case _ if _deref(r._p) in inrange(char("1"), char("9")):
             # bare-digit number (NIF27): no sign prefix on positives.
-            with _useCpuRegisters():
-                result.data.p = p
-                result.data.len = 0
+            result.data.p = r._p
             _handleNumber(r, result)
             if _continuesAsStr(r):
                 _lineStr(r, result)  # `2024-08-12`, `14:05`
@@ -1305,6 +1479,60 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
                     result.add(string(str(tok.tk)) + string(":") + r.decodeStr(tok))
         close(r)
         return result
+
+    def _numbers(input: string) -> seq[string]:
+        """Every token of `input`, numbers rendered by their decoded value."""
+        result = default(seq[string])
+        with var:
+            r = openFromBuffer(input.copy(), string("ThisMod"))
+        result = seq[string]()
+        with var:
+            tok = default(ExpandedToken)
+        while True:
+            r.next(tok)
+            match tok.tk:
+                case NifKind.EofToken:
+                    break
+                case NifKind.IntLit:
+                    result.add(string("i") + str(decodeInt(tok)))
+                case NifKind.UIntLit:
+                    result.add(string("u") + str(decodeUInt(tok)))
+                case NifKind.FloatLit:
+                    result.add(string("f") + str(int64(decodeFloat(tok) * 100.0)))  # in hundredths
+                case NifKind.ParLe:
+                    result.add(string("(") + str(tok.data))
+                case NifKind.ParRi:
+                    result.add(string(")"))
+                case _:
+                    result.add(string(str(tok.tk)) + string(":") + str(tok.data))
+        close(r)
+        return result
+
+    # Numbers: base prefixes and `_` digit separators.
+    assert _numbers(string("(n 0xFF 0xff 0o377 0b1111_1111 -0xFF 0xDEAD_BEEFu 1_000_000)")) == seq[string](
+        [string("(n"), string("i255"), string("i255"), string("i255"), string("i255"), string("i-255"),
+         string("u3735928559"), string("i1000000"), string(")")])
+    assert _numbers(string("1_234.5_6E+0_2 1234.56E+02 0x1E3 012 -0o17 0b0u")) == seq[string](
+        [string("f12345600"), string("f12345600"), string("i483"), string("i12"), string("i-15"), string("u0")])
+    assert _numbers(string("0x7FFF_FFFF_FFFF_FFFF -0x8000_0000_0000_0000 0xFFFF_FFFF_FFFF_FFFFu")) == seq[string](
+        [string("i9223372036854775807"), string("i-9223372036854775808"), string("u18446744073709551615")])
+    # malformed spellings are one error token each
+    for bad in [string("0x"), string("0o8"), string("0b102"), string("0x_FF"), string("1_"), string("1__2"),
+                string("1_.0"), string("1._0"), string("1E_2"), string("1E+_2"), string("1_u")]:
+        assert _numbers(bad) == seq[string]([string("UnknownToken:") + bad]), bad
+    # `#` and `:` may appear literally inside a string; the comment follows the quote
+    with block:
+        with var:
+            r = openFromBuffer(string("(tag 0 \"2026-10-11T12:00:00Z\") \"key: value; # text\"#comment#"),
+                               string("ThisMod"))
+        with var:
+            tok = default(ExpandedToken)
+        r.next(tok); r.next(tok); r.next(tok)
+        assert tok.tk == StringLit and r.decodeStr(tok) == string("2026-10-11T12:00:00Z")
+        r.next(tok); r.next(tok)
+        assert tok.tk == StringLit and r.decodeStr(tok) == string("key: value; # text")
+        assert decodeComment(tok) == string("comment")
+        close(r)
 
     # Off by default: a symbol is one token carrying the whole string, exactly
     # as every existing client expects.
@@ -1643,6 +1871,30 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             string(")"),
             string("Ident:b")],
         )
+
+    with block:  # an escape cut short by the end of its token keeps the backslash
+        assert _tokens(string("ab\\"), False) == seq[string]([string("Ident:ab\\")])
+        assert _tokens(string("ab\\4"), False) == seq[string]([string("Ident:ab\\4")])
+        assert _tokens(string("ab\\4 x"), False) == seq[string]([string("Ident:ab\\4"), string("Ident:x")])
+        assert _tokens(string("\"ab\\"), False) == seq[string]([string("StrLit:ab\\")])
+        assert _tokens(string("\"a\\41\""), False) == seq[string]([string("StrLit:aA")])
+        # a char literal cut short by the end of the input is no CharLit
+        for bad in [string("'"), string("'\\"), string("'\\4"), string("'\\41"), string("'a")]:
+            with var:
+                r = openFromBuffer(bad.copy(), string("ThisMod"))
+            with var:
+                tok = default(ExpandedToken)
+            r.next(tok)
+            assert tok.tk != NifKind.CharLit, bad
+            close(r)
+        with block:
+            with var:
+                r = openFromBuffer(string("'\\41'"), string("ThisMod"))
+            with var:
+                tok = default(ExpandedToken)
+            r.next(tok)
+            assert tok.tk == NifKind.CharLit and decodeChar(tok) == char("A")
+            close(r)
 
     echo("nifreader: OK")
 

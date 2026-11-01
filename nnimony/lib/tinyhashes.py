@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@3f56467ab15a46746c4f2b33a904809a2ffa0a12:src/lib/tinyhashes.nim
+# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/lib/tinyhashes.nim
 # ///
 # --------------------------------------------------
 # Fast&sufficient string hashing. We use custom code here so that we're independent

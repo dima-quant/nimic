@@ -75,7 +75,7 @@ SCRATCH = SCRATCH_BASE / f"run_{os.getpid()}"
 # in ncompiler/conversion_plan.md (the snapshot's koch.nim) and linked in as SCRATCH/dist/<name>, which the work
 # directories (SCRATCH/compiler, ...) see as ../dist. The project's own dist/ is nimic's wheel output.
 DIST_PINS = {
-    "nimony": (Path(os.environ.get("NIMONY_DIR", ROOT.parent / "nimony")), "3f56467ab15a46746c4f2b33a904809a2ffa0a12"),
+    "nimony": (Path(os.environ.get("NIMONY_DIR", ROOT.parent / "nimony")), "8e0321d8917bc55953b17a354f6fd478890d479f"),
     "checksums": (Path(os.environ.get("CHECKSUMS_DIR", ROOT.parent / "checksums")),
                   "0b8e46379c5bc1bf73d8b3011908389c60fb9b98"),
 }

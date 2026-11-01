@@ -41,6 +41,7 @@ from nimic.system.ansi_c import c_free, c_malloc, csize_t
 from nimic.transpiler import (unparse, private_name_collisions, check_private_names, free_call_overlaps,
                               check_imported_module)
 from nimic import valuecheck
+from nimic.inliner import _n_template_entries
 from nnimony.tools import upstream
 
 def _n_fwd_proc(a, b):
@@ -591,6 +592,30 @@ class TestNTypes(unittest.TestCase):
         holder.owner = p
         self.assertTrue(holder.owner == p)
         dealloc(mem)
+
+    def test_copy_of_a_value_that_may_be_nil(self):
+        """A value is `.copy()`ed where the binding is then changed in place (rules §1, rule:copy); nil is Python's
+        None, which has no method, so a value that may be nil is copied with the free form `copy(x)` (nifreader's
+        `var p = r.p` of an empty buffer's nil `r.p`): nil copies to nil, any other value as `x.copy()`. Both drop
+        in Nim, which copies on assignment."""
+        class _TNilHolder(Object):
+            p: ptr[UncheckedArray[char]]
+
+        holder = _TNilHolder()
+        holder.p = nil
+        self.assertIsNone(copy(holder.p))  # `is None` stays Nim's `== nil` (rule:nilident)
+        self.assertIsNone(copy(nil))
+        s = string("ab")
+        holder.p = cast[ptr[UncheckedArray[char]]](addr(s[0]))
+        q = copy(holder.p)
+        self.assertIsNot(q, holder.p)
+        self.assertTrue(q == holder.p)
+        self.assertEqual(q[1], ch("b"))
+        t = copy(s)
+        t.add(ch("c"))
+        self.assertEqual((s, t), ("ab", "abc"))
+        self.assertIsInstance(copy(NilPtr("ptr[char]")), NilPtr)  # an unset ptr field of a Python-side object
+        self.assertEqual(unparse(ast.parse("p = copy(q)\nr = q.copy()\n"))[0].splitlines(), ["p = q", "r = q"])
 
     def test_pointer_arithmetic_nifcore_patterns(self):
         """nifcore's address arithmetic: `cast[ptr T](cast[uint](p) + n * sizeof(T).uint)`, the difference of two
@@ -3786,6 +3811,56 @@ class TestNTypes(unittest.TestCase):
             modules = self._run_sources(sources)
             self.assertEqual(modules["_n_tv_a"].run(), 4)
             self.assertEqual(modules["_n_tv_b"].run(), 6)
+        finally:
+            for name in sources:
+                sys.modules.pop(name, None)
+
+    def test_template_passing_its_parameter_to_an_assigning_template_expands(self):
+        """A statement template that passes its parameter to a template assigning it (nifreader's
+        `unsignedSuffix(p, ...)` calling `inc(p)`) assigns the caller's argument, as Nim substitutes the argument
+        into both bodies: it is expanded in @template_expand callers too, also nested two deep and through a `mut
+        @` parameter of the caller. A template only reading its parameter stays a call."""
+        sources = {
+            "_n_tn_a": """
+                @template
+                def bump(x: nint):
+                    x = x + 1
+                @template
+                def twice(x: nint):
+                    bump(x)
+                    bump(x)
+                @template
+                def four(y: nint):
+                    twice(y)
+                    twice(y)
+                @template
+                def show(x: nint):
+                    echo(x)
+                @template_expand
+                def nested() -> nint:
+                    with var:
+                        v = nint(0)
+                    twice(v)
+                    return v
+                @template_expand
+                def deeper() -> nint:
+                    with var:
+                        v = nint(0)
+                    four(v)
+                    return v
+                @template_expand
+                def through(v: mut @ nint):
+                    twice(v)
+                """,
+        }
+        try:
+            m = self._run_sources(sources)["_n_tn_a"]
+            self.assertEqual(m.nested(), 2)
+            self.assertEqual(m.deeper(), 4)
+            v = nint(5)
+            m.through(v)
+            self.assertEqual(v, 7)
+            self.assertNotIn(m.show.__code__, _n_template_entries)
         finally:
             for name in sources:
                 sys.modules.pop(name, None)
