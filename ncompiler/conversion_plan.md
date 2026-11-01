@@ -167,6 +167,11 @@ A nimony backend, written in Nim, that writes nimic Python from Nim code: the re
 - **When.** Not during Phase A: the `src/lib` batches still change the rules (batch 6 found 15 core gaps),
   and a backend built now would freeze today's quirks. Revisit before Phase B / C, where the line counts
   (7k–50k per component) make a mechanical conversion pay.
+- **Where** (set up 2026-11-01): `src/nimicgen` on the `nimic-backend` branch of a second nimony clone,
+  `../nimony-nimic`, started at the pin `8e0321d8` and rebased at each re-pin. `../nimony` stays the
+  verification baseline. nimicgen isn't offered upstream, and it is converted to nimic later. Its guide is
+  `src/nimicgen/CLAUDE.md` there, and its plan is `src/nimicgen/plan.md`. Its specification stays here (the
+  rules file), and so does its acceptance test (a round-trip check in `tests/verify_transpiled.py`).
 
 ## History
 
