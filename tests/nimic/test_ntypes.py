@@ -16,6 +16,7 @@ import tempfile
 import textwrap
 import types
 import unittest
+from pathlib import Path
 
 from nimic.ntypes import *
 from nimic.nsystem import ord as nim_ord, _BuildProfile, _n_set_build_profile
@@ -40,6 +41,7 @@ from nimic.system.ansi_c import c_free, c_malloc, csize_t
 from nimic.transpiler import (unparse, private_name_collisions, check_private_names, free_call_overlaps,
                               check_imported_module)
 from nimic import valuecheck
+from nnimony.tools import upstream
 
 def _n_fwd_proc(a, b):
     """A forward declaration in this module (overloads below)."""
@@ -6288,6 +6290,64 @@ class TestNTypes(unittest.TestCase):
             self.assertIn("== eipkg.ed\nfrom .eb import B\nfrom .ea import fa\n", out)
             self.assertIn("  + fa: leaked by eipkg.eb; imported from eipkg.ea (an added Nim import)", out)
             self.assertIn("== eipkg.ee\nfrom . import ea\nfrom nimic.std.os import *\n", out)
+
+    def test_upstream_tool(self):
+        """nnimony/tools/upstream.py (the re-pin tool) reports, per converted module, what changed in its original
+        between the commit its header records and the target: the commits, a diffstat and the diff; an original
+        deleted or renamed upstream; and the upstream files of the converted directories no module was converted
+        from. `mark` moves a module's header to the target."""
+        with tempfile.TemporaryDirectory() as tmp:
+            nimony, nnimony = Path(tmp, "nimony"), Path(tmp, "nnimony")
+
+            def git(*args):
+                return subprocess.run(["git", "-C", str(nimony), *args], check=True, capture_output=True,
+                                      text=True, env=dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                                                          GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")).stdout
+            (nimony / "src" / "lib").mkdir(parents=True)
+            git("init", "-q")
+            for name in ("a", "b", "c", "d"):
+                (nimony / "src" / "lib" / f"{name}.nim").write_text(f"proc {name}*() = discard\n" * 3)
+            git("add", "-A")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD").strip()
+            (nimony / "src" / "lib" / "a.nim").write_text("proc a*() = discard\nproc a2*() = discard\n")
+            git("mv", "src/lib/b.nim", "src/lib/b2.nim")
+            git("rm", "-q", "src/lib/c.nim")
+            (nimony / "src" / "lib" / "e.nim").write_text("proc e*() = discard\n")
+            git("add", "-A")
+            git("commit", "-qm", "a2 and moves")
+            target = git("rev-parse", "HEAD").strip()
+            (nnimony / "lib").mkdir(parents=True)
+            (nnimony / "tools").mkdir()
+            (nnimony / "tools" / "x.py").write_text("# a tool, no header\n")
+            for name in ("a", "b", "c", "d"):
+                (nnimony / "lib" / f"{name}.py").write_text(
+                    f"# /// nimic\n# source: nimony@{base}:src/lib/{name}.nim\n# ///\n")
+            modules = upstream.converted_modules(nnimony)
+            self.assertEqual([m.key for m in modules], ["lib/a", "lib/b", "lib/c", "lib/d"])
+            drifts = {d.module.key: d for d in upstream.drift(modules, target, nimony)}
+            self.assertEqual(drifts["lib/a"].status, "changed")
+            self.assertEqual(drifts["lib/a"].stat, "+1 -2")
+            self.assertIn("+proc a2*() = discard", drifts["lib/a"].diff)
+            self.assertEqual([c.split(" ", 1)[1] for c in drifts["lib/a"].commits], ["a2 and moves"])
+            self.assertEqual(drifts["lib/b"].status, "renamed to src/lib/b2.nim")
+            self.assertEqual(drifts["lib/c"].status, "deleted")
+            self.assertEqual((drifts["lib/d"].status, drifts["lib/d"].diff), ("unchanged", ""))
+            (nnimony / "lib" / "d.py").unlink()  # d: there before, not converted
+            modules = upstream.converted_modules(nnimony)
+            self.assertEqual(upstream.new_upstream_files(modules, target, nimony),
+                             (["src/lib/b2.nim", "src/lib/e.nim"], ["src/lib/d.nim"]))
+            (nnimony / "lib" / "d.py").write_text(f"# /// nimic\n# source: nimony@{base}:src/lib/d.nim\n# ///\n")
+            modules = upstream.converted_modules(nnimony)
+            text = upstream.report(list(drifts.values()), (["src/lib/e.nim"], []), "HEAD", target, with_diff=True)
+            self.assertIn("3 of 4 converted modules changed", text)
+            self.assertIn("| `lib/a` | changed | +1 -2 | 1 |", text)
+            self.assertIn("```diff", text)
+            self.assertIn("Unchanged (1): `lib/d`", text)
+            self.assertIn("New upstream files in these directories", text)
+            self.assertEqual(upstream.mark(modules, ["lib/a"], target), [f"lib/a: {base[:12]} -> {target[:12]}"])
+            self.assertIn(f"# source: nimony@{target}:src/lib/a.nim", (nnimony / "lib" / "a.py").read_text())
+            self.assertIn(f"# source: nimony@{base}:src/lib/d.nim", (nnimony / "lib" / "d.py").read_text())
 
     def test_file_open_takes_file_mode(self):
         """`open(f, path, fmRead)` with syncio's FileMode opens the file like the mode's string "r": also through

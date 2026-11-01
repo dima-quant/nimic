@@ -51,8 +51,10 @@ see *History*).
 - nimony moves fast: 603 commits in the 5.5 months before this pin, and `src/lib` more than doubled.
 - So every converted module records its source commit from the start:
   `# source: nimony@<sha>:src/lib/bitabs.nim`.
-- A re-pin is applied as upstream diffs to the converted modules, done by `nnimony/tools/upstream.py` (to
-  come; needed from the first re-pin on).
+- A re-pin is applied as upstream diffs to the converted modules, reported by `nnimony/tools/upstream.py`
+  (2026-11-01): per module, the commits, diffstat and diff of its original since the commit its header records,
+  plus the files added upstream; `--mark` moves a module's header once its diff is converted. Then the clone and
+  the pins move (`nnimony/tools/queue.py` NIMONY_PIN, `tests/verify_transpiled.py` DIST_PINS).
 - Re-pin deliberately, e.g. when a component is complete.
 
 ## Layout of the conversion
@@ -109,7 +111,10 @@ converted (`nnimony/tools/queue.py`). Then, in this order:
    2026-11-01:* `verify_transpiled.py roundtrip` (`nnimony/checks/nif_roundtrip.py`) over the 45 `.nif` files of
    the nimony clone; it found nimic's float `$` differing from Nim's (`ncompiler/review_core_2026_11_01.md`).
 2. **The upstream tool** (`nnimony/tools/upstream.py`), then **the first re-pin** of nimony while `src/lib` is
-   complete and small: each converted module takes the upstream diff since the commit its header records.
+   complete and small: each converted module takes the upstream diff since the commit its header records. *The
+   tool: done 2026-11-01.* The first re-pin's target, `8e0321d8` (2026-11-01, 106 commits): 9 of 37 modules
+   changed (nifreader +225 -37, nifcore +94 -94, bif, intrinsics, compat2, bitabs, lineinfos, models/leng_tags,
+   models/tags), no file added.
 3. **Before Phase B:**
    - revisit [a nimic backend for nimony](#idea-for-later-a-nimic-backend-for-nimony), now that the rules
      change less per batch;
