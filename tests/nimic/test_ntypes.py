@@ -3171,7 +3171,8 @@ class TestNTypes(unittest.TestCase):
             nim('x = f"€{n}"')
 
     def test_transpile_object_variant_record(self):
-        """rule:matchcase: nested record cases, `case _` -> else, discriminator defaults dropped."""
+        """rule:matchcase: nested record cases, `case _` -> else, discriminator defaults dropped, a label of the
+        discriminator's type is the bare member (nimony doesn't count `NodeKind.nkInt` as covering `nkInt`)."""
         src = textwrap.dedent('''
             class NodeObj(Object):
                 info: nint
@@ -3199,12 +3200,12 @@ class TestNTypes(unittest.TestCase):
               NodeObj* = object
                 info*: int
                 case kind*: NodeKind
-                  of NodeKind.nkInt:
+                  of nkInt:
                     intVal*: int
-                  of NodeKind.nkAdd, NodeKind.nkSub:
+                  of nkAdd, nkSub:
                     leftOp*: Node
                     rightOp*: Node
-                  of NodeKind.nkIf:
+                  of nkIf:
                     cond*: Node
                     case hasElse*: bool
                       of true:
@@ -3215,6 +3216,22 @@ class TestNTypes(unittest.TestCase):
                     discard
                 tail*: int''')
         self.assertEqual(unparse(ast.parse(src))[0].strip(), expected)
+
+    def test_transpile_object_variant_record_labels(self):
+        """rule:matchcase: only a label qualified by the discriminator's own type (also module-qualified) loses
+        its qualifier; another value keeps its spelling."""
+        src = textwrap.dedent('''
+            class A(Object):
+                k: m.K
+                match k:
+                    case m.K.x | Other.y:
+                        f: nint
+                    case K.z:
+                        g: nint
+        ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("of x, Other.y:", out)
+        self.assertIn("of K.z:", out)
 
     def test_value_assignment_containers(self):
         """`x <<= y` (Nim `x = y` through a var parameter) works for seq, array and Tset, in place."""
@@ -3563,6 +3580,10 @@ class TestNTypes(unittest.TestCase):
             self.assertEqual(len(s), 11)
         self.assertEqual(len(Tset[char](digits)), 10)
         self.assertEqual(Tset[char](ch('x')), Tset[char]({ch('x')}))
+        # one char is an element, not an iterable of its text: `{'x'}` holds the char, `$` works
+        for one in (Tset[char](ch('x')), Tset(ch('x'))):
+            self.assertEqual([type(e) for e in one], [char])
+            self.assertEqual(str(one), "{'x'}")
         self.assertEqual(Tset[uint8](1, inrange(3, 5)), {1, 3, 4, 5})
         self.assertEqual(Tset[uint8](Tset[uint8](2, 4)), {2, 4})
         self.assertEqual(unparse(ast.parse("x = Tset[char](ch('-'), inrange(ch('0'), ch('9')))"))[0].strip(),
@@ -6284,7 +6305,8 @@ class TestNTypes(unittest.TestCase):
     def test_relative_name_import(self):
         """A relative name import `from .nifcore import TokenBuf, Cursor` is a full `import nifcore` (rule:import);
         unparse()'s `package` tells it from a module import of a package's modules (`from ..models import tags`),
-        and `from . import nifreader` is `import nifreader`. Each path is imported once."""
+        and `from . import nifreader` is `import nifreader`. Each path is imported once; `from . import a, b` is one
+        `import a, b`."""
         out = unparse(ast.parse("from nimic.ntypes import *\n"
                                 "from .nifcore import TokenBuf, Cursor\n"
                                 "from . import nifcore, nifreader\n"
@@ -6296,6 +6318,10 @@ class TestNTypes(unittest.TestCase):
         self.assertIn("import nifreader", lines)
         self.assertEqual(lines.count("import ../models/tags"), 1)
         self.assertNotIn("TokenBuf", out)
+        # one statement is one Nim `import` line, in its order (the original's grouping); a module imported
+        # before is left out, `as` gets its own line
+        out = unparse(ast.parse("from . import a, b, c\nfrom . import a, d as x, e\n"))[0]
+        self.assertEqual(out.splitlines(), ["import a, b, c", "import d as x", "import e"])
 
     def test_overloads(self):
         """`addIdent = overloads(nifcore.addIdent, nifbuilder.addIdent)`: Nim overloads plain procs of one name of
@@ -7706,7 +7732,7 @@ def addWord(b: mut@Builder, w: string) -> None:
         only in a try or a `.raises` routine): `.raises` under nimony and called in try / quit(1), called directly
         in Nim 2. Imports, standalone pragmas and definitions stay at the block's top level; its procs take the
         pragma alias. Each main block of a module has its own number; a main block with only definitions has no
-        proc."""
+        proc. Nothing of a main block is exported."""
         src = ('from nimic.ntypes import *\n'
                'if comptime(__name__ == "__main__"):\n'
                '    importFrom("nimic.std.os", "getCurrentDir")\n'
@@ -7727,7 +7753,7 @@ def addWord(b: mut@Builder, w: string) -> None:
             "    {.pragma: nimicMain1Raises.}",
             "  from ncode/std/os import getCurrentDir",
             "",
-            "  proc helper*(x: int): int {.nimicMain1Raises.} =",
+            "  proc helper(x: int): int {.nimicMain1Raises.} =",
             "    return x + 1",
             "  proc nimicMain1() {.nimicMain1Raises.} =",
             "    let",
@@ -7746,7 +7772,7 @@ def addWord(b: mut@Builder, w: string) -> None:
             "  else:",
             "    {.pragma: nimicMain2Raises.}",
             "",
-            "  proc other*() {.nimicMain2Raises.} =",
+            "  proc other() {.nimicMain2Raises.} =",
             "    echo(1)"])
         # a variable section a proc of the block uses stays a global (a stub's tracker), the others are locals
         src = ('if comptime(__name__ == "__main__"):\n'
@@ -7758,8 +7784,27 @@ def addWord(b: mut@Builder, w: string) -> None:
                '        calls.inc()\n'
                '    stub()\n')
         out = unparse(ast.parse(src))[0]
-        self.assertIn("  var\n    calls* = 0\n", out)
+        self.assertIn("  var\n    calls = 0\n", out)
+        # the block exports nothing: its `_x` and `x` are the same Nim code
+        self.assertEqual(out, unparse(ast.parse(src.replace("calls", "_calls").replace("stub", "_stub")))[0])
         self.assertIn("  proc nimicMain1() {.nimicMain1Raises.} =\n    let\n      n = 2\n    stub()\n", out)
+        # only a def's free names keep a section global: a parameter of the same name doesn't (the section stays
+        # after the statement before it); a `when` holding only definitions and `f = overloads(...)` stay too
+        src = ('if comptime(__name__ == "__main__"):\n'
+               '    if comptime(defined("nimony")):\n'
+               '        @template\n'
+               '        def _check(c: bool):\n'
+               '            if not c: quit(1)\n'
+               '    close = overloads(a.close, b.close)\n'
+               '    def count(dir: string) -> nint:\n'
+               '        return dir.len\n'
+               '    echo(1)\n'
+               '    with let:\n'
+               '        dir = string("x")\n'
+               '    echo(count(dir))\n')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("  when defined(nimony):\n\n    template check(c: bool) =", out)
+        self.assertIn("  proc nimicMain1() {.nimicMain1Raises.} =\n    echo(1)\n    let\n      dir = \"x\"\n", out)
 
     def test_transpile_std_bridge(self):
         """rule:stdbridge -> nimic.std.os is ncode/std/os (std/os, under nimony with the string forms of

@@ -66,46 +66,46 @@ def _hashTree(s: mut @ Sha1State, n: mut @ Cursor, foundInline: mut @ bool):
             with let:
                 tag = tagName(tags(n), cursorTagId(n))
             if tag == "inline": foundInline <<= True
-            update(s, "(")
+            update(s, string("("))
             update(s, tag)
             with into(n):
                 while hasMore(n):
                     _hashTree(s, n, foundInline)
-            update(s, ")")
+            update(s, string(")"))
         case NifKind.Symbol:
-            update(s, " ")
+            update(s, string(" "))
             update(s, symName(n))
             inc(n)
         case NifKind.SymbolDef:
-            update(s, " :")
+            update(s, string(" :"))
             update(s, symName(n))
             inc(n)
         case NifKind.Ident:
-            update(s, " ")
+            update(s, string(" "))
             update(s, strVal(n))
             inc(n)
         case NifKind.StrLit:
-            update(s, " \"")
+            update(s, string(" \""))
             update(s, strVal(n))
             inc(n)
         case NifKind.IntLit:
-            update(s, " ")
+            update(s, string(" "))
             update(s, str(intVal(n)))
             inc(n)
         case NifKind.UIntLit:
-            update(s, " ")
+            update(s, string(" "))
             update(s, str(uintVal(n)))
             inc(n)
         case NifKind.FloatLit:
-            update(s, " ")
+            update(s, string(" "))
             update(s, str(floatVal(n)))
             inc(n)
         case NifKind.CharLit:
-            update(s, " '")
+            update(s, string(" '"))
             update(s, str(ord(charLit(n))))
             inc(n)
         case NifKind.DotToken:
-            update(s, " .")
+            update(s, string(" ."))
             inc(n)
         case _:
             inc(n)
@@ -118,13 +118,13 @@ def lengInterfaceDigest(buf: mut @ TokenBuf) -> string:
     with var:
         n = beginRead(buf)
     if kind(n) == NifKind.TagLit:
-        update(s, "(")
+        update(s, string("("))
         update(s, tagName(tags(n), cursorTagId(n)))
         with into(n):
             while hasMore(n):
                 if kind(n) == NifKind.TagLit and tagName(tags(n), cursorTagId(n)) == "proc":
                     # (proc SymbolDef Params Type ProcPragmas Body)
-                    update(s, "(proc")
+                    update(s, string("(proc"))
                     with var:
                         isInline = nbool(False)
                     with into(n):
@@ -140,12 +140,12 @@ def lengInterfaceDigest(buf: mut @ TokenBuf) -> string:
                                 _hashTree(s, n, ignored)
                             else:
                                 skip(n)
-                    update(s, ")")
+                    update(s, string(")"))
                 else:
                     with var:
                         ignored = nbool(False)
                     _hashTree(s, n, ignored)
-        update(s, ")")
+        update(s, string(")"))
     endRead(n)
     result = string(str(SecureHash(finalize(s))))
     return result

@@ -38,5 +38,5 @@ def uhash(s: string) -> UHash:
 
 
 if comptime(__name__ == "__main__"):
-    for _s in [string(""), string("a"), string("abc"), string("nifcore"), string("(.nif24)"), utf8("ü€")]:
-        echo(_s.len, " ", uhash(_s))
+    for s in [string(""), string("a"), string("abc"), string("nifcore"), string("(.nif24)"), utf8("ü€")]:
+        echo(s.len, " ", uhash(s))

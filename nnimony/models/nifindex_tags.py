@@ -53,20 +53,20 @@ def rawTagIsNifIndexKind(raw: TagEnum) -> bool:
 
 if comptime(__name__ == "__main__"):
     # First member (no ordinal)
-    echo(str(NifIndexKind.NoIndexTag))
+    echo(NifIndexKind.NoIndexTag)
     echo(ord(NifIndexKind.NoIndexTag))
 
     # Members with tag ordinals
-    echo(str(NifIndexKind.KvIdx))
+    echo(NifIndexKind.KvIdx)
     echo(ord(NifIndexKind.KvIdx))
     echo(ord(NifIndexKind.KvIdx) == ord(TagEnum.KvTagId))
 
-    echo(str(NifIndexKind.ProcIdx))
+    echo(NifIndexKind.ProcIdx)
     echo(ord(NifIndexKind.ProcIdx))
     echo(ord(NifIndexKind.ProcIdx) == ord(TagEnum.ProcTagId))
 
     # Last member
-    echo(str(NifIndexKind.LinkIdx))
+    echo(NifIndexKind.LinkIdx)
     echo(ord(NifIndexKind.LinkIdx))
     echo(ord(NifIndexKind.LinkIdx) == ord(TagEnum.LinkTagId))
 
@@ -79,5 +79,5 @@ if comptime(__name__ == "__main__"):
     echo(rawTagIsNifIndexKind(TagEnum.ErrTagId))
 
     # Convert tag ordinal back
-    echo(str(NifIndexKind(ord(TagEnum.KvTagId))))
-    echo(str(NifIndexKind(ord(TagEnum.LinkTagId))))
+    echo(NifIndexKind(ord(TagEnum.KvTagId)))
+    echo(NifIndexKind(ord(TagEnum.LinkTagId)))

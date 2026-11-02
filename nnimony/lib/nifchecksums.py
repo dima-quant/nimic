@@ -37,23 +37,23 @@ def _updateAtom(dest: mut @ Sha1State, n: Cursor):
     ## Hashes one leaf token (build-agnostic: the hashed content is the tag/sym
     ## name, string, or numeric value, so the digest matches classic byte-for-byte).
     if isSymbolDef(n):
-        update(dest, " :"); update(dest, symString(pool, symId(n)))
+        update(dest, string(" :")); update(dest, symString(pool, symId(n)))
     elif isSymbol(n):
-        update(dest, " "); update(dest, symString(pool, symId(n)))
+        update(dest, string(" ")); update(dest, symString(pool, symId(n)))
     elif isIdent(n):
-        update(dest, " "); update(dest, pool.strings[strId(n)])
+        update(dest, string(" ")); update(dest, pool.strings[strId(n)])
     elif isIntLit(n):
-        update(dest, " "); update(dest, str(intVal(n)))
+        update(dest, string(" ")); update(dest, str(intVal(n)))
     elif isUIntLit(n):
-        update(dest, " "); update(dest, str(uintVal(n)))
+        update(dest, string(" ")); update(dest, str(uintVal(n)))
     elif isFloatLit(n):
-        update(dest, " "); update(dest, str(floatVal(n)))
+        update(dest, string(" ")); update(dest, str(floatVal(n)))
     elif isStringLit(n):
-        update(dest, " "); update(dest, pool.strings[strId(n)])
+        update(dest, string(" ")); update(dest, pool.strings[strId(n)])
     elif isCharLit(n):
-        update(dest, " "); update(dest, str(uoperand(n)))
+        update(dest, string(" ")); update(dest, str(uoperand(n)))
     elif isDotToken(n):
-        update(dest, ".")
+        update(dest, string("."))
 
 
 def updateLoop(dest: mut @ Sha1State, n: mut @ Cursor, inlineT: TagId, foundInline: mut @ bool):
@@ -61,13 +61,13 @@ def updateLoop(dest: mut @ Sha1State, n: mut @ Cursor, inlineT: TagId, foundInli
     ## the same with and without ParRi elision: the close is hashed as ")"
     ## whether or not its token physically exists.
     if isTagLit(n):
-        update(dest, "(")
+        update(dest, string("("))
         update(dest, globalTags.tags[cursorTagId(n)])
         if cursorTagId(n) == inlineT: foundInline <<= True
         with into(n):
             while hasMore(n):
                 updateLoop(dest, n, inlineT, foundInline)
-        update(dest, ")")
+        update(dest, string(")"))
     else:
         _updateAtom(dest, n)
         inc(n)

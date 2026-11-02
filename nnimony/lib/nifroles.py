@@ -112,8 +112,6 @@ def nifCloses():
 
 
 if comptime(__name__ == "__main__"):
-    echo(string("nifroles ok"))
-
     # the roles as routines carry them (no effect on what the routines do)
     def _tSkip(n: nint) -> nint:
         """{.nifAdvance.}"""
@@ -123,4 +121,5 @@ if comptime(__name__ == "__main__"):
         """{.nifEmits: "Y", nifBalanced.}"""
         return s + "!"
 
+    echo(string("nifroles ok"))
     echo(_tSkip(1), "|", _tEmitSym(string("x")))

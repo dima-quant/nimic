@@ -3038,8 +3038,10 @@ class Tset(_NLen, set):
 
     def __init__(self, *items):
         """Nim set constructor `{a, b..c}`: `Tset[T](a, inrange(b, c))` or `Tset[T]({a, inrange(b, c)})`;
-        a single iterable argument (another set, `inrange(b, c)`, a char) gives its members."""
-        if len(items) == 1 and isinstance(items[0], collections.abc.Iterable):
+        a single iterable argument (another set, `inrange(b, c)`) gives its members. A single `char` is an
+        element (`{'x'}`), though Python can iterate it."""
+        if (len(items) == 1 and isinstance(items[0], collections.abc.Iterable)
+                and not isinstance(items[0], char)):
             items = items[0]
         members = []
         for item in items:

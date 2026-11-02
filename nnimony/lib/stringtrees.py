@@ -44,7 +44,7 @@ def _splitValue(a: openArray[Key], position: nint) -> tuple[char, float]:
                 hits += 1
         # the split is the better, the more `hits` is close to `a.len / 2`:
         with let:
-            grade = 100000.0 - abs(float(hits) - float(a.len) / 2.0)
+            grade = 100000.0 - abs(float64(hits) - float64(a.len) / 2.0)
         if grade > result[1]:
             result = (disc, grade)
     return result

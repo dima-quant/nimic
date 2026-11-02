@@ -166,16 +166,16 @@ Classes and objects use standard Python `class` definitions but employ specific 
 | `type SomeType = ptr object` | `@ptr class SomeType(Object):` | class definition should be decorated by `@ptr` for pointer types |
 | `SomeType(x: 1, y: 2)` | `SomeType(x=1, y=2)` | Object instantiation |
 | `type T = object`<br>&nbsp;&nbsp;&nbsp;&nbsp;`k: int = 5` | `class T(Object):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`k: nint = nint(5)` | Field defaults (Nim 2), also in a variant's branches: each new value gets its own copy of a default it isn't given (`T()`, `T(s=...)`, `default(T)`, `reset`, a nested object field); a copy or conversion takes the source's fields, and zeroed memory (`cast`, `alloc0`) has none. `= None` is no default (a nil ref, a legacy dummy discriminator default) |
-| `type Time* = float64` | `Time = float64` or `class Time(float64): pass` | Type Alias. Bidirectionally interchangeable with the target type in `@dispatch`. |
+| `type Time* = float64` | `Time = float64` | Type Alias (`rule:typealias`). Bidirectionally interchangeable with the target type in `@dispatch`. `class Time(float64): pass` transpiles the same and still works (the Nim 2 conversions use it), but the assignment is the canonical form (§13.5): it is the same Python type, as Nim's alias is |
 | `type range[warnMin .. hintMax]` | `class MyRange(Trange[warnMin, hintMax]): pass` | Range subtyping definition (`rule:trange`) |
-| `type set[TNoteKind]` | `class MySet(Tset[TNoteKind]): pass` | Sets of ordinal types definition |
-| `type seq[string]` | `class MySeq(seq[string]): pass` | Sequence type alias |
+| `type MySet = set[TNoteKind]` | `MySet = Tset[TNoteKind]` | A set type alias (also `class MySet(Tset[TNoteKind]): pass`, see `type Time*`) |
+| `type MySeq = seq[string]` | `MySeq = seq[string]` | A sequence type alias (also `class MySeq(seq[string]): pass`, see `type Time*`) |
 | `(x: 1, y: 2)` | `SomeTuple(x=1, y=2)` | NTuple constructor transpiles to Nim tuple literal (`rule:tuplelit`) |
-| `{}` | `Tset[T]()` or `Tset()` | Empty set literal (`rule:setlit`) |
-| `{a, b, c}` | `Tset[T](a, b, c)` or `Tset(a, b, c)` | Set literal with elements (`rule:setlit`) |
+| `{}` | `Tset[T]()` | Empty set literal (`rule:setlit`). `Tset()` transpiles the same, but its elements have no type (canonical: `Tset[T]`, §13.5) |
+| `{a, b, c}` | `Tset[T](a, b, c)` | Set literal with elements (`rule:setlit`); a single element too (`Tset[char](ch('x'))`, `{'x'}`). `Tset(a, b, c)` transpiles the same |
 | `{'-', '0'..'9'}` | `Tset[char](ch('-'), inrange(ch('0'), ch('9')))` or `Tset[char]({ch('-'), inrange(...)})` | Ranges in a set literal |
-| `@[a, b, c]` | `seq[T]([a, b, c])` or `seq([a, b, c])` | Sequence literal (`rule:seqlit`) |
-| `@[]` | `seq()` or `seq[T]()` | Empty sequence literal (`rule:seqlit`) |
+| `@[a, b, c]` | `seq[T]([a, b, c])` | Sequence literal (`rule:seqlit`). The element type is needed in Python: `seq([a, b])` transpiles, but doesn't run ("Seq type not specified") |
+| `@[]` | `seq[T]()` | Empty sequence literal (`rule:seqlit`); `seq()` doesn't run either |
 | `[byte 1, 5]` | `array[2, byte]([1, 5])` | Arrays (`rule:array`). Where the field or the annotation gives the type, the transpiler writes Nim's bare literal: `R(params=array[6, PatKind]([...]))` → `R(params: [...])`, `X: array[E, string] = array[E, string]([...])` → `X: array[E, string] = [...]`. Elsewhere (a call argument, an element, a `return`) it writes the conversion `array[N, T]([...])`, which keeps the index type, with a numeric first element typed (`[int8(-1), 2]`) |
 | `type T = object` with `case kind: K` | `class T(Object):` with `kind: K` + `match kind:` | Object variants, see §11 (`rule:matchcase`) **(Nim 2: the Nim 3 version is in §14)** |
 | `ar: array[1, string] = [0: "some"]` | `ar = array[1, string]({0: string("some")})` | Arrays initialized with a dictionary |
@@ -196,6 +196,10 @@ translates to
       """{.borrow.}"""
       return super().__mul__(scalar)
 ```
+A borrowed operator's body calls the base type's operator: `return super().__eq__(b)` for `` `==` ``, `return super().__str__()`
+for `` `$` `` (Python's `str()` takes the base's text). A borrowed named proc calls it on the base value:
+`func hash*(x: TagId): Hash {.borrow.}` is `return hash(uint32(x))` (§7, `hash`). Only the pragma reaches Nim
+(`rule:funcdefbody`), so the body is Python's alone and has this one form.
 **Enums (`rule:enum`) `type SomeEnum = enum`** ➔ `class SomeEnum(NIntEnum):`, e.g., for enumerations
 ```python
   # Python Nimic
@@ -229,7 +233,7 @@ Functions use standard Python `def` definitions but might employ specific decora
 | `proc `*`(a: Int128, b: uint32): Int128` (private operator) | `def __mul__(a: Int128, b: uint32) -> Int128:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`"""{.private.}"""` | An operator can't take a `_`: the `{.private.}` docstring pragma (`rule:privatepragma`) keeps it unexported in Nim and is not emitted. In Python the overload stays visible to other modules (Nim would reject such a call) |
 | `proc `=copy`(dest: var Mangler; src: Mangler) {.error.}` (a lifetime hook: `=copy`, `=sink`, `=destroy`, `=wasMoved`, `=dup`, `=trace`) | `@hook("copy")`<br>`def _copy(dest: mut @ Mangler, src: Mangler):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`"""{.error.}"""`<br>&nbsp;&nbsp;&nbsp;&nbsp;`pass` | `rule:hook`: the Nim name is the hook's; the Python name only decides export (`_copy`: not exported). A module-level `def` right after its type, where Nim needs it (before the type's first use). In Python one owning object is one Nim value: `=destroy` runs when CPython frees it or at the end of the `with block:` that declared it (not for views and casts); `.copy()` and stores (constructor, field, `seq.add`) run `=dup` / `=copy`; `a <<= b` runs `=copy`; `move(x)` runs `=wasMoved(x)`. A `=copy` with `{.error.}` makes the type move-only: stores move (share) it, `.copy()` is a `TypeError`. Python copies where Nim moves, so a count read in between can be higher (`ncompiler/proposals/feature_lifetime_hooks_runtime.md` §4) |
 | `proc f(x: int): int` (forward declaration) | `def f(x: nint) -> nint:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`pass` | A body of only `pass` (after an optional pragma docstring) is a forward declaration; the later definition replaces it in Python. Overloaded procs: both with `@dispatch` |
-| `obj.f(a)` (method call syntax), `f(obj, a)` | `f(obj, a)` for a module-level proc, `obj.f(a)` for a method of the class | **The call syntax follows the Python definition.** A method of the class (the methods rule, row `type T = object` below; a `@property`; `@ufcs(T)`, which installs a method) is called as a method everywhere; a module-level proc or template is called free everywhere, also a block template (`with addCast(b, t):`), whatever the original's spelling: Nim's two spellings are one call, so the transpiled code means the same. Method syntax of a module-level proc is an `AttributeError`, whose message names the free call when the caller binds a routine of that name; without parentheses too (`b.count` is no bound proc). A free call of a proc whose name a parameter or a module-level value holds is the qualified call (`nifcore.kind(node)` next to a parameter `kind: NifKind`; §8.1 `shadowed`). A module calling a method of another module's class imports that module for Nim (§8: `from . import nifcore`), even when Python finds the method through the class. For other types (`string`, ...) a proc is a method only through `@ufcs(string)` |
+| `obj.f(a)` (method call syntax), `f(obj, a)` | `f(obj, a)` for a module-level proc, `obj.f(a)` for a method of the class | **The call syntax follows the Python definition.** A method of the class (the methods rule, row `type T = object` below; a `@property`; `@ufcs(T)`, which installs a method) is called as a method everywhere; a module-level proc or template is called free everywhere, also a block template (`with addCast(b, t):`), whatever the original's spelling: Nim's two spellings are one call, so the transpiled code means the same. Method syntax of a module-level proc is an `AttributeError`, whose message names the free call when the caller binds a routine of that name; without parentheses too (`b.count` is no bound proc). A free call of a proc whose name a parameter or a module-level value holds is the qualified call (`nifcore.kind(node)` next to a parameter `kind: NifKind`; §8.1 `shadowed`). A module calling a method of another module's class imports that module for Nim (§8: `from . import nifcore`), even when Python finds the method through the class. For other types (`string`, ...) a proc is a method only through `@ufcs(string)`. **When `@ufcs`:** a module-level routine is `@ufcs(T)`, `T` its first parameter's type, exactly when a call of it keeps the original's method syntax (`srcPath.startsWithPath(stdlibRoot)`, `docpaths.nim:66`, is `srcPath._startsWithPath(...)` under `@ufcs(string)`): in its module or in an importer; also an operator or `$` the methods rule keeps at module level. The transpiler keeps each call's spelling, so the round trip gives back `@ufcs` from the calls. `@ufcs` is the first decorator (`@ufcs(StringView)`, `@dispatch`, `@template_expand`) |
 | `proc len*(b: TokenBuf): int {.inline.} = b.len` (a getter of a private field `len`) | `class TokenBuf(Object):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`_len: nint`<br>&nbsp;&nbsp;&nbsp;&nbsp;`@property`<br>&nbsp;&nbsp;&nbsp;&nbsp;`def len(b: TokenBuf) -> nint:`<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`"""{.inline.}"""`<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`return b._len` | A `@property` that only returns the field of its name with a `_` is Nim's getter: the field `_len` and the property `len` don't collide (`rule:localname`), although both are `len` in Nim (in the module `b.len` is the field, elsewhere the proc: the same value). A property is one spelling, as any Python property: callers write `b.len` / `c.kind` everywhere, never `kind(c)` or `c.kind()` (there is no module-level `kind`), even where the original has the free call `kind(c)` (Nim's two spellings are one call, so the transpiled code means the same). The one exception is `len`, whose `len(b)` is Python's own protocol (below). A `len` the class declares (a `@property` or a method) also answers Python's `len(b)`, Nim's other spelling of the same call; an object of length 0 stays truthy. Every sized nimic value has `.len` (`seq`, `array`, `string`, `cstring`, `openArray`, `Tset`, the std/tables tables) |
 | `foo(nil)` for `x: SomeRef` | `foo(None)` | `None` dispatches only to nilable parameter types: `@ref` classes, `ptr[T]`, `pointer`, `@calltype` procs. **(Nim 2: the Nim 3 version is in §14)** |
 | `iterator myIter(x: int): int`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | `def myIter(x: nint) -> nint:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`yield x` | |
@@ -360,6 +364,7 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
 | `and`, `or`, etc (binary) | `&`, `\|`, etc | Nim binary operators map to Python bitwise |
+| `(if c: a else: b)` (an `if` expression) | `a if c else b`, as a result `return a if c else b` | An `if` expression is Python's conditional expression, also as a template's or proc's result (nifcdecl's `tagEnumOf`); `if c: a elif d: b else: e` nests, `a if c else (b if d else e)` (transpiled `if c: a else: (if d: b else: e)`). An original's `if` statement whose branches `return` stays an `if` statement. The transpiler writes the two differently (the expression on one line), so each spelling of the original is kept |
 | `s[i] = c` | `s[i] = c` | Writes the char in place (`IndexDefect` past the end) |
 | `for c in mitems(s): c = x` | `for c in mitems(s):`<br>&nbsp;&nbsp;&nbsp;&nbsp;`c <<= x` | `mitems` of a string yields chars bound to their slots; `<<=` writes back (transpiled `c = x`) |
 | `"$1 [$#] ${name}" % [a, b]`, `format(f, a, b)`, `s.addf(f, a)` | the same | strutils `%`, `format`, `addf` with Nim semantics (`$1`, `$#`, `$-1`, `${n}`, `$name` key/value pairs, `$$`; `ValueError` if invalid) |
@@ -595,7 +600,14 @@ class NodeObj(Object):
 - **Under `nimony c`** the test block meets nimony's library:
   - its statements run in `proc nimicMainN()` (`rule:mainproc`), `.raises` under nimony and called in
     `try: ... except: quit(1)`, so it may call `readFile`, `getCurrentDir`, `removeFile`; its imports and
-    definitions stay at the top level, its procs are `.raises` under nimony too;
+    definitions (also a `when` of only definitions, `f = overloads(...)`) and the variable sections its procs
+    read stay at the top level, before the statements; its procs are `.raises` under nimony too;
+  - nothing of a main block is exported (no `*`), so its variables are plain names (`for s in ...`, not
+    `_s`): `_x` and `x` are the same Nim code there. A main block's variable must not rebind a module-level
+    name (Python shares the module's namespace);
+  - order: the transpiled block has its definitions first. Tests the conversion adds are written in that
+    order; a converted `when isMainModule` keeps the original's order (bif, nifreader interleave procs and
+    tests), which the round trip can't give back;
   - `doAssert` comes from the prelude; `except AssertionDefect` has no meaning (nimony's `assert` quits);
   - a local passed as `var` (or added to) must be initialized: `x: seq[T] = seq[T]([])` (`@[]`) or
     `x = default(T)`; `x = T()` is Nim's bare `var x: T` (`rule:varini`).
@@ -604,6 +616,30 @@ class NodeObj(Object):
   2. **tests:** the output of Python and of the compiled transpiled module are equal;
   3. **original:** the output of Python and of the original nimony module, compiled with the transpiled
      test block appended, are equal. This is the check of fidelity to the source.
+
+### 13.5 Canonical forms
+
+Nim can't tell some nimic spellings apart: they transpile to the same Nim, so a Nim → nimic round trip
+(nimicgen, `../nimony-nimic`) gives back one of them. The conversions write that one:
+
+| Choice | Canonical form | Not |
+| --- | --- | --- |
+| a string literal (§6) | `string("x")` where the literal is a value: bound (assignment, `with` section, default), stored, returned, passed as an argument (`update(s, string("("))`, `quit(string("msg"))`, `slurp(string("../x.md"))`); a bare `"x"` where Python takes its `str` as it is: an `echo` argument, an `assert` message, an operand of an operator or comparison next to a nimic string (`s + "!"`, `x == "abc"`), an enum member's text, `_ = "..."`, a directive's argument (`pragma`, `push`, `importFrom`, `exportExcept`, `defined`) | the other spelling in that place |
+| a char literal (`rule:char`) | `ch(' ')`; `char(' ')` only where a local `ch` shadows `ch()` | `char(' ')` |
+| a seq or set literal (`rule:seqlit`, `rule:setlit`) | `seq[T]([a, b])`, `seq[T]()`, `Tset[T](a, b)`, `Tset[T]()` | `seq(...)` (doesn't run), `Tset(...)` |
+| an `echo` argument (`rule:echodollar`) | `echo(x)`: echo applies Nim's `$` itself | `echo(str(x))` (`str(True)` is `True`, `$true` is `true`) |
+| Nim's `float` | `float64` (`float64(hits)`, `f: float64`): Python's `float` is no nimic type | `float` |
+| a type alias (§3) | `X = T` (`TInfoOSProps = Tset[TInfoOSProp]`) | `class X(T): pass` |
+| a borrowed operator (§3, distinct) | `return super().__eq__(b)`, `return super().__str__()` | `return string(str(uint32(x)))` |
+| `overloads(...)` (`rule:overloads`) | the modules in the order the module imports them | another order |
+| main block variables (§13.4) | plain names | `_x` |
+| a main block's order (§13.4) | definitions first (added tests) | definitions after statements |
+
+Forms the transpiler keeps apart, so each original spelling has its own nimic form: `from . import a, b`
+(one `import a, b` line) vs one `from . import` per module (Nim's `import bitabs, lineinfos, nifroles` is
+`from . import bitabs, lineinfos, nifroles`, written before the `from .bitabs import ...` name imports Python
+needs: an import already written is left out); `a if c else b` (§7) vs an `if` statement whose
+branches return; `x.f()` vs `f(x)` (§4: the call syntax follows the definition, `@ufcs`).
 
 ## 14. Nim 3 constructs
 

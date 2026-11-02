@@ -28,20 +28,20 @@ def rawTagIsCallConv(raw: TagEnum) -> bool:
 
 if comptime(__name__ == "__main__"):
     # First member (no ordinal)
-    echo(str(CallConv.NoCallConv))
+    echo(CallConv.NoCallConv)
     echo(ord(CallConv.NoCallConv))
 
     # Members with tag ordinals
-    echo(str(CallConv.Cdecl))
+    echo(CallConv.Cdecl)
     echo(ord(CallConv.Cdecl))
     echo(ord(CallConv.Cdecl) == ord(TagEnum.CdeclTagId))
 
-    echo(str(CallConv.Stdcall))
+    echo(CallConv.Stdcall)
     echo(ord(CallConv.Stdcall))
     echo(ord(CallConv.Stdcall) == ord(TagEnum.StdcallTagId))
 
     # Last member
-    echo(str(CallConv.Nimcall))
+    echo(CallConv.Nimcall)
     echo(ord(CallConv.Nimcall))
     echo(ord(CallConv.Nimcall) == ord(TagEnum.NimcallTagId))
 
@@ -53,5 +53,5 @@ if comptime(__name__ == "__main__"):
     echo(rawTagIsCallConv(TagEnum.ErrTagId))
 
     # Convert tag ordinal back
-    echo(str(CallConv(ord(TagEnum.StdcallTagId))))
-    echo(str(CallConv(ord(TagEnum.NimcallTagId))))
+    echo(CallConv(ord(TagEnum.StdcallTagId)))
+    echo(CallConv(ord(TagEnum.NimcallTagId)))

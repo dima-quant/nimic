@@ -153,35 +153,35 @@ def crucialOrigins(fname: string) -> CrucialOrigin:
 
 
 if comptime(__name__ == "__main__"):
-    for _plain in [string(""), string("system.nim"), string("__crucial"), string("__crucialXsystem.nim"), string("__cruciaX\0system.nim")]:
-        echo(isCrucialFile(_plain), "|", crucialTail(_plain) == _plain, "|", realFile(_plain) == _plain)
+    for plain in [string(""), string("system.nim"), string("__crucial"), string("__crucialXsystem.nim"), string("__cruciaX\0system.nim")]:
+        echo(isCrucialFile(plain), "|", crucialTail(plain) == plain, "|", realFile(plain) == plain)
         with var:
-            _cnt = 0
-        for _o in crucialOrigins(_plain):
-            _cnt += 1
-        echo(_cnt)
+            cnt = 0
+        for o in crucialOrigins(plain):
+            cnt += 1
+        echo(cnt)
 
     with var:
-        _f1 = CrucialPrefix.copy()
-    _f1.addCrucialInfo(string("[]=.0.system"), string("system.nim"), i32(34))
-    _f1.add(crucialTail(string("system.nim")))
-    echo(isCrucialFile(_f1), "|", realFile(_f1), "|", crucialTail(_f1).len)
-    for _o in crucialOrigins(_f1):
-        echo(_o.sym, "|", _o.declFile, "|", _o.declLine)
+        f1 = CrucialPrefix.copy()
+    f1.addCrucialInfo(string("[]=.0.system"), string("system.nim"), i32(34))
+    f1.add(crucialTail(string("system.nim")))
+    echo(isCrucialFile(f1), "|", realFile(f1), "|", crucialTail(f1).len)
+    for o in crucialOrigins(f1):
+        echo(o.sym, "|", o.declFile, "|", o.declLine)
 
     with var:
-        _f2 = CrucialPrefix.copy()
-    _f2.addCrucialInfo(string("setElem.0.foo"), string("foo.nim"), i32(16))
-    _f2.add(crucialTail(_f1))
-    echo(isCrucialFile(_f2), "|", realFile(_f2), "|", crucialTail(_f2).len)
-    for _o in crucialOrigins(_f2):
-        echo(_o.sym, "|", _o.declFile, "|", _o.declLine)
+        f2 = CrucialPrefix.copy()
+    f2.addCrucialInfo(string("setElem.0.foo"), string("foo.nim"), i32(16))
+    f2.add(crucialTail(f1))
+    echo(isCrucialFile(f2), "|", realFile(f2), "|", crucialTail(f2).len)
+    for o in crucialOrigins(f2):
+        echo(o.sym, "|", o.declFile, "|", o.declLine)
 
     with let:
-        _bare = CrucialPrefix + string("bareSym.0.mod\0real.nim")
-        _noLine = CrucialPrefix + string("symFile.0.mod") + CrucialFieldSep + string("decl.nim\0real.nim")
-        _badLine = CrucialPrefix + string("symBad.0.mod") + CrucialFieldSep + string("decl.nim") + CrucialFieldSep + string("42x\0real.nim")
-    for _forged in [_bare, _noLine, _badLine]:
-        echo(isCrucialFile(_forged), "|", realFile(_forged))
-        for _o in crucialOrigins(_forged):
-            echo(_o.sym, "|", _o.declFile, "|", _o.declLine)
+        bare = CrucialPrefix + string("bareSym.0.mod\0real.nim")
+        noLine = CrucialPrefix + string("symFile.0.mod") + CrucialFieldSep + string("decl.nim\0real.nim")
+        badLine = CrucialPrefix + string("symBad.0.mod") + CrucialFieldSep + string("decl.nim") + CrucialFieldSep + string("42x\0real.nim")
+    for forged in [bare, noLine, badLine]:
+        echo(isCrucialFile(forged), "|", realFile(forged))
+        for o in crucialOrigins(forged):
+            echo(o.sym, "|", o.declFile, "|", o.declLine)

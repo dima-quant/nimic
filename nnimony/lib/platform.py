@@ -67,7 +67,7 @@ class TInfoOSProp(NIntEnum):
     ospLacksThreadVars = auto()  # OS lacks proper __threadvar support
 
 
-class TInfoOSProps(Tset[TInfoOSProp]): pass
+TInfoOSProps = Tset[TInfoOSProp]
 
 
 class TInfoOS(NTuple):

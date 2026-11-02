@@ -69,9 +69,9 @@ else:
 
 from nimic.std.assertions import *
 from nimic.std.hashes import *
+from . import bitabs, lineinfos, nifroles
 from .bitabs import BiTable, ensureIndexed, getKeyId, getOrIncl, hash, initBiTable, len
 from .lineinfos import FileId, isValid, NoFile
-from . import bitabs, lineinfos, nifroles
 export(nifroles)  # a `{.nifWrap.}` in a template body is resolved where it expands
 export(bitabs)  # adapters touching pool.strings / tags need getOrIncl etc.
 exportFrom(lineinfos, "FileId", "NoFile", "isValid", "==", "hash")
@@ -121,7 +121,7 @@ class TagId(uint32):
 
     def __str__(x: TagId) -> string:
         """{.borrow, noSideEffect.}"""
-        return string(str(uint32(x)))
+        return super().__str__()
 
 
 @distinct
@@ -136,7 +136,7 @@ class StrId(uint32):
 
     def __str__(x: StrId) -> string:
         """{.borrow, noSideEffect.}"""
-        return string(str(uint32(x)))
+        return super().__str__()
 
 
 @distinct
@@ -151,7 +151,7 @@ class SymId(uint32):
 
     def __str__(x: SymId) -> string:
         """{.borrow, noSideEffect.}"""
-        return string(str(uint32(x)))
+        return super().__str__()
 
 # ── bit-packing constants ────────────────────────────────────────────────
 

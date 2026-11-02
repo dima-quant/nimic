@@ -30,7 +30,7 @@ def toUnixPath(s: string) -> string:
     if comptime(defined("windows")):
         return s.replace(ch('\\'), ch('/'))
     else:
-        return s
+        return s.copy()
 
 
 with const:

@@ -287,7 +287,7 @@ def takeProcType(n: mut @ Cursor) -> ProcType:
     if typeKind(n) == LengType.ParamsT:
         # Already inside a (proc/proctype) scope; the caller entered. Read the
         # remaining sibling cursors without entering a new scope.
-        assert typeKind(n) == LengType.ParamsT or n.kind() == NifKind.DotToken
+        assert typeKind(n) == LengType.ParamsT or kind(n) == NifKind.DotToken
         result = ProcType(params=n)
         skip(n)
         result.returnType = n
@@ -300,7 +300,7 @@ def takeProcType(n: mut @ Cursor) -> ProcType:
         assert stmtKind(n) == LengStmt.ProcS or typeKind(n) == LengType.ProctypeT
         with into(n):  # enter (proc ...) / (proctype ...)
             skip(n)  # name
-            assert typeKind(n) == LengType.ParamsT or n.kind() == NifKind.DotToken
+            assert typeKind(n) == LengType.ParamsT or kind(n) == NifKind.DotToken
             result = ProcType(params=n)
             skip(n)
             result.returnType = n
@@ -398,7 +398,7 @@ def _kindMatches(c: Cursor, expected: LengTagKind) -> bool:
 def skip(c: mut @ Cursor, expected: LengTagKind):
     """{.tagDispatch.}"""
     assert _kindMatches(c, expected), (
-        string("skip ") + str(expected) + string(": cursor at kind=") + str(c.kind()))
+        string("skip ") + str(expected) + string(": cursor at kind=") + str(kind(c)))
     skip(c)
 
 
@@ -406,7 +406,7 @@ def skip(c: mut @ Cursor, expected: LengTagKind):
 def inc(c: mut @ Cursor, expected: LengTagKind):
     """{.tagDispatch.}"""
     assert _kindMatches(c, expected), (
-        string("inc ") + str(expected) + string(": cursor at kind=") + str(c.kind()))
+        string("inc ") + str(expected) + string(": cursor at kind=") + str(kind(c)))
     inc(c)
 
 
@@ -414,7 +414,7 @@ def inc(c: mut @ Cursor, expected: LengTagKind):
 def into(c: mut @ Cursor, expected: LengTagKind, body: untyped):
     """{.tagDispatch.}"""
     assert _kindMatches(c, expected), (
-        string("into ") + str(expected) + string(": cursor at kind=") + str(c.kind()))
+        string("into ") + str(expected) + string(": cursor at kind=") + str(kind(c)))
     with into(c):
         body
 
@@ -423,7 +423,7 @@ def into(c: mut @ Cursor, expected: LengTagKind, body: untyped):
 def loopInto(c: mut @ Cursor, expected: LengTagKind, body: untyped):
     """{.tagDispatch.}"""
     assert _kindMatches(c, expected), (
-        string("loopInto ") + str(expected) + string(": cursor at kind=") + str(c.kind()))
+        string("loopInto ") + str(expected) + string(": cursor at kind=") + str(kind(c)))
     for _ in loopInto(c):
         body
 

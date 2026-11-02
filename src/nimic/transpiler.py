@@ -88,7 +88,8 @@ Control flow:
     case expression (the branch values without `return`)
   rule:matchcase -> adjust match case according to Nim syntax, also for variant types: in a class body,
     `field: T` followed by `match field:` is a record case `case field*: T` (discriminator default dropped),
-    `case _` -> else, `A | B` -> of A, B; branch bodies are records, so cases nest
+    `case _` -> else, `A | B` -> of A, B, a label `T.a` is the bare member `a` (nimony's sem doesn't count
+    `T.a` as covering `a`); branch bodies are records, so cases nest
     In statements, `case _ if c in inrange(a, b) or c in S or c == v:` (c: the match subject, S a set) ->
     `of a .. b, S, v:`, and
     `case _ if cond:` with any other condition -> `elif cond:`
@@ -106,7 +107,8 @@ Control flow:
   rule:mainproc -> the body of a top-level `if comptime(__name__ == "__main__"):` is `proc nimicMainN()`, called
     in the `when isMainModule:` block (imports and standalone pragmas stay there); under nimony the proc is
     `.raises` and called in `try: ... except: quit(1)`: nimony calls a `.raises` routine only in a try or a
-    `.raises` routine
+    `.raises` routine; definitions and the variable sections its procs use stay at the block's top level
+    (before its statements), and nothing of the block is exported (no `*`: `_x` and `x` are the same Nim)
   rule:comptimeexpr -> the expression `a if comptime(c) else b` is written as `when c: a else: b`
   rule:assigncall -> the statement assign(target, value) is written as `target = value`; used where Python
     can't assign, e.g. through a call returning var T: assign(p.s(cpsStmts), oldCode)
@@ -189,7 +191,7 @@ Imports:
   rule:import -> write import from as import, drop from __future__ import ...; a relative `from ..models import m`
     and `from . import m` bind module names: import ../models/m, import m; `from . import m as x` is import m as x;
     a relative name import `from .nifcore import TokenBuf` is import nifcore (unparse()'s `package` tells the two
-    apart); each path is imported once
+    apart); each path is imported once; `from . import a, b` is one line `import a, b` (the grouping is kept)
   rule:nodoubleimport -> do not write import module if already imported (also `from nimic.std import m`, which
     is `import std/m` for qualified use, m.proc)
   rule:labeledblock -> with block("name"): ... is `block name:`; breakBlock("name") is `break name`
@@ -1037,6 +1039,7 @@ class _Unparser(NodeVisitor):
         self._hook_procs = {}  # rule:hook: Python name of a @hook proc -> its hook (`copy`)
         self._block_templates = set()  # rule:looptemplate: names of templates with code blocks
         self._main_blocks = 0  # rule:mainproc: the module's `if comptime(__name__ == "__main__")` blocks so far
+        self._in_main_block = False  # rule:mainproc: a main block exports nothing
         self._main_raises = None  # rule:mainproc: the pragma alias of the main block being written
         self._noreturn_procs = set()  # rule:tryassign: names of the module's procs that don't return
         self._operator_procs = {}  # rule:operator: Python name of an @operator proc -> its Nim operator (`+!`)
@@ -1444,12 +1447,23 @@ class _Unparser(NodeVisitor):
             if node.module and not self._names_modules(node):
                 self._import_once(self._import_path(node.module, node.level))
                 return
-            for alias in node.names:
-                name = f"{node.module}.{alias.name}" if node.module else alias.name
-                if alias.asname:
-                    self.fill(f"import {self._import_path(name, node.level)} as {alias.asname}")
-                else:
-                    self._import_once(self._import_path(name, node.level))
+            # one Python statement is one Nim statement: `from . import a, b` is `import a, b` (rule:nodoubleimport
+            # drops a module imported before)
+            group = []
+            for alias in node.names + [None]:
+                if alias is None or alias.asname:
+                    if group:
+                        self.fill("import " + ", ".join(group))
+                        group = []
+                    if alias is not None:
+                        name = f"{node.module}.{alias.name}" if node.module else alias.name
+                        self.fill(f"import {self._import_path(name, node.level)} as {alias.asname}")
+                    continue
+                path = self._import_path(f"{node.module}.{alias.name}" if node.module else alias.name, node.level)
+                if self._indent or (path not in self._import_paths and path not in group):
+                    if not self._indent:
+                        self._import_paths.add(path)
+                    group.append(path)
             return
         if node.module and not node.module in ["__future__"]:
             path = self._import_path(node.module, node.level or 0)
@@ -1822,7 +1836,7 @@ class _Unparser(NodeVisitor):
         if len(name) > 1 and name[0] == "_":
             # private names keep their Nim name, unexported; __x / _1 are no Nim identifiers without a prefix
             _str = "local" + name if name[1] == "_" or name[1].isdigit() else name[1:]
-        elif definition and not name[0].startswith("local_"):
+        elif definition and not name[0].startswith("local_") and not self._in_main_block:
             _str = name + "*"
         else:
             _str = name
@@ -2017,21 +2031,32 @@ class _Unparser(NodeVisitor):
                 self.traverse(b.annotation)
                 with self.block(start=""):
                     for case in items[i + 1].cases:
-                        self._write_record_branch(case)
+                        self._write_record_branch(case, b.annotation)
                 i += 2
             else:
                 self.traverse(b)
                 i += 1
 
-    def _write_record_branch(self, case):
-        # rule:matchcase: `case _` -> else, `A | B` -> of A, B (via visit_MatchOr)
+    def _write_record_branch(self, case, discriminator_type):
+        # rule:matchcase: `case _` -> else, `A | B` -> of A, B
         if isinstance(case.pattern, MatchAs) and case.pattern.name is None and case.pattern.pattern is None:
             self.fill("else")
         else:
             self.fill("of ")
-            self.traverse(case.pattern)
+            labels = case.pattern.patterns if isinstance(case.pattern, MatchOr) else [case.pattern]
+            self.interleave(lambda: self.write(", "),
+                            lambda p: self._write_record_label(p, discriminator_type), labels)
         with self.block():
             self._traverse_record_items(case.body)
+
+    def _write_record_label(self, pattern, discriminator_type):
+        """rule:matchcase -> a record case's label `K.a` (K the discriminator's type) is the bare member `a`:
+        nimony's sem doesn't count a qualified member as covering it (Nim 2 accepts both)."""
+        value = pattern.value if isinstance(pattern, MatchValue) else None
+        if isinstance(value, Attribute) and ast.dump(value.value) == ast.dump(discriminator_type):
+            self.write(self._adjust_name(value.attr, definition=False))  # rule:localname
+        else:
+            self.traverse(pattern)
 
     @staticmethod
     def _is_string_annotation(ann) -> bool:
@@ -2462,18 +2487,47 @@ class _Unparser(NodeVisitor):
                 and len(test.ops) == 1 and isinstance(test.ops[0], Eq) and isinstance(test.comparators[0], Constant)
                 and test.comparators[0].value == "__main__")
 
-    @staticmethod
-    def _stays_toplevel(stmt) -> bool:
+    @classmethod
+    def _stays_toplevel(cls, stmt) -> bool:
         """rule:mainproc -> a statement of a main block that stays at its top level: an import (also importFrom /
         importExcept), a standalone pragma (pragma("feature: ...")), which Nim allows only there, and the
-        definitions (def, class, `with const:`), which a later main block of the module may use."""
+        definitions (def, class, `with const:`, `f = overloads(...)`), which a later main block of the module may
+        use; also an `if comptime(...)` (a `when`) whose branches hold only such statements."""
         if isinstance(stmt, (Import, ImportFrom, FunctionDef, AsyncFunctionDef, ClassDef)):
             return True
         if (isinstance(stmt, With) and len(stmt.items) == 1 and isinstance(stmt.items[0].context_expr, Name)
                 and stmt.items[0].context_expr.id == "const"):
             return True
+        if isinstance(stmt, If):
+            test = stmt.test.operand if isinstance(stmt.test, UnaryOp) and isinstance(stmt.test.op, Not) else stmt.test
+            return (isinstance(test, Call) and isinstance(test.func, Name) and test.func.id == "comptime"
+                    and all(cls._stays_toplevel(s) for s in stmt.body + stmt.orelse))
+        if (isinstance(stmt, Assign) and isinstance(stmt.value, Call) and isinstance(stmt.value.func, Name)
+                and stmt.value.func.id == "overloads"):
+            return True
         return (isinstance(stmt, Expr) and isinstance(stmt.value, Call) and isinstance(stmt.value.func, Name)
                 and stmt.value.func.id in ("importFrom", "importExcept", "pragma"))
+
+    @staticmethod
+    def _free_names(definition) -> set:
+        """rule:mainproc -> the names a def or class reads from its enclosing scope: a function's own parameters
+        and locals (assigned without `global` / `nonlocal`) aside."""
+        result = set()
+        in_functions = set()
+        for d in walk(definition):
+            if not isinstance(d, (FunctionDef, AsyncFunctionDef, Lambda)) or id(d) in in_functions:
+                continue
+            nodes = list(walk(d))
+            in_functions |= {id(n) for n in nodes}
+            own = {a.arg for n in nodes if isinstance(n, arguments)
+                   for a in n.posonlyargs + n.args + n.kwonlyargs + [x for x in (n.vararg, n.kwarg) if x]}
+            declared = {name for n in nodes if isinstance(n, (Global, Nonlocal)) for name in n.names}
+            own |= {n.id for n in nodes if isinstance(n, Name) and isinstance(n.ctx, Store)} - declared
+            result |= {n.id for n in nodes if isinstance(n, Name) and isinstance(n.ctx, Load)} - own
+        # a class body outside its methods: annotations, field defaults
+        result |= {n.id for n in walk(definition)
+                   if isinstance(n, Name) and isinstance(n.ctx, Load) and id(n) not in in_functions}
+        return result
 
     @staticmethod
     def _declares_any(stmt, names) -> bool:
@@ -2493,7 +2547,9 @@ class _Unparser(NodeVisitor):
         (its procs take the pragma alias `nimicMainNRaises`,
         `.raises` under nimony); the statements are `proc nimicMainN()`, `.raises` under nimony, called in
         `try: ... except: quit(1)` there (Python's uncaught exception ends the run with 1); Nim 2 calls it
-        directly, its uncaught exception still printing the traceback. Its variables are the proc's locals."""
+        directly, its uncaught exception still printing the traceback. Its variables are the proc's locals.
+        The block is no part of the module's interface: its names are not exported (no `*`), so a main block's
+        `_x` and `x` are the same Nim code."""
         self._main_blocks += 1
         name = f"nimicMain{self._main_blocks}"
         self.fill("when ")
@@ -2507,9 +2563,10 @@ class _Unparser(NodeVisitor):
                 self.fill(f"{{.pragma: {name}Raises.}}")
             self._main_raises = f"{name}Raises"
             # variables the block's procs use stay globals: their sections stay at the top level too
-            used = {n.id for s in body if isinstance(s, (FunctionDef, AsyncFunctionDef, ClassDef))
-                    for n in walk(s) if isinstance(n, Name)}
+            used = {n for s in body if isinstance(s, (FunctionDef, AsyncFunctionDef, ClassDef))
+                    for n in self._free_names(s)}
             top = [s for s in body if self._stays_toplevel(s) or self._declares_any(s, used)]
+            self._in_main_block = True
             self.traverse(top)
             rest = [s for s in body if not any(s is x for x in top)]
             if rest:
@@ -2519,6 +2576,7 @@ class _Unparser(NodeVisitor):
                     self.traverse(rest)
                     self._scope_depth -= 1
             self._main_raises = None
+            self._in_main_block = False
             if not rest:
                 return
             self.fill("when defined(nimony):")

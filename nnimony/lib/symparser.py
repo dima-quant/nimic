@@ -272,9 +272,9 @@ if comptime(__name__ == "__main__"):
     assert extractVersionedBasename(string("abc.Mod132a3bc")) == string("")
 
     with let:
-        _sn = splitSymName(string("abc.12.Mod132a3bc"))
-    assert _sn.name == string("abc.12")
-    assert _sn.module == string("Mod132a3bc")
+        sn = splitSymName(string("abc.12.Mod132a3bc"))
+    assert sn.name == string("abc.12")
+    assert sn.module == string("Mod132a3bc")
 
     assert derivedName(string("outer.0"), string("env")) == string("outer`env.0")
     assert derivedName(string("abc.12"), string("vt")) == string("abc`vt.12")
@@ -291,54 +291,54 @@ if comptime(__name__ == "__main__"):
     assert extractModule(derivedName(string("outer.0"), string("env")) + string(".mymod")) == string("mymod")
 
     with let:
-        _mp = splitModulePath(string("abc/def.2.nif"))
-    assert _mp.dir == string("abc")
-    assert _mp.name == string("def")
-    assert _mp.ext == string(".2.nif")
+        mp = splitModulePath(string("abc/def.2.nif"))
+    assert mp.dir == string("abc")
+    assert mp.name == string("def")
+    assert mp.ext == string(".2.nif")
 
     with let:
-        _mp2 = splitModulePath(string("def.2.nif"))
-    assert _mp2.dir == string(""), _mp2.dir
-    assert _mp2.name == string("def"), _mp2.name
-    assert _mp2.ext == string(".2.nif")
+        mp2 = splitModulePath(string("def.2.nif"))
+    assert mp2.dir == string(""), mp2.dir
+    assert mp2.name == string("def"), mp2.name
+    assert mp2.ext == string(".2.nif")
 
     with let:
-        _mp3 = splitModulePath(string("def"))
-    assert _mp3.dir == string(""), _mp3.dir
-    assert _mp3.name == string("def"), _mp3.name
-    assert _mp3.ext == string("")
+        mp3 = splitModulePath(string("def"))
+    assert mp3.dir == string(""), mp3.dir
+    assert mp3.name == string("def"), mp3.name
+    assert mp3.ext == string("")
 
     with var:
-        _basename = string("")
-        _disamb = nint(0)
-    assert splitLocalSymName(string("tmp.14"), _basename, _disamb)
-    assert _basename == string("tmp")
-    assert _disamb == 14
-    assert not splitLocalSymName(string("tmp.14.mod"), _basename, _disamb)
-    assert not splitLocalSymName(string("tmp.part.14"), _basename, _disamb)
+        basename = string("")
+        disamb = nint(0)
+    assert splitLocalSymName(string("tmp.14"), basename, disamb)
+    assert basename == string("tmp")
+    assert disamb == 14
+    assert not splitLocalSymName(string("tmp.14.mod"), basename, disamb)
+    assert not splitLocalSymName(string("tmp.part.14"), basename, disamb)
 
     # Added tests for remaining procs and edge cases
     with var:
-        _isGlob = nbool(False)
-        _inPlace = string("abc.12.Mod132a3bc")
-        _inPlaceNoVer = string("abc.Mod132a3bc")
-    echo(extractBasename(string("abc.12.Mod132a3bc"), _isGlob), "|", extractBasename(string("abc.12"), _isGlob), "|", extractBasename(string("a.b.c.23"), _isGlob), "|", extractBasename(string("nodigits"), _isGlob), "|", extractBasename(string(""), _isGlob))
-    echo(_isGlob)
-    _isGlob = nbool(False)
-    echo(extractBasename(string("abc.12"), _isGlob), "|", _isGlob)
-    echo(extractBasename(string("abc.12.Mod132a3bc"), _isGlob), "|", _isGlob)
-    extractBasename(_inPlace)
-    extractBasename(_inPlaceNoVer)
-    echo(_inPlace, "|", _inPlaceNoVer)
+        isGlob = nbool(False)
+        inPlace = string("abc.12.Mod132a3bc")
+        inPlaceNoVer = string("abc.Mod132a3bc")
+    echo(extractBasename(string("abc.12.Mod132a3bc"), isGlob), "|", extractBasename(string("abc.12"), isGlob), "|", extractBasename(string("a.b.c.23"), isGlob), "|", extractBasename(string("nodigits"), isGlob), "|", extractBasename(string(""), isGlob))
+    echo(isGlob)
+    isGlob = nbool(False)
+    echo(extractBasename(string("abc.12"), isGlob), "|", isGlob)
+    echo(extractBasename(string("abc.12.Mod132a3bc"), isGlob), "|", isGlob)
+    extractBasename(inPlace)
+    extractBasename(inPlaceNoVer)
+    echo(inPlace, "|", inPlaceNoVer)
     echo(genericTypeName(string("key1"), string("mod1")))
     echo(extractModule(string("abc.12")), "|", extractModule(string("")), "|", extractModule(string("a")))
-    echo(str(_sn), "|", str(splitSymName(string("abc.12"))), "|", str(splitSymName(string(""))))
+    echo(sn, "|", splitSymName(string("abc.12")), "|", splitSymName(string("")))
     echo(extractVersionedBasename(string("")), "|", extractVersionedBasename(string("abc.12")))
     echo(derivedName(string(""), string("env")), "|", derivedName(string(".0"), string("env")))
     echo(isInstantiation(string("")), "|", isInstantiation(string("gen.12.Xaaaa.mymod")))
     echo(isLocalName(string("")), "|", isLocalName(string("tmp")), "|", isLocalName(string("tmp.14")), "|", isLocalName(string("abc.12.Mod132a3bc")))
-    echo(splitLocalSymName(string(""), _basename, _disamb), "|", splitLocalSymName(string(".14"), _basename, _disamb), "|", splitLocalSymName(string("tmp."), _basename, _disamb), "|", splitLocalSymName(string("tmp.99999999999999999999"), _basename, _disamb))
+    echo(splitLocalSymName(string(""), basename, disamb), "|", splitLocalSymName(string(".14"), basename, disamb), "|", splitLocalSymName(string("tmp."), basename, disamb), "|", splitLocalSymName(string("tmp.99999999999999999999"), basename, disamb))
     echo(removeModule(string("abc.12.Mod132a3bc")), "|", removeModule(string("abc.12")), "|", removeModule(string("")))
-    echo(str(_mp), "|", str(_mp2), "|", str(_mp3), "|", str(splitModulePath(string("a"))), "|", str(splitModulePath(string("a\\b.2.nif"))))
+    echo(mp, "|", mp2, "|", mp3, "|", splitModulePath(string("a")), "|", splitModulePath(string("a\\b.2.nif")))
     echo(changeModuleExt(string("abc/def.2.nif"), string("c.nif")), "|", changeModuleExt(string("def.2.nif"), string(".s.nif")), "|", changeModuleExt(string("abc/def.2.nif"), string("")))
     echo(cmpNames(string("abc"), string("def")), "|", cmpNames(string("def"), string("abc")), "|", cmpNames(string("abc"), string("abc")))

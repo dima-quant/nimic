@@ -31,7 +31,7 @@ from nimic.std.syncio import *  # `slurp` is a `std/syncio` proc under nimony (a
                                 # magic under the host Nim bootstrap compiler).
 
 with const:
-    _VersionFile = slurp("../../doc/version.md")
+    _VersionFile = slurp(string("../../doc/version.md"))
     ## The file verbatim: version, whitespace, date.
 
 
@@ -43,7 +43,7 @@ def _firstField(s: string) -> string:
     result = string("")
     with var:
         i = 0
-    while i < len(s) and s[i] > char(' '):
+    while i < len(s) and s[i] > ch(' '):
         result.add(s[i])
         i += 1
     return result

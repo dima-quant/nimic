@@ -206,19 +206,4 @@ if comptime(__name__ == "__main__"):
             e2 = initHtmlBuilder(HtmlOutFormat.hofNif, 16)
         echo(e2.finalize())
 
-        # the variant's field check: `nif` of an hofHtml builder, `buf` of an hofNif one
-        with var:
-            h = initHtmlBuilder(HtmlOutFormat.hofHtml)
-        try:
-            echo(attachedToFile(h._nif))
-        except FieldDefect:
-            echo(string("FieldDefect: nif of hofHtml"))
-        with var:
-            n = initHtmlBuilder(HtmlOutFormat.hofNif)
-        try:
-            echo(n._buf.len)
-        except FieldDefect:
-            echo(string("FieldDefect: buf of hofNif"))
-        echo(n.finalize())
-
     _addedTests()

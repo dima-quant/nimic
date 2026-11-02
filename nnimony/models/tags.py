@@ -758,12 +758,12 @@ with const:
 
 
 if comptime(__name__ == "__main__"):
-    for _t in [TagEnum.InvalidTagId, TagEnum.ErrTagId, TagEnum.ProcTagId, TagEnum.StringTagId, TagEnum.AlwaysTagId]:
-        echo(_t, "|", TagData[_t][0], "|", TagData[_t][1])
+    for t in [TagEnum.InvalidTagId, TagEnum.ErrTagId, TagEnum.ProcTagId, TagEnum.StringTagId, TagEnum.AlwaysTagId]:
+        echo(t, "|", TagData[t][0], "|", TagData[t][1])
     with var:
-        _cnt = 0
-    for _t in inrange(low(TagEnum), high(TagEnum)):
-        doAssert(TagData[_t][1] == ord(_t))
-        doAssert(TagData[_t][0].len > 0)
-        _cnt += 1
-    echo("total=", _cnt)
+        cnt = 0
+    for t in inrange(low(TagEnum), high(TagEnum)):
+        doAssert(TagData[t][1] == ord(t))
+        doAssert(TagData[t][0].len > 0)
+        cnt += 1
+    echo("total=", cnt)

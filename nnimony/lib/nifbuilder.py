@@ -389,7 +389,7 @@ def attachLineInfo(b: mut @ Builder, col: int32, line: int32, file = string(""))
     pass
 
 
-def addFloatLit(b: mut @ Builder, f: float, col: int32 = 0, line: int32 = 0, file = string("")):
+def addFloatLit(b: mut @ Builder, f: float64, col: int32 = 0, line: int32 = 0, file = string("")):
     ## Emit a float literal. Special values (`inf`, `nan`, `neginf`) are emitted
     ## as compounds; for those, `(col, line, file)` if non-zero is attached as a
     ## suffix on the inner tag (the only place a NIF27 line-info suffix can go).

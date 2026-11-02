@@ -706,7 +706,7 @@ def _handleLineInfo(r: mut @ Reader, result: mut @ ExpandedToken):
 
     def integerOutOfRangeError():
         """{.noinline, noreturn.}"""
-        quit("Parsed integer outside of valid range")
+        quit(string("Parsed integer outside of valid range"))
 
     with _useCpuRegisters():
         with var:
@@ -1984,8 +1984,6 @@ if comptime(__name__ == "__main__"):
 
         close(r)
 
-    _test_nifreader_extra()
-
     importFrom("nimic.std.os", "getTempDir", "removeFile")
     importFrom("nimic.std.syncio", "writeFile")
     from nimic.std.formatfloat import *  # `$` of a float (nimony builds with a slim system)
@@ -2069,4 +2067,5 @@ if comptime(__name__ == "__main__"):
         _dump(b)
         close(b)
 
+    _test_nifreader_extra()
     _test_nifreader_dump()

@@ -144,7 +144,7 @@ if comptime(__name__ == "__main__"):
         vEmpty = toStringViewUnsafe(empty)
 
     echo(v1.len, "|", v1[0], "|", v1[4], "|", vEmpty.len)
-    echo(str(v1), "|", str(vEmpty))
+    echo(v1, "|", vEmpty)
     echo(v1 == v2, "|", v1 == v3, "|", v1 == vEmpty, "|", vEmpty == toStringViewUnsafe(string("")))
     echo(v1 == s1, "|", v1 == s3, "|", vEmpty == empty, "|", vEmpty == s1)
     echo(startsWith(v1, string("hello")), "|", startsWith(v1, string("world")), "|", startsWith(v1, string("")), "|", startsWith(v1, string("hello world!")))
