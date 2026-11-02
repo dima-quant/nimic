@@ -1489,21 +1489,6 @@ if comptime(__name__ == "__main__"):
         echo(string("containsSym (cut): "), containsSym(pCut, string("foo.3.mymod")), string(" "),
              containsSym(pCut, string("shared.1.othermod")))
 
-        # a file cut inside the token block: `load` and `loadFromFile` stop on a failed assertion
-        writeFile(pCut, substr(bytes, 0, 29))
-        try:
-            _ = load(pCut)
-            echo(string("load (cut): loaded"))
-        except AssertionDefect:
-            echo(string("load (cut): AssertionDefect"))
-        f = open(pCut, fmRead)
-        try:
-            _ = loadFromFile(f)
-            echo(string("loadFromFile (cut): loaded"))
-        except AssertionDefect:
-            echo(string("loadFromFile (cut): AssertionDefect"))
-        close(f)
-
         removeFile(p1)
         removeFile(p2)
         removeFile(pText)

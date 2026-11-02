@@ -17,6 +17,9 @@ Formatting:
   rule:discard -> assign to "_" is replaced by "discard"
   rule:pass -> replace "pass" by "discard"
   rule:nonlocal -> suppress "nonlocal" declarations (Nim closures capture by reference)
+  rule:ignorestyle -> the top-level prelude import (`from nimic.ntypes import *`) is followed by
+    `when defined(nimony): {.feature: "ignoreStyle".}`: nimic's snake_case Nim names (unsafe_addr) match Nim's
+    camelCase ones style-insensitively, as in Nim 2
 
 Scope qualifiers:
   rule:dropwith -> drop "with" for "const", "let", "var", "block", "static"; a block or static body
@@ -98,6 +101,12 @@ Control flow:
   rule:comptime -> the expression "if comptime(x)" is written as "when x" ("if" directly followed by "comptime"
     should be resolvable at comptime (is interpreted as "when")
   rule:main -> replace __name__ == "__main__" by isMainModule
+  rule:resultvar -> in a proc with a return type, `with var:` / `with let:` declaring `result` (Python has no
+    implicit result) assigns Nim's implicit one: result = v; a bare result: T is the default result
+  rule:mainproc -> the body of a top-level `if comptime(__name__ == "__main__"):` is `proc nimicMainN()`, called
+    in the `when isMainModule:` block (imports and standalone pragmas stay there); under nimony the proc is
+    `.raises` and called in `try: ... except: quit(1)`: nimony calls a `.raises` routine only in a try or a
+    `.raises` routine
   rule:comptimeexpr -> the expression `a if comptime(c) else b` is written as `when c: a else: b`
   rule:assigncall -> the statement assign(target, value) is written as `target = value`; used where Python
     can't assign, e.g. through a call returning var T: assign(p.s(cpsStmts), oldCode)
@@ -119,6 +128,8 @@ Operators & renaming:
   rule:nint -> the names nint and nbool (nimic's Nim int / mutable Nim bool) are Nim's int and bool
   rule:cell -> cell(x) (a mutable variable of an enum member, for a `var` parameter) is just x
   rule:funcrename -> rename functions "print" to "echo", "str" to "$"
+  rule:echodollar -> an echo / print argument that isn't a string or a literal is `$`-converted: echo(x) is echo($x)
+    (nimony's echo writes each argument with `write`, which has no overload for a set, a seq, an object)
   rule:stringjoin -> replace "f" by "&"
   rule:literaltypes -> write as type suffix u64(0x9e3779b97f4a7c15) -> 0x9e3779b97f4a7c15'u64; also uint64(c) / uint(c)
     with a constant above high(int64): 18446744073709551615'u64; a non-literal argument (u32(i)) raises
@@ -129,6 +140,8 @@ Operators & renaming:
     chars above 0xFF raise SyntaxError (use utf8()); applies to f-string literal parts too
   rule:utf8literal -> utf8("é") with a constant argument emits the raw Nim literal "é" (its UTF-8 bytes);
     a non-constant argument stays utf8(x) (identity template in pydefs.nim)
+  rule:stringliteral -> string("abc") with a str literal is the literal "abc" (nimony doesn't evaluate the
+    conversion at compile time, in a const)
   rule:array -> array[N, T]([a, b]) is the Nim literal [a, b] where a type is given: an object constructor's
     field (T(f: [a, b])) and a declaration (x: array[N, T] = [a, b], also from `with var: x = array[...](...)`);
     elsewhere (call arguments, elements, returns) the conversion array[N, T]([a, b]), which keeps the index
@@ -137,6 +150,9 @@ Operators & renaming:
   rule:isnot -> write isnot according to Nim syntax
   rule:notin -> write notin according to Nim syntax
   rule:inrange -> inrange(a, b) transpiles as a .. b (Nim inclusive range literal)
+  rule:range -> range(n) / range(a, b) transpile as 0 ..< n / a ..< b; range(a, b, s) with an int literal step is
+    countup(a, b - 1, s) / countdown(a, b + 1, -s) (a literal bound folded), another step a SyntaxError. nimony's
+    `range` is system's type constructor, so a prelude template can't stand in. `..` / `..<` bind looser than `+`
   rule:strformat -> Python % transpiles as Nim % (strutils format) instead of mod when the left operand is a string
     (a literal, string(...) / FormatStr(...), a name declared as string or FormatStr in an enclosing scope, a call of
     a proc declared `-> string`) or the right one is a list / tuple or a name declared as a sequence of strings
@@ -180,6 +196,8 @@ Imports:
   rule:emit -> emit("C code") transpiles as an emit pragma {.emit: <triple-quoted C code>.} (raises if run in Python)
   rule:importexcept -> importExcept("..m", "a", "%") transpiles as `import ../m except a, `%``; in Python it
     binds the module's public names except those
+  rule:stdbridge -> nimic.std.os is imported as ncode/std/os (std/os re-exported; under nimony also the string
+    forms of removeFile / removeDir / createDir, which nimony has on Path in std/files, std/dirs)
   rule:importfrom -> importFrom("..m", "a", "%") transpiles as Nim's selective `from ../m import a, `%``; in
     Python it binds only those names (a Python `from m import a` is a full `import m`); importFrom("..m")
     without names is `from ../m import nil` and binds only `m` (qualified use)
@@ -970,6 +988,7 @@ class _Unparser(NodeVisitor):
         self._aliases = {"Object": "object", "NTuple": "tuple"}
         self._tuple_types = set()
         self._string_names = [set()]  # rule:strformat: names declared as string / FormatStr, per scope
+        self._implicit_result = [False]  # rule:resultvar: whether the routine being written has Nim's `result`
         self._string_seq_names = [set()]  # rule:strformat: names declared as seq/openArray/array/varargs of string
         self._ref_types = set()
         self._set_types = set()
@@ -979,6 +998,8 @@ class _Unparser(NodeVisitor):
         self.module_names = []
         self._module_rename = {"ntypes": "ncode/pydefs", "nimpy": "ncode/nimpy"}
         self._module_std = ["math"]
+        # rule:stdbridge -> nimic std modules whose Nim side bridges nimony's library (ncode/std/<m>.nim)
+        self._std_bridges = {"os"}
         self._type_registry = type_registry
         if self._type_registry is not None:
             types_dict = getattr(self._type_registry, "types", self._type_registry)
@@ -1015,6 +1036,8 @@ class _Unparser(NodeVisitor):
         self._concepts = {"Concept"}  # rule:concept: Concept and the concepts the module defines
         self._hook_procs = {}  # rule:hook: Python name of a @hook proc -> its hook (`copy`)
         self._block_templates = set()  # rule:looptemplate: names of templates with code blocks
+        self._main_blocks = 0  # rule:mainproc: the module's `if comptime(__name__ == "__main__")` blocks so far
+        self._main_raises = None  # rule:mainproc: the pragma alias of the main block being written
         self._noreturn_procs = set()  # rule:tryassign: names of the module's procs that don't return
         self._operator_procs = {}  # rule:operator: Python name of an @operator proc -> its Nim operator (`+!`)
         self._import_paths = set()  # rule:import: the Nim paths imported so far
@@ -1357,6 +1380,9 @@ class _Unparser(NodeVisitor):
         if module_name in self._module_std:
             return "ncode/pystd/" + module_name
         if module_name_split[0] == "nimic":
+            if module_name_split[1:2] == ["std"] and module_name_split[2:] and module_name_split[2] in self._std_bridges:
+                # rule:stdbridge -> nimic.std.os is ncode/std/os: std/os, under nimony with its string forms
+                return "ncode/std/" + "/".join(module_name_split[2:])
             if module_name_split[1] in self._module_rename:
                 module_name_split[1] = self._module_rename[module_name_split[1]]
             return "/".join(module_name_split[1:])
@@ -1426,7 +1452,15 @@ class _Unparser(NodeVisitor):
                     self._import_once(self._import_path(name, node.level))
             return
         if node.module and not node.module in ["__future__"]:
-            self._import_once(self._import_path(node.module, node.level or 0))
+            path = self._import_path(node.module, node.level or 0)
+            first_prelude = node.module == "nimic.ntypes" and not self._indent and path not in self._import_paths
+            self._import_once(path)
+            if first_prelude:
+                # rule:ignorestyle -> nimic writes Nim names snake_case (unsafe_addr, is_nil, copy_mem), which
+                # Nim 2 matches style-insensitively; nimony only with the module feature, written after the prelude
+                self.fill("when defined(nimony):")
+                with self.block(start=""):
+                    self.fill('{.feature: "ignoreStyle".}')
         # self.write("import ")
         # self.interleave(lambda: self.write(", "), self.traverse, node.names)
 
@@ -2037,10 +2071,44 @@ class _Unparser(NodeVisitor):
         params = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
         self._string_names.append({x.arg for x in params if self._is_string_annotation(x.annotation)})
         self._string_seq_names.append({x.arg for x in params if self._is_string_seq_annotation(x.annotation)})
+        self._implicit_result.append(self._has_implicit_result(node))
         self._function_helper(node, "")
+        self._implicit_result.pop()
         self._string_names.pop()
         self._string_seq_names.pop()
         self._scope_depth -= 1
+
+    def _has_implicit_result(self, node) -> bool:
+        """rule:resultvar -> a proc, func or converter with a return type has Nim's implicit `result`; a template
+        (its `result` is the caller's) and an iterator have none."""
+        if node.returns is None or isinstance(node.returns, Constant):
+            return False
+        decorators = {(d.func if isinstance(d, Call) else d) for d in node.decorator_list}
+        if any(isinstance(d, Name) and d.id in ("template", "iterator", "calltype") for d in decorators):
+            return False
+        return not self._has_yield(node.body)
+
+    def _write_result_declarations(self, node) -> bool:
+        """rule:resultvar -> in a routine with Nim's implicit `result`, a `with var:` / `with let:` declaring
+        `result` (nimic needs it: Python has no implicit result) assigns the implicit one: `result = v`; the
+        other variables of the section stay declared, in order. A bare `result: T` is Nim's default result.
+        Declaring it would shadow it: nimony rejects that, Nim 2 warns. Returns whether it wrote the section."""
+        def is_result(stmt):
+            targets = stmt.targets if isinstance(stmt, Assign) else [stmt.target] if isinstance(stmt, AnnAssign) else []
+            return len(targets) == 1 and isinstance(targets[0], Name) and targets[0].id == "result"
+        if not self._implicit_result[-1] or not any(is_result(s) for s in node.body):
+            return False
+        run = []
+        for stmt in [*node.body, None]:
+            if stmt is not None and not is_result(stmt):
+                run.append(stmt)
+                continue
+            if run:
+                self.visit_With(ast.copy_location(With(items=node.items, body=run), node))
+                run = []
+            if stmt is not None and stmt.value is not None:
+                self.traverse(ast.copy_location(Assign(targets=[Name(id="result", ctx=Store())], value=stmt.value), stmt))
+        return True
 
     def visit_AsyncFunctionDef(self, node):
         self._scope_depth += 1
@@ -2108,6 +2176,9 @@ class _Unparser(NodeVisitor):
             if "private" in parsed_pragma:  # rule:privatepragma
                 is_private = True
                 pragma = ",".join([x for x in parsed_pragma if x != "private"])
+        if self._main_raises and decl_str == "proc" and write_body:
+            # rule:mainproc -> a proc of a main block may call `.raises` routines (`.raises` under nimony)
+            pragma = ", ".join(p for p in (pragma, self._main_raises) if p)
         func_name = node.name
         do_arg_swap = False  # rule:funcdefargswap
         inplace = False  # rule:funcdefinplace
@@ -2382,9 +2453,92 @@ class _Unparser(NodeVisitor):
                 return True, UnaryOp(op=test_node.op, operand=inner_arg)
         return False, test_node
 
+    @staticmethod
+    def _is_main_test(test) -> bool:
+        """`__name__ == "__main__"`, alone or as the first operand of an `and`."""
+        if isinstance(test, BoolOp) and isinstance(test.op, And):
+            test = test.values[0]
+        return (isinstance(test, Compare) and isinstance(test.left, Name) and test.left.id == "__name__"
+                and len(test.ops) == 1 and isinstance(test.ops[0], Eq) and isinstance(test.comparators[0], Constant)
+                and test.comparators[0].value == "__main__")
+
+    @staticmethod
+    def _stays_toplevel(stmt) -> bool:
+        """rule:mainproc -> a statement of a main block that stays at its top level: an import (also importFrom /
+        importExcept), a standalone pragma (pragma("feature: ...")), which Nim allows only there, and the
+        definitions (def, class, `with const:`), which a later main block of the module may use."""
+        if isinstance(stmt, (Import, ImportFrom, FunctionDef, AsyncFunctionDef, ClassDef)):
+            return True
+        if (isinstance(stmt, With) and len(stmt.items) == 1 and isinstance(stmt.items[0].context_expr, Name)
+                and stmt.items[0].context_expr.id == "const"):
+            return True
+        return (isinstance(stmt, Expr) and isinstance(stmt.value, Call) and isinstance(stmt.value.func, Name)
+                and stmt.value.func.id in ("importFrom", "importExcept", "pragma"))
+
+    @staticmethod
+    def _declares_any(stmt, names) -> bool:
+        """Whether `stmt` is a `with var:` / `with let:` section declaring one of `names`."""
+        if not (isinstance(stmt, With) and len(stmt.items) == 1 and isinstance(stmt.items[0].context_expr, Name)
+                and stmt.items[0].context_expr.id in ("var", "let")):
+            return False
+        return any(isinstance(target, Name) and target.id in names
+                   for s in stmt.body if isinstance(s, (Assign, AnnAssign))
+                   for target in (s.targets if isinstance(s, Assign) else [s.target]))
+
+    def _write_main_block(self, test_expr, body):
+        """rule:mainproc -> the body of `if comptime(__name__ == "__main__"):` (a module's test) runs in a proc:
+        nimony calls a `.raises` routine (readFile, getCurrentDir, removeFile) only in a `try` or a `.raises`
+        routine, and a test block's imports and variables can't move into a `try`. Its imports, standalone
+        pragmas, definitions and the variable sections its procs use stay at the block's top level, in order
+        (its procs take the pragma alias `nimicMainNRaises`,
+        `.raises` under nimony); the statements are `proc nimicMainN()`, `.raises` under nimony, called in
+        `try: ... except: quit(1)` there (Python's uncaught exception ends the run with 1); Nim 2 calls it
+        directly, its uncaught exception still printing the traceback. Its variables are the proc's locals."""
+        self._main_blocks += 1
+        name = f"nimicMain{self._main_blocks}"
+        self.fill("when ")
+        self.traverse(test_expr)
+        with self.block():
+            self.fill("when defined(nimony):")
+            with self.block(start=""):
+                self.fill(f"{{.pragma: {name}Raises, raises.}}")
+            self.fill("else:")
+            with self.block(start=""):
+                self.fill(f"{{.pragma: {name}Raises.}}")
+            self._main_raises = f"{name}Raises"
+            # variables the block's procs use stay globals: their sections stay at the top level too
+            used = {n.id for s in body if isinstance(s, (FunctionDef, AsyncFunctionDef, ClassDef))
+                    for n in walk(s) if isinstance(n, Name)}
+            top = [s for s in body if self._stays_toplevel(s) or self._declares_any(s, used)]
+            self.traverse(top)
+            rest = [s for s in body if not any(s is x for x in top)]
+            if rest:
+                self.fill(f"proc {name}() {{.{name}Raises.}} =")
+                with self.block(start=""):
+                    self._scope_depth += 1
+                    self.traverse(rest)
+                    self._scope_depth -= 1
+            self._main_raises = None
+            if not rest:
+                return
+            self.fill("when defined(nimony):")
+            with self.block(start=""):
+                self.fill("try:")
+                with self.block(start=""):
+                    self.fill(f"{name}()")
+                self.fill("except:")
+                with self.block(start=""):
+                    self.fill("quit(1)")
+            self.fill("else:")
+            with self.block(start=""):
+                self.fill(f"{name}()")
+
     def visit_If(self, node):
         # rule:comptime
         comptime, test_expr = self._check_comptime(node.test)
+        if comptime and not node.orelse and not self._indent and self._is_main_test(test_expr):
+            self._write_main_block(test_expr, node.body)
+            return
         if comptime:
             self.fill("when ")
             self.traverse(test_expr)
@@ -2475,6 +2629,8 @@ class _Unparser(NodeVisitor):
         start = ":"
         if isinstance(node.items[0].context_expr, Name):
             name = node.items[0].context_expr.id
+            if name in ("var", "let") and self._write_result_declarations(node):
+                return
             if name in self._keywords_no_with:
                 self.fill()
                 self._context_stack.append(name)
@@ -3035,6 +3191,52 @@ class _Unparser(NodeVisitor):
             self.set_precedence(precedence.next(), right)
             self.traverse(right)
 
+    def _write_slice_op(self, operator, node, left, right):
+        """Emit Nim's `left .. right` / `left ..< right`. Nim's `..` operators bind looser than arithmetic
+        (`0 ..< n + 1`) and tighter than comparisons (`i in a ..< b`): the operands are parenthesized below
+        arithmetic precedence, the whole above `|` (Python's precedence table)."""
+        with self.require_parens(_Precedence.EXPR, node):
+            self.set_precedence(_Precedence.ARITH, left, right)
+            self.traverse(left)
+            self.write(f" {operator} ")
+            self.traverse(right)
+
+    @staticmethod
+    def _int_literal(node):
+        """The value of an int literal node (`3`, `-1`), else None."""
+        if isinstance(node, UnaryOp) and isinstance(node.op, USub):
+            value = _Unparser._int_literal(node.operand)
+            return None if value is None else -value
+        if isinstance(node, Constant) and type(node.value) is int:
+            return node.value
+        return None
+
+    def _write_range(self, node):
+        """rule:range -> Python's range: range(n) is `0 ..< n`, range(a, b) is `a ..< b`; with a literal step
+        s, range(a, b, s) is `a ..< b` (s = 1), `countup(a, b - 1, s)` (s > 1) or `countdown(a, b + 1, -s)`
+        (s < 0), the bound folded when it is a literal (range(n - 1, -1, -1) is countdown(n - 1, 0))."""
+        args = node.args
+        if len(args) == 1:
+            self._write_slice_op("..<", node, Constant(value=0), args[0])
+            return
+        step = 1 if len(args) == 2 else self._int_literal(args[2])
+        if step is None or step == 0:
+            line = f"line {node.lineno}: " if hasattr(node, "lineno") else ""
+            raise SyntaxError(f"{line}range(a, b, step) takes a nonzero int literal step (Nim's countup / countdown)")
+        if step == 1:
+            self._write_slice_op("..<", node, args[0], args[1])
+            return
+        shift = -1 if step > 0 else 1  # Python's bound is exclusive, countup's / countdown's inclusive
+        bound = self._int_literal(args[1])
+        if bound is not None:
+            last = Constant(value=bound + shift) if bound + shift >= 0 else UnaryOp(
+                op=USub(), operand=Constant(value=-(bound + shift)))
+        else:
+            last = BinOp(left=args[1], op=Sub() if shift < 0 else Add(), right=Constant(value=1))
+        self.write("countup(" if step > 0 else "countdown(")
+        self.items_view(self.traverse, [args[0], last] + ([Constant(value=abs(step))] if abs(step) != 1 else []))
+        self.write(")")
+
     cmpops = {
         "Eq": "==",
         "NotEq": "!=",
@@ -3105,7 +3307,28 @@ class _Unparser(NodeVisitor):
             attr = self._adjust_name(node.attr, definition=False) # rule:localname
             self.write(attr)
 
+    def _echo_operand(self, arg):
+        """rule:echodollar -> an echo argument as written to Nim: `$`-converted (str(arg)) unless it already is a
+        string or a literal that nimony's `write` takes."""
+        if (isinstance(arg, (Starred, JoinedStr)) or self._is_string_operand(arg)
+                or (isinstance(arg, Constant) and type(arg.value) in (int, float, bool))
+                or (isinstance(arg, UnaryOp) and isinstance(arg.op, USub) and isinstance(arg.operand, Constant))
+                or (isinstance(arg, Call) and isinstance(arg.func, Name)
+                    and arg.func.id in ("str", "$", "ch", "utf8", *self._type_suffixes))):
+            return arg
+        return ast.copy_location(Call(func=Name(id="str", ctx=Load()), args=[arg], keywords=[]), arg)
+
     def visit_Call(self, node):
+        if (isinstance(node.func, Name) and node.func.id in ("echo", "print") and not node.keywords
+                and not getattr(node, "_n_echo_done", False)):
+            # rule:echodollar -> Nim 2's echo applies `$` to each argument, nimony's writes it as it is (`write`
+            # has no overload for a set, a seq, an object): echo(x) is echo($x), the same in Nim 2
+            call = ast.copy_location(Call(func=node.func, args=[self._echo_operand(a) for a in node.args],
+                                          keywords=[]), node)
+            call._n_echo_done = True
+            self.set_precedence(self.get_precedence(node), call)
+            self.visit_Call(call)
+            return
         if isinstance(node.func, Name) and node.func.id in ("str", "$") and self.get_precedence(node) > _Precedence.FACTOR:
             # rule:dollarparens -> `$` is a prefix operator: as the base of an index or attribute, str(x)[i] and
             # str(x).f are ($(x))[i] and ($(x)).f
@@ -3166,9 +3389,16 @@ class _Unparser(NodeVisitor):
             self.traverse(node.args[0])
         elif isinstance(node.func, Name) and node.func.id == "inrange" and len(node.args) == 2:
             # rule:inrange -> inrange(a, b) translates to a .. b in Nim
+            self._write_slice_op("..", node, node.args[0], node.args[1])
+        elif isinstance(node.func, Name) and node.func.id == "range" and 1 <= len(node.args) <= 3 and not node.keywords:
+            # rule:range -> range(n) is 0 ..< n, range(a, b) is a ..< b; range(a, b, s) with a literal step is
+            # countup / countdown (nimony's `range` is the type constructor, so no prelude template can stand in)
+            self._write_range(node)
+        elif (isinstance(node.func, Name) and node.func.id == "string" and len(node.args) == 1 and not node.keywords
+              and isinstance(node.args[0], Constant) and isinstance(node.args[0].value, str)):
+            # rule:stringliteral -> string("abc") is the literal "abc" (a Nim string literal already is a string;
+            # nimony doesn't evaluate the conversion at compile time, in a const)
             self.traverse(node.args[0])
-            self.write(" .. ")
-            self.traverse(node.args[1])
         elif (isinstance(node.func, Name) and node.func.id in self._operator_procs and not node.keywords
               and len(node.args) in (1, 2)):
             # rule:operator -> plus_bang(c, 1) is c +! 1, a one-argument call the prefix form

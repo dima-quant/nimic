@@ -330,7 +330,7 @@ def readIndex(indexName: string) -> NifIndex:
                             path = pool.strings[strId(n)]
                         skip(n)
                         with var:
-                            names: seq[StrId] = seq[StrId]()
+                            names: seq[StrId] = seq[StrId]([])  # Nim: `= @[]` (nimony: initialized)
                         while hasMore(n):
                             if isIdent(n): names.add(strId(n))
                             skip(n)
@@ -452,7 +452,7 @@ if comptime(__name__ == "__main__"):
 
         # converter and export sections, no checksum
         with var:
-            sections = IndexSections()
+            sections = default(IndexSections)  # initialized: nimony adds to its fields only then
         sections.converters.add((symId(pool, string("MyInt.0.m")), symId(pool, string("toMyInt.0.m"))))
         sections.converters.add((SymId(0), symId(pool, string("anyConv.1.m"))))
         sections.exportBuf = createTokenBuf()

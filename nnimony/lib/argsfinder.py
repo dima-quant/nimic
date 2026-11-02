@@ -201,8 +201,8 @@ if comptime(__name__ == "__main__"):
     echo(found.endsWith(string("/argsfinder_test/gcc.args")))
     echo(findArgs(deep, string("missing.args")).len)
     with var:
-        args = seq[string]()
-        paths = seq[string]()
+        args: seq[string] = seq[string]([])  # `= @[]`: nimony passes only an initialized local as `var`
+        paths: seq[string] = seq[string]([])
     processArgsFile(found, args)
     processArgsFile(string(""), args)
     echo(args)

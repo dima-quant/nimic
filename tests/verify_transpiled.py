@@ -45,9 +45,8 @@ a change that concerns it). Their transpilation and `nim check` still run.
 Modules marked for rework or with open gaps in ncompiler/conversion_queue.md are reported as XFAIL
 (expected failure).
 Everything runs in .scratch/verify_transpiled/run_<pid> (git-ignored; one directory per run, so parallel runs
-don't disturb each other). The tracked transpiled files in
-tests/nraytracer/ncache are never touched (running tests/nraytracer/test_nast.py in place regenerates
-them). Exit code 1 if any check fails.
+don't disturb each other). The transpiled files in tests/nraytracer/ncache (git-ignored, temporary:
+running tests/nraytracer/test_nast.py in place regenerates them) are never touched. Exit code 1 if any check fails.
 """
 from __future__ import annotations
 
@@ -256,7 +255,9 @@ def _py_conditions(tree: ast.AST) -> list[str]:
             else:
                 snippet = ast.Assign(targets=[ast.Name("x", ast.Store())], value=node)
             module = ast.fix_missing_locations(ast.Module(body=[snippet], type_ignores=[]))
-            out.extend(_nim_conditions(transpiler.unparse(module)[0]))
+            # the snippet's own `when` is its first line (a main block's body adds the transpiler's
+            # `when defined(nimony)` of rule:mainproc, which no original has)
+            out.extend(_nim_conditions(transpiler.unparse(module)[0].lstrip().splitlines()[0]))
     return out
 
 

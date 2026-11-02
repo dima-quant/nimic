@@ -4,16 +4,38 @@ type
   uintp* = uint
   intp* = int
 
-when defined(nimPreviewSlimSystem):
-  # under a slim system File / assert / doAssert / raiseAssert are not in system:
-  # every transpiled module imports this prelude, so re-export them
+when defined(nimPreviewSlimSystem) or defined(nimony):
+  # under a slim system (nimony's is always slim) File / echo / assert / raiseAssert are not in
+  # system: every transpiled module imports this prelude, so re-export them
   import std/[syncio, assertions]
   export syncio, assertions
 
-# Python enumerate(s): Nim's for-loop macro handles `for (i, x) in enumerate(s)` (emitted by
-# rule:fortupleunpack) as well as `for i, x in ...`, over any iterable
-import std/enumerate
-export enumerate
+when defined(nimony):
+  # nimic's isNil (Nim 2 system's) for every nilable type; nimony's system has it for cstring only
+  template isNil*[T](p: ptr T): bool = p == nil
+  template isNil*[T](p: ref T): bool = p == nil
+  template isNil*(p: pointer): bool = p == nil
+  # Nim 2's doAssert: an assert that -d:danger keeps
+  template doAssert*(cond: bool; msg = "") =
+    if not cond: failedAssertImpl(msg)
+  # `$` nimony's system lacks; echo's arguments are `$`-converted by rule:echodollar
+  func `$`*(c: char): string =
+    result = newString(1)
+    result[0] = c
+  func `$`*(x: cstring): string =
+    result = ""
+    if x != nil:
+      var i = 0
+      while x[i] != '\0':
+        result.add x[i]
+        inc i
+
+when not defined(nimony):
+  # Python enumerate(s): Nim's for-loop macro handles `for (i, x) in enumerate(s)` (emitted by
+  # rule:fortupleunpack) as well as `for i, x in ...`, over any iterable. nimony has no macros and
+  # no std/enumerate: a module using enumerate doesn't compile there yet
+  import std/enumerate
+  export enumerate
 
 type
   TextIOWrapper* = File
@@ -21,10 +43,6 @@ type
 const
   inf* = Inf
 
-template range*(a: untyped): untyped =
-  0 ..< a
-template range*(a, b: untyped): untyped =
-  a ..< b
 template str*(x: untyped): untyped =
   $ x
 template `+`*(x: string, y: string): string =
@@ -40,17 +58,3 @@ template isinstance*(x, t: untyped): untyped =
 template utf8*(s: string): string =
   ## nimic utf8(text): Nim strings already hold UTF-8 bytes, so this is identity.
   s
-
-
-template range3(t) {.dirty.} =
-  iterator range*(a, b, c: t): t {.inline.} =
-    ## A type specialized version of `..<` for convenience so that
-    ## mixing integer types works better.
-    var res = a
-    while res*c < b*c:
-      yield res
-      res += c
-
-range3(int64)
-range3(int32)
-range3(int)

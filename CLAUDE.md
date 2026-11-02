@@ -132,7 +132,7 @@ For modifications in `src/nimic/ntypesystem.py` and `src/nimic/ntypes.py`:
      clone with nifreader, writes it back with nifbuilder and stores / loads it as bif, in Python and as compiled
      Nim; each file's texts must agree and both runs' outputs must be byte-identical (Python ~2 min, Nim < 1 s).
    - Pitfalls: never run `tests/nraytracer/test_*.py` (e.g. `test_nast.py`) or `ntranspile` inside the repo
-     to check compilation: they regenerate the **tracked** `tests/nraytracer/ncache/*.nim`. The script works
+     to check compilation: they regenerate `tests/nraytracer/ncache/*.nim` (git-ignored, temporary). The script works
      in `.scratch/verify_transpiled`. Transpile modules the way `nimic.nimp` does (import, then `unparse`
      with `_n_registry`); a bare `transpiler.unparse(ast)` fails for modules needing the type registry.
 

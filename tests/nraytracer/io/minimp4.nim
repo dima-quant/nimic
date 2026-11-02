@@ -1,79 +1,81 @@
 import ncode/pydefs
+when defined(nimony):
+  {.feature: "ignoreStyle".}
 import system/ansi_c
 const
-  MP4E_STATUS_OK = 0
-  MP4E_STATUS_BAD_ARGUMENTS = -1
-  MP4E_STATUS_NO_MEMORY = -2
-  MP4E_STATUS_FILE_WRITE_ERROR = -3
-  MP4E_STATUS_ONLY_ONE_DSI_ALLOWED = -4
-  MP4E_SAMPLE_DEFAULT = 0
-  MP4E_SAMPLE_RANDOM_ACCESS = 1
-  MP4E_SAMPLE_CONTINUATION = 2
-  MP4_OBJECT_TYPE_AUDIO_ISO_IEC_14496_3 = 64'u32
-  MP4_OBJECT_TYPE_AVC = 33'u32
-  MP4_OBJECT_TYPE_HEVC = 35'u32
-  local_MINIMP4_MAX_SPS = 32
-  local_MINIMP4_MAX_PPS = 256
-  local_HEVC_NAL_VPS = 32
-  local_HEVC_NAL_SPS = 33
-  local_HEVC_NAL_PPS = 34
-  local_HEVC_NAL_BLA_W_LP = 16
-  local_HEVC_NAL_CRA_NUT = 21
-  local_MOOV_TIMESCALE = 1000'u32
+  MP4E_STATUS_OK* = 0
+  MP4E_STATUS_BAD_ARGUMENTS* = -1
+  MP4E_STATUS_NO_MEMORY* = -2
+  MP4E_STATUS_FILE_WRITE_ERROR* = -3
+  MP4E_STATUS_ONLY_ONE_DSI_ALLOWED* = -4
+  MP4E_SAMPLE_DEFAULT* = 0
+  MP4E_SAMPLE_RANDOM_ACCESS* = 1
+  MP4E_SAMPLE_CONTINUATION* = 2
+  MP4_OBJECT_TYPE_AUDIO_ISO_IEC_14496_3* = 64'u32
+  MP4_OBJECT_TYPE_AVC* = 33'u32
+  MP4_OBJECT_TYPE_HEVC* = 35'u32
+  MINIMP4_MAX_SPS = 32
+  MINIMP4_MAX_PPS = 256
+  HEVC_NAL_VPS = 32
+  HEVC_NAL_SPS = 33
+  HEVC_NAL_PPS = 34
+  HEVC_NAL_BLA_W_LP = 16
+  HEVC_NAL_CRA_NUT = 21
+  MOOV_TIMESCALE = 1000'u32
 
-proc local_fourCC(a: nint, b: nint, c: nint, d: nint): uint32 {.inline.} =
-  return uint32(a) shl 24 or uint32(b) shl 16 or uint32(c) shl 8 or uint32(d)
+proc fourCC(a: char, b: char, c: char, d: char): uint32 {.inline.} =
+  return uint32(ord(a)) shl 24 or uint32(ord(b)) shl 16 or uint32(ord(c)) shl 8 or uint32(ord(d))
 let
-  local_BOX_co64 = local_fourCC(99, 111, 54, 52)
-  local_BOX_stco = local_fourCC(115, 116, 99, 111)
-  local_BOX_ctts = local_fourCC(99, 116, 116, 115)
-  local_BOX_dinf = local_fourCC(100, 105, 110, 102)
-  local_BOX_dref = local_fourCC(100, 114, 101, 102)
-  local_BOX_edts = local_fourCC(101, 100, 116, 115)
-  local_BOX_elst = local_fourCC(101, 108, 115, 116)
-  local_BOX_free = local_fourCC(102, 114, 101, 101)
-  local_BOX_hdlr = local_fourCC(104, 100, 108, 114)
-  local_BOX_mdia = local_fourCC(109, 100, 105, 97)
-  local_BOX_mdat = local_fourCC(109, 100, 97, 116)
-  local_BOX_mdhd = local_fourCC(109, 100, 104, 100)
-  local_BOX_minf = local_fourCC(109, 105, 110, 102)
-  local_BOX_moov = local_fourCC(109, 111, 111, 118)
-  local_BOX_mvhd = local_fourCC(109, 118, 104, 100)
-  local_BOX_stsd = local_fourCC(115, 116, 115, 100)
-  local_BOX_stsz = local_fourCC(115, 116, 115, 122)
-  local_BOX_stbl = local_fourCC(115, 116, 98, 108)
-  local_BOX_stsc = local_fourCC(115, 116, 115, 99)
-  local_BOX_smhd = local_fourCC(115, 109, 104, 100)
-  local_BOX_stss = local_fourCC(115, 116, 115, 115)
-  local_BOX_stts = local_fourCC(115, 116, 116, 115)
-  local_BOX_trak = local_fourCC(116, 114, 97, 107)
-  local_BOX_tkhd = local_fourCC(116, 107, 104, 100)
-  local_BOX_udta = local_fourCC(117, 100, 116, 97)
-  local_BOX_vmhd = local_fourCC(118, 109, 104, 100)
-  local_BOX_url = local_fourCC(117, 114, 108, 32)
-  local_BOX_ftyp = local_fourCC(102, 116, 121, 112)
-  local_BOX_esds = local_fourCC(101, 115, 100, 115)
-  local_BOX_mp4a = local_fourCC(109, 112, 52, 97)
-  local_BOX_mp4s = local_fourCC(109, 112, 52, 115)
-  local_BOX_avc1 = local_fourCC(97, 118, 99, 49)
-  local_BOX_avcC = local_fourCC(97, 118, 99, 67)
-  local_BOX_hvc1 = local_fourCC(104, 118, 99, 49)
-  local_BOX_hvcC = local_fourCC(104, 118, 99, 67)
-  local_BOX_nmhd = local_fourCC(110, 109, 104, 100)
-  local_BOX_mvex = local_fourCC(109, 118, 101, 120)
-  local_BOX_trex = local_fourCC(116, 114, 101, 120)
-  local_BOX_moof = local_fourCC(109, 111, 111, 102)
-  local_BOX_mfhd = local_fourCC(109, 102, 104, 100)
-  local_BOX_traf = local_fourCC(116, 114, 97, 102)
-  local_BOX_tfhd = local_fourCC(116, 102, 104, 100)
-  local_BOX_trun = local_fourCC(116, 114, 117, 110)
-  local_BOX_mehd = local_fourCC(109, 101, 104, 100)
-  local_BOX_meta = local_fourCC(109, 101, 116, 97)
-  local_BOX_ilst = local_fourCC(105, 108, 115, 116)
-  local_BOX_ccmt = local_fourCC(169, 99, 109, 116)
-  local_BOX_data = local_fourCC(100, 97, 116, 97)
+  BOX_co64 = fourCC('c', 'o', '6', '4')
+  BOX_stco = fourCC('s', 't', 'c', 'o')
+  BOX_ctts = fourCC('c', 't', 't', 's')
+  BOX_dinf = fourCC('d', 'i', 'n', 'f')
+  BOX_dref = fourCC('d', 'r', 'e', 'f')
+  BOX_edts = fourCC('e', 'd', 't', 's')
+  BOX_elst = fourCC('e', 'l', 's', 't')
+  BOX_free = fourCC('f', 'r', 'e', 'e')
+  BOX_hdlr = fourCC('h', 'd', 'l', 'r')
+  BOX_mdia = fourCC('m', 'd', 'i', 'a')
+  BOX_mdat = fourCC('m', 'd', 'a', 't')
+  BOX_mdhd = fourCC('m', 'd', 'h', 'd')
+  BOX_minf = fourCC('m', 'i', 'n', 'f')
+  BOX_moov = fourCC('m', 'o', 'o', 'v')
+  BOX_mvhd = fourCC('m', 'v', 'h', 'd')
+  BOX_stsd = fourCC('s', 't', 's', 'd')
+  BOX_stsz = fourCC('s', 't', 's', 'z')
+  BOX_stbl = fourCC('s', 't', 'b', 'l')
+  BOX_stsc = fourCC('s', 't', 's', 'c')
+  BOX_smhd = fourCC('s', 'm', 'h', 'd')
+  BOX_stss = fourCC('s', 't', 's', 's')
+  BOX_stts = fourCC('s', 't', 't', 's')
+  BOX_trak = fourCC('t', 'r', 'a', 'k')
+  BOX_tkhd = fourCC('t', 'k', 'h', 'd')
+  BOX_udta = fourCC('u', 'd', 't', 'a')
+  BOX_vmhd = fourCC('v', 'm', 'h', 'd')
+  BOX_url = fourCC('u', 'r', 'l', ' ')
+  BOX_ftyp = fourCC('f', 't', 'y', 'p')
+  BOX_esds = fourCC('e', 's', 'd', 's')
+  BOX_mp4a = fourCC('m', 'p', '4', 'a')
+  BOX_mp4s = fourCC('m', 'p', '4', 's')
+  BOX_avc1 = fourCC('a', 'v', 'c', '1')
+  BOX_avcC = fourCC('a', 'v', 'c', 'C')
+  BOX_hvc1 = fourCC('h', 'v', 'c', '1')
+  BOX_hvcC = fourCC('h', 'v', 'c', 'C')
+  BOX_nmhd = fourCC('n', 'm', 'h', 'd')
+  BOX_mvex = fourCC('m', 'v', 'e', 'x')
+  BOX_trex = fourCC('t', 'r', 'e', 'x')
+  BOX_moof = fourCC('m', 'o', 'o', 'f')
+  BOX_mfhd = fourCC('m', 'f', 'h', 'd')
+  BOX_traf = fourCC('t', 'r', 'a', 'f')
+  BOX_tfhd = fourCC('t', 'f', 'h', 'd')
+  BOX_trun = fourCC('t', 'r', 'u', 'n')
+  BOX_mehd = fourCC('m', 'e', 'h', 'd')
+  BOX_meta = fourCC('m', 'e', 't', 'a')
+  BOX_ilst = fourCC('i', 'l', 's', 't')
+  BOX_ccmt = fourCC('\xa9', 'c', 'm', 't')
+  BOX_data = fourCC('d', 'a', 't', 'a')
 const
-  local_box_ftyp_data = array[24, uint8]([0'u8, 0'u8, 0'u8, 24'u8, 102'u8, 116'u8, 121'u8, 112'u8, 109'u8, 112'u8, 52'u8, 50'u8, 0'u8, 0'u8, 0'u8, 0'u8, 109'u8, 112'u8, 52'u8, 50'u8, 105'u8, 115'u8, 111'u8, 109'u8])
+  box_ftyp_data: array[24, uint8] = [0, 0, 0, 24, ord('f'), ord('t'), ord('y'), ord('p'), ord('m'), ord('p'), ord('4'), ord('2'), 0, 0, 0, 0, ord('m'), ord('p'), ord('4'), ord('2'), ord('i'), ord('s'), ord('o'), ord('m')]
 type
   TrackMediaKind* = enum 
     
@@ -91,72 +93,70 @@ type
     height*: int32
     channelcount*: uint32
 
-  local_MiniMp4Vector = object
+  MiniMp4Vector = object
     data*: ptr UncheckedArray[uint8]
-    bytes*: nint
-    capacity*: nint
+    bytes*: int
+    capacity*: int
 
-  local_SampleT = object
+  SampleT = object
     size*: uint64
     offset*: uint64
     duration*: uint32
     flag_random_access*: uint32
 
-  local_TrackT = object
+  TrackT = object
     info*: MP4E_track_t
-    smpl*: local_MiniMp4Vector
-    pending_sample*: local_MiniMp4Vector
-    vsps*: local_MiniMp4Vector
-    vpps*: local_MiniMp4Vector
-    vvps*: local_MiniMp4Vector
+    smpl*: MiniMp4Vector
+    pending_sample*: MiniMp4Vector
+    vsps*: MiniMp4Vector
+    vpps*: MiniMp4Vector
+    vvps*: MiniMp4Vector
 
 
-type
   WriteCallback* = proc(offset: int64, buffer: pointer, size: csize_t, token: pointer): cint {.cdecl.}
-type
   MP4E_mux_t* = object
-    tracks*: local_MiniMp4Vector
+    tracks*: MiniMp4Vector
     write_pos*: int64
     write_callback*: WriteCallback
     token*: pointer
     text_comment*: cstring
-    sequential_mode_flag*: nint
-    enable_fragmentation*: nint
-    fragments_count*: nint
+    sequential_mode_flag*: int
+    enable_fragmentation*: int
+    fragments_count*: int
 
-  local_BitReaderT = object
+  BitReaderT = object
     cache*: uint32
-    cache_free_bits*: nint
+    cache_free_bits*: int
     buf*: ptr uint16
     origin*: ptr uint16
     origin_bytes*: uint32
 
-  local_H264SpsIdPatcher = object
-    sps_cache*: array[local_MINIMP4_MAX_SPS, pointer]
-    pps_cache*: array[local_MINIMP4_MAX_PPS, pointer]
-    sps_bytes*: array[local_MINIMP4_MAX_SPS, nint]
-    pps_bytes*: array[local_MINIMP4_MAX_PPS, nint]
-    map_sps*: array[local_MINIMP4_MAX_SPS, nint]
-    map_pps*: array[local_MINIMP4_MAX_PPS, nint]
+  H264SpsIdPatcher = object
+    sps_cache*: array[MINIMP4_MAX_SPS, pointer]
+    pps_cache*: array[MINIMP4_MAX_PPS, pointer]
+    sps_bytes*: array[MINIMP4_MAX_SPS, int]
+    pps_bytes*: array[MINIMP4_MAX_PPS, int]
+    map_sps*: array[MINIMP4_MAX_SPS, int]
+    map_pps*: array[MINIMP4_MAX_PPS, int]
 
   mp4_h26x_writer_t* = object
-    sps_patcher*: local_H264SpsIdPatcher
+    sps_patcher*: H264SpsIdPatcher
     mux*: ptr MP4E_mux_t
-    mux_track_id*: nint
-    is_hevc*: nint
-    need_vps*: nint
-    need_sps*: nint
-    need_pps*: nint
-    need_idr*: nint
+    mux_track_id*: int
+    is_hevc*: int
+    need_vps*: int
+    need_sps*: int
+    need_pps*: int
+    need_idr*: int
 
-  local_BsT = object
-    shift*: nint
+  BsT = object
+    shift*: int
     cache*: uint32
     buf*: ptr uint32
     origin*: ptr uint32
 
 
-proc local_vectorInit(h: ptr local_MiniMp4Vector, capacity: nint): nint =
+proc vectorInit(h: ptr MiniMp4Vector, capacity: int): int =
   h[].bytes = 0
   h[].capacity = capacity
   if capacity > 0:
@@ -167,593 +167,594 @@ proc local_vectorInit(h: ptr local_MiniMp4Vector, capacity: nint): nint =
     h[].data = nil
   return 1
 
-proc local_vectorReset(h: ptr local_MiniMp4Vector) =
+proc vectorReset(h: ptr MiniMp4Vector) =
   if h[].data != nil:
     c_free(h[].data)
-  zero_mem(h, sizeof(local_MiniMp4Vector))
+  zero_mem(h, sizeof(MiniMp4Vector))
 
-proc local_vectorGrow(h: ptr local_MiniMp4Vector, local_bytes: nint): nint =
+proc vectorGrow(h: ptr MiniMp4Vector, bytes: int): int =
   var
-    local_newSize = h[].capacity * 2 + 1024
-  if local_newSize < h[].capacity + local_bytes:
-    local_newSize = h[].capacity + local_bytes + 1024
+    newSize = h[].capacity * 2 + 1024
+  if newSize < h[].capacity + bytes:
+    newSize = h[].capacity + bytes + 1024
   let
-    local_p = c_realloc(h[].data, csize_t(local_newSize))
-  if local_p == nil:
+    p = c_realloc(h[].data, csize_t(newSize))
+  if p == nil:
     return 0
-  h[].data = cast[ptr UncheckedArray[uint8]](local_p)
-  h[].capacity = local_newSize
+  h[].data = cast[ptr UncheckedArray[uint8]](p)
+  h[].capacity = newSize
   return 1
 
-proc local_vectorAllocTail(h: ptr local_MiniMp4Vector, local_bytes: nint): ptr uint8 =
-  if h[].data == nil and local_vectorInit(h, 2 * local_bytes + 1024) == 0:
+proc vectorAllocTail(h: ptr MiniMp4Vector, bytes: int): ptr uint8 =
+  if h[].data == nil and vectorInit(h, 2 * bytes + 1024) == 0:
     return nil
-  if h[].capacity - h[].bytes < local_bytes and local_vectorGrow(h, local_bytes) == 0:
+  if h[].capacity - h[].bytes < bytes and vectorGrow(h, bytes) == 0:
     return nil
   result = cast[ptr uint8](cast[intp](h[].data) + h[].bytes)
-  h[].bytes += local_bytes
+  h[].bytes += bytes
   return result
 
-proc local_vectorPut(h: ptr local_MiniMp4Vector, buf: pointer, local_bytes: nint): ptr uint8 =
+proc vectorPut(h: ptr MiniMp4Vector, buf: pointer, bytes: int): ptr uint8 =
   let
-    local_tail = local_vectorAllocTail(h, local_bytes)
-  if local_tail != nil:
-    copy_mem(local_tail, buf, local_bytes)
-  return local_tail
+    tail = vectorAllocTail(h, bytes)
+  if tail != nil:
+    copy_mem(tail, buf, bytes)
+  return tail
 
-template local_WR1(p: var ptr uint8, x: uint32) {.dirty.} =
+template WR1(p: var ptr uint8, x: uint32) {.dirty.} =
   p[] = uint8(x and 255)
   p = cast[ptr uint8](cast[intp](p) + 1)
 
-template local_WRITE_1(p: var ptr uint8, x: uint32) {.dirty.} =
-  local_WR1(p, x)
+template WRITE_1(p: var ptr uint8, x: uint32) {.dirty.} =
+  WR1(p, x)
 
-template local_WRITE_2(p: var ptr uint8, x: uint32) {.dirty.} =
-  local_WR1(p, x shr 8)
-  local_WR1(p, x)
+template WRITE_2(p: var ptr uint8, x: uint32) {.dirty.} =
+  WR1(p, x shr 8)
+  WR1(p, x)
 
-template local_WRITE_3(p: var ptr uint8, x: uint32) {.dirty.} =
-  local_WR1(p, x shr 16)
-  local_WR1(p, x shr 8)
-  local_WR1(p, x)
+template WRITE_3(p: var ptr uint8, x: uint32) {.dirty.} =
+  WR1(p, x shr 16)
+  WR1(p, x shr 8)
+  WR1(p, x)
 
-template local_WRITE_4(p: var ptr uint8, x: uint32) {.dirty.} =
-  local_WR1(p, x shr 24)
-  local_WR1(p, x shr 16)
-  local_WR1(p, x shr 8)
-  local_WR1(p, x)
+template WRITE_4(p: var ptr uint8, x: uint32) {.dirty.} =
+  WR1(p, x shr 24)
+  WR1(p, x shr 16)
+  WR1(p, x shr 8)
+  WR1(p, x)
 
-proc local_WR4(p: ptr uint8, x: nint) =
+proc WR4(p: ptr uint8, x: int) =
   let
-    local_xu = uint32(x)
-    local_arr = cast[ptr UncheckedArray[uint8]](p)
-  local_arr[0] = uint8(local_xu shr 24 and 255)
-  local_arr[1] = uint8(local_xu shr 16 and 255)
-  local_arr[2] = uint8(local_xu shr 8 and 255)
-  local_arr[3] = uint8(local_xu and 255)
+    xu = uint32(x)
+    arr = cast[ptr UncheckedArray[uint8]](p)
+  arr[0] = uint8(xu shr 24 and 255)
+  arr[1] = uint8(xu shr 16 and 255)
+  arr[2] = uint8(xu shr 8 and 255)
+  arr[3] = uint8(xu and 255)
 
-template local_ATOM(p: var ptr uint8, local_stack: var ptr ptr uint8, x: uint32) {.dirty.} =
-  cast[ptr ptr uint8](local_stack)[] = p
-  local_stack = cast[ptr ptr uint8](cast[intp](local_stack) + sizeof(pointer))
+template ATOM(p: var ptr uint8, stack: var ptr ptr uint8, x: uint32) {.dirty.} =
+  cast[ptr ptr uint8](stack)[] = p
+  stack = cast[ptr ptr uint8](cast[intp](stack) + sizeof(pointer))
   p = cast[ptr uint8](cast[intp](p) + 4)
-  local_WRITE_4(p, x)
+  WRITE_4(p, x)
 
-template local_ATOM_FULL(p: var ptr uint8, local_stack: var ptr ptr uint8, x: uint32, flag: uint32) {.dirty.} =
-  local_ATOM(p, local_stack, x)
-  local_WRITE_4(p, flag)
+template ATOM_FULL(p: var ptr uint8, stack: var ptr ptr uint8, x: uint32, flag: uint32) {.dirty.} =
+  ATOM(p, stack, x)
+  WRITE_4(p, flag)
 
-template local_END_ATOM(p: var ptr uint8, local_stack: var ptr ptr uint8) {.dirty.} =
-  local_stack = cast[ptr ptr uint8](cast[intp](local_stack) - sizeof(pointer))
-  let
-    local_atomStart = cast[ptr ptr uint8](local_stack)[]
-  local_WR4(local_atomStart, cast[intp](p) - cast[intp](local_atomStart))
-
-template local_ERR(expr: nint) {.dirty.} =
+template END_ATOM(p: var ptr uint8, stack: var ptr ptr uint8) {.dirty.} =
+  stack = cast[ptr ptr uint8](cast[intp](stack) - sizeof(pointer))
   block:
     let
-      local_err = expr
-    if local_err != 0:
-      return local_err
+      atomStart = cast[ptr ptr uint8](stack)[]
+    WR4(atomStart, cast[intp](p) - cast[intp](atomStart))
 
-proc local_ptrDiff(a: ptr uint8, b: ptr uint8): nint {.inline.} =
+template ERR(expr: int) {.dirty.} =
+  block:
+    let
+      err = expr
+    if err != 0:
+      return err
+
+proc ptrDiff(a: ptr uint8, b: ptr uint8): int {.inline.} =
   return cast[intp](a) - cast[intp](b)
 
-proc local_ptrAdd(p: ptr uint8, n: nint): ptr uint8 {.inline.} =
+proc ptrAdd(p: ptr uint8, n: int): ptr uint8 {.inline.} =
   return cast[ptr uint8](cast[intp](p) + n)
 
-proc local_appendMem(v: ptr local_MiniMp4Vector, mem: pointer, local_bytes: nint): nint =
+proc appendMem(v: ptr MiniMp4Vector, mem: pointer, bytes: int): int =
   var
-    local_i = 0
+    i = 0
   let
-    local_p = v[].data
-  while local_i + 2 < v[].bytes:
+    p = v[].data
+  while i + 2 < v[].bytes:
     let
-      local_cb = nint(local_p[local_i]) * 256 + nint(local_p[local_i + 1])
-    if local_cb == local_bytes and cmp_mem(local_ptrAdd(cast[ptr uint8](addr(local_p[local_i + 2])), 0), mem, local_cb) == 0:
+      cb = int(p[i]) * 256 + int(p[i + 1])
+    if cb == bytes and cmp_mem(ptrAdd(cast[ptr uint8](addr(p[i + 2])), 0), mem, cb) == 0:
       return 1
-    local_i += 2 + local_cb
+    i += 2 + cb
   var
-    local_size: array[2, uint8]
-  local_size[0] = uint8(local_bytes shr 8)
-  local_size[1] = uint8(local_bytes and 255)
-  result = nint(local_vectorPut(v, addr(local_size[0]), 2) != nil and local_vectorPut(v, mem, local_bytes) != nil)
+    size: array[2, uint8]
+  size[0] = uint8(bytes shr 8)
+  size[1] = uint8(bytes and 255)
+  result = int(vectorPut(v, addr(size[0]), 2) != nil and vectorPut(v, mem, bytes) != nil)
   return result
 
-proc local_itemsCount(v: ptr local_MiniMp4Vector): nint =
+proc itemsCount(v: ptr MiniMp4Vector): int =
   var
-    local_i = 0
-    local_count = 0
+    i = 0
+    count = 0
   let
-    local_p = v[].data
-  while local_i + 2 < v[].bytes:
+    p = v[].data
+  while i + 2 < v[].bytes:
     let
-      local_cb = nint(local_p[local_i]) * 256 + nint(local_p[local_i + 1])
-    local_count += 1
-    local_i += 2 + local_cb
-  return local_count
+      cb = int(p[i]) * 256 + int(p[i + 1])
+    count += 1
+    i += 2 + cb
+  return count
 
-proc local_getDuration(tr: ptr local_TrackT): uint32 =
+proc getDuration(tr: ptr TrackT): uint32 =
   var
-    local_sumDuration = uint32(0)
+    sumDuration = uint32(0)
   let
-    local_s = cast[ptr UncheckedArray[local_SampleT]](tr[].smpl.data)
-    local_count = tr[].smpl.bytes div sizeof(local_SampleT)
-  for local_i in range(local_count):
-    local_sumDuration += local_s[local_i].duration
-  return local_sumDuration
+    s = cast[ptr UncheckedArray[SampleT]](tr[].smpl.data)
+    count = tr[].smpl.bytes div sizeof(SampleT)
+  for i in 0 ..< count:
+    sumDuration += s[i].duration
+  return sumDuration
 
-proc local_writePendingData(mux: ptr MP4E_mux_t, tr: ptr local_TrackT): nint =
-  if tr[].pending_sample.bytes > 0 and tr[].smpl.bytes >= sizeof(local_SampleT):
+proc writePendingData(mux: ptr MP4E_mux_t, tr: ptr TrackT): int =
+  if tr[].pending_sample.bytes > 0 and tr[].smpl.bytes >= sizeof(SampleT):
     var
-      local_base: array[8, uint8]
+      base: array[8, uint8]
     var
-      p = cast[ptr uint8](addr(local_base[0]))
-    local_WRITE_4(p, uint32(tr[].pending_sample.bytes + 8))
-    local_WRITE_4(p, local_BOX_mdat)
-    local_ERR(mux[].write_callback(mux[].write_pos, addr(local_base[0]), csize_t(local_ptrDiff(p, cast[ptr uint8](addr(local_base[0])))), mux[].token))
-    mux[].write_pos += local_ptrDiff(p, cast[ptr uint8](addr(local_base[0])))
+      p = cast[ptr uint8](addr(base[0]))
+    WRITE_4(p, uint32(tr[].pending_sample.bytes + 8))
+    WRITE_4(p, BOX_mdat)
+    ERR(mux[].write_callback(mux[].write_pos, addr(base[0]), csize_t(ptrDiff(p, cast[ptr uint8](addr(base[0])))), mux[].token))
+    mux[].write_pos += ptrDiff(p, cast[ptr uint8](addr(base[0])))
     let
-      local_smplDesc = cast[ptr local_SampleT](cast[intp](local_vectorAllocTail(addr(tr[].smpl), 0)) - sizeof(local_SampleT))
-    local_smplDesc[].size = uint64(tr[].pending_sample.bytes)
-    local_smplDesc[].offset = uint64(mux[].write_pos)
-    local_ERR(mux[].write_callback(mux[].write_pos, tr[].pending_sample.data, csize_t(tr[].pending_sample.bytes), mux[].token))
+      smplDesc = cast[ptr SampleT](cast[intp](vectorAllocTail(addr(tr[].smpl), 0)) - sizeof(SampleT))
+    smplDesc[].size = uint64(tr[].pending_sample.bytes)
+    smplDesc[].offset = uint64(mux[].write_pos)
+    ERR(mux[].write_callback(mux[].write_pos, tr[].pending_sample.data, csize_t(tr[].pending_sample.bytes), mux[].token))
     mux[].write_pos += tr[].pending_sample.bytes
     tr[].pending_sample.bytes = 0
   return MP4E_STATUS_OK
 
-proc local_addSampleDescriptor(mux: ptr MP4E_mux_t, tr: ptr local_TrackT, local_dataBytes: nint, local_duration: nint, local_kind: nint): nint =
+proc addSampleDescriptor(mux: ptr MP4E_mux_t, tr: ptr TrackT, dataBytes: int, duration: int, kind: int): int =
   var
-    local_smp: local_SampleT
-  local_smp.size = uint64(local_dataBytes)
-  local_smp.offset = uint64(mux[].write_pos)
-  local_smp.duration = if local_duration != 0: uint32(local_duration) else: tr[].info.default_duration
-  local_smp.flag_random_access = uint32(nint(local_kind == MP4E_SAMPLE_RANDOM_ACCESS))
-  return nint(local_vectorPut(addr(tr[].smpl), addr(local_smp), sizeof(local_SampleT)) != nil)
+    smp: SampleT
+  smp.size = uint64(dataBytes)
+  smp.offset = uint64(mux[].write_pos)
+  smp.duration = if duration != 0: uint32(duration) else: tr[].info.default_duration
+  smp.flag_random_access = uint32(int(kind == MP4E_SAMPLE_RANDOM_ACCESS))
+  return int(vectorPut(addr(tr[].smpl), addr(smp), sizeof(SampleT)) != nil)
 
-proc local_odSizeOfSize(local_size: nint): nint =
+proc odSizeOfSize(size: int): int =
   result = 1
   var
-    local_i = local_size
-  while local_i > 127:
+    i = size
+  while i > 127:
     result += 1
-    local_i -= 127
+    i -= 127
   return result
 const
-  local_MP4E_HANDLER_TYPE_VIDE = 1986618469'u32
-  local_MP4E_HANDLER_TYPE_SOUN = 1936684398'u32
-  local_MP4E_HANDLER_TYPE_GESM = 1734701933'u32
-  local_MP4E_HANDLER_TYPE_MDIR = 1835297138'u32
-  local_FILE_HEADER_BYTES = 256
-  local_TRACK_HEADER_BYTES = 512
+  MP4E_HANDLER_TYPE_VIDE = 1986618469'u32
+  MP4E_HANDLER_TYPE_SOUN = 1936684398'u32
+  MP4E_HANDLER_TYPE_GESM = 1734701933'u32
+  MP4E_HANDLER_TYPE_MDIR = 1835297138'u32
+  FILE_HEADER_BYTES = 256
+  TRACK_HEADER_BYTES = 512
 
-proc local_mp4eFlushIndex(mux: ptr MP4E_mux_t): nint =
+proc mp4eFlushIndex(mux: ptr MP4E_mux_t): int =
   var
-    local_stackBase: array[20, ptr uint8]
+    stackBase: array[20, ptr uint8]
   var
-    local_stack = cast[ptr ptr uint8](addr(local_stackBase[0]))
+    stack = cast[ptr ptr uint8](addr(stackBase[0]))
   let
-    local_ntracks = mux[].tracks.bytes div sizeof(local_TrackT)
+    ntracks = mux[].tracks.bytes div sizeof(TrackT)
   var
-    local_indexBytes = local_FILE_HEADER_BYTES
+    indexBytes = FILE_HEADER_BYTES
   if mux[].text_comment != nil:
-    local_indexBytes += 128 + len(string(mux[].text_comment))
-  for local_ntr in range(local_ntracks):
+    indexBytes += 128 + len($(mux[].text_comment))
+  for ntr in 0 ..< ntracks:
     let
-      local_tr = cast[ptr local_TrackT](cast[intp](mux[].tracks.data) + local_ntr * sizeof(local_TrackT))
-    local_indexBytes += local_TRACK_HEADER_BYTES
-    local_indexBytes += local_tr[].smpl.bytes * (sizeof(local_SampleT) + 4 + 4) div sizeof(local_SampleT)
-    local_indexBytes += local_tr[].vsps.bytes
-    local_indexBytes += local_tr[].vpps.bytes
-    local_ERR(local_writePendingData(mux, local_tr))
+      tr = cast[ptr TrackT](cast[intp](mux[].tracks.data) + ntr * sizeof(TrackT))
+    indexBytes += TRACK_HEADER_BYTES
+    indexBytes += tr[].smpl.bytes * (sizeof(SampleT) + 4 + 4) div sizeof(SampleT)
+    indexBytes += tr[].vsps.bytes
+    indexBytes += tr[].vpps.bytes
+    ERR(writePendingData(mux, tr))
   let
-    local_base = cast[ptr uint8](c_malloc(csize_t(local_indexBytes)))
-  if local_base == nil:
+    base = cast[ptr uint8](c_malloc(csize_t(indexBytes)))
+  if base == nil:
     return MP4E_STATUS_NO_MEMORY
   var
-    p = local_base
+    p = base
   if mux[].sequential_mode_flag == 0:
     let
-      local_size = mux[].write_pos - int64(sizeof(local_box_ftyp_data))
-      local_sizeLimit = int64(4294967294'u64)
-    if local_size > local_sizeLimit:
-      local_WRITE_4(p, 1'u32)
-      local_WRITE_4(p, local_BOX_mdat)
-      local_WRITE_4(p, uint32(local_size shr 32 and 4294967295))
-      local_WRITE_4(p, uint32(local_size and 4294967295))
+      size = mux[].write_pos - int64(sizeof(box_ftyp_data))
+      sizeLimit = int64(4294967294'u64)
+    if size > sizeLimit:
+      WRITE_4(p, 1'u32)
+      WRITE_4(p, BOX_mdat)
+      WRITE_4(p, uint32(size shr 32 and 4294967295))
+      WRITE_4(p, uint32(size and 4294967295))
     else:
-      local_WRITE_4(p, 8'u32)
-      local_WRITE_4(p, local_BOX_free)
-      local_WRITE_4(p, uint32(local_size - 8))
-      local_WRITE_4(p, local_BOX_mdat)
-    local_ERR(mux[].write_callback(int64(sizeof(local_box_ftyp_data)), local_base, csize_t(local_ptrDiff(p, local_base)), mux[].token))
-    p = local_base
-  local_ATOM(p, local_stack, local_BOX_moov)
-  local_ATOM_FULL(p, local_stack, local_BOX_mvhd, 0'u32)
-  local_WRITE_4(p, 0'u32)
-  local_WRITE_4(p, 0'u32)
-  if local_ntracks > 0:
+      WRITE_4(p, 8'u32)
+      WRITE_4(p, BOX_free)
+      WRITE_4(p, uint32(size - 8))
+      WRITE_4(p, BOX_mdat)
+    ERR(mux[].write_callback(int64(sizeof(box_ftyp_data)), base, csize_t(ptrDiff(p, base)), mux[].token))
+    p = base
+  ATOM(p, stack, BOX_moov)
+  ATOM_FULL(p, stack, BOX_mvhd, 0'u32)
+  WRITE_4(p, 0'u32)
+  WRITE_4(p, 0'u32)
+  if ntracks > 0:
     let
-      local_tr0 = cast[ptr local_TrackT](mux[].tracks.data)
+      tr0 = cast[ptr TrackT](mux[].tracks.data)
     var
-      local_dur = local_getDuration(local_tr0)
-    local_dur = uint32(uint64(local_dur) * uint64(local_MOOV_TIMESCALE) div uint64(local_tr0[].info.time_scale))
-    local_WRITE_4(p, local_MOOV_TIMESCALE)
-    local_WRITE_4(p, local_dur)
-  local_WRITE_4(p, 65536'u32)
-  local_WRITE_2(p, 256'u32)
-  local_WRITE_2(p, 0'u32)
-  local_WRITE_4(p, 0'u32)
-  local_WRITE_4(p, 0'u32)
-  local_WRITE_4(p, 65536'u32)
-  local_WRITE_4(p, 0'u32)
-  local_WRITE_4(p, 0'u32)
-  local_WRITE_4(p, 0'u32)
-  local_WRITE_4(p, 65536'u32)
-  local_WRITE_4(p, 0'u32)
-  local_WRITE_4(p, 0'u32)
-  local_WRITE_4(p, 0'u32)
-  local_WRITE_4(p, 1073741824'u32)
-  for local_i in range(6):
-    local_WRITE_4(p, 0'u32)
-  local_WRITE_4(p, uint32(local_ntracks + 1))
-  local_END_ATOM(p, local_stack)
-  for local_ntr in range(local_ntracks):
+      dur = getDuration(tr0)
+    dur = uint32(uint64(dur) * uint64(MOOV_TIMESCALE) div uint64(tr0[].info.time_scale))
+    WRITE_4(p, MOOV_TIMESCALE)
+    WRITE_4(p, dur)
+  WRITE_4(p, 65536'u32)
+  WRITE_2(p, 256'u32)
+  WRITE_2(p, 0'u32)
+  WRITE_4(p, 0'u32)
+  WRITE_4(p, 0'u32)
+  WRITE_4(p, 65536'u32)
+  WRITE_4(p, 0'u32)
+  WRITE_4(p, 0'u32)
+  WRITE_4(p, 0'u32)
+  WRITE_4(p, 65536'u32)
+  WRITE_4(p, 0'u32)
+  WRITE_4(p, 0'u32)
+  WRITE_4(p, 0'u32)
+  WRITE_4(p, 1073741824'u32)
+  for i in 0 ..< 6:
+    WRITE_4(p, 0'u32)
+  WRITE_4(p, uint32(ntracks + 1))
+  END_ATOM(p, stack)
+  for ntr in 0 ..< ntracks:
     let
-      local_tr = cast[ptr local_TrackT](cast[intp](mux[].tracks.data) + local_ntr * sizeof(local_TrackT))
-      local_duration = local_getDuration(local_tr)
+      tr = cast[ptr TrackT](cast[intp](mux[].tracks.data) + ntr * sizeof(TrackT))
+      duration = getDuration(tr)
     var
-      local_samplesCount = local_tr[].smpl.bytes div sizeof(local_SampleT)
+      samplesCount = tr[].smpl.bytes div sizeof(SampleT)
     let
-      local_sample = cast[ptr UncheckedArray[local_SampleT]](local_tr[].smpl.data)
+      sample = cast[ptr UncheckedArray[SampleT]](tr[].smpl.data)
     var
-      local_handlerType = uint32(0)
-      local_handlerAscii = string("")
+      handlerType = uint32(0)
+      handlerAscii = ""
     if mux[].enable_fragmentation != 0:
-      local_samplesCount = 0
-    elif local_samplesCount <= 0:
+      samplesCount = 0
+    elif samplesCount <= 0:
       continue
-    case local_tr[].info.track_media_kind:
+    case tr[].info.track_media_kind:
       of TrackMediaKind.e_audio:
-        local_handlerType = local_MP4E_HANDLER_TYPE_SOUN
-        local_handlerAscii = string("SoundHandler")
+        handlerType = MP4E_HANDLER_TYPE_SOUN
+        handlerAscii = "SoundHandler"
       of TrackMediaKind.e_video:
-        local_handlerType = local_MP4E_HANDLER_TYPE_VIDE
-        local_handlerAscii = string("VideoHandler")
+        handlerType = MP4E_HANDLER_TYPE_VIDE
+        handlerAscii = "VideoHandler"
       of TrackMediaKind.e_private:
-        local_handlerType = local_MP4E_HANDLER_TYPE_GESM
-        local_handlerAscii = string("")
-    local_ATOM(p, local_stack, local_BOX_trak)
-    local_ATOM_FULL(p, local_stack, local_BOX_tkhd, 7'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, uint32(local_ntr + 1))
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, uint32(uint64(local_duration) * uint64(local_MOOV_TIMESCALE) div uint64(local_tr[].info.time_scale)))
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_2(p, 0'u32)
-    local_WRITE_2(p, 0'u32)
-    local_WRITE_2(p, 256'u32)
-    local_WRITE_2(p, 0'u32)
-    local_WRITE_4(p, 65536'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, 65536'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, 1073741824'u32)
-    if local_tr[].info.track_media_kind == TrackMediaKind.e_audio or local_tr[].info.track_media_kind == TrackMediaKind.e_private:
-      local_WRITE_4(p, 0'u32)
-      local_WRITE_4(p, 0'u32)
+        handlerType = MP4E_HANDLER_TYPE_GESM
+        handlerAscii = ""
+    ATOM(p, stack, BOX_trak)
+    ATOM_FULL(p, stack, BOX_tkhd, 7'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, uint32(ntr + 1))
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, uint32(uint64(duration) * uint64(MOOV_TIMESCALE) div uint64(tr[].info.time_scale)))
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_2(p, 0'u32)
+    WRITE_2(p, 0'u32)
+    WRITE_2(p, 256'u32)
+    WRITE_2(p, 0'u32)
+    WRITE_4(p, 65536'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, 65536'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, 1073741824'u32)
+    if tr[].info.track_media_kind == TrackMediaKind.e_audio or tr[].info.track_media_kind == TrackMediaKind.e_private:
+      WRITE_4(p, 0'u32)
+      WRITE_4(p, 0'u32)
     else:
-      local_WRITE_4(p, uint32(local_tr[].info.width) * 65536'u32)
-      local_WRITE_4(p, uint32(local_tr[].info.height) * 65536'u32)
-    local_END_ATOM(p, local_stack)
-    local_ATOM(p, local_stack, local_BOX_mdia)
-    local_ATOM_FULL(p, local_stack, local_BOX_mdhd, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, local_tr[].info.time_scale)
-    local_WRITE_4(p, local_duration)
+      WRITE_4(p, uint32(tr[].info.width) * 65536'u32)
+      WRITE_4(p, uint32(tr[].info.height) * 65536'u32)
+    END_ATOM(p, stack)
+    ATOM(p, stack, BOX_mdia)
+    ATOM_FULL(p, stack, BOX_mdhd, 0'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, tr[].info.time_scale)
+    WRITE_4(p, duration)
     block:
       let
-        local_langCode = uint32((nint(local_tr[].info.language[0]) and 31) shl 10 or (nint(local_tr[].info.language[1]) and 31) shl 5 or nint(local_tr[].info.language[2]) and 31)
-      local_WRITE_2(p, local_langCode)
-    local_WRITE_2(p, 0'u32)
-    local_END_ATOM(p, local_stack)
-    local_ATOM_FULL(p, local_stack, local_BOX_hdlr, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, local_handlerType)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    if len(local_handlerAscii) > 0:
-      for local_i in range(len(local_handlerAscii)):
-        local_WRITE_1(p, uint32(ord(local_handlerAscii[local_i])))
-      local_WRITE_1(p, 0'u32)
+        langCode = uint32((int(tr[].info.language[0]) and 31) shl 10 or (int(tr[].info.language[1]) and 31) shl 5 or int(tr[].info.language[2]) and 31)
+      WRITE_2(p, langCode)
+    WRITE_2(p, 0'u32)
+    END_ATOM(p, stack)
+    ATOM_FULL(p, stack, BOX_hdlr, 0'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, handlerType)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, 0'u32)
+    if len(handlerAscii) > 0:
+      for i in 0 ..< len(handlerAscii):
+        WRITE_1(p, uint32(ord(handlerAscii[i])))
+      WRITE_1(p, 0'u32)
     else:
-      local_WRITE_4(p, 0'u32)
-    local_END_ATOM(p, local_stack)
-    local_ATOM(p, local_stack, local_BOX_minf)
-    if local_tr[].info.track_media_kind == TrackMediaKind.e_audio:
-      local_ATOM_FULL(p, local_stack, local_BOX_smhd, 0'u32)
-      local_WRITE_2(p, 0'u32)
-      local_WRITE_2(p, 0'u32)
-      local_END_ATOM(p, local_stack)
-    if local_tr[].info.track_media_kind == TrackMediaKind.e_video:
-      local_ATOM_FULL(p, local_stack, local_BOX_vmhd, 1'u32)
-      local_WRITE_2(p, 0'u32)
-      local_WRITE_2(p, 0'u32)
-      local_WRITE_2(p, 0'u32)
-      local_WRITE_2(p, 0'u32)
-      local_END_ATOM(p, local_stack)
-    local_ATOM(p, local_stack, local_BOX_dinf)
-    local_ATOM_FULL(p, local_stack, local_BOX_dref, 0'u32)
-    local_WRITE_4(p, 1'u32)
-    local_ATOM_FULL(p, local_stack, local_BOX_url, 1'u32)
-    local_END_ATOM(p, local_stack)
-    local_END_ATOM(p, local_stack)
-    local_END_ATOM(p, local_stack)
-    local_ATOM(p, local_stack, local_BOX_stbl)
-    local_ATOM_FULL(p, local_stack, local_BOX_stsd, 0'u32)
-    local_WRITE_4(p, 1'u32)
-    if local_tr[].info.track_media_kind == TrackMediaKind.e_audio or local_tr[].info.track_media_kind == TrackMediaKind.e_private:
-      if local_tr[].info.track_media_kind == TrackMediaKind.e_audio:
-        local_ATOM(p, local_stack, local_BOX_mp4a)
+      WRITE_4(p, 0'u32)
+    END_ATOM(p, stack)
+    ATOM(p, stack, BOX_minf)
+    if tr[].info.track_media_kind == TrackMediaKind.e_audio:
+      ATOM_FULL(p, stack, BOX_smhd, 0'u32)
+      WRITE_2(p, 0'u32)
+      WRITE_2(p, 0'u32)
+      END_ATOM(p, stack)
+    if tr[].info.track_media_kind == TrackMediaKind.e_video:
+      ATOM_FULL(p, stack, BOX_vmhd, 1'u32)
+      WRITE_2(p, 0'u32)
+      WRITE_2(p, 0'u32)
+      WRITE_2(p, 0'u32)
+      WRITE_2(p, 0'u32)
+      END_ATOM(p, stack)
+    ATOM(p, stack, BOX_dinf)
+    ATOM_FULL(p, stack, BOX_dref, 0'u32)
+    WRITE_4(p, 1'u32)
+    ATOM_FULL(p, stack, BOX_url, 1'u32)
+    END_ATOM(p, stack)
+    END_ATOM(p, stack)
+    END_ATOM(p, stack)
+    ATOM(p, stack, BOX_stbl)
+    ATOM_FULL(p, stack, BOX_stsd, 0'u32)
+    WRITE_4(p, 1'u32)
+    if tr[].info.track_media_kind == TrackMediaKind.e_audio or tr[].info.track_media_kind == TrackMediaKind.e_private:
+      if tr[].info.track_media_kind == TrackMediaKind.e_audio:
+        ATOM(p, stack, BOX_mp4a)
       else:
-        local_ATOM(p, local_stack, local_BOX_mp4s)
-      local_WRITE_4(p, 0'u32)
-      local_WRITE_2(p, 0'u32)
-      local_WRITE_2(p, 1'u32)
-      if local_tr[].info.track_media_kind == TrackMediaKind.e_audio:
-        local_WRITE_4(p, 0'u32)
-        local_WRITE_4(p, 0'u32)
-        local_WRITE_2(p, uint32(local_tr[].info.channelcount))
-        local_WRITE_2(p, 16'u32)
-        local_WRITE_4(p, 0'u32)
-        local_WRITE_4(p, local_tr[].info.time_scale shl 16)
-      local_ATOM_FULL(p, local_stack, local_BOX_esds, 0'u32)
-      if local_tr[].vsps.bytes > 0:
+        ATOM(p, stack, BOX_mp4s)
+      WRITE_4(p, 0'u32)
+      WRITE_2(p, 0'u32)
+      WRITE_2(p, 1'u32)
+      if tr[].info.track_media_kind == TrackMediaKind.e_audio:
+        WRITE_4(p, 0'u32)
+        WRITE_4(p, 0'u32)
+        WRITE_2(p, uint32(tr[].info.channelcount))
+        WRITE_2(p, 16'u32)
+        WRITE_4(p, 0'u32)
+        WRITE_4(p, tr[].info.time_scale shl 16)
+      ATOM_FULL(p, stack, BOX_esds, 0'u32)
+      if tr[].vsps.bytes > 0:
         let
-          local_dsiBytes = local_tr[].vsps.bytes - 2
+          dsiBytes = tr[].vsps.bytes - 2
         var
-          local_dsiBytesVar = local_dsiBytes
+          dsiBytesVar = dsiBytes
         let
-          local_dsiSizeSize = local_odSizeOfSize(local_dsiBytes)
-          local_dcdBytes = local_dsiBytes + local_dsiSizeSize + 1 + (1 + 1 + 3 + 4 + 4)
+          dsiSizeSize = odSizeOfSize(dsiBytes)
+          dcdBytes = dsiBytes + dsiSizeSize + 1 + (1 + 1 + 3 + 4 + 4)
         var
-          local_dcdBytesVar = local_dcdBytes
+          dcdBytesVar = dcdBytes
         let
-          local_dcdSizeSize = local_odSizeOfSize(local_dcdBytes)
+          dcdSizeSize = odSizeOfSize(dcdBytes)
         var
-          local_esdBytes = local_dcdBytes + local_dcdSizeSize + 1 + 3
-        local_WRITE_1(p, 3'u32)
-        while local_esdBytes > 127:
-          local_esdBytes -= 127
-          local_WRITE_1(p, 255'u32)
-        local_WRITE_1(p, uint32(local_esdBytes))
-        local_WRITE_2(p, 0'u32)
-        local_WRITE_1(p, 0'u32)
-        local_WRITE_1(p, 4'u32)
-        while local_dcdBytesVar > 127:
-          local_dcdBytesVar -= 127
-          local_WRITE_1(p, 255'u32)
-        local_WRITE_1(p, uint32(local_dcdBytesVar))
-        if local_tr[].info.track_media_kind == TrackMediaKind.e_audio:
-          local_WRITE_1(p, uint32(MP4_OBJECT_TYPE_AUDIO_ISO_IEC_14496_3))
-          local_WRITE_1(p, 5'u32 shl 2)
+          esdBytes = dcdBytes + dcdSizeSize + 1 + 3
+        WRITE_1(p, 3'u32)
+        while esdBytes > 127:
+          esdBytes -= 127
+          WRITE_1(p, 255'u32)
+        WRITE_1(p, uint32(esdBytes))
+        WRITE_2(p, 0'u32)
+        WRITE_1(p, 0'u32)
+        WRITE_1(p, 4'u32)
+        while dcdBytesVar > 127:
+          dcdBytesVar -= 127
+          WRITE_1(p, 255'u32)
+        WRITE_1(p, uint32(dcdBytesVar))
+        if tr[].info.track_media_kind == TrackMediaKind.e_audio:
+          WRITE_1(p, uint32(MP4_OBJECT_TYPE_AUDIO_ISO_IEC_14496_3))
+          WRITE_1(p, 5'u32 shl 2)
         else:
-          local_WRITE_1(p, 208'u32)
-          local_WRITE_1(p, 32'u32 shl 2)
-        local_WRITE_3(p, uint32(local_tr[].info.channelcount * 6144 div 8))
-        local_WRITE_4(p, 0'u32)
-        local_WRITE_4(p, 0'u32)
-        local_WRITE_1(p, 5'u32)
-        while local_dsiBytesVar > 127:
-          local_dsiBytesVar -= 127
-          local_WRITE_1(p, 255'u32)
-        local_WRITE_1(p, uint32(local_dsiBytesVar))
-        for local_i in range(local_dsiBytes):
-          local_WRITE_1(p, uint32(local_tr[].vsps.data[2 + local_i]))
-      local_END_ATOM(p, local_stack)
-      local_END_ATOM(p, local_stack)
-    if local_tr[].info.track_media_kind == TrackMediaKind.e_video and (MP4_OBJECT_TYPE_AVC == local_tr[].info.object_type_indication or MP4_OBJECT_TYPE_HEVC == local_tr[].info.object_type_indication):
+          WRITE_1(p, 208'u32)
+          WRITE_1(p, 32'u32 shl 2)
+        WRITE_3(p, uint32(tr[].info.channelcount * 6144 div 8))
+        WRITE_4(p, 0'u32)
+        WRITE_4(p, 0'u32)
+        WRITE_1(p, 5'u32)
+        while dsiBytesVar > 127:
+          dsiBytesVar -= 127
+          WRITE_1(p, 255'u32)
+        WRITE_1(p, uint32(dsiBytesVar))
+        for i in 0 ..< dsiBytes:
+          WRITE_1(p, uint32(tr[].vsps.data[2 + i]))
+      END_ATOM(p, stack)
+      END_ATOM(p, stack)
+    if tr[].info.track_media_kind == TrackMediaKind.e_video and (MP4_OBJECT_TYPE_AVC == tr[].info.object_type_indication or MP4_OBJECT_TYPE_HEVC == tr[].info.object_type_indication):
       let
-        local_numSPS = local_itemsCount(addr(local_tr[].vsps))
-        local_numPPS = local_itemsCount(addr(local_tr[].vpps))
-      if MP4_OBJECT_TYPE_AVC == local_tr[].info.object_type_indication:
-        local_ATOM(p, local_stack, local_BOX_avc1)
+        numSPS = itemsCount(addr(tr[].vsps))
+        numPPS = itemsCount(addr(tr[].vpps))
+      if MP4_OBJECT_TYPE_AVC == tr[].info.object_type_indication:
+        ATOM(p, stack, BOX_avc1)
       else:
-        local_ATOM(p, local_stack, local_BOX_hvc1)
-      local_WRITE_2(p, 0'u32)
-      local_WRITE_2(p, 0'u32)
-      local_WRITE_2(p, 0'u32)
-      local_WRITE_2(p, 1'u32)
-      local_WRITE_2(p, 0'u32)
-      local_WRITE_2(p, 0'u32)
-      local_WRITE_4(p, 0'u32)
-      local_WRITE_4(p, 0'u32)
-      local_WRITE_4(p, 0'u32)
-      local_WRITE_2(p, uint32(local_tr[].info.width))
-      local_WRITE_2(p, uint32(local_tr[].info.height))
-      local_WRITE_4(p, 4718592'u32)
-      local_WRITE_4(p, 4718592'u32)
-      local_WRITE_4(p, 0'u32)
-      local_WRITE_2(p, 1'u32)
-      for local_i in range(32):
-        local_WRITE_1(p, 0'u32)
-      local_WRITE_2(p, 24'u32)
-      local_WRITE_2(p, 65535'u32)
-      if MP4_OBJECT_TYPE_AVC == local_tr[].info.object_type_indication:
-        local_ATOM(p, local_stack, local_BOX_avcC)
-        local_WRITE_1(p, 1'u32)
-        local_WRITE_1(p, uint32(local_tr[].vsps.data[2 + 1]))
-        local_WRITE_1(p, uint32(local_tr[].vsps.data[2 + 2]))
-        local_WRITE_1(p, uint32(local_tr[].vsps.data[2 + 3]))
-        local_WRITE_1(p, 255'u32)
-        local_WRITE_1(p, uint32(224 or local_numSPS))
-        for local_i in range(local_tr[].vsps.bytes):
-          local_WRITE_1(p, uint32(local_tr[].vsps.data[local_i]))
-        local_WRITE_1(p, uint32(local_numPPS))
-        for local_i in range(local_tr[].vpps.bytes):
-          local_WRITE_1(p, uint32(local_tr[].vpps.data[local_i]))
+        ATOM(p, stack, BOX_hvc1)
+      WRITE_2(p, 0'u32)
+      WRITE_2(p, 0'u32)
+      WRITE_2(p, 0'u32)
+      WRITE_2(p, 1'u32)
+      WRITE_2(p, 0'u32)
+      WRITE_2(p, 0'u32)
+      WRITE_4(p, 0'u32)
+      WRITE_4(p, 0'u32)
+      WRITE_4(p, 0'u32)
+      WRITE_2(p, uint32(tr[].info.width))
+      WRITE_2(p, uint32(tr[].info.height))
+      WRITE_4(p, 4718592'u32)
+      WRITE_4(p, 4718592'u32)
+      WRITE_4(p, 0'u32)
+      WRITE_2(p, 1'u32)
+      for i in 0 ..< 32:
+        WRITE_1(p, 0'u32)
+      WRITE_2(p, 24'u32)
+      WRITE_2(p, 65535'u32)
+      if MP4_OBJECT_TYPE_AVC == tr[].info.object_type_indication:
+        ATOM(p, stack, BOX_avcC)
+        WRITE_1(p, 1'u32)
+        WRITE_1(p, uint32(tr[].vsps.data[2 + 1]))
+        WRITE_1(p, uint32(tr[].vsps.data[2 + 2]))
+        WRITE_1(p, uint32(tr[].vsps.data[2 + 3]))
+        WRITE_1(p, 255'u32)
+        WRITE_1(p, uint32(224 or numSPS))
+        for i in 0 ..< tr[].vsps.bytes:
+          WRITE_1(p, uint32(tr[].vsps.data[i]))
+        WRITE_1(p, uint32(numPPS))
+        for i in 0 ..< tr[].vpps.bytes:
+          WRITE_1(p, uint32(tr[].vpps.data[i]))
       else:
         let
-          local_numVPS = local_itemsCount(addr(local_tr[].vvps))
-        local_ATOM(p, local_stack, local_BOX_hvcC)
-        local_WRITE_1(p, 1'u32)
-        local_WRITE_1(p, 1'u32)
-        local_WRITE_4(p, 1610612736'u32)
-        local_WRITE_2(p, 0'u32)
-        local_WRITE_4(p, 0'u32)
-        local_WRITE_1(p, 0'u32)
-        local_WRITE_2(p, 61440'u32)
-        local_WRITE_1(p, 252'u32)
-        local_WRITE_1(p, 252'u32)
-        local_WRITE_1(p, 248'u32)
-        local_WRITE_1(p, 248'u32)
-        local_WRITE_2(p, 0'u32)
-        local_WRITE_1(p, 3'u32)
-        local_WRITE_1(p, 3'u32)
-        local_WRITE_1(p, uint32(1 shl 7 or local_HEVC_NAL_VPS and 63))
-        local_WRITE_2(p, uint32(local_numVPS))
-        for local_i in range(local_tr[].vvps.bytes):
-          local_WRITE_1(p, uint32(local_tr[].vvps.data[local_i]))
-        local_WRITE_1(p, uint32(1 shl 7 or local_HEVC_NAL_SPS and 63))
-        local_WRITE_2(p, uint32(local_numSPS))
-        for local_i in range(local_tr[].vsps.bytes):
-          local_WRITE_1(p, uint32(local_tr[].vsps.data[local_i]))
-        local_WRITE_1(p, uint32(1 shl 7 or local_HEVC_NAL_PPS and 63))
-        local_WRITE_2(p, uint32(local_numPPS))
-        for local_i in range(local_tr[].vpps.bytes):
-          local_WRITE_1(p, uint32(local_tr[].vpps.data[local_i]))
-      local_END_ATOM(p, local_stack)
-      local_END_ATOM(p, local_stack)
-    local_END_ATOM(p, local_stack)
-    local_ATOM_FULL(p, local_stack, local_BOX_stts, 0'u32)
+          numVPS = itemsCount(addr(tr[].vvps))
+        ATOM(p, stack, BOX_hvcC)
+        WRITE_1(p, 1'u32)
+        WRITE_1(p, 1'u32)
+        WRITE_4(p, 1610612736'u32)
+        WRITE_2(p, 0'u32)
+        WRITE_4(p, 0'u32)
+        WRITE_1(p, 0'u32)
+        WRITE_2(p, 61440'u32)
+        WRITE_1(p, 252'u32)
+        WRITE_1(p, 252'u32)
+        WRITE_1(p, 248'u32)
+        WRITE_1(p, 248'u32)
+        WRITE_2(p, 0'u32)
+        WRITE_1(p, 3'u32)
+        WRITE_1(p, 3'u32)
+        WRITE_1(p, uint32(1 shl 7 or HEVC_NAL_VPS and 63))
+        WRITE_2(p, uint32(numVPS))
+        for i in 0 ..< tr[].vvps.bytes:
+          WRITE_1(p, uint32(tr[].vvps.data[i]))
+        WRITE_1(p, uint32(1 shl 7 or HEVC_NAL_SPS and 63))
+        WRITE_2(p, uint32(numSPS))
+        for i in 0 ..< tr[].vsps.bytes:
+          WRITE_1(p, uint32(tr[].vsps.data[i]))
+        WRITE_1(p, uint32(1 shl 7 or HEVC_NAL_PPS and 63))
+        WRITE_2(p, uint32(numPPS))
+        for i in 0 ..< tr[].vpps.bytes:
+          WRITE_1(p, uint32(tr[].vpps.data[i]))
+      END_ATOM(p, stack)
+      END_ATOM(p, stack)
+    END_ATOM(p, stack)
+    ATOM_FULL(p, stack, BOX_stts, 0'u32)
     block:
       let
-        local_pentryCount = p
+        pentryCount = p
       var
-        local_cnt = 1
-        local_entryCount = 0
-      local_WRITE_4(p, 0'u32)
-      for local_i in range(local_samplesCount):
-        if local_i == local_samplesCount - 1 or local_sample[local_i].duration != local_sample[local_i + 1].duration:
-          local_WRITE_4(p, uint32(local_cnt))
-          local_WRITE_4(p, local_sample[local_i].duration)
-          local_cnt = 0
-          local_entryCount += 1
-        local_cnt += 1
-      local_WR4(local_pentryCount, local_entryCount)
-    local_END_ATOM(p, local_stack)
-    local_ATOM_FULL(p, local_stack, local_BOX_stsc, 0'u32)
+        cnt = 1
+        entryCount = 0
+      WRITE_4(p, 0'u32)
+      for i in 0 ..< samplesCount:
+        if i == samplesCount - 1 or sample[i].duration != sample[i + 1].duration:
+          WRITE_4(p, uint32(cnt))
+          WRITE_4(p, sample[i].duration)
+          cnt = 0
+          entryCount += 1
+        cnt += 1
+      WR4(pentryCount, entryCount)
+    END_ATOM(p, stack)
+    ATOM_FULL(p, stack, BOX_stsc, 0'u32)
     if mux[].enable_fragmentation != 0:
-      local_WRITE_4(p, 0'u32)
+      WRITE_4(p, 0'u32)
     else:
-      local_WRITE_4(p, 1'u32)
-      local_WRITE_4(p, 1'u32)
-      local_WRITE_4(p, 1'u32)
-      local_WRITE_4(p, 1'u32)
-    local_END_ATOM(p, local_stack)
-    local_ATOM_FULL(p, local_stack, local_BOX_stsz, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, uint32(local_samplesCount))
-    for local_i in range(local_samplesCount):
-      local_WRITE_4(p, uint32(local_sample[local_i].size))
-    local_END_ATOM(p, local_stack)
+      WRITE_4(p, 1'u32)
+      WRITE_4(p, 1'u32)
+      WRITE_4(p, 1'u32)
+      WRITE_4(p, 1'u32)
+    END_ATOM(p, stack)
+    ATOM_FULL(p, stack, BOX_stsz, 0'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, uint32(samplesCount))
+    for i in 0 ..< samplesCount:
+      WRITE_4(p, uint32(sample[i].size))
+    END_ATOM(p, stack)
     var
-      local_is64bit = false
-    if local_samplesCount > 0 and local_sample[local_samplesCount - 1].offset > 4294967295'u64:
-      local_is64bit = true
-    if not local_is64bit:
-      local_ATOM_FULL(p, local_stack, local_BOX_stco, 0'u32)
-      local_WRITE_4(p, uint32(local_samplesCount))
-      for local_i in range(local_samplesCount):
-        local_WRITE_4(p, uint32(local_sample[local_i].offset))
+      is64bit = false
+    if samplesCount > 0 and sample[samplesCount - 1].offset > 4294967295'u64:
+      is64bit = true
+    if not is64bit:
+      ATOM_FULL(p, stack, BOX_stco, 0'u32)
+      WRITE_4(p, uint32(samplesCount))
+      for i in 0 ..< samplesCount:
+        WRITE_4(p, uint32(sample[i].offset))
     else:
-      local_ATOM_FULL(p, local_stack, local_BOX_co64, 0'u32)
-      local_WRITE_4(p, uint32(local_samplesCount))
-      for local_i in range(local_samplesCount):
-        local_WRITE_4(p, uint32(local_sample[local_i].offset shr 32 and 4294967295'u64))
-        local_WRITE_4(p, uint32(local_sample[local_i].offset and 4294967295'u64))
-    local_END_ATOM(p, local_stack)
+      ATOM_FULL(p, stack, BOX_co64, 0'u32)
+      WRITE_4(p, uint32(samplesCount))
+      for i in 0 ..< samplesCount:
+        WRITE_4(p, uint32(sample[i].offset shr 32 and 4294967295'u64))
+        WRITE_4(p, uint32(sample[i].offset and 4294967295'u64))
+    END_ATOM(p, stack)
     block:
       var
-        local_raCount = 0
-      for local_i in range(local_samplesCount):
-        if local_sample[local_i].flag_random_access != 0:
-          local_raCount += 1
-      if local_raCount != local_samplesCount:
-        local_ATOM_FULL(p, local_stack, local_BOX_stss, 0'u32)
-        local_WRITE_4(p, uint32(local_raCount))
-        for local_i in range(local_samplesCount):
-          if local_sample[local_i].flag_random_access != 0:
-            local_WRITE_4(p, uint32(local_i + 1))
-        local_END_ATOM(p, local_stack)
-    local_END_ATOM(p, local_stack)
-    local_END_ATOM(p, local_stack)
-    local_END_ATOM(p, local_stack)
-    local_END_ATOM(p, local_stack)
+        raCount = 0
+      for i in 0 ..< samplesCount:
+        if sample[i].flag_random_access != 0:
+          raCount += 1
+      if raCount != samplesCount:
+        ATOM_FULL(p, stack, BOX_stss, 0'u32)
+        WRITE_4(p, uint32(raCount))
+        for i in 0 ..< samplesCount:
+          if sample[i].flag_random_access != 0:
+            WRITE_4(p, uint32(i + 1))
+        END_ATOM(p, stack)
+    END_ATOM(p, stack)
+    END_ATOM(p, stack)
+    END_ATOM(p, stack)
+    END_ATOM(p, stack)
   if mux[].text_comment != nil:
     let
-      local_comment = string(mux[].text_comment)
-    local_ATOM(p, local_stack, local_BOX_udta)
-    local_ATOM_FULL(p, local_stack, local_BOX_meta, 0'u32)
-    local_ATOM_FULL(p, local_stack, local_BOX_hdlr, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, local_MP4E_HANDLER_TYPE_MDIR)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_WRITE_4(p, 0'u32)
-    local_END_ATOM(p, local_stack)
-    local_ATOM(p, local_stack, local_BOX_ilst)
-    local_ATOM(p, local_stack, local_BOX_ccmt)
-    local_ATOM(p, local_stack, local_BOX_data)
-    local_WRITE_4(p, 1'u32)
-    local_WRITE_4(p, 0'u32)
-    for local_i in range(len(local_comment) + 1):
-      if local_i < len(local_comment):
-        local_WRITE_1(p, uint32(ord(local_comment[local_i])))
+      comment = $(mux[].text_comment)
+    ATOM(p, stack, BOX_udta)
+    ATOM_FULL(p, stack, BOX_meta, 0'u32)
+    ATOM_FULL(p, stack, BOX_hdlr, 0'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, MP4E_HANDLER_TYPE_MDIR)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, 0'u32)
+    WRITE_4(p, 0'u32)
+    END_ATOM(p, stack)
+    ATOM(p, stack, BOX_ilst)
+    ATOM(p, stack, BOX_ccmt)
+    ATOM(p, stack, BOX_data)
+    WRITE_4(p, 1'u32)
+    WRITE_4(p, 0'u32)
+    for i in 0 ..< len(comment) + 1:
+      if i < len(comment):
+        WRITE_1(p, uint32(ord(comment[i])))
       else:
-        local_WRITE_1(p, 0'u32)
-    local_END_ATOM(p, local_stack)
-    local_END_ATOM(p, local_stack)
-    local_END_ATOM(p, local_stack)
-    local_END_ATOM(p, local_stack)
-    local_END_ATOM(p, local_stack)
-  local_END_ATOM(p, local_stack)
+        WRITE_1(p, 0'u32)
+    END_ATOM(p, stack)
+    END_ATOM(p, stack)
+    END_ATOM(p, stack)
+    END_ATOM(p, stack)
+    END_ATOM(p, stack)
+  END_ATOM(p, stack)
   let
-    local_err2 = mux[].write_callback(mux[].write_pos, local_base, csize_t(local_ptrDiff(p, local_base)), mux[].token)
-  mux[].write_pos += local_ptrDiff(p, local_base)
-  c_free(local_base)
-  return local_err2
+    err2 = mux[].write_callback(mux[].write_pos, base, csize_t(ptrDiff(p, base)), mux[].token)
+  mux[].write_pos += ptrDiff(p, base)
+  c_free(base)
+  return err2
 
-proc MP4E_open*(sequential_mode_flag: nint, enable_fragmentation: nint, token: pointer, write_callback: WriteCallback): ptr MP4E_mux_t =
-  if write_callback(0, unsafe_addr(local_box_ftyp_data[0]), csize_t(sizeof(local_box_ftyp_data)), token) != 0:
+proc MP4E_open*(sequential_mode_flag: int, enable_fragmentation: int, token: pointer, write_callback: WriteCallback): ptr MP4E_mux_t =
+  if write_callback(0, unsafe_addr(box_ftyp_data[0]), csize_t(sizeof(box_ftyp_data)), token) != 0:
     return nil
   let
     mux = cast[ptr MP4E_mux_t](c_malloc(csize_t(sizeof(MP4E_mux_t))))
@@ -765,522 +766,527 @@ proc MP4E_open*(sequential_mode_flag: nint, enable_fragmentation: nint, token: p
   mux[].write_callback = write_callback
   mux[].token = token
   mux[].text_comment = nil
-  mux[].write_pos = int64(sizeof(local_box_ftyp_data))
+  mux[].write_pos = int64(sizeof(box_ftyp_data))
   if mux[].sequential_mode_flag == 0:
-    if mux[].write_callback(mux[].write_pos, unsafe_addr(local_box_ftyp_data[0]), csize_t(8), mux[].token) != 0:
+    if mux[].write_callback(mux[].write_pos, unsafe_addr(box_ftyp_data[0]), csize_t(8), mux[].token) != 0:
       c_free(mux)
       return nil
     mux[].write_pos += 16
-  _ = local_vectorInit(addr(mux[].tracks), 2 * sizeof(local_TrackT))
+  let
+    dummy = vectorInit(addr(mux[].tracks), 2 * sizeof(TrackT))
   return mux
 
-proc MP4E_add_track*(mux: ptr MP4E_mux_t, track_data: ptr MP4E_track_t): nint =
+proc MP4E_add_track*(mux: ptr MP4E_mux_t, track_data: ptr MP4E_track_t): int =
   if mux == nil or track_data == nil:
     return MP4E_STATUS_BAD_ARGUMENTS
   let
-    local_ntr = mux[].tracks.bytes div sizeof(local_TrackT)
-    local_trp = local_vectorAllocTail(addr(mux[].tracks), sizeof(local_TrackT))
-  if local_trp == nil:
+    ntr = mux[].tracks.bytes div sizeof(TrackT)
+    trp = vectorAllocTail(addr(mux[].tracks), sizeof(TrackT))
+  if trp == nil:
     return MP4E_STATUS_NO_MEMORY
   let
-    local_tr = cast[ptr local_TrackT](local_trp)
-  zero_mem(local_tr, sizeof(local_TrackT))
-  copy_mem(addr(local_tr[].info), track_data, sizeof(MP4E_track_t))
-  if local_vectorInit(addr(local_tr[].smpl), 256) == 0:
+    tr = cast[ptr TrackT](trp)
+  zero_mem(tr, sizeof(TrackT))
+  copy_mem(addr(tr[].info), track_data, sizeof(MP4E_track_t))
+  if vectorInit(addr(tr[].smpl), 256) == 0:
     return MP4E_STATUS_NO_MEMORY
-  _ = local_vectorInit(addr(local_tr[].vsps), 0)
-  _ = local_vectorInit(addr(local_tr[].vpps), 0)
-  _ = local_vectorInit(addr(local_tr[].pending_sample), 0)
-  return local_ntr
+  discard vectorInit(addr(tr[].vsps), 0)
+  discard vectorInit(addr(tr[].vpps), 0)
+  discard vectorInit(addr(tr[].pending_sample), 0)
+  return ntr
 
-proc MP4E_set_dsi*(mux: ptr MP4E_mux_t, track_id: nint, dsi: pointer, local_bytes: nint): nint =
+proc MP4E_set_dsi*(mux: ptr MP4E_mux_t, track_id: int, dsi: pointer, bytes: int): int =
   let
-    local_tr = cast[ptr local_TrackT](cast[intp](mux[].tracks.data) + track_id * sizeof(local_TrackT))
-  if local_tr[].vsps.bytes != 0:
+    tr = cast[ptr TrackT](cast[intp](mux[].tracks.data) + track_id * sizeof(TrackT))
+  if tr[].vsps.bytes != 0:
     return MP4E_STATUS_ONLY_ONE_DSI_ALLOWED
-  return if local_appendMem(addr(local_tr[].vsps), dsi, local_bytes) != 0: MP4E_STATUS_OK else: MP4E_STATUS_NO_MEMORY
+  return if appendMem(addr(tr[].vsps), dsi, bytes) != 0: MP4E_STATUS_OK else: MP4E_STATUS_NO_MEMORY
 
-proc MP4E_set_vps*(mux: ptr MP4E_mux_t, track_id: nint, vps: pointer, local_bytes: nint): nint =
+proc MP4E_set_vps*(mux: ptr MP4E_mux_t, track_id: int, vps: pointer, bytes: int): int =
   let
-    local_tr = cast[ptr local_TrackT](cast[intp](mux[].tracks.data) + track_id * sizeof(local_TrackT))
-  return if local_appendMem(addr(local_tr[].vvps), vps, local_bytes) != 0: MP4E_STATUS_OK else: MP4E_STATUS_NO_MEMORY
+    tr = cast[ptr TrackT](cast[intp](mux[].tracks.data) + track_id * sizeof(TrackT))
+  return if appendMem(addr(tr[].vvps), vps, bytes) != 0: MP4E_STATUS_OK else: MP4E_STATUS_NO_MEMORY
 
-proc MP4E_set_sps*(mux: ptr MP4E_mux_t, track_id: nint, sps: pointer, local_bytes: nint): nint =
+proc MP4E_set_sps*(mux: ptr MP4E_mux_t, track_id: int, sps: pointer, bytes: int): int =
   let
-    local_tr = cast[ptr local_TrackT](cast[intp](mux[].tracks.data) + track_id * sizeof(local_TrackT))
-  return if local_appendMem(addr(local_tr[].vsps), sps, local_bytes) != 0: MP4E_STATUS_OK else: MP4E_STATUS_NO_MEMORY
+    tr = cast[ptr TrackT](cast[intp](mux[].tracks.data) + track_id * sizeof(TrackT))
+  return if appendMem(addr(tr[].vsps), sps, bytes) != 0: MP4E_STATUS_OK else: MP4E_STATUS_NO_MEMORY
 
-proc MP4E_set_pps*(mux: ptr MP4E_mux_t, track_id: nint, pps: pointer, local_bytes: nint): nint =
+proc MP4E_set_pps*(mux: ptr MP4E_mux_t, track_id: int, pps: pointer, bytes: int): int =
   let
-    local_tr = cast[ptr local_TrackT](cast[intp](mux[].tracks.data) + track_id * sizeof(local_TrackT))
-  return if local_appendMem(addr(local_tr[].vpps), pps, local_bytes) != 0: MP4E_STATUS_OK else: MP4E_STATUS_NO_MEMORY
+    tr = cast[ptr TrackT](cast[intp](mux[].tracks.data) + track_id * sizeof(TrackT))
+  return if appendMem(addr(tr[].vpps), pps, bytes) != 0: MP4E_STATUS_OK else: MP4E_STATUS_NO_MEMORY
 
-proc MP4E_put_sample*(mux: ptr MP4E_mux_t, track_num: nint, data: pointer, data_bytes: nint, local_duration: nint, local_kind: nint): nint =
+proc MP4E_put_sample*(mux: ptr MP4E_mux_t, track_num: int, data: pointer, data_bytes: int, duration: int, kind: int): int =
   if mux == nil or data == nil:
     return MP4E_STATUS_BAD_ARGUMENTS
   let
-    local_tr = cast[ptr local_TrackT](cast[intp](mux[].tracks.data) + track_num * sizeof(local_TrackT))
+    tr = cast[ptr TrackT](cast[intp](mux[].tracks.data) + track_num * sizeof(TrackT))
   if mux[].enable_fragmentation != 0:
     if mux[].fragments_count == 0:
-      local_ERR(local_mp4eFlushIndex(mux))
+      ERR(mp4eFlushIndex(mux))
     mux[].fragments_count += 1
     return MP4E_STATUS_OK
-  if local_kind != MP4E_SAMPLE_CONTINUATION:
+  if kind != MP4E_SAMPLE_CONTINUATION:
     if mux[].sequential_mode_flag != 0:
-      local_ERR(local_writePendingData(mux, local_tr))
-    if local_addSampleDescriptor(mux, local_tr, data_bytes, local_duration, local_kind) == 0:
+      ERR(writePendingData(mux, tr))
+    if addSampleDescriptor(mux, tr, data_bytes, duration, kind) == 0:
       return MP4E_STATUS_NO_MEMORY
   elif mux[].sequential_mode_flag == 0:
-    if local_tr[].smpl.bytes < sizeof(local_SampleT):
+    if tr[].smpl.bytes < sizeof(SampleT):
       return MP4E_STATUS_NO_MEMORY
     let
-      local_smplDesc = cast[ptr local_SampleT](cast[intp](local_tr[].smpl.data) + local_tr[].smpl.bytes - sizeof(local_SampleT))
-    local_smplDesc[].size += uint64(data_bytes)
+      smplDesc = cast[ptr SampleT](cast[intp](tr[].smpl.data) + tr[].smpl.bytes - sizeof(SampleT))
+    smplDesc[].size += uint64(data_bytes)
   if mux[].sequential_mode_flag != 0:
-    if local_vectorPut(addr(local_tr[].pending_sample), data, data_bytes) == nil:
+    if vectorPut(addr(tr[].pending_sample), data, data_bytes) == nil:
       return MP4E_STATUS_NO_MEMORY
   else:
-    local_ERR(mux[].write_callback(mux[].write_pos, data, csize_t(data_bytes), mux[].token))
+    ERR(mux[].write_callback(mux[].write_pos, data, csize_t(data_bytes), mux[].token))
     mux[].write_pos += data_bytes
   return MP4E_STATUS_OK
 
-proc MP4E_close*(mux: ptr MP4E_mux_t): nint =
+proc MP4E_close*(mux: ptr MP4E_mux_t): int =
   var
-    local_err = MP4E_STATUS_OK
+    err = MP4E_STATUS_OK
   if mux == nil:
     return MP4E_STATUS_BAD_ARGUMENTS
   if mux[].enable_fragmentation == 0:
-    local_err = local_mp4eFlushIndex(mux)
+    err = mp4eFlushIndex(mux)
   if mux[].text_comment != nil:
     c_free(mux[].text_comment)
   let
-    local_ntracks = mux[].tracks.bytes div sizeof(local_TrackT)
-  for local_ntr in range(local_ntracks):
+    ntracks = mux[].tracks.bytes div sizeof(TrackT)
+  for ntr in 0 ..< ntracks:
     let
-      local_tr = cast[ptr local_TrackT](cast[intp](mux[].tracks.data) + local_ntr * sizeof(local_TrackT))
-    local_vectorReset(addr(local_tr[].vsps))
-    local_vectorReset(addr(local_tr[].vpps))
-    local_vectorReset(addr(local_tr[].smpl))
-    local_vectorReset(addr(local_tr[].pending_sample))
-  local_vectorReset(addr(mux[].tracks))
+      tr = cast[ptr TrackT](cast[intp](mux[].tracks.data) + ntr * sizeof(TrackT))
+    vectorReset(addr(tr[].vsps))
+    vectorReset(addr(tr[].vpps))
+    vectorReset(addr(tr[].smpl))
+    vectorReset(addr(tr[].pending_sample))
+  vectorReset(addr(mux[].tracks))
   c_free(mux)
-  return local_err
+  return err
 
-proc local_loadShort(x: uint16): uint16 {.inline.} =
+proc loadShort(x: uint16): uint16 {.inline.} =
   return x shl 8 or x shr 8
 
-proc local_showBits(bs: ptr local_BitReaderT, n: nint): uint32 =
+proc showBits(bs: ptr BitReaderT, n: int): uint32 =
   return bs[].cache shr (32 - n)
 
-proc local_flushBits(bs: ptr local_BitReaderT, n: nint) =
+proc flushBits(bs: ptr BitReaderT, n: int) =
   bs[].cache = bs[].cache shl n
   bs[].cache_free_bits += n
   if bs[].cache_free_bits >= 0:
-    bs[].cache = bs[].cache or uint32(local_loadShort(bs[].buf[])) shl bs[].cache_free_bits
+    bs[].cache = bs[].cache or uint32(loadShort(bs[].buf[])) shl bs[].cache_free_bits
     bs[].buf = cast[ptr uint16](cast[intp](bs[].buf) + 2)
     bs[].cache_free_bits -= 16
 
-proc local_getBits(bs: ptr local_BitReaderT, n: nint): uint32 =
-  result = local_showBits(bs, n)
-  local_flushBits(bs, n)
+proc getBits(bs: ptr BitReaderT, n: int): uint32 =
+  result = showBits(bs, n)
+  flushBits(bs, n)
   return result
 
-proc local_setPosBits(bs: ptr local_BitReaderT, local_posBits: uint32) =
-  bs[].buf = cast[ptr uint16](cast[intp](bs[].origin) + local_posBits div 16 * 2)
+proc setPosBits(bs: ptr BitReaderT, posBits: uint32) =
+  bs[].buf = cast[ptr uint16](cast[intp](bs[].origin) + intp(posBits div 16 * 2))
   bs[].cache = uint32(0)
   bs[].cache_free_bits = 16
-  local_flushBits(bs, 0)
-  local_flushBits(bs, nint(local_posBits and 15))
+  flushBits(bs, 0)
+  flushBits(bs, int(posBits and 15))
 
-proc local_getPosBits(bs: ptr local_BitReaderT): uint32 =
+proc getPosBits(bs: ptr BitReaderT): uint32 =
   return uint32(cast[intp](bs[].buf) - cast[intp](bs[].origin)) div 2 * 16 - uint32(16 - bs[].cache_free_bits)
 
-proc local_remainingBits(bs: ptr local_BitReaderT): nint =
-  return nint(bs[].origin_bytes) * 8 - nint(local_getPosBits(bs))
+proc remainingBits(bs: ptr BitReaderT): int =
+  return int(bs[].origin_bytes) * 8 - int(getPosBits(bs))
 
-proc local_initBits(bs: ptr local_BitReaderT, data: pointer, local_dataBytes: nint) =
+proc initBits(bs: ptr BitReaderT, data: pointer, dataBytes: int) =
   bs[].origin = cast[ptr uint16](data)
-  bs[].origin_bytes = uint32(local_dataBytes)
-  local_setPosBits(bs, uint32(0))
+  bs[].origin_bytes = uint32(dataBytes)
+  setPosBits(bs, uint32(0))
 
-proc local_ueBits(bs: ptr local_BitReaderT): nint =
+proc ueBits(bs: ptr BitReaderT): int =
   var
-    local_clz = 0
-  while local_getBits(bs, 1) == 0:
-    local_clz += 1
-  return 1 shl local_clz - 1 + (if local_clz > 0: nint(local_getBits(bs, local_clz)) else: 0)
+    clz = 0
+  while getBits(bs, 1) == 0:
+    clz += 1
+  return 1 shl clz - 1 + (if clz > 0: int(getBits(bs, clz)) else: 0)
 
-proc local_swap32(x: uint32): uint32 {.inline.} =
+proc swap32(x: uint32): uint32 {.inline.} =
   return x shr 24 and 255 or x shr 8 and 65280 or x shl 8 and 16711680 or (x and 255) shl 24
 
-proc local_bsPutBits(bs: ptr local_BsT, n: nint, val: uint32) =
+proc bsPutBits(bs: ptr BsT, n: int, val: uint32) =
   bs[].shift -= n
   if bs[].shift < 0:
     bs[].cache = bs[].cache or val shr -bs[].shift
-    bs[].buf[] = local_swap32(bs[].cache)
+    bs[].buf[] = swap32(bs[].cache)
     bs[].buf = cast[ptr uint32](cast[intp](bs[].buf) + 4)
     bs[].shift = 32 + bs[].shift
     bs[].cache = uint32(0)
   bs[].cache = bs[].cache or val shl bs[].shift
 
-proc local_bsFlush(bs: ptr local_BsT) =
-  bs[].buf[] = local_swap32(bs[].cache)
+proc bsFlush(bs: ptr BsT) =
+  bs[].buf[] = swap32(bs[].cache)
 
-proc local_bsGetPosBits(bs: ptr local_BsT): uint32 =
+proc bsGetPosBits(bs: ptr BsT): uint32 =
   return uint32((cast[intp](bs[].buf) - cast[intp](bs[].origin)) div 4 * 32) + uint32(32 - bs[].shift)
 
-proc local_bsByteAlign(bs: ptr local_BsT): uint32 =
+proc bsByteAlign(bs: ptr BsT): uint32 =
   let
-    local_pos = nint(local_bsGetPosBits(bs))
-  local_bsPutBits(bs, -local_pos and 7, uint32(0))
-  return uint32(local_pos + (-local_pos and 7))
+    pos = int(bsGetPosBits(bs))
+  bsPutBits(bs, -pos and 7, uint32(0))
+  return uint32(pos + (-pos and 7))
 
-proc local_bsPutGolomb(bs: ptr local_BsT, val: uint32) =
+proc bsPutGolomb(bs: ptr BsT, val: uint32) =
   var
-    local_size = 0
-    local_t = val + 1
-  while local_t != 0:
-    local_size += 1
-    local_t = local_t shr 1
-  local_bsPutBits(bs, 2 * local_size - 1, val + 1)
+    size = 0
+    t = val + 1
+  while t != 0:
+    size += 1
+    t = t shr 1
+  bsPutBits(bs, 2 * size - 1, val + 1)
 
-proc local_bsInitBits(bs: ptr local_BsT, data: pointer) =
+proc bsInitBits(bs: ptr BsT, data: pointer) =
   bs[].origin = cast[ptr uint32](data)
   bs[].buf = bs[].origin
   bs[].shift = 32
   bs[].cache = uint32(0)
 
-proc local_findMemCache(cache: var openArray[pointer], local_cacheBytes: var openArray[nint], local_cacheSize: nint, mem: pointer, local_bytes: nint): nint =
-  if local_bytes == 0:
+proc findMemCache(cache: var openArray[pointer], cacheBytes: var openArray[int], cacheSize: int, mem: pointer, bytes: int): int =
+  if bytes == 0:
     return -1
-  for local_i in range(local_cacheSize):
-    if local_cacheBytes[local_i] == local_bytes and cmp_mem(cache[local_i], mem, local_bytes) == 0:
-      return local_i
-  for local_i in range(local_cacheSize):
-    if local_cacheBytes[local_i] == 0:
-      cache[local_i] = c_malloc(csize_t(local_bytes))
-      if cache[local_i] != nil:
-        copy_mem(cache[local_i], mem, local_bytes)
-        local_cacheBytes[local_i] = local_bytes
-      return local_i
+  for i in 0 ..< cacheSize:
+    if cacheBytes[i] == bytes and cmp_mem(cache[i], mem, bytes) == 0:
+      return i
+  for i in 0 ..< cacheSize:
+    if cacheBytes[i] == 0:
+      cache[i] = c_malloc(csize_t(bytes))
+      if cache[i] != nil:
+        copy_mem(cache[i], mem, bytes)
+        cacheBytes[i] = bytes
+      return i
   return -1
 
-proc local_removeNalEscapes(dst: ptr UncheckedArray[uint8], src: ptr UncheckedArray[uint8], local_h264DataBytes: nint): nint =
+proc removeNalEscapes(dst: ptr UncheckedArray[uint8], src: ptr UncheckedArray[uint8], h264DataBytes: int): int =
   var
-    local_i = 0
-    local_zeroCnt = 0
-    local_j = 0
-  while local_j < local_h264DataBytes:
-    if local_zeroCnt == 2 and src[local_j] <= 3:
-      if src[local_j] == 3:
-        if local_j == local_h264DataBytes - 1:
-          pass
-        elif src[local_j + 1] <= 3:
-          local_j += 1
-          local_zeroCnt = 0
+    i = 0
+    zeroCnt = 0
+    j = 0
+  while j < h264DataBytes:
+    if zeroCnt == 2 and src[j] <= 3:
+      if src[j] == 3:
+        if j == h264DataBytes - 1:
+          discard
+        elif src[j + 1] <= 3:
+          j += 1
+          zeroCnt = 0
         else:
-          pass
+          discard
       else:
         return 0
-    dst[local_i] = src[local_j]
-    local_i += 1
-    if src[local_j] != 0:
-      local_zeroCnt = 0
+    dst[i] = src[j]
+    i += 1
+    if src[j] != 0:
+      zeroCnt = 0
     else:
-      local_zeroCnt += 1
-    local_j += 1
-  return local_i
+      zeroCnt += 1
+    j += 1
+  return i
 
-proc local_nalPutEsc(d: ptr UncheckedArray[uint8], s: ptr UncheckedArray[uint8], n: nint): nint =
+proc nalPutEsc(d: ptr UncheckedArray[uint8], s: ptr UncheckedArray[uint8], n: int): int =
   var
-    local_j = 4
-    local_cntz = 0
+    j = 4
+    cntz = 0
   d[0] = uint8(0)
   d[1] = uint8(0)
   d[2] = uint8(0)
   d[3] = uint8(1)
-  for local_i in range(n):
+  for i in 0 ..< n:
     let
-      local_b = s[local_i]
-    if local_cntz == 2 and local_b <= 3:
-      d[local_j] = uint8(3)
-      local_j += 1
-      local_cntz = 0
-    if local_b != 0:
-      local_cntz = 0
+      b = s[i]
+    if cntz == 2 and b <= 3:
+      d[j] = uint8(3)
+      j += 1
+      cntz = 0
+    if b != 0:
+      cntz = 0
     else:
-      local_cntz += 1
-    d[local_j] = local_b
-    local_j += 1
-  return local_j
+      cntz += 1
+    d[j] = b
+    j += 1
+  return j
 
-proc local_copyBits(bs: ptr local_BitReaderT, bd: ptr local_BsT) =
+proc copyBits(bs: ptr BitReaderT, bd: ptr BsT) =
   var
-    local_bitCount = local_remainingBits(bs)
-  while local_bitCount > 7:
+    bitCount = remainingBits(bs)
+  while bitCount > 7:
     let
-      local_cb = min(local_bitCount - 7, 8)
-      local_bits = local_getBits(bs, local_cb)
-    local_bsPutBits(bd, local_cb, local_bits)
-    local_bitCount -= local_cb
+      cb = min(bitCount - 7, 8)
+      bits = getBits(bs, cb)
+    bsPutBits(bd, cb, bits)
+    bitCount -= cb
   var
-    local_bits2 = local_getBits(bs, local_bitCount)
-  while local_bitCount > 0 and local_bits2 and 1 == 0:
-    local_bits2 = local_bits2 shr 1
-    local_bitCount -= 1
-  if local_bitCount > 0:
-    local_bsPutBits(bd, local_bitCount, local_bits2)
+    bits2 = getBits(bs, bitCount)
+  while bitCount > 0:
+    let
+      bit0 = bits2 and 1
+    if bit0 != 0:
+      break
+    bits2 = bits2 shr 1
+    bitCount -= 1
+  if bitCount > 0:
+    bsPutBits(bd, bitCount, bits2)
 
-proc local_changeSpsId(bs: ptr local_BitReaderT, bd: ptr local_BsT, local_newId: nint, local_oldId: var nint): nint =
-  for local_i in range(3):
+proc changeSpsId(bs: ptr BitReaderT, bd: ptr BsT, newId: int, oldId: var int): int =
+  for i in 0 ..< 3:
     let
-      local_bits = local_getBits(bs, 8)
-    local_bsPutBits(bd, 8, local_bits)
+      bits = getBits(bs, 8)
+    bsPutBits(bd, 8, bits)
   let
-    local_spsId = local_ueBits(bs)
-  local_oldId = local_spsId
-  local_bsPutGolomb(bd, uint32(local_newId))
-  local_copyBits(bs, bd)
-  result = nint(local_bsByteAlign(bd)) div 8
-  local_bsFlush(bd)
+    spsId = ueBits(bs)
+  oldId = spsId
+  bsPutGolomb(bd, uint32(newId))
+  copyBits(bs, bd)
+  result = int(bsByteAlign(bd)) div 8
+  bsFlush(bd)
   return result
 
-proc local_patchPps(h: ptr local_H264SpsIdPatcher, bs: ptr local_BitReaderT, bd: ptr local_BsT, local_newPpsId: nint, local_oldId: var nint): nint =
+proc patchPps(h: ptr H264SpsIdPatcher, bs: ptr BitReaderT, bd: ptr BsT, newPpsId: int, oldId: var int): int =
   let
-    local_ppsId = local_ueBits(bs)
-    local_spsId = local_ueBits(bs)
-  local_oldId = local_ppsId
+    ppsId = ueBits(bs)
+    spsId = ueBits(bs)
+  oldId = ppsId
   let
-    local_mappedSps = h[].map_sps[local_spsId]
-  local_bsPutGolomb(bd, uint32(local_newPpsId))
-  local_bsPutGolomb(bd, uint32(local_mappedSps))
-  local_copyBits(bs, bd)
-  result = nint(local_bsByteAlign(bd)) div 8
-  local_bsFlush(bd)
+    mappedSps = h[].map_sps[spsId]
+  bsPutGolomb(bd, uint32(newPpsId))
+  bsPutGolomb(bd, uint32(mappedSps))
+  copyBits(bs, bd)
+  result = int(bsByteAlign(bd)) div 8
+  bsFlush(bd)
   return result
 
-proc local_patchSliceHeader(h: ptr local_H264SpsIdPatcher, bs: ptr local_BitReaderT, bd: ptr local_BsT) =
+proc patchSliceHeader(h: ptr H264SpsIdPatcher, bs: ptr BitReaderT, bd: ptr BsT) =
   let
-    local_firstMbInSlice = local_ueBits(bs)
-    local_sliceType = local_ueBits(bs)
-    local_ppsId = local_ueBits(bs)
-    local_mappedPps = h[].map_pps[local_ppsId]
-  local_bsPutGolomb(bd, uint32(local_firstMbInSlice))
-  local_bsPutGolomb(bd, uint32(local_sliceType))
-  local_bsPutGolomb(bd, uint32(local_mappedPps))
-  local_copyBits(bs, bd)
+    firstMbInSlice = ueBits(bs)
+    sliceType = ueBits(bs)
+    ppsId = ueBits(bs)
+    mappedPps = h[].map_pps[ppsId]
+  bsPutGolomb(bd, uint32(firstMbInSlice))
+  bsPutGolomb(bd, uint32(sliceType))
+  bsPutGolomb(bd, uint32(mappedPps))
+  copyBits(bs, bd)
 
-proc local_transcodeNalu(h: ptr local_H264SpsIdPatcher, src: ptr UncheckedArray[uint8], local_naluBytes: nint, dst: ptr UncheckedArray[uint8]): nint =
+proc transcodeNalu(h: ptr H264SpsIdPatcher, src: ptr UncheckedArray[uint8], naluBytes: int, dst: ptr UncheckedArray[uint8]): int =
   var
-    local_oldId = 0
-    local_bst: local_BitReaderT
-    local_bs: local_BitReaderT
-    local_bdt: local_BsT
-    local_bd: local_BsT
+    oldId = 0
+    bst: BitReaderT
+    bs: BitReaderT
+    bdt: BsT
+    bd: BsT
   let
-    local_payloadType = nint(src[0]) and 31
+    payloadType = int(src[0]) and 31
   dst[0] = src[0]
-  local_bsInitBits(addr(local_bd), local_ptrAdd(cast[ptr uint8](dst), 1))
-  local_initBits(addr(local_bs), local_ptrAdd(cast[ptr uint8](src), 1), local_naluBytes - 1)
-  local_bsInitBits(addr(local_bdt), local_ptrAdd(cast[ptr uint8](dst), 1))
-  local_initBits(addr(local_bst), local_ptrAdd(cast[ptr uint8](src), 1), local_naluBytes - 1)
-  case local_payloadType:
+  bsInitBits(addr(bd), ptrAdd(cast[ptr uint8](dst), 1))
+  initBits(addr(bs), ptrAdd(cast[ptr uint8](src), 1), naluBytes - 1)
+  bsInitBits(addr(bdt), ptrAdd(cast[ptr uint8](dst), 1))
+  initBits(addr(bst), ptrAdd(cast[ptr uint8](src), 1), naluBytes - 1)
+  case payloadType:
     of 7:
       let
-        local_cb = local_changeSpsId(addr(local_bst), addr(local_bdt), 0, local_oldId)
-        local_id = local_findMemCache(h[].sps_cache, h[].sps_bytes, local_MINIMP4_MAX_SPS, local_ptrAdd(cast[ptr uint8](dst), 1), local_cb)
-      if local_id == -1:
+        cb = changeSpsId(addr(bst), addr(bdt), 0, oldId)
+        id = findMemCache(h[].sps_cache, h[].sps_bytes, MINIMP4_MAX_SPS, ptrAdd(cast[ptr uint8](dst), 1), cb)
+      if id == -1:
         return 0
-      h[].map_sps[local_oldId] = local_id
-      _ = local_changeSpsId(addr(local_bs), addr(local_bd), local_id, local_oldId)
+      h[].map_sps[oldId] = id
+      discard changeSpsId(addr(bs), addr(bd), id, oldId)
     of 8:
       let
-        local_cb = local_patchPps(h, addr(local_bst), addr(local_bdt), 0, local_oldId)
-        local_id = local_findMemCache(h[].pps_cache, h[].pps_bytes, local_MINIMP4_MAX_PPS, local_ptrAdd(cast[ptr uint8](dst), 1), local_cb)
-      if local_id == -1:
+        cb = patchPps(h, addr(bst), addr(bdt), 0, oldId)
+        id = findMemCache(h[].pps_cache, h[].pps_bytes, MINIMP4_MAX_PPS, ptrAdd(cast[ptr uint8](dst), 1), cb)
+      if id == -1:
         return 0
-      h[].map_pps[local_oldId] = local_id
-      _ = local_patchPps(h, addr(local_bs), addr(local_bd), local_id, local_oldId)
-    of 1 | 2 | 5:
-      local_patchSliceHeader(h, addr(local_bs), addr(local_bd))
-    of _:
-      copy_mem(dst, src, local_naluBytes)
-      return local_naluBytes
-  result = 1 + nint(local_bsByteAlign(addr(local_bd))) div 8
-  local_bsFlush(addr(local_bd))
+      h[].map_pps[oldId] = id
+      discard patchPps(h, addr(bs), addr(bd), id, oldId)
+    of 1, 2, 5:
+      patchSliceHeader(h, addr(bs), addr(bd))
+    else:
+      copy_mem(dst, src, naluBytes)
+      return naluBytes
+  result = 1 + int(bsByteAlign(addr(bd))) div 8
+  bsFlush(addr(bd))
   return result
 
-proc local_findStartCode(local_h264Data: ptr UncheckedArray[uint8], local_h264DataBytes: nint, local_zcount: var nint): ptr UncheckedArray[uint8] =
+proc findStartCode(h264Data: ptr UncheckedArray[uint8], h264DataBytes: int, zcount: var int): ptr UncheckedArray[uint8] =
   let
-    local_eof = cast[intp](local_h264Data) + local_h264DataBytes
+    eof = cast[intp](h264Data) + h264DataBytes
   var
-    local_pos = cast[intp](local_h264Data)
-  while local_pos < local_eof:
+    pos = cast[intp](h264Data)
+  while pos < eof:
     var
-      local_zeroCnt = 1
-      local_found = local_pos
-    while local_found < local_eof and cast[ptr UncheckedArray[uint8]](local_found)[0] != 0:
-      local_found += 1
-    if local_found >= local_eof:
-      local_zcount = 0
-      return cast[ptr UncheckedArray[uint8]](local_eof)
-    local_pos = local_found
-    while local_pos + local_zeroCnt < local_eof and cast[ptr UncheckedArray[uint8]](local_pos)[local_zeroCnt] == 0:
-      local_zeroCnt += 1
-    if local_zeroCnt >= 2 and local_pos + local_zeroCnt < local_eof and (cast[ptr UncheckedArray[uint8]](local_pos)[local_zeroCnt] == 1):
-      local_zcount = local_zeroCnt + 1
-      return cast[ptr UncheckedArray[uint8]](local_pos + local_zeroCnt + 1)
-    local_pos += local_zeroCnt
-  local_zcount = 0
-  return cast[ptr UncheckedArray[uint8]](local_eof)
+      zeroCnt = 1
+      found = pos
+    while found < eof and cast[ptr UncheckedArray[uint8]](found)[0] != 0:
+      found += 1
+    if found >= eof:
+      zcount = 0
+      return cast[ptr UncheckedArray[uint8]](eof)
+    pos = found
+    while pos + zeroCnt < eof and cast[ptr UncheckedArray[uint8]](pos)[zeroCnt] == 0:
+      zeroCnt += 1
+    if zeroCnt >= 2 and pos + zeroCnt < eof and (cast[ptr UncheckedArray[uint8]](pos)[zeroCnt] == 1):
+      zcount = zeroCnt + 1
+      return cast[ptr UncheckedArray[uint8]](pos + zeroCnt + 1)
+    pos += zeroCnt
+  zcount = 0
+  return cast[ptr UncheckedArray[uint8]](eof)
 
-proc local_findNalUnit(local_h264Data: ptr UncheckedArray[uint8], local_h264DataBytes: nint, local_pnalUnitBytes: var nint): ptr UncheckedArray[uint8] =
+proc findNalUnit(h264Data: ptr UncheckedArray[uint8], h264DataBytes: int, pnalUnitBytes: var int): ptr UncheckedArray[uint8] =
   let
-    local_eof = cast[intp](local_h264Data) + local_h264DataBytes
+    eof = cast[intp](h264Data) + h264DataBytes
   var
-    local_zcount = 0
+    zcount = 0
   let
-    local_start = local_findStartCode(local_h264Data, local_h264DataBytes, local_zcount)
+    start = findStartCode(h264Data, h264DataBytes, zcount)
   var
-    local_stop = local_start
-  if local_start != nil:
+    stop = start
+  if start != nil:
     let
-      local_startAddr = cast[intp](local_start)
-    local_stop = local_findStartCode(local_start, nint(local_eof - local_startAddr), local_zcount)
+      startAddr = cast[intp](start)
+    stop = findStartCode(start, int(eof - startAddr), zcount)
     var
-      local_stopAddr = cast[intp](local_stop)
-    while local_stopAddr > local_startAddr and cast[ptr UncheckedArray[uint8]](local_stopAddr - 1)[0] == 0:
-      local_stopAddr -= 1
-    local_stop = cast[ptr UncheckedArray[uint8]](local_stopAddr)
-  local_pnalUnitBytes = nint(cast[intp](local_stop) - cast[intp](local_start)) - local_zcount
-  return local_start
+      stopAddr = cast[intp](stop)
+    while stopAddr > startAddr and cast[ptr UncheckedArray[uint8]](stopAddr - 1)[0] == 0:
+      stopAddr -= 1
+    stop = cast[ptr UncheckedArray[uint8]](stopAddr)
+  pnalUnitBytes = int(cast[intp](stop) - cast[intp](start)) - zcount
+  return start
 
-proc mp4_h26x_write_init*(h: ptr mp4_h26x_writer_t, mux: ptr MP4E_mux_t, width: nint, height: nint, is_hevc: nint): nint =
+proc mp4_h26x_write_init*(h: ptr mp4_h26x_writer_t, mux: ptr MP4E_mux_t, width: int, height: int, is_hevc: int): int =
   var
-    local_tr: MP4E_track_t
-  local_tr.track_media_kind = TrackMediaKind.e_video
-  local_tr.language[0] = uint8(117)
-  local_tr.language[1] = uint8(110)
-  local_tr.language[2] = uint8(100)
-  local_tr.language[3] = uint8(0)
-  local_tr.object_type_indication = if is_hevc != 0: MP4_OBJECT_TYPE_HEVC else: MP4_OBJECT_TYPE_AVC
-  local_tr.time_scale = uint32(90000)
-  local_tr.default_duration = uint32(0)
-  local_tr.width = int32(width)
-  local_tr.height = int32(height)
-  h[].mux_track_id = MP4E_add_track(mux, addr(local_tr))
+    tr: MP4E_track_t
+  tr.track_media_kind = TrackMediaKind.e_video
+  tr.language[0] = uint8(117)
+  tr.language[1] = uint8(110)
+  tr.language[2] = uint8(100)
+  tr.language[3] = uint8(0)
+  tr.object_type_indication = if is_hevc != 0: MP4_OBJECT_TYPE_HEVC else: MP4_OBJECT_TYPE_AVC
+  tr.time_scale = uint32(90000)
+  tr.default_duration = uint32(0)
+  tr.width = int32(width)
+  tr.height = int32(height)
+  h[].mux_track_id = MP4E_add_track(mux, addr(tr))
   h[].mux = mux
   h[].is_hevc = is_hevc
   h[].need_vps = is_hevc
   h[].need_sps = 1
   h[].need_pps = 1
   h[].need_idr = 1
-  zero_mem(addr(h[].sps_patcher), sizeof(local_H264SpsIdPatcher))
+  zero_mem(addr(h[].sps_patcher), sizeof(H264SpsIdPatcher))
   return MP4E_STATUS_OK
 
 proc mp4_h26x_write_close*(h: ptr mp4_h26x_writer_t) =
   let
-    local_p = addr(h[].sps_patcher)
-  for local_i in range(local_MINIMP4_MAX_SPS):
-    if local_p[].sps_cache[local_i] != nil:
-      c_free(local_p[].sps_cache[local_i])
-  for local_i in range(local_MINIMP4_MAX_PPS):
-    if local_p[].pps_cache[local_i] != nil:
-      c_free(local_p[].pps_cache[local_i])
+    p = addr(h[].sps_patcher)
+  for i in 0 ..< MINIMP4_MAX_SPS:
+    if p[].sps_cache[i] != nil:
+      c_free(p[].sps_cache[i])
+  for i in 0 ..< MINIMP4_MAX_PPS:
+    if p[].pps_cache[i] != nil:
+      c_free(p[].pps_cache[i])
   zero_mem(h, sizeof(mp4_h26x_writer_t))
 
-proc mp4_h26x_write_nal*(h: ptr mp4_h26x_writer_t, nal: ptr UncheckedArray[uint8], length: nint, local_timeStamp90kHz_next: uint32): nint =
+proc mp4_h26x_write_nal*(h: ptr mp4_h26x_writer_t, nal: ptr UncheckedArray[uint8], length: int, timeStamp90kHz_next: uint32): int =
   let
-    local_eof = cast[intp](nal) + length
+    eof = cast[intp](nal) + length
   var
-    local_err = MP4E_STATUS_OK
-    local_curNal = nal
+    err = MP4E_STATUS_OK
+    curNal = nal
   while true:
     var
-      local_sizeofNal = 0
-    local_curNal = local_findNalUnit(local_curNal, nint(local_eof - cast[intp](local_curNal)), local_sizeofNal)
-    if local_sizeofNal == 0:
+      sizeofNal = 0
+    curNal = findNalUnit(curNal, int(eof - cast[intp](curNal)), sizeofNal)
+    if sizeofNal == 0:
       break
     let
-      local_payloadType = nint(local_curNal[0]) and 31
-    if local_payloadType == 9:
-      return local_err
+      payloadType = int(curNal[0]) and 31
+    if payloadType == 9:
+      return err
     let
-      local_nal1 = cast[ptr UncheckedArray[uint8]](c_malloc(csize_t(local_sizeofNal * 17 div 16 + 32)))
-    if local_nal1 == nil:
+      nal1 = cast[ptr UncheckedArray[uint8]](c_malloc(csize_t(sizeofNal * 17 div 16 + 32)))
+    if nal1 == nil:
       return MP4E_STATUS_NO_MEMORY
     let
-      local_nal2 = cast[ptr UncheckedArray[uint8]](c_malloc(csize_t(local_sizeofNal * 17 div 16 + 32)))
-    if local_nal2 == nil:
-      c_free(local_nal1)
+      nal2 = cast[ptr UncheckedArray[uint8]](c_malloc(csize_t(sizeofNal * 17 div 16 + 32)))
+    if nal2 == nil:
+      c_free(nal1)
       return MP4E_STATUS_NO_MEMORY
     var
-      local_escapedSize = local_removeNalEscapes(local_nal2, local_curNal, local_sizeofNal)
-    if local_escapedSize == 0:
-      c_free(local_nal1)
-      c_free(local_nal2)
+      escapedSize = removeNalEscapes(nal2, curNal, sizeofNal)
+    if escapedSize == 0:
+      c_free(nal1)
+      c_free(nal2)
       return MP4E_STATUS_BAD_ARGUMENTS
-    local_escapedSize = local_transcodeNalu(addr(h[].sps_patcher), local_nal2, local_escapedSize, local_nal1)
-    local_escapedSize = local_nalPutEsc(local_nal2, local_nal1, local_escapedSize)
-    case local_payloadType:
+    escapedSize = transcodeNalu(addr(h[].sps_patcher), nal2, escapedSize, nal1)
+    escapedSize = nalPutEsc(nal2, nal1, escapedSize)
+    case payloadType:
       of 7:
-        _ = MP4E_set_sps(h[].mux, h[].mux_track_id, local_ptrAdd(cast[ptr uint8](local_nal2), 4), local_escapedSize - 4)
+        discard MP4E_set_sps(h[].mux, h[].mux_track_id, ptrAdd(cast[ptr uint8](nal2), 4), escapedSize - 4)
         h[].need_sps = 0
       of 8:
         if h[].need_sps != 0:
-          c_free(local_nal1)
-          c_free(local_nal2)
+          c_free(nal1)
+          c_free(nal2)
           return MP4E_STATUS_BAD_ARGUMENTS
-        _ = MP4E_set_pps(h[].mux, h[].mux_track_id, local_ptrAdd(cast[ptr uint8](local_nal2), 4), local_escapedSize - 4)
+        discard MP4E_set_pps(h[].mux, h[].mux_track_id, ptrAdd(cast[ptr uint8](nal2), 4), escapedSize - 4)
         h[].need_pps = 0
       of 5:
         if h[].need_sps != 0:
-          c_free(local_nal1)
-          c_free(local_nal2)
+          c_free(nal1)
+          c_free(nal2)
           return MP4E_STATUS_BAD_ARGUMENTS
         h[].need_idr = 0
         if h[].need_pps == 0 and h[].need_idr == 0:
           var
-            local_bs: local_BitReaderT
-          local_initBits(addr(local_bs), local_ptrAdd(cast[ptr uint8](local_curNal), 1), local_sizeofNal - 4 - 1)
+            bs: BitReaderT
+          initBits(addr(bs), ptrAdd(cast[ptr uint8](curNal), 1), sizeofNal - 4 - 1)
           let
-            local_firstMbInSlice = local_ueBits(addr(local_bs))
+            firstMbInSlice = ueBits(addr(bs))
           var
-            local_sampleKind = MP4E_SAMPLE_DEFAULT
-          local_nal2[0] = uint8((local_escapedSize - 4) shr 24)
-          local_nal2[1] = uint8((local_escapedSize - 4) shr 16)
-          local_nal2[2] = uint8((local_escapedSize - 4) shr 8)
-          local_nal2[3] = uint8(local_escapedSize - 4)
-          if local_firstMbInSlice != 0:
-            local_sampleKind = MP4E_SAMPLE_CONTINUATION
-          elif local_payloadType == 5:
-            local_sampleKind = MP4E_SAMPLE_RANDOM_ACCESS
-          local_err = MP4E_put_sample(h[].mux, h[].mux_track_id, local_nal2, local_escapedSize, nint(local_timeStamp90kHz_next), local_sampleKind)
-      of _:
+            sampleKind = MP4E_SAMPLE_DEFAULT
+          nal2[0] = uint8((escapedSize - 4) shr 24)
+          nal2[1] = uint8((escapedSize - 4) shr 16)
+          nal2[2] = uint8((escapedSize - 4) shr 8)
+          nal2[3] = uint8(escapedSize - 4)
+          if firstMbInSlice != 0:
+            sampleKind = MP4E_SAMPLE_CONTINUATION
+          elif payloadType == 5:
+            sampleKind = MP4E_SAMPLE_RANDOM_ACCESS
+          err = MP4E_put_sample(h[].mux, h[].mux_track_id, nal2, escapedSize, int(timeStamp90kHz_next), sampleKind)
+      else:
         if h[].need_sps != 0:
-          c_free(local_nal1)
-          c_free(local_nal2)
+          c_free(nal1)
+          c_free(nal2)
           return MP4E_STATUS_BAD_ARGUMENTS
         if h[].need_pps == 0 and h[].need_idr == 0:
           var
-            local_bs: local_BitReaderT
-          local_initBits(addr(local_bs), local_ptrAdd(cast[ptr uint8](local_curNal), 1), local_sizeofNal - 4 - 1)
+            bs: BitReaderT
+          initBits(addr(bs), ptrAdd(cast[ptr uint8](curNal), 1), sizeofNal - 4 - 1)
           let
-            local_firstMbInSlice = local_ueBits(addr(local_bs))
+            firstMbInSlice = ueBits(addr(bs))
           var
-            local_sampleKind = MP4E_SAMPLE_DEFAULT
-          local_nal2[0] = uint8((local_escapedSize - 4) shr 24)
-          local_nal2[1] = uint8((local_escapedSize - 4) shr 16)
-          local_nal2[2] = uint8((local_escapedSize - 4) shr 8)
-          local_nal2[3] = uint8(local_escapedSize - 4)
-          if local_firstMbInSlice != 0:
-            local_sampleKind = MP4E_SAMPLE_CONTINUATION
-          elif local_payloadType == 5:
-            local_sampleKind = MP4E_SAMPLE_RANDOM_ACCESS
-          local_err = MP4E_put_sample(h[].mux, h[].mux_track_id, local_nal2, local_escapedSize, nint(local_timeStamp90kHz_next), local_sampleKind)
-    c_free(local_nal1)
-    c_free(local_nal2)
-    if local_err != 0:
+            sampleKind = MP4E_SAMPLE_DEFAULT
+          nal2[0] = uint8((escapedSize - 4) shr 24)
+          nal2[1] = uint8((escapedSize - 4) shr 16)
+          nal2[2] = uint8((escapedSize - 4) shr 8)
+          nal2[3] = uint8(escapedSize - 4)
+          if firstMbInSlice != 0:
+            sampleKind = MP4E_SAMPLE_CONTINUATION
+          elif payloadType == 5:
+            sampleKind = MP4E_SAMPLE_RANDOM_ACCESS
+          err = MP4E_put_sample(h[].mux, h[].mux_track_id, nal2, escapedSize, int(timeStamp90kHz_next), sampleKind)
+    c_free(nal1)
+    c_free(nal2)
+    if err != 0:
       break
-    local_curNal = cast[ptr UncheckedArray[uint8]](cast[intp](local_curNal) + 1)
-  return local_err
+    curNal = cast[ptr UncheckedArray[uint8]](cast[intp](curNal) + 1)
+  return err

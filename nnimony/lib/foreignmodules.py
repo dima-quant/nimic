@@ -240,7 +240,7 @@ if comptime(__name__ == "__main__"):
         with let:
             tags = newTagPool()
         with var:
-            first = seq[string]()
+            first: seq[string] = seq[string]([])  # `= @[]`: nimony adds only to an initialized local
         for k in _sortedKeys(tm.index):
             with let:
                 ts = toString(tm.getDecl(k, tags), includeLineInfo=False)

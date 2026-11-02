@@ -5420,7 +5420,7 @@ class TestNTypes(unittest.TestCase):
                                 "    for _ in c.loopTo():\n        break\n    for _ in range(3):\n        pass\n"))[0]
         self.assertIn("  loopTo(3):\n    echo(1)", out)
         self.assertIn("  c.loopTo():\n    break", out)
-        self.assertIn("for _ in range(3):", out)  # other loops are not template calls
+        self.assertIn("for _ in 0 ..< 3:", out)  # other loops are not template calls
 
     def test_pointer_to_object_is_the_object(self):
         """Dereferencing a pointer to an object whose address was taken gives that object, also after casts
@@ -6262,7 +6262,7 @@ class TestNTypes(unittest.TestCase):
                                 "from nimic.std import os as nos\n"
                                 "from . import msgs\n"))[0]
         self.assertEqual(out.count("import std/memfiles"), 1)
-        self.assertIn("import std/os as nos", out)
+        self.assertIn("import ncode/std/os as nos", out)
         self.assertIn("import msgs", out.splitlines())
         self.assertNotIn("import std\n", out)
 
@@ -6988,7 +6988,7 @@ def addWord(b: mut@Builder, w: string) -> None:
                                       initializerBody: typed = None, other: untyped = None):
                 initializerBody
             ''')
-        self.assertIn("name: string = string(\"\"), initializerBody: typed, other: untyped) =", unparse(ast.parse(src))[0])
+        self.assertIn("name: string = \"\", initializerBody: typed, other: untyped) =", unparse(ast.parse(src))[0])
 
     def test_to_float_to_int(self):
         """Nim toFloat(int): float and toInt(float): int (rounds half away from zero)."""
@@ -7402,7 +7402,7 @@ def addWord(b: mut@Builder, w: string) -> None:
             ''')
         out = unparse(ast.parse(src))[0]
         self.assertIn("  let\n    bitsPerDigit = case base\n      of Base.base2:\n        1\n"
-                      "      of Base.base8:\n        3\n      else:\n        raiseAssert(string(\"unreachable\"))", out)
+                      "      of Base.base8:\n        3\n      else:\n        raiseAssert(\"unreachable\")", out)
         # not every branch assigns the same name: an ordinary case statement
         src2 = textwrap.dedent('''\
             with var:
@@ -7628,6 +7628,156 @@ def addWord(b: mut@Builder, w: string) -> None:
         self.assertNotIn("return", out)
         self.assertIn("    true\n", out)
 
+    def test_transpile_range(self):
+        """rule:range -> Python's range is written as Nim's `..<` (nimony's `range` is the type constructor,
+        no prelude template can stand in): range(n) is 0 ..< n, range(a, b) a ..< b, a literal step countup /
+        countdown with the inclusive bound (folded when literal); precedence: `..<` binds looser than `+`,
+        tighter than `in`."""
+        def nim(src):
+            return unparse(ast.parse(src))[0].strip()
+        self.assertEqual(nim("for i in range(n):\n    pass"), "for i in 0 ..< n:\n  discard")
+        self.assertEqual(nim("for i in range(1, s.len):\n    pass"), "for i in 1 ..< s.len:\n  discard")
+        self.assertEqual(nim("for i in range(a, b, 1):\n    pass"), "for i in a ..< b:\n  discard")
+        self.assertEqual(nim("for i in range(n + 1):\n    pass"), "for i in 0 ..< n + 1:\n  discard")
+        self.assertEqual(nim("for i in range(a | b):\n    pass"), "for i in 0 ..< (a or b):\n  discard")
+        self.assertEqual(nim("ok = x in range(a, b)"), "ok = x in a ..< b")
+        self.assertEqual(nim("n = range(k).len"), "n = (0 ..< k).len")
+        self.assertEqual(nim("for i in range(n - 1, -1, -1):\n    pass"), "for i in countdown(n - 1, 0):\n  discard")
+        self.assertEqual(nim("for i in range(i, 0, -1):\n    pass"), "for i in countdown(i, 1):\n  discard")
+        self.assertEqual(nim("for i in range(h, k, -2):\n    pass"), "for i in countdown(h, k + 1, 2):\n  discard")
+        self.assertEqual(nim("for i in range(0, 10, 3):\n    pass"), "for i in countup(0, 9, 3):\n  discard")
+        self.assertEqual(nim("for i in range(0, m, 3):\n    pass"), "for i in countup(0, m - 1, 3):\n  discard")
+        for src in ("for i in range(0, m, k):\n    pass", "for i in range(0, m, 0):\n    pass"):
+            with self.assertRaisesRegex(SyntaxError, "int literal step"):
+                nim(src)
+        # inrange (Nim's `..`) follows the same precedence
+        self.assertEqual(nim("ok = c in inrange(a, b + 1)"), "ok = c in a .. b + 1")
+        self.assertEqual(nim("n = inrange(a, b).len"), "n = (a .. b).len")
+
+    def test_transpile_string_literal(self):
+        """rule:stringliteral -> string("abc") is the Nim literal "abc", which already is a string: nimony doesn't
+        evaluate a string(...) conversion at compile time (in a const). A non-literal argument stays a conversion."""
+        def nim(src):
+            return unparse(ast.parse(src))[0].strip()
+        self.assertEqual(nim('with const:\n    HexChars = string("0123456789ABCDEF")'),
+                         'const\n  HexChars* = "0123456789ABCDEF"')
+        self.assertEqual(nim('x = (string("a\\n"), 0)'), 'x = ("a\\n", 0)')
+        self.assertEqual(nim('n = string("ab").len'), 'n = "ab".len')
+        self.assertEqual(nim('s = string(t)'), 's = string(t)')
+        with self.assertRaises(SyntaxError):  # not a byte (rule:latin1literal): utf8("€")
+            nim('s = string("€")')
+
+    def test_transpile_echo_dollar(self):
+        """rule:echodollar -> nimony's echo writes each argument with `write`, which takes strings, chars, numbers,
+        bools and enums only; Nim 2's applies `$`. An argument that isn't a string or a literal is `$`-converted
+        (the same in Nim 2); print is echo."""
+        def nim(src):
+            return unparse(ast.parse(src))[0].strip()
+        self.assertEqual(nim('def f(s: string, n: nint):\n    echo("a", s, n, r.targets, 3, -1, 1.5, True)'),
+                         'proc f*(s: string, n: int) =\n  echo("a", s, $(n), $(r.targets), 3, -1, 1.5, true)')
+        self.assertEqual(nim('echo(ch("c"), str(x), u8(3), string("q"), x.y[0])'),
+                         "echo('c', $(x), 3'u8, \"q\", $(x.y[0]))")
+        self.assertEqual(nim("print(t)"), "echo($(t))")
+        self.assertEqual(nim("echo()"), "echo()")
+
+    def test_transpile_result_declaration(self):
+        """rule:resultvar -> nimic declares `result` (Python has no implicit one); in a routine with Nim's implicit
+        result the declaration is the assignment `result = v` (a declared `var result` shadows it: nimony rejects
+        it, Nim 2 warns), the other variables of the section stay declared in order; `result: T` alone is Nim's
+        default result. A template's result (the caller's), a proc without a return type are left as they are."""
+        def nim(src):
+            return unparse(ast.parse(src))[0].strip()
+        self.assertEqual(nim("def f(x: nint) -> nint:\n    with var:\n        a = 1\n        result: nint = 0\n"
+                             "        b = 2\n    result += x\n    return result"),
+                         "proc f*(x: int): int =\n  var\n    a = 1\n  result = 0\n  var\n    b = 2\n"
+                         "  result += x\n  return result")
+        self.assertEqual(nim('def g() -> string:\n    with let:\n        result = string("a")\n    return result'),
+                         'proc g*(): string =\n  result = "a"\n  return result')
+        self.assertEqual(nim("def k() -> nint:\n    with var:\n        result: nint\n    return result"),
+                         "proc k*(): int =\n  return result")
+        self.assertEqual(nim("def h():\n    with var:\n        result = 0"), "proc h*() =\n  var\n    result = 0")
+        self.assertIn("  var\n    result = 1\n",
+                      nim("@template\ndef t() -> nint:\n    with var:\n        result = 1\n    return result"))
+        self.assertIn("  var\n    result = 1\n",
+                      nim("def it() -> nint:\n    with var:\n        result = 1\n    yield result"))
+
+    def test_transpile_main_proc(self):
+        """rule:mainproc -> a main block's statements run in `proc nimicMainN()` (nimony calls `.raises` routines
+        only in a try or a `.raises` routine): `.raises` under nimony and called in try / quit(1), called directly
+        in Nim 2. Imports, standalone pragmas and definitions stay at the block's top level; its procs take the
+        pragma alias. Each main block of a module has its own number; a main block with only definitions has no
+        proc."""
+        src = ('from nimic.ntypes import *\n'
+               'if comptime(__name__ == "__main__"):\n'
+               '    importFrom("nimic.std.os", "getCurrentDir")\n'
+               '    def helper(x: nint) -> nint:\n'
+               '        return x + 1\n'
+               '    with let:\n'
+               '        cwd = getCurrentDir()\n'
+               '    echo(cwd, helper(1))\n'
+               'if comptime(__name__ == "__main__" and not defined("nimony")):\n'
+               '    def other():\n'
+               '        echo(1)\n')
+        lines = unparse(ast.parse(src))[0].strip().splitlines()
+        self.assertEqual(lines[3:], [
+            "when isMainModule:",
+            "  when defined(nimony):",
+            "    {.pragma: nimicMain1Raises, raises.}",
+            "  else:",
+            "    {.pragma: nimicMain1Raises.}",
+            "  from ncode/std/os import getCurrentDir",
+            "",
+            "  proc helper*(x: int): int {.nimicMain1Raises.} =",
+            "    return x + 1",
+            "  proc nimicMain1() {.nimicMain1Raises.} =",
+            "    let",
+            "      cwd = getCurrentDir()",
+            "    echo($(cwd), $(helper(1)))",
+            "  when defined(nimony):",
+            "    try:",
+            "      nimicMain1()",
+            "    except:",
+            "      quit(1)",
+            "  else:",
+            "    nimicMain1()",
+            "when isMainModule and not defined(nimony):",
+            "  when defined(nimony):",
+            "    {.pragma: nimicMain2Raises, raises.}",
+            "  else:",
+            "    {.pragma: nimicMain2Raises.}",
+            "",
+            "  proc other*() {.nimicMain2Raises.} =",
+            "    echo(1)"])
+        # a variable section a proc of the block uses stays a global (a stub's tracker), the others are locals
+        src = ('if comptime(__name__ == "__main__"):\n'
+               '    with var:\n'
+               '        calls = 0\n'
+               '    with let:\n'
+               '        n = 2\n'
+               '    def stub():\n'
+               '        calls.inc()\n'
+               '    stub()\n')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("  var\n    calls* = 0\n", out)
+        self.assertIn("  proc nimicMain1() {.nimicMain1Raises.} =\n    let\n      n = 2\n    stub()\n", out)
+
+    def test_transpile_std_bridge(self):
+        """rule:stdbridge -> nimic.std.os is ncode/std/os (std/os, under nimony with the string forms of
+        removeFile / removeDir / createDir); other nimic std modules are Nim's std ones."""
+        out = unparse(ast.parse('from nimic.std.os import *\nimportFrom("nimic.std.os", "getTempDir")\n'
+                                'from nimic.std.syncio import *\n'))[0]
+        self.assertEqual(out.strip().splitlines(),
+                         ["import ncode/std/os", "from ncode/std/os import getTempDir", "import std/syncio"])
+
+    def test_transpile_ignorestyle(self):
+        """rule:ignorestyle -> the prelude import is followed by nimony's ignoreStyle feature: nimic's snake_case
+        Nim names (unsafe_addr) are Nim 2's style-insensitive matches, which nimony makes only with the feature.
+        Written once, at the top level."""
+        out = unparse(ast.parse("from nimic.ntypes import *\nfrom nimic.ntypes import *\nx = 1\n"))[0]
+        self.assertEqual(out.strip().splitlines(),
+                         ["import ncode/pydefs", "when defined(nimony):", '  {.feature: "ignoreStyle".}', "x = 1"])
+        self.assertNotIn("ignoreStyle", unparse(ast.parse("from nimic.nsystem import *\n"))[0])
+
     def test_transpile_array_literals(self):
         """rule:array types the first element of an array[N, T](...) call; the declaration form
         `x: array[N, T] = [...]` is only used for a variable being declared."""
@@ -7642,7 +7792,7 @@ def addWord(b: mut@Builder, w: string) -> None:
         self.assertEqual(nim("R(p=array[3, K]([K.a, K.b, K.c]), n=1)"), "R(p: [K.a, K.b, K.c], n: 1)")
         self.assertEqual(nim("R(q=array[2, byte]([1, 2]))"), "R(q: [1, 2])")
         self.assertEqual(nim('with const:\n    X: array[K, string] = array[K, string]([string("a"), "b"])'),
-                         'const\n  X*: array[K, string] = [string("a"), "b"]')
+                         'const\n  X*: array[K, string] = ["a", "b"]')
         # elsewhere the conversion carries the index type; a numeric first element takes the element type
         self.assertEqual(nim("f(array[2, int8]([-1, 2]))"), "f(array[2, int8]([int8(-1), 2]))")
         self.assertEqual(nim("g(x=array[2, byte]([1, 2]))"), "g(x = array[2, byte]([byte(1), 2]))")
@@ -7908,7 +8058,7 @@ def addWord(b: mut@Builder, w: string) -> None:
                         echo(x)
                 cb(1)
         ''')
-        self.assertIn("  var\n    cb: proc (x: int) =\n      proc (x: int) =\n        echo(x)\n  cb(1)", out)
+        self.assertIn("  var\n    cb: proc (x: int) =\n      proc (x: int) =\n        echo($(x))\n  cb(1)", out)
         # a second def of the name would silently rebind it in Python, but redefines the variable in Nim
         with self.assertRaises(SyntaxError):
             nim('''

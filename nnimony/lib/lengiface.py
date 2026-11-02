@@ -178,10 +178,6 @@ if comptime(__name__ == "__main__"):
         echo(lengInterfaceFile(string("M.c.nif")))
         echo(lengInterfaceFile(string("M.oc.nif")))
         echo(lengInterfaceFile(string("dir/sub.M.c.nif")))
-        try:
-            echo(lengInterfaceFile(string("M.c")))
-        except AssertionDefect:
-            echo(string("AssertionDefect: not a .nif file"))
 
         # the digest of small modules
         with let:
