@@ -545,8 +545,8 @@ if comptime(__name__ == "__main__"):
         p1 = atomicTempPath(f)
         p2 = atomicTempPath(f)
         prefix = f + string(".tmp.")
-        parts1 = p1.substr(prefix.len).split(char('.'))
-        parts2 = p2.substr(prefix.len).split(char('.'))
+        parts1 = p1.substr(prefix.len).split(ch('.'))
+        parts2 = p2.substr(prefix.len).split(ch('.'))
     echo(p1.startsWith(prefix), " ", parts1.len, " ", parts1[0] == parts2[0], " ",
          parseInt(parts1[0]) > 0, " ", parseInt(parts2[1]) == parseInt(parts1[1]) + 1)
 

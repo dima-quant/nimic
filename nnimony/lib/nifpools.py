@@ -752,7 +752,7 @@ def consumeParRi(c: mut @ Cursor):
     ## nifcore never materialises a close token — the scope end is implicit at
     ## `rem == 0`. There is nothing to advance past; this exists so classic
     ## `skipParRi` sites compile and stay no-ops.
-    assert not c.hasMore(), string("consumeParRi: cursor not at a (virtual) ParRi")
+    assert not c.hasMore(), "consumeParRi: cursor not at a (virtual) ParRi"
 
 
 @dispatch
@@ -773,27 +773,27 @@ if comptime(__name__ == "__main__"):
 
     def _showInfo(title: string, i: NifLineInfo):
         if i.isValid():
-            echo(title, string(" "), pool.filenames[i.file], string(":"), i.line, string(":"), i.col)
+            echo(title, " ", pool.filenames[i.file], ":", i.line, ":", i.col)
         else:
-            echo(title, string(" none"))
+            echo(title, " none")
 
     def _showPredicates(title: string, c: Cursor):
         """Every cursor predicate at `c` (also at a scope's end)."""
-        echo(title, string(": tag "), isTagLit(c), string(" dot "), isDotToken(c), string(" ident "), isIdent(c),
-             string(" sym "), isSymbol(c), string(" symdef "), isSymbolDef(c), string(" str "), isStringLit(c),
-             string(" int "), isIntLit(c), string(" uint "), isUIntLit(c), string(" float "), isFloatLit(c),
-             string(" char "), isCharLit(c), string(" unknown "), isUnknownToken(c))
+        echo(title, ": tag ", isTagLit(c), " dot ", isDotToken(c), " ident ", isIdent(c),
+             " sym ", isSymbol(c), " symdef ", isSymbolDef(c), " str ", isStringLit(c),
+             " int ", isIntLit(c), " uint ", isUIntLit(c), " float ", isFloatLit(c),
+             " char ", isCharLit(c), " unknown ", isUnknownToken(c))
 
     def _showTokenPredicates(title: string, n: NifToken):
         """Every raw-token predicate of `n`."""
-        echo(title, string(": "), kind(n), string(" tag "), isTagLit(n), string(" dot "), isDotToken(n),
-             string(" ident "), isIdent(n), string(" sym "), isSymbol(n), string(" symdef "), isSymbolDef(n),
-             string(" str "), isStringLit(n), string(" int "), isIntLit(n), string(" uint "), isUIntLit(n),
-             string(" float "), isFloatLit(n), string(" char "), isCharLit(n), string(" unknown "),
+        echo(title, ": ", kind(n), " tag ", isTagLit(n), " dot ", isDotToken(n),
+             " ident ", isIdent(n), " sym ", isSymbol(n), " symdef ", isSymbolDef(n),
+             " str ", isStringLit(n), " int ", isIntLit(n), " uint ", isUIntLit(n),
+             " float ", isFloatLit(n), " char ", isCharLit(n), " unknown ",
              isUnknownToken(n))
 
     def _showBuf(title: string, b: TokenBuf):
-        echo(title, string(" ("), len(b), string(" tokens):"))
+        echo(title, " (", len(b), " tokens):")
         echo(toString(b))
         echo(toString(b, False))
 
@@ -801,14 +801,14 @@ if comptime(__name__ == "__main__"):
         # ── globalTags: the master tag pool, seeded in TagEnum order
         for e in array[5, TagEnum]([TagEnum.ErrTagId, TagEnum.SufTagId, TagEnum.AtTagId, TagEnum.DotTagId,
                                     high(TagEnum)]):
-            echo(string("tag "), TagData[e][0], string(" ord "), ord(e), string(" id "),
-                 uint32(registerTag(globalTags, TagData[e][0])), string(" name "),
+            echo("tag ", TagData[e][0], " ord ", ord(e), " id ",
+                 uint32(registerTag(globalTags, TagData[e][0])), " name ",
                  globalTags.tagName(TagId(uint32(ord(e)))))
-        echo(string("ErrT "), uint32(ErrT), string(" InlineInt "), InlineInt)
+        echo("ErrT ", uint32(ErrT), " InlineInt ", InlineInt)
         with let:
             newTag = registerTag(string("nifpoolsTestTag"))
-        echo(string("new tag "), uint32(newTag) == uint32(ord(high(TagEnum))) + 1, string(" again "),
-             registerTag(string("nifpoolsTestTag")) == newTag, string(" name "), globalTags.tagName(newTag))
+        echo("new tag ", uint32(newTag) == uint32(ord(high(TagEnum))) + 1, " again ",
+             registerTag(string("nifpoolsTestTag")) == newTag, " name ", globalTags.tagName(newTag))
 
         # ── info-carrying builders, buildTree, copyInto, copyIntoUnchecked
         with let:
@@ -823,7 +823,7 @@ if comptime(__name__ == "__main__"):
             sym2 = symId(pool, string("barbazquux"), 2, string("mody"))
         with var:
             b = createTokenBuf()
-        echo(string("shares the global pools "), b.pool == pool, string(" "), b.tags == globalTags)
+        echo("shares the global pools ", b.pool == pool, " ", b.tags == globalTags)
         with buildTree(b, TagEnum.StmtsTagId, i1):
             with buildTree(b, ErrT, i2):
                 addIdent(b, string("x"))
@@ -875,19 +875,19 @@ if comptime(__name__ == "__main__"):
         for i in range(len(b)):
             _showTokenPredicates(string("token ") + string(str(i)), b[i])
             _showInfo(string("  raw info"), info(b[i]))
-        echo(string("tagId of token 0 "), uint32(tagId(b[0])), string(" "), uint32(tagId(b[0])) == uint32(ord(TagEnum.StmtsTagId)))
+        echo("tagId of token 0 ", uint32(tagId(b[0])), " ", uint32(tagId(b[0])) == uint32(ord(TagEnum.StmtsTagId)))
         with var:
             d = b.beginRead()
         with into(d):
             with into(d):
                 while d.hasMore():
                     if isIntLit(d):
-                        echo(string("int: typebits "), typebits(load(d)), string(" getInt28 "), getInt28(d),
-                             string(" soperand "), soperand(d), string(" uoperand "), uoperand(d))
+                        echo("int: typebits ", typebits(load(d)), " getInt28 ", getInt28(d),
+                             " soperand ", soperand(d), " uoperand ", uoperand(d))
                     elif isCharLit(d):
-                        echo(string("char: "), charLit(load(d)), string(" uoperand "), uoperand(d))
+                        echo("char: ", charLit(load(d)), " uoperand ", uoperand(d))
                     else:
-                        echo(kind(d), string(": typebits "), typebits(load(d)), string(" uoperand "), uoperand(d))
+                        echo(kind(d), ": typebits ", typebits(load(d)), " uoperand ", uoperand(d))
                     skip(d)
             skipUntilEnd(d)
         endRead(d)
@@ -897,10 +897,10 @@ if comptime(__name__ == "__main__"):
                                   int32(134217727), int32(-134217728), int32(-2)]):
             with var:
                 t = int28Token(v, i1)
-            echo(string("int28 "), v, string(": token "), uint32(t), string(" kind "), kind(t), string(" back "),
-                 getInt28(t), string(" dot "), isDotToken(t))
+            echo("int28 ", v, ": token ", uint32(t), " kind ", kind(t), " back ",
+                 getInt28(t), " dot ", isDotToken(t))
             patchInt28Token(t, v // 2)
-            echo(string("  patched "), getInt28(t))
+            echo("  patched ", getInt28(t))
         with var:
             cf = createTokenBuf()
         with buildTree(cf, ErrT, NoLineInfo):
@@ -911,7 +911,7 @@ if comptime(__name__ == "__main__"):
             g = cf.beginRead()
         with into(g):
             while g.hasMore():
-                echo(string("cf getInt28 "), getInt28(g), string(" dot "), isDotToken(g))
+                echo("cf getInt28 ", getInt28(g), " dot ", isDotToken(g))
                 skip(g)
         endRead(g)
 
@@ -955,7 +955,7 @@ if comptime(__name__ == "__main__"):
             w3 = parseFromBuffer(string("(a (b 1) 2)"), string("w"))
         w3.add(int28Token(int32(0), NoLineInfo))
         widenSealed(w3, 1, 0)
-        echo(string("widenSealed by 0 keeps "), toString(w3, False))
+        echo("widenSealed by 0 keeps ", toString(w3, False))
 
         # ── cursorToPosition, isLastSon, linearScan, takeTree, addUnstructured, skip / inc with intents
         with var:
@@ -965,35 +965,35 @@ if comptime(__name__ == "__main__"):
         with var:
             n = base.copy()
         n.inc()
-        echo(string("after inc: position "), cursorToPosition(base, n), string(" last son "), isLastSon(n))
+        echo("after inc: position ", cursorToPosition(base, n), " last son ", isLastSon(n))
         skip(n, SkipIntent.SkipFull)
-        echo(string("after skip SkipFull: position "), cursorToPosition(base, n), string(" last son "), isLastSon(n))
+        echo("after skip SkipFull: position ", cursorToPosition(base, n), " last son ", isLastSon(n))
         skip(n, TagClass.AnyExpr)
         inc(n, SkipIntent.SkipName)
-        echo(string("after skip AnyExpr, inc SkipName: position "), cursorToPosition(base, n), string(" last son "),
-             isLastSon(n), string(" "), toString(n, False))
+        echo("after skip AnyExpr, inc SkipName: position ", cursorToPosition(base, n), " last son ",
+             isLastSon(n), " ", toString(n, False))
         inc(n, TagClass.Anything)
-        echo(string("after inc Anything: position "), cursorToPosition(base, n), string(" "), toString(n, False))
+        echo("after inc Anything: position ", cursorToPosition(base, n), " ", toString(n, False))
         endRead(n)
         with var:
             scan = base.copy()
         for _ in linearScan(scan):
-            echo(string("scan "), cursorToPosition(base, scan), string(" "), toString(scan, False))
+            echo("scan ", cursorToPosition(base, scan), " ", toString(scan, False))
         endRead(scan)
         with var:
             scan2 = base.copy()
         for _ in linearScan(scan2):
-            if globalTags.tagName(cursorTagId(scan2)) == string("q"):
+            if globalTags.tagName(cursorTagId(scan2)) == "q":
                 break
-        echo(string("scan stopped at "), cursorToPosition(base, scan2), string(" "), toString(scan2, False))
+        echo("scan stopped at ", cursorToPosition(base, scan2), " ", toString(scan2, False))
         endRead(scan2)
         with var:
             atom = parseFromBuffer(string("x"), string("t"))
         with var:
             ac = atom.beginRead()
         for _ in linearScan(ac):
-            echo(string("scan of an atom runs its body"))
-        echo(string("scan of an atom: "), toString(ac, False))
+            echo("scan of an atom runs its body")
+        echo("scan of an atom: ", toString(ac, False))
         endRead(ac)
         with var:
             moved = createTokenBuf()
@@ -1002,7 +1002,7 @@ if comptime(__name__ == "__main__"):
         tk.inc()
         takeTree(moved, tk)
         takeTree(moved, tk)
-        echo(string("takeTree twice: "), toString(moved, False), string(" | then at "), toString(tk, False))
+        echo("takeTree twice: ", toString(moved, False), " | then at ", toString(tk, False))
         endRead(tk)
         with var:
             rest = createTokenBuf()
@@ -1012,24 +1012,24 @@ if comptime(__name__ == "__main__"):
         skip(ru)
         with buildTree(rest, ErrT, NoLineInfo):
             addUnstructured(rest, ru)
-        echo(string("addUnstructured: "), toString(rest, False))
+        echo("addUnstructured: ", toString(rest, False))
         endRead(ru)
         endRead(base)
 
         # ── parse / render: nifpools' overloads, nifcoreparse's when qualified
         with var:
             pb = parseFromBuffer(string("(stmts@1,2,f.nim (call@1,1 foo 1) (ret@3,4 x))"), string("pm"))
-        echo(string("parseFromBuffer shares the global pool "), pb.pool == pool, string(" "), pb.tags == globalTags)
+        echo("parseFromBuffer shares the global pool ", pb.pool == pool, " ", pb.tags == globalTags)
         with var:
             own = nifcoreparse.parseFromBuffer(string("(stmts 1)"), string("pm"))
-        echo(string("nifcoreparse.parseFromBuffer shares it "), own.pool == pool)
+        echo("nifcoreparse.parseFromBuffer shares it ", own.pool == pool)
         _showBuf(string("parsed"), pb)
         with var:
             pc = pb.beginRead()
-        echo(string("toString(c) "), toString(pc))
-        echo(string("toString(c, false) "), toString(pc, False))
-        echo(string("toString(c, produceLineInfo = false) "), toString(pc, produceLineInfo=False))
-        echo(string("nifcoreparse.toString(c, includeLineInfo = false) "),
+        echo("toString(c) ", toString(pc))
+        echo("toString(c, false) ", toString(pc, False))
+        echo("toString(c, produceLineInfo = false) ", toString(pc, produceLineInfo=False))
+        echo("nifcoreparse.toString(c, includeLineInfo = false) ",
              nifcoreparse.toString(pc, includeLineInfo=False))
         endRead(pc)
 
@@ -1037,18 +1037,18 @@ if comptime(__name__ == "__main__"):
         with let:
             path = getTempDir() + string("nifpools_test_module.nif")
         writeFile(pb, path)
-        echo(string("written: "), vfsRead(path) == nifcoreparse.toModuleString(pb, string(".nifpools_test_module")))
+        echo("written: ", vfsRead(path) == nifcoreparse.toModuleString(pb, string(".nifpools_test_module")))
         with var:
             pf = parseFromFile(path)
-        echo(string("parseFromFile shares the global pool "), pf.pool == pool)
+        echo("parseFromFile shares the global pool ", pf.pool == pool)
         _showBuf(string("from the file"), pf)
         with let:
             before = getLastModificationTime(path)
         writeFile(pb, path, FileWriteMode.OnlyIfChanged)
-        echo(string("OnlyIfChanged, unchanged: not rewritten "), getLastModificationTime(path) == before)
+        echo("OnlyIfChanged, unchanged: not rewritten ", getLastModificationTime(path) == before)
         vfsWrite(path, string("(changed)"))
         writeFile(pb, path, FileWriteMode.OnlyIfChanged)
-        echo(string("OnlyIfChanged, changed: rewritten "), vfsRead(path) == nifcoreparse.toModuleString(pb, string(".nifpools_test_module")))
+        echo("OnlyIfChanged, changed: rewritten ", vfsRead(path) == nifcoreparse.toModuleString(pb, string(".nifpools_test_module")))
         vfsWrite(path, string("(other 1)"))
         writeFile(pb, path, FileWriteMode.AlwaysWrite)
         with var:

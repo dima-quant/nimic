@@ -39,7 +39,7 @@ class Mangler(Object):
     def _undoWhitespace(b: mut @ Mangler):
         with var:
             i = len(b._buf) - 1
-        while i >= 0 and b._buf[i] == char('S'):
+        while i >= 0 and b._buf[i] == ch('S'):
             i -= 1
         b._buf.setLen(i + 1)
 
@@ -48,7 +48,7 @@ class Mangler(Object):
             _HexChars = string("0123456789abcdef")
         with var:
             n = nint(c)
-        b._put(char('X'))
+        b._put(ch('X'))
         b._put(_HexChars[(n >> 4) & 0xF])
         b._put(_HexChars[n & 0xF])
 
@@ -56,15 +56,15 @@ class Mangler(Object):
         b._put(s)
 
     def _addSep(b: mut @ Mangler):
-        if len(b._buf) > 0 and b._buf[len(b._buf) - 1] == char('Z'):
+        if len(b._buf) > 0 and b._buf[len(b._buf) - 1] == ch('Z'):
             pass  # space not required
-        b._put(char('S'))
+        b._put(ch('S'))
 
     def _addBegin(b: mut @ Mangler):
-        if len(b._buf) > 0 and b._buf[len(b._buf) - 1] == char('S'):
-            b._buf[len(b._buf) - 1] = char('A')
+        if len(b._buf) > 0 and b._buf[len(b._buf) - 1] == ch('S'):
+            b._buf[len(b._buf) - 1] = ch('A')
         else:
-            b._put(char('A'))
+            b._put(ch('A'))
 
     def _referencePrevious(b: mut @ Mangler, s: string) -> bool:
         result = False
@@ -75,7 +75,7 @@ class Mangler(Object):
             if existing == 0:
                 b._seen[s] = oldLen
             else:
-                b._buf.add(char('R'))
+                b._buf.add(ch('R'))
                 b._buf.addInt(existing - 1)
                 if len(b._buf) - oldLen >= len(s):
                     # undo, it was a pessimization!
@@ -87,7 +87,7 @@ class Mangler(Object):
     def addEmpty(b: mut @ Mangler, count: nint = 1):
         b._addSep()
         for i in inrange(1, count):
-            b._put(char('E'))
+            b._put(ch('E'))
 
     def addIntLit(b: mut @ Mangler, i: BiggestInt):
         b._addSep()
@@ -101,7 +101,7 @@ class Mangler(Object):
         assert b._nesting > 0, "generating ')' would produce a syntax error"
         b._nesting -= 1
         b._undoWhitespace()
-        b._put(char('Z'))
+        b._put(ch('Z'))
 
 
 @hook("copy")
@@ -120,7 +120,7 @@ def extract(b: sink @ Mangler) -> string:
     assert b._nesting == 0, "unpaired '(' or ')'"
     with var:
         i = len(b._buf) - 1
-    while i > 0 and b._buf[i] == char('Z'):
+    while i > 0 and b._buf[i] == ch('Z'):
         i -= 1
     b._buf.setLen(i + 1)
     result = move(b._buf)
@@ -128,12 +128,12 @@ def extract(b: sink @ Mangler) -> string:
 
 
 with const:
-    _ControlLetters = Tset[char](char('A'), char('Z'), char('E'), char('S'), char('O'), char('U'), char('X'), char('R'))  # not yet necessary: 'K'
+    _ControlLetters = Tset[char](ch('A'), ch('Z'), ch('E'), ch('S'), ch('O'), ch('U'), ch('X'), ch('R'))  # not yet necessary: 'K'
 
 
 @template
 def _needsEscape(c: char) -> bool:
-    return c not in (Tset[char](inrange(char('a'), char('z')), inrange(char('0'), char('9')), char('_')) - _ControlLetters)
+    return c not in (Tset[char](inrange(ch('a'), ch('z')), inrange(ch('0'), ch('9')), ch('_')) - _ControlLetters)
 
 
 #  ------------ Atoms ------------------------
@@ -152,14 +152,14 @@ def addIdent(b: mut @ Mangler, s: string):
     b._addSep()
     if not b._referencePrevious(s):
         for c in s:
-            if c == char('.') or _needsEscape(c):
+            if c == ch('.') or _needsEscape(c):
                 b._escape(c)
             else:
                 b._put(c)
 
 
 def _addSymbolBody(b: mut @ Mangler, s: string):
-    for part in s.split(char('.')):
+    for part in s.split(ch('.')):
         if not b._referencePrevious(part):
             for c in part:
                 if _needsEscape(c):
@@ -176,30 +176,30 @@ def addSymbol(b: mut @ Mangler, s: string):
 
 def addSymbolDef(b: mut @ Mangler, s: string):
     b._addSep()
-    b._put(char('O'))
+    b._put(ch('O'))
     if not b._referencePrevious(s):
         _addSymbolBody(b, s)
 
 
 def addStrLit(b: mut @ Mangler, s: string):
     b._addSep()
-    b._put(char('U'))
+    b._put(ch('U'))
     for c in s:
         if _needsEscape(c):
             b._escape(c)
         else:
             b._put(c)
-    b._put(char('U'))
+    b._put(ch('U'))
 
 
 def addCharLit(b: mut @ Mangler, c: char):
     b._addSep()
-    b._escape(char("'"))
+    b._escape(ch("'"))
     if _needsEscape(c):
         b._escape(c)
     else:
         b._put(c)
-    b._escape(char("'"))
+    b._escape(ch("'"))
 
 
 def addFloatLit(b: mut @ Mangler, f: BiggestFloat):
@@ -208,8 +208,8 @@ def addFloatLit(b: mut @ Mangler, f: BiggestFloat):
         x = string("")
     x.addFloat(f)
     for c in x:
-        if c == char('e'):
-            b._put(char('E'))
+        if c == ch('e'):
+            b._put(ch('E'))
         elif _needsEscape(c):
             b._escape(c)
         else:
@@ -220,7 +220,7 @@ def addKeyw(b: mut @ Mangler, keyw: string):
     ## Adds a complete compound node that has no children like `(nil)`.
     b._addBegin()
     putTag(b, keyw)
-    b._put(char('Z'))
+    b._put(ch('Z'))
 
 
 def addTree(b: mut @ Mangler, kind: string):
@@ -267,7 +267,7 @@ if comptime(__name__ == "__main__"):
                 with withTree(m, string("i")):
                     m.addIntLit(8)
 
-        assert extract(m) == string("AarrayArangeS0S9ZAR0AR6S0S4ZAiS8")
+        assert extract(m) == "AarrayArangeS0S9ZAR0AR6S0S4ZAiS8"
 
     def _main():
         with var:

@@ -70,7 +70,7 @@ class Builder(Object):
     def _undoWhitespace(b: mut @ Builder):
         with var:
             i = b._offs - 1
-        while i >= 0 and b._raw[i] in Tset[char](char(' '), char('\n')):
+        while i >= 0 and b._raw[i] in Tset[char](ch(' '), ch('\n')):
             i -= 1
         b._offs = i + 1
 
@@ -232,7 +232,7 @@ def _putPending(b: mut @ Builder, s: string):
 
 
 with const:
-    ControlChars = Tset[char](char('('), char(')'), char('['), char(']'), char('{'), char('}'), char('~'), char('#'), char("'"), char('"'), char('\\'), char(':'), char('@'))
+    ControlChars = Tset[char](ch('('), ch(')'), ch('['), ch(']'), ch('{'), ch('}'), ch('~'), ch('#'), ch("'"), ch('"'), ch('\\'), ch(':'), ch('@'))
 
 
 def _escape(b: mut @ Builder, c: char):
@@ -240,7 +240,7 @@ def _escape(b: mut @ Builder, c: char):
         _HexChars = string("0123456789ABCDEF")
     with var:
         n = nint(c)
-    _put(b, char('\\'))
+    _put(b, ch('\\'))
     _put(b, _HexChars[(n >> 4) & 0xF])
     _put(b, _HexChars[n & 0xF])
 
@@ -248,7 +248,7 @@ def _escape(b: mut @ Builder, c: char):
 @ufcs(char)
 @template
 def _needsEscape(c: char) -> bool:
-    return c < char(' ') or c in ControlChars
+    return c < ch(' ') or c in ControlChars
 
 
 def addRaw(b: mut @ Builder, s: string):
@@ -263,10 +263,10 @@ def _addSep(b: mut @ Builder):
     ## even when nesting is zero.
     if b._offs == 0:
         pass
-    elif b._raw[b._offs - 1] in Tset[char](char('\n'), char(' '), char('('), char(')')):
+    elif b._raw[b._offs - 1] in Tset[char](ch('\n'), ch(' '), ch('('), ch(')')):
         _ = string("no separator required")
     else:
-        _put(b, char(' '))
+        _put(b, ch(' '))
 
 
 def addNumber(b: mut @ Builder, s: string):
@@ -284,14 +284,14 @@ def addIdent(b: mut @ Builder, s: string):
         with let:
             src = _readRawData(s)
             c0 = src[0]
-        if c0 < char(' ') or c0 in Tset[char](char('.'), inrange(char('0'), char('9')), char('+'), char('-'), char('~')) or c0._needsEscape():
+        if c0 < ch(' ') or c0 in Tset[char](ch('.'), inrange(ch('0'), ch('9')), ch('+'), ch('-'), ch('~')) or c0._needsEscape():
             _escape(b, c0)
         else:
             _put(b, c0)
         for i in range(1, sLen):
             with let:
                 c = src[i]
-            if c < char(' ') or (c in (ControlChars + Tset[char](char('.')))):
+            if c < ch(' ') or (c in (ControlChars + Tset[char](ch('.')))):
                 _escape(b, c)
             else:
                 _put(b, c)
@@ -305,7 +305,7 @@ def _addSymbolImpl(b: mut @ Builder, s: string, len: nint) -> nint:
         with let:
             src = _readRawData(s)
             c0 = src[0]
-        if c0 in Tset[char](char('.'), inrange(char('0'), char('9')), char('+'), char('-'), char('~')) or c0._needsEscape():
+        if c0 in Tset[char](ch('.'), inrange(ch('0'), ch('9')), ch('+'), ch('-'), ch('~')) or c0._needsEscape():
             _escape(b, c0)
         else:
             _put(b, c0)
@@ -313,10 +313,10 @@ def _addSymbolImpl(b: mut @ Builder, s: string, len: nint) -> nint:
             with let:
                 c = src[i]
             # Symbols imported from C can have a space like "struct foo".
-            if c == char(' ') or c._needsEscape():
+            if c == ch(' ') or c._needsEscape():
                 _escape(b, c)
             else:
-                if c == char('.'): result += 1
+                if c == ch('.'): result += 1
                 _put(b, c)
     return result
 
@@ -329,7 +329,7 @@ def addSymbol(b: mut @ Builder, s: string):
 
 def addSymbolDef(b: mut @ Builder, s: string):
     _addSep(b)
-    _put(b, char(':'))
+    _put(b, ch(':'))
     _ = _addSymbolImpl(b, s, s.len)
 
 
@@ -347,7 +347,7 @@ def addSymbol(b: mut @ Builder, s: string, dottedSuffix: string):
 def addSymbolDefRetIsGlobal(b: mut @ Builder, s: string, dottedSuffix = string("")) -> bool:
     ## Returns true if the symbol is global.
     _addSep(b)
-    _put(b, char(':'))
+    _put(b, ch(':'))
     with var:
         L = nint(s.len)
     if dottedSuffix.len > 0 and s.endsWith(dottedSuffix):
@@ -360,29 +360,29 @@ def addSymbolDefRetIsGlobal(b: mut @ Builder, s: string, dottedSuffix = string("
 @dispatch
 def addStrLit(b: mut @ Builder, s: string):
     _addSep(b)
-    _put(b, char('"'))
+    _put(b, ch('"'))
     for c in s:
         if _needsEscape(c):
             _escape(b, c)
         else:
             _put(b, c)
-    _put(b, char('"'))
+    _put(b, ch('"'))
 
 
 def addEmpty(b: mut @ Builder, count = 1):
     _addSep(b)
     for i in inrange(1, count):
-        _put(b, char('.'))
+        _put(b, ch('.'))
 
 
 def addCharLit(b: mut @ Builder, c: char):
     _addSep(b)
-    _put(b, char("'"))
+    _put(b, ch("'"))
     if c._needsEscape():
         _escape(b, c)
     else:
         _put(b, c)
-    _put(b, char("'"))
+    _put(b, ch("'"))
 
 
 def addIntLit(b: mut @ Builder, i: int64):
@@ -394,7 +394,7 @@ def addIntLit(b: mut @ Builder, i: int64):
 def addUIntLit(b: mut @ Builder, u: uint64):
     _addSep(b)
     _put(b, str(u))
-    _put(b, char('u'))
+    _put(b, ch('u'))
 
 
 def attachLineInfo(b: mut @ Builder, col: int32, line: int32, file = string("")):
@@ -414,15 +414,15 @@ def addFloatLit(b: mut @ Builder, f: float64, col: int32 = 0, line: int32 = 0, f
         case FloatClass.fcInf:
             _put(b, string("(inf"))
             if hasInfo: attachLineInfo(b, col, line, file)
-            _put(b, char(')'))
+            _put(b, ch(')'))
         case FloatClass.fcNan:
             _put(b, string("(nan"))
             if hasInfo: attachLineInfo(b, col, line, file)
-            _put(b, char(')'))
+            _put(b, ch(')'))
         case FloatClass.fcNegInf:
             _put(b, string("(neginf"))
             if hasInfo: attachLineInfo(b, col, line, file)
-            _put(b, char(')'))
+            _put(b, ch(')'))
         case FloatClass.fcNegZero:
             _put(b, string("-0.0"))
             if hasInfo: attachLineInfo(b, col, line, file)
@@ -436,15 +436,15 @@ def addFloatLit(b: mut @ Builder, f: float64, col: int32 = 0, line: int32 = 0, f
                 myLen = b._offs.copy()
             _put(b, tmp)
             for i in range(myLen, b._offs):
-                if b._raw[i] == char('e'): b._raw[i] = char('E')
+                if b._raw[i] == ch('e'): b._raw[i] = ch('E')
             if hasInfo: attachLineInfo(b, col, line, file)
 
 
 def _b62Char(d: nint) -> char:
     """{.inline.}"""
-    if d < 10: return char(ord(char('0')) + d)
-    elif d < 36: return char(ord(char('A')) + d - 10)
-    else: return char(ord(char('a')) + d - 36)
+    if d < 10: return char(ord(ch('0')) + d)
+    elif d < 36: return char(ord(ch('A')) + d - 10)
+    else: return char(ord(ch('a')) + d - 36)
 
 
 def _addB62Unsigned(b: mut @ Builder, n0: uint64):
@@ -452,7 +452,7 @@ def _addB62Unsigned(b: mut @ Builder, n0: uint64):
     ## least one digit (even for zero) so the line-info parser sees a non-empty
     ## diff segment.
     if n0 == 0:
-        _put(b, char('0'))
+        _put(b, ch('0'))
     else:
         with var:
             buf: pragma("noinit") @ array[12, char] = array[12, char]()  # 62^12 > 2^64
@@ -472,12 +472,12 @@ def _addLineDiff(b: mut @ Builder, x: int32, emitZero: bool):
     ## Emit one base62 line-info diff. If `emitZero` is false and `x == 0`,
     ## emit nothing (the segment is implicitly zero between two commas).
     if x < 0:
-        _put(b, char('~'))
+        _put(b, ch('~'))
         _addB62Unsigned(b, uint64(-int64(x)))
     elif x > 0:
         _addB62Unsigned(b, uint64(x))
     elif emitZero:
-        _put(b, char('0'))
+        _put(b, ch('0'))
 
 
 def attachLineInfo(b: mut @ Builder, col: int32, line: int32, file = string("")):
@@ -490,18 +490,18 @@ def attachLineInfo(b: mut @ Builder, col: int32, line: int32, file = string(""))
     b._drainPending()
     if col < 0:
         # Use the bare-`~` shorthand (no `@` introducer).
-        _put(b, char('~'))
+        _put(b, ch('~'))
         _addB62Unsigned(b, uint64(-int64(col)))
     else:
-        _put(b, char('@'))
+        _put(b, ch('@'))
         if col > 0:
             _addB62Unsigned(b, uint64(col))
         # else: empty first diff segment, allowed by `B62Digit*` in the grammar.
     if line != 0 or file.len > 0:
-        _put(b, char(','))
+        _put(b, ch(','))
         _addLineDiff(b, line, emitZero=False)
     if file.len > 0:
-        _put(b, char(','))
+        _put(b, ch(','))
         for c in file:
             if c._needsEscape():
                 _escape(b, c)
@@ -522,21 +522,21 @@ def attachComment(b: mut @ Builder, s: string):
     ## or tag name (or directly after a preceding `attachLineInfo`). No
     ## whitespace allowed before the `#`.
     b._drainPending()
-    _put(b, char('#'))
+    _put(b, ch('#'))
     for c in s:
         if c._needsEscape():
             _escape(b, c)
         else:
             _put(b, c)
-    _put(b, char('#'))
+    _put(b, ch('#'))
 
 
 def addKeyw(b: mut @ Builder, keyw: string):
     ## Adds a complete compound node that has no children like `(nil)`.
     b._drainPending()
-    _put(b, char('('))
+    _put(b, ch('('))
     _put(b, keyw)
-    _put(b, char(')'))
+    _put(b, ch(')'))
 
 
 def addTree(b: mut @ Builder, kind: string):
@@ -547,8 +547,8 @@ def addTree(b: mut @ Builder, kind: string):
     if not b._compact:
         if b._nesting > 0:
             _put(b, string("\n"))
-            for i in inrange(1, b._nesting): _put(b, char(' '))
-        _put(b, char('('))
+            for i in inrange(1, b._nesting): _put(b, ch(' '))
+        _put(b, ch('('))
     else:
         _put(b, string("\n("))
     _put(b, kind)
@@ -561,7 +561,7 @@ def endTree(b: mut @ Builder):
     if b._nesting >= 0:
         b._nesting -= 1
     b._undoWhitespace()
-    _put(b, char(')'))
+    _put(b, ch(')'))
 
 
 @template
@@ -678,8 +678,8 @@ if comptime(__name__ == "__main__"):
             addStrLit(bm, string("hi \"world\"\n"))
             addStrLit(bm, string("raw"), string("R"), 2, 3, string("s.nim"))
             addEmpty(bm, 2)
-            addCharLit(bm, char('x'))
-            addCharLit(bm, char('\n'))
+            addCharLit(bm, ch('x'))
+            addCharLit(bm, ch('\n'))
             addIntLit(bm, i64(-12345))
             addUIntLit(bm, u64(999))
             addUIntLit(bm, u64(42), string("u8"), -3, -4, string("u.nim"))

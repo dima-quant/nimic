@@ -198,10 +198,10 @@ if comptime(__name__ == "__main__"):
         return result
 
     def _showModule(label: string, m: ForeignModule):
-        echo(label, string(": isBif="), m.isBif, string(" hasEmbeddedIndex="), m.hasEmbeddedIndex,
-             string(" entries="), m.index.len)
+        echo(label, ": isBif=", m.isBif, " hasEmbeddedIndex=", m.hasEmbeddedIndex,
+             " entries=", m.index.len)
         for k in _sortedKeys(m.index):
-            echo(string("  "), k)
+            echo("  ", k)
 
     def _addedTests():
         with let:
@@ -228,12 +228,12 @@ if comptime(__name__ == "__main__"):
             bm = openForeignModule(bifFile)
         _showModule(string("text"), tm)
         _showModule(string("bif"), bm)
-        echo(string("same keys: "), _sortedKeys(tm.index) == _sortedKeys(bm.index))
+        echo("same keys: ", _sortedKeys(tm.index) == _sortedKeys(bm.index))
 
         # hasDecl
-        echo(string("hasDecl p10: "), tm.hasDecl(string("p10.0.m")), string(" "), bm.hasDecl(string("p10.0.m")))
-        echo(string("hasDecl missing: "), tm.hasDecl(string("nope.0.m")), string(" "), bm.hasDecl(string("nope.0.m")))
-        echo(string("hasDecl local: "), tm.hasDecl(string("loc.0")), string(" "), bm.hasDecl(string("loc.0")))
+        echo("hasDecl p10: ", tm.hasDecl(string("p10.0.m")), " ", bm.hasDecl(string("p10.0.m")))
+        echo("hasDecl missing: ", tm.hasDecl(string("nope.0.m")), " ", bm.hasDecl(string("nope.0.m")))
+        echo("hasDecl local: ", tm.hasDecl(string("loc.0")), " ", bm.hasDecl(string("loc.0")))
 
         # getDecl of every symbol: the same tree from the text and the bif module
         with let:
@@ -244,12 +244,12 @@ if comptime(__name__ == "__main__"):
             with let:
                 ts = toString(tm.getDecl(k, tags), includeLineInfo=False)
                 bs = toString(bm.getDecl(k, tags), includeLineInfo=False)
-            echo(k, string(": "), ts)
-            if ts != bs: echo(string("  MISMATCH bif: "), bs)
-            echo(string("  text info: "), toString(tm.getDecl(k, tags)))
-            echo(string("  bif info:  "), toString(bm.getDecl(k, tags)))
+            echo(k, ": ", ts)
+            if ts != bs: echo("  MISMATCH bif: ", bs)
+            echo("  text info: ", toString(tm.getDecl(k, tags)))
+            echo("  bif info:  ", toString(bm.getDecl(k, tags)))
             first.add(ts)
-        echo(string("declBufs: "), tm.declBufs.len, string(" "), bm.declBufs.len)
+        echo("declBufs: ", tm.declBufs.len, " ", bm.declBufs.len)
         # cached: every cursor read again after `declBufs` grew, no new buffer
         with var:
             same = True
@@ -259,7 +259,7 @@ if comptime(__name__ == "__main__"):
             if toString(tm.getDecl(k, tags), includeLineInfo=False) != first[i]: same = False
             if toString(bm.getDecl(k, tags), includeLineInfo=False) != first[i]: same = False
             i += 1
-        echo(string("cached same: "), same, string(" declBufs: "), tm.declBufs.len, string(" "), bm.declBufs.len)
+        echo("cached same: ", same, " declBufs: ", tm.declBufs.len, " ", bm.declBufs.len)
 
         # withLineInfo: the decl's first token, with and without the root's seed
         with var:
@@ -267,9 +267,9 @@ if comptime(__name__ == "__main__"):
         with var:
             infoM = openForeignModule(textFile)
         for k in [string("p10.0.m"), string("p33.0.m"), string("T.0.m"), string("c.0.m")]:
-            echo(k, string(" withLineInfo=false "), _firstInfo(plainM.getDecl(k, tags)),
-                 string(" withLineInfo=true "), _firstInfo(infoM.getDecl(k, tags, withLineInfo=True)))
-        echo(string("dense: "), toString(infoM.getDecl(string("p11.0.m"), tags)))
+            echo(k, " withLineInfo=false ", _firstInfo(plainM.getDecl(k, tags)),
+                 " withLineInfo=true ", _firstInfo(infoM.getDecl(k, tags, withLineInfo=True)))
+        echo("dense: ", toString(infoM.getDecl(string("p11.0.m"), tags)))
 
         # pool: nil (a fresh pool per decl) vs the caller's shared pool
         with let:
@@ -287,15 +287,15 @@ if comptime(__name__ == "__main__"):
                 b = pooled.getDecl(string("p12.0.m"), tags, shared).copy()
             a.inc()
             b.inc()
-            echo(string("pool nil: "), symName(a), string(" matches shared "), symId(a) == symId(shared, string("p12.0.m")),
-                 string(" | shared pool: "), symName(b), string(" matches shared "), symId(b) == symId(shared, string("p12.0.m")))
+            echo("pool nil: ", symName(a), " matches shared ", symId(a) == symId(shared, string("p12.0.m")),
+                 " | shared pool: ", symName(b), " matches shared ", symId(b) == symId(shared, string("p12.0.m")))
 
         # a text file without `.indexat`
         writeFile(plainFile, string("(.nif27)\n(stmts (proc :a.0.m x . . (params) . . . (stmts)))\n"))
         with var:
             pm = openForeignModule(plainFile)
-        echo(string("plain: hasEmbeddedIndex="), pm.hasEmbeddedIndex, string(" entries="), pm.index.len,
-             string(" hasDecl a: "), pm.hasDecl(string("a.0.m")))
+        echo("plain: hasEmbeddedIndex=", pm.hasEmbeddedIndex, " entries=", pm.index.len,
+             " hasDecl a: ", pm.hasDecl(string("a.0.m")))
 
         # readEmbeddedIndex on a reader: the offsets are absolute (the deltas summed up) and increase in the
         # order of the decls, each one the start of its decl
@@ -303,7 +303,7 @@ if comptime(__name__ == "__main__"):
             r = nifreader.open(textFile)
         with var:
             tab = readEmbeddedIndex(r)
-        echo(string("readEmbeddedIndex: "), tab.len, string(" == "), tm.index.len)
+        echo("readEmbeddedIndex: ", tab.len, " == ", tm.index.len)
         with var:
             prev = 0
         with var:
@@ -312,13 +312,13 @@ if comptime(__name__ == "__main__"):
             if k.startsWith(string("p")):
                 if getOrQuit(tab, k) <= prev: increasing = False
                 prev = getOrQuit(tab, k)
-            echo(string("  "), k, string(" offset="), getOrQuit(tab, k))
-        echo(string("increasing: "), increasing)
+            echo("  ", k, " offset=", getOrQuit(tab, k))
+        echo("increasing: ", increasing)
         with var:
             one = createTokenBuf(16, None, tags)
         r.jumpTo(getOrQuit(tab, string("v.0.m")))
         parse(r, one)
-        echo(string("at v.0.m: "), toString(one, includeLineInfo=False))
+        echo("at v.0.m: ", toString(one, includeLineInfo=False))
         close(r)
 
         removeFile(textFile)

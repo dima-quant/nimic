@@ -35,34 +35,34 @@ if comptime(defined("nimony")):
     pragma('feature: "lenientnils"')
 
 with const:
-    _ControlChars = Tset(
-        char("("),
-        char(")"),
-        char("["),
-        char("]"),
-        char("{"),
-        char("}"),
-        char("~"),
-        char("#"),
-        char("'"),
-        char('"'),
-        char(":"),
-        char("@"),
+    _ControlChars = Tset[char](
+        ch("("),
+        ch(")"),
+        ch("["),
+        ch("]"),
+        ch("{"),
+        ch("}"),
+        ch("~"),
+        ch("#"),
+        ch("'"),
+        ch('"'),
+        ch(":"),
+        ch("@"),
     )
-    _ControlCharsOrWhite = _ControlChars + Tset(
-        char(" "), char("\n"), char("\t"), char("\r")
+    _ControlCharsOrWhite = _ControlChars + Tset[char](
+        ch(" "), ch("\n"), ch("\t"), ch("\r")
     )
-    _HexChars = Tset(
-        inrange(char("0"), char("9")), inrange(char("A"), char("F"))
+    _HexChars = Tset[char](
+        inrange(ch("0"), ch("9")), inrange(ch("A"), ch("F"))
     )  # lowercase letters are not in the NIF spec!
-    _Digits = Tset(inrange(char("0"), char("9")))
-    _HexNumberDigits = Tset(
-        inrange(char("0"), char("9")), inrange(char("A"), char("F")), inrange(char("a"), char("f"))
+    _Digits = Tset[char](inrange(ch("0"), ch("9")))
+    _HexNumberDigits = Tset[char](
+        inrange(ch("0"), ch("9")), inrange(ch("A"), ch("F")), inrange(ch("a"), ch("f"))
     )  # unlike escapes, numbers accept both cases
-    _B62Digits = Tset(
-        inrange(char("0"), char("9")),
-        inrange(char("A"), char("Z")),
-        inrange(char("a"), char("z")),
+    _B62Digits = Tset[char](
+        inrange(ch("0"), ch("9")),
+        inrange(ch("A"), ch("Z")),
+        inrange(ch("a"), ch("z")),
     )
 
 
@@ -144,7 +144,7 @@ class ExpandedToken(Object):
         with var:
             i = 0
         while i < t.data.len and t.data[i] in _Digits:
-            result = result * 10 + (ord(t.data[i]) - ord(char("0")))
+            result = result * 10 + (ord(t.data[i]) - ord(ch("0")))
             i += 1
         return result
 
@@ -251,12 +251,12 @@ def _skipWhitespace(r: mut @ Reader):
         while p < eof:
             match _deref(p):
                 case _ if (
-                    _deref(p) == char(" ")
-                    or _deref(p) == char("\t")
-                    or _deref(p) == char("\r")
+                    _deref(p) == ch(" ")
+                    or _deref(p) == ch("\t")
+                    or _deref(p) == ch("\r")
                 ):
                     _inc(p)
-                case _ if _deref(p) == char("\n"):
+                case _ if _deref(p) == ch("\n"):
                     _inc(p)
                     r.line += 1
                 case _:
@@ -274,15 +274,15 @@ def _captureComment(r: mut @ Reader, result: mut @ ExpandedToken):
         with let:
             start = p
         while p < eof:
-            if _deref(p) == char("#"):
+            if _deref(p) == ch("#"):
                 result.comment.len = cast[intp](p) - cast[intp](start)
                 _inc(p)
                 break
-            elif _deref(p) == char("\n"):
+            elif _deref(p) == ch("\n"):
                 _inc(p)
                 r.line += 1
             else:
-                if _deref(p) == char("\\"):
+                if _deref(p) == ch("\\"):
                     result._flags.incl(_TokenFlag.CommentHasEscapes)
                 _inc(p)
 
@@ -292,17 +292,17 @@ def _handleHex(p: pchar) -> char:
     with var:
         output = 0
     match p[0]:
-        case _ if p[0] in inrange(char("0"), char("9")):
-            output = (output << 4) | (ord(p[0]) - ord(char("0")))
-        case _ if p[0] in inrange(char("A"), char("F")):
-            output = (output << 4) | (ord(p[0]) - ord(char("A")) + 10)
+        case _ if p[0] in inrange(ch("0"), ch("9")):
+            output = (output << 4) | (ord(p[0]) - ord(ch("0")))
+        case _ if p[0] in inrange(ch("A"), ch("F")):
+            output = (output << 4) | (ord(p[0]) - ord(ch("A")) + 10)
         case _:
             pass
     match p[1]:
-        case _ if p[1] in inrange(char("0"), char("9")):
-            output = (output << 4) | (ord(p[1]) - ord(char("0")))
-        case _ if p[1] in inrange(char("A"), char("F")):
-            output = (output << 4) | (ord(p[1]) - ord(char("A")) + 10)
+        case _ if p[1] in inrange(ch("0"), ch("9")):
+            output = (output << 4) | (ord(p[1]) - ord(ch("0")))
+        case _ if p[1] in inrange(ch("A"), ch("F")):
+            output = (output << 4) | (ord(p[1]) - ord(ch("A")) + 10)
         case _:
             pass
     result = char(output)
@@ -323,29 +323,29 @@ def _decodeEscape(p: mut @ pchar, sentinel: pchar) -> char:
     ## that ends in a `\\` or in `\\H` keeps the backslash literally and `p`
     ## stays put, so the remaining byte, if any, decodes as an ordinary one."""
     result = default(char)
-    if p >= sentinel: return char("\\")
+    if p >= sentinel: return ch("\\")
     match _deref(p):
-        case _ if _deref(p) == char("n"):
-            result = char("\x0a")
+        case _ if _deref(p) == ch("n"):
+            result = ch("\x0a")
             _inc(p)
-        case _ if _deref(p) == char("t"):
-            result = char("\x09")
+        case _ if _deref(p) == ch("t"):
+            result = ch("\x09")
             _inc(p)
-        case _ if _deref(p) == char("r"):
-            result = char("\x0d")
+        case _ if _deref(p) == ch("r"):
+            result = ch("\x0d")
             _inc(p)
-        case _ if _deref(p) == char("|"):
-            result = char("\x5c")
+        case _ if _deref(p) == ch("|"):
+            result = ch("\x5c")
             _inc(p)
-        case _ if _deref(p) == char("^"):
-            result = char("\x22")
+        case _ if _deref(p) == ch("^"):
+            result = ch("\x22")
             _inc(p)
         case _:
             if _plus_bang(p, 1) < sentinel:
                 result = _handleHex(p)
                 _inc(p, 2)
             else:
-                result = char("\\")
+                result = ch("\\")
     return result
 
 
@@ -354,7 +354,7 @@ def decodeChar(t: ExpandedToken) -> char:
     result = default(char)
     assert t.tk == NifKind.CharLit
     result = _deref(t.data.p)
-    if result == char("\\"):
+    if result == ch("\\"):
         with var:
             p = t.data.p
         _inc(p)
@@ -374,7 +374,7 @@ def decodeStr(r: Reader, t: ExpandedToken) -> string:
         with let:
             sentinel = _plus_bang(p, t.data.len)
         while p < sentinel:
-            if _deref(p) == char("\\"):
+            if _deref(p) == ch("\\"):
                 _inc(p)
                 result.add(_decodeEscape(p, sentinel))
             else:
@@ -436,7 +436,7 @@ def decodeComment(t: ExpandedToken) -> string:
     with let:
         sentinel = _plus_bang(p, t.comment.len)
     while p < sentinel:
-        if _deref(p) == char("\\"):
+        if _deref(p) == ch("\\"):
             _inc(p)
             result.add(_decodeEscape(p, sentinel))
         else:
@@ -455,7 +455,7 @@ def decodeFilename(t: ExpandedToken) -> string:
         with let:
             sentinel = _plus_bang(p, t.filename.len)
         while p < sentinel:
-            if _deref(p) == char("\\"):
+            if _deref(p) == ch("\\"):
                 _inc(p)
                 result.add(_decodeEscape(p, sentinel))
             else:
@@ -472,12 +472,12 @@ def _digitValue(c: char) -> nint:
     """{.inline.}"""
     result = default(nint)
     match c:
-        case _ if c in inrange(char("0"), char("9")):
-            result = ord(c) - ord(char("0"))
-        case _ if c in inrange(char("A"), char("F")):
-            result = ord(c) - ord(char("A")) + 10
-        case _ if c in inrange(char("a"), char("f")):
-            result = ord(c) - ord(char("a")) + 10
+        case _ if c in inrange(ch("0"), ch("9")):
+            result = ord(c) - ord(ch("0"))
+        case _ if c in inrange(ch("A"), ch("F")):
+            result = ord(c) - ord(ch("A")) + 10
+        case _ if c in inrange(ch("a"), ch("f")):
+            result = ord(c) - ord(ch("a")) + 10
         case _:
             result = 0
     return result
@@ -493,20 +493,20 @@ def _decodeMagnitude(t: ExpandedToken, negative: mut @ bool) -> BiggestUInt:
     with var:
         i = 0
     negative <<= False
-    if t.data[i] == char("-"):
+    if t.data[i] == ch("-"):
         negative <<= True
         i += 1
     with var:
         base = u64(10)
-    if i + 1 < t.data.len and t.data[i] == char("0"):
+    if i + 1 < t.data.len and t.data[i] == ch("0"):
         match t.data[i + 1]:
-            case _ if t.data[i + 1] == char("x"):
+            case _ if t.data[i + 1] == ch("x"):
                 base = u64(16)
                 i += 2
-            case _ if t.data[i + 1] == char("o"):
+            case _ if t.data[i + 1] == ch("o"):
                 base = u64(8)
                 i += 2
-            case _ if t.data[i + 1] == char("b"):
+            case _ if t.data[i + 1] == ch("b"):
                 base = u64(2)
                 i += 2
             case _:
@@ -514,7 +514,7 @@ def _decodeMagnitude(t: ExpandedToken, negative: mut @ bool) -> BiggestUInt:
     while i < t.data.len:
         with let:
             c = t.data[i]
-        if c != char("_"):
+        if c != ch("_"):
             with let:
                 d = BiggestUInt(_digitValue(c))
             assert result <= (high(BiggestUInt) - d) // base, "integer literal out of range"
@@ -589,7 +589,7 @@ def _digitsWithSeparators(p: mut @ pchar, eof: pointer, len: mut @ nint,
         if _deref(p) in digitSet:
             _inc(p)
             len += 1
-        elif _deref(p) == char("_"):
+        elif _deref(p) == ch("_"):
             _inc(p)
             len += 1
             if p >= eof or _deref(p) not in digitSet:
@@ -610,7 +610,7 @@ def _malformedNumber(p: mut @ pchar, eof: pointer, result: mut @ ExpandedToken):
 
 @template
 def _unsignedSuffix(p: mut @ pchar, eof: pointer, result: mut @ ExpandedToken):
-    if p < eof and _deref(p) == char("u"):
+    if p < eof and _deref(p) == ch("u"):
         result.tk = NifKind.UIntLit
         _inc(p)
         # ignore the suffix 'u'
@@ -619,8 +619,8 @@ def _unsignedSuffix(p: mut @ pchar, eof: pointer, result: mut @ ExpandedToken):
 @template
 def _hasBasePrefix(p: pchar, eof: pointer) -> bool:
     ## `p` starts `0x`, `0o` or `0b`; see `handlePrefixedNumber`.
-    return _deref(p) == char("0") and _plus_bang(p, 1) < eof and \
-        _deref(_plus_bang(p, 1)) in Tset(char("x"), char("o"), char("b"))
+    return _deref(p) == ch("0") and _plus_bang(p, 1) < eof and \
+        _deref(_plus_bang(p, 1)) in Tset[char](ch("x"), ch("o"), ch("b"))
 
 
 @template_expand
@@ -634,18 +634,18 @@ def _handleNumber(r: mut @ Reader, result: mut @ ExpandedToken):
             with var:
                 ok = _digitsWithSeparators(p, eof, result.data.len, _Digits)
 
-            if ok and p < eof and _deref(p) == char("."):
+            if ok and p < eof and _deref(p) == ch("."):
                 result.tk = NifKind.FloatLit
                 _inc(p)
                 result.data.len += 1
                 ok = _digitsWithSeparators(p, eof, result.data.len, _Digits)
 
-            if ok and p < eof and _deref(p) == char("E"):
+            if ok and p < eof and _deref(p) == ch("E"):
                 result.tk = NifKind.FloatLit
                 _inc(p)
                 result.data.len += 1
                 if p < eof:
-                    if _deref(p) == char("-") or _deref(p) == char("+"):
+                    if _deref(p) == ch("-") or _deref(p) == ch("+"):
                         _inc(p)
                         result.data.len += 1
                 ok = _digitsWithSeparators(p, eof, result.data.len, _Digits)
@@ -667,18 +667,18 @@ def _handlePrefixedNumber(r: mut @ Reader, result: mut @ ExpandedToken):
         with var:
             ok = False
         match _deref(_plus_bang(p, 1)):
-            case _ if _deref(_plus_bang(p, 1)) == char("x"):
+            case _ if _deref(_plus_bang(p, 1)) == ch("x"):
                 _inc(p, 2)
                 result.data.len += 2
                 ok = _digitsWithSeparators(p, eof, result.data.len, _HexNumberDigits)
-            case _ if _deref(_plus_bang(p, 1)) == char("o"):
+            case _ if _deref(_plus_bang(p, 1)) == ch("o"):
                 _inc(p, 2)
                 result.data.len += 2
-                ok = _digitsWithSeparators(p, eof, result.data.len, Tset(inrange(char("0"), char("7"))))
+                ok = _digitsWithSeparators(p, eof, result.data.len, Tset[char](inrange(ch("0"), ch("7"))))
             case _:
                 _inc(p, 2)
                 result.data.len += 2
-                ok = _digitsWithSeparators(p, eof, result.data.len, Tset(char("0"), char("1")))
+                ok = _digitsWithSeparators(p, eof, result.data.len, Tset[char](ch("0"), ch("1")))
         if ok and p < eof and _deref(p) in _Digits: ok = False
 
         if not ok:
@@ -692,12 +692,12 @@ def _decodeB62(c: char) -> nint:
     ## Decode a single base62 digit (0-9, A-Z, a-z) to its numeric value 0..61.
     ## Caller must guarantee `c` is in `B62Digits`."""
     result = default(nint)
-    if c <= char("9"):
-        result = ord(c) - ord(char("0"))
-    elif c <= char("Z"):
-        result = ord(c) - ord(char("A")) + 10
+    if c <= ch("9"):
+        result = ord(c) - ord(ch("0"))
+    elif c <= ch("Z"):
+        result = ord(c) - ord(ch("A")) + 10
     else:
-        result = ord(c) - ord(char("a")) + 36
+        result = ord(c) - ord(ch("a")) + 36
     return result
 
 
@@ -828,7 +828,7 @@ def _hasEscapes(data: StringView, first: nint, last: nint) -> bool:
     with var:
         i = copy(first)
     while i <= last:
-        if data[i] == char("\\"):
+        if data[i] == ch("\\"):
             return True
         i += 1
     result = False
@@ -853,7 +853,7 @@ def _splitSymbol(r: mut @ Reader, result: mut @ ExpandedToken):
     with var:
         k = 0
     while k < origLen:
-        if result.data[k] == char("."):
+        if result.data[k] == ch("."):
             lastDot = copy(k)
         k += 1
 
@@ -875,7 +875,7 @@ def _splitSymbol(r: mut @ Reader, result: mut @ ExpandedToken):
     with var:
         i = head - 2
     while i > 0:
-        if result.data[i] == char(".") and result.data[i + 1] in _Digits:
+        if result.data[i] == ch(".") and result.data[i + 1] in _Digits:
             break
         i -= 1
 
@@ -901,7 +901,7 @@ def _splitSymbol(r: mut @ Reader, result: mut @ ExpandedToken):
     with var:
         comps = int32(1)
     for j in range(0, r._pending.len):
-        if r._pending[j] == char("."):
+        if r._pending[j] == ch("."):
             comps += 1
     r._pendingTotal = comps
     r._pendingLeft = comps
@@ -929,7 +929,7 @@ def _nextSymbolPart(r: mut @ Reader, result: mut @ ExpandedToken):
         result.part = SymbolPart.SymDedup
     with var:
         n = 0
-    while n < r._pending.len and r._pending[n] != char("."):
+    while n < r._pending.len and r._pending[n] != ch("."):
         n += 1
     result.data = StringView(p=r._pending.p, len=n)
     if _TokenFlag.TokenHasEscapes in r._pendingFlags and _hasEscapes(
@@ -959,29 +959,29 @@ def _nextSymbolPart(r: mut @ Reader, result: mut @ ExpandedToken):
 # for the newline that ends the node.
 
 with const:
-    _IdentStartChars = Tset(
-        inrange(char("a"), char("z")),
-        inrange(char("A"), char("Z")),
-        char("_"),
-        char("\\"),
-        inrange(char("\x80"), char("\xff")),
+    _IdentStartChars = Tset[char](
+        inrange(ch("a"), ch("z")),
+        inrange(ch("A"), ch("Z")),
+        ch("_"),
+        ch("\\"),
+        inrange(ch("\x80"), ch("\xff")),
     )
     _IdentChars = _IdentStartChars + _Digits
-    _LineStrStart = Tset(char("-"), char("/"), char(":"))
-    _LineStrEnd = Tset(
-        char(" "),
-        char("\t"),
-        char("\n"),
-        char("\r"),
-        char("("),
-        char(")"),
-        char("@"),
-        char("~"),
-        char("#"),
+    _LineStrStart = Tset[char](ch("-"), ch("/"), ch(":"))
+    _LineStrEnd = Tset[char](
+        ch(" "),
+        ch("\t"),
+        ch("\n"),
+        ch("\r"),
+        ch("("),
+        ch(")"),
+        ch("@"),
+        ch("~"),
+        ch("#"),
     )
     # where an identifier or symbol ends in line mode: `-` and `/` are no
     # control characters, but they start a string
-    _LineWordEnd = _ControlCharsOrWhite + Tset(char("-"), char("/"))
+    _LineWordEnd = _ControlCharsOrWhite + Tset[char](ch("-"), ch("/"))
 
 
 @template
@@ -997,7 +997,7 @@ def _lineStr(r: mut @ Reader, result: mut @ ExpandedToken):
     parenthesis or suffix (`@`, `~`, `#`) and turn it into a string literal."""
     with _useCpuRegisters():
         while p < eof and _deref(p) not in _LineStrEnd:
-            if _deref(p) == char("\\"):
+            if _deref(p) == ch("\\"):
                 result._flags.incl(_TokenFlag.TokenHasEscapes)
             _inc(p)
         result.data.len = _minus_bang(p, result.data.p)
@@ -1016,13 +1016,13 @@ def _lineHead(r: mut @ Reader, result: mut @ ExpandedToken):
             while p < eof and _deref(p) in _IdentChars:
                 # an escape's body may be a shortcut such as `\|`
                 with let:
-                    n = 2 if _deref(p) == char("\\") and _plus_bang(p, 1) < eof else 1
+                    n = 2 if _deref(p) == ch("\\") and _plus_bang(p, 1) < eof else 1
                 result.data.len += n
                 _inc(p, n)
         if result.data.len > 0 and (p >= eof or _deref(p) in _ControlCharsOrWhite):
             result.tk = NifKind.ParLe
         else:
-            while p < eof and _deref(p) != char("\n"):
+            while p < eof and _deref(p) != ch("\n"):
                 _inc(p)
             result.data.len = _minus_bang(p, result.data.p)
     if result.tk == NifKind.ParLe:
@@ -1039,9 +1039,9 @@ def _linePrelude(r: mut @ Reader, tok: mut @ ExpandedToken) -> bool:
     if r._inLineNode and r._depth == 0:
         # the newline is significant here
         with _useCpuRegisters():
-            while p < eof and _deref(p) in Tset(char(" "), char("\t"), char("\r")):
+            while p < eof and _deref(p) in Tset[char](ch(" "), ch("\t"), ch("\r")):
                 _inc(p)
-        if r._p >= r._eof or _deref(r._p) == char("\n"):
+        if r._p >= r._eof or _deref(r._p) == ch("\n"):
             # the `)` of the line node; the newline itself is skipped next time
             tok.tk = NifKind.ParRi
             tok.data = StringView(p=r._p, len=0)
@@ -1053,9 +1053,9 @@ def _linePrelude(r: mut @ Reader, tok: mut @ ExpandedToken) -> bool:
             return False
     result = False
     match _deref(r._p):
-        case _ if _deref(r._p) == char("("):
+        case _ if _deref(r._p) == ch("("):
             r._depth += 1
-        case _ if _deref(r._p) == char(")"):
+        case _ if _deref(r._p) == ch(")"):
             if r._depth > 0:
                 r._depth -= 1
         case _:
@@ -1286,11 +1286,11 @@ def _readDirectives(r: mut @ Reader):
         if r.startsWith(string("(.")):
             next(r, tok)
             assert tok.tk == NifKind.ParLe
-            if tok.data == string(".indexat"):
+            if tok.data == ".indexat":
                 next(r, tok)
                 if tok.tk == NifKind.IntLit:
                     r._indexAt = nint(decodeInt(tok))
-            elif tok.data == string(".unusedname"):
+            elif tok.data == ".unusedname":
                 next(r, tok)
                 if tok.tk == NifKind.Symbol:
                     r._unusedNameHint = tok
@@ -1320,10 +1320,10 @@ def extractModuleSuffix(filename: string) -> string:
     with var:
         skip = False
     for c in filename:
-        if c == char("/") or c == char("\\"):
+        if c == ch("/") or c == ch("\\"):
             result.setLen(0)
             skip = False
-        elif c == char("."):
+        elif c == ch("."):
             skip = True
         elif not skip:
             result.add(c)
@@ -1526,10 +1526,10 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
         with var:
             tok = default(ExpandedToken)
         r.next(tok); r.next(tok); r.next(tok)
-        assert tok.tk == StringLit and r.decodeStr(tok) == string("2026-10-11T12:00:00Z")
+        assert tok.tk == StringLit and r.decodeStr(tok) == "2026-10-11T12:00:00Z"
         r.next(tok); r.next(tok)
-        assert tok.tk == StringLit and r.decodeStr(tok) == string("key: value; # text")
-        assert decodeComment(tok) == string("comment")
+        assert tok.tk == StringLit and r.decodeStr(tok) == "key: value; # text"
+        assert decodeComment(tok) == "comment"
         close(r)
 
     # Off by default: a symbol is one token carrying the whole string, exactly
@@ -1626,7 +1626,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
         assert tok.tk == NifKind.Symbol and tok.suffixes == uint8(2)
         r.jumpTo(start)
         r.next(tok)
-        assert r.decodeStr(tok) == string("abc")
+        assert r.decodeStr(tok) == "abc"
         r.next(tok)
         assert tok.tk == NifKind.ExtendedSuffix and tok.part == SymbolPart.SymDisamb
         close(r)
@@ -1796,12 +1796,12 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
                 tok = default(ExpandedToken)
             r.next(tok)
             r.next(tok)
-            assert tok.tk == StringLit and r.decodeStr(tok) == string("src/main.nim")
-            assert tok.pos.line == int32(3) and decodeComment(tok) == string("c")
+            assert tok.tk == StringLit and r.decodeStr(tok) == "src/main.nim"
+            assert tok.pos.line == int32(3) and decodeComment(tok) == "c"
             r.next(tok)
             assert (
                 tok.tk == StringLit
-                and r.decodeStr(tok) == string("2024-08-12")
+                and r.decodeStr(tok) == "2024-08-12"
                 and tok.pos.col == int32(-2)
             )
             r.next(tok)
@@ -1838,10 +1838,10 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             r.next(tok)
             assert (
                 tok.tk == NifKind.ParLe
-                and tok.data == string("warn")
+                and tok.data == "warn"
                 and tok.pos.line == int32(1)
             )
-            assert decodeComment(tok) == string("disk")
+            assert decodeComment(tok) == "disk"
             close(r)
         # a line that does not start with an identifier is one error token
         assert _lineTokens(string("./run.sh x\nok")) == seq[string](
@@ -1891,7 +1891,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             with var:
                 tok = default(ExpandedToken)
             r.next(tok)
-            assert tok.tk == NifKind.CharLit and decodeChar(tok) == char("A")
+            assert tok.tk == NifKind.CharLit and decodeChar(tok) == ch("A")
             close(r)
 
     echo("nifreader: OK")
@@ -1901,9 +1901,9 @@ if comptime(__name__ == "__main__"):
 
     def _test_nifreader_extra():
         # extractModuleSuffix
-        assert extractModuleSuffix(string("foo/bar/baz.s.nif")) == string("baz")
-        assert extractModuleSuffix(string("dir\\modname.nif")) == string("modname")
-        assert extractModuleSuffix(string("simple")) == string("simple")
+        assert extractModuleSuffix(string("foo/bar/baz.s.nif")) == "baz"
+        assert extractModuleSuffix(string("dir\\modname.nif")) == "modname"
+        assert extractModuleSuffix(string("simple")) == "simple"
 
         # directives, fileSize, indexStartsAt, firstUnusedName, processDirectives, startsWith
         with var:
@@ -1915,28 +1915,28 @@ if comptime(__name__ == "__main__"):
             )
         assert r.processDirectives() == DirectivesResult.Success
         assert r.indexStartsAt() == 128
-        assert r.firstUnusedName() == string("unused.1.MyMod")
+        assert r.firstUnusedName() == "unused.1.MyMod"
         assert r.fileSize() > 0
         assert r.startsWith(string("(stmts"))
 
         with var:
             tok = default(ExpandedToken)
         r.next(tok)
-        assert tok.tk == NifKind.ParLe and str(tok) == string("(stmts")
+        assert tok.tk == NifKind.ParLe and str(tok) == "(stmts"
 
         r.next(tok)
-        assert tok.tk == NifKind.DotToken and str(tok) == string(".")
+        assert tok.tk == NifKind.DotToken and str(tok) == "."
 
         r.next(tok)
-        assert tok.tk == NifKind.CharLit and decodeChar(tok) == char("A")
-        assert str(tok) == string("CharLit:")
+        assert tok.tk == NifKind.CharLit and decodeChar(tok) == ch("A")
+        assert str(tok) == "CharLit:"
 
         r.next(tok)
-        assert tok.tk == NifKind.CharLit and decodeChar(tok) == char("A")
+        assert tok.tk == NifKind.CharLit and decodeChar(tok) == ch("A")
 
         r.next(tok)
         assert tok.tk == NifKind.IntLit and decodeInt(tok) == BiggestInt(42)
-        assert str(tok) == string("IntLit:42")
+        assert str(tok) == "IntLit:42"
 
         r.next(tok)
         assert tok.tk == NifKind.IntLit and decodeInt(tok) == BiggestInt(-17)
@@ -1950,35 +1950,35 @@ if comptime(__name__ == "__main__"):
         r.next(tok)
         assert tok.tk == StringLit
         assert needsDecoding(tok)
-        assert r.decodeStr(tok) == string('hi\n\t\r\\"!'), r.decodeStr(tok)
+        assert r.decodeStr(tok) == 'hi\n\t\r\\"!', r.decodeStr(tok)
         assert tok.pos.col == int32(62) and tok.pos.line == int32(-2)
-        assert decodeFilename(tok) == string("path name.nim")
-        assert decodeComment(tok) == string("cmt!")
+        assert decodeFilename(tok) == "path name.nim"
+        assert decodeComment(tok) == "cmt!"
 
         r.next(tok)
         assert tok.tk == NifKind.SymbolDef
         assert needsDecoding(tok)
-        assert r.decodeStr(tok) == string("local.1.MyMod")
+        assert r.decodeStr(tok) == "local.1.MyMod"
 
         r.next(tok)
         assert tok.tk == NifKind.Symbol
         assert needsDecoding(tok)
-        assert r.decodeStr(tok) == string("sym.2.MyMod")
+        assert r.decodeStr(tok) == "sym.2.MyMod"
 
         r.next(tok)
-        assert tok.tk == NifKind.ParRi and str(tok) == string(")")
+        assert tok.tk == NifKind.ParRi and str(tok) == ")"
 
         r.next(tok)
-        assert tok.tk == NifKind.EofToken and str(tok) == string("<eof>")
+        assert tok.tk == NifKind.EofToken and str(tok) == "<eof>"
 
         with var:
             tagTok = default(ExpandedToken)
         tagTok.tk = NifKind.TagLit
-        assert str(tagTok) == string("<TagLit>")
+        assert str(tagTok) == "<TagLit>"
         tagTok.tk = NifKind.LineInfoLit
-        assert str(tagTok) == string("<LineInfoLit>")
+        assert str(tagTok) == "<LineInfoLit>"
         tagTok.tk = NifKind.UnknownToken
-        assert str(tagTok) == string("<unknown token>")
+        assert str(tagTok) == "<unknown token>"
 
         close(r)
 
@@ -2043,9 +2043,9 @@ if comptime(__name__ == "__main__"):
         # through vfs (an mmap'd file); the module suffix comes from the file name
         with var:
             r = open(path)
-        echo(string("file: size="), r.fileSize(), string(" len="), len(text), string(" indexat="), r.indexStartsAt(),
-             string(" unused="), r.firstUnusedName(), string(" directives="), r.processDirectives(),
-             string(" startsWith="), r.startsWith(string("(stmts")), string(" "), r.startsWith(string("(.nif")))
+        echo("file: size=", r.fileSize(), " len=", len(text), " indexat=", r.indexStartsAt(),
+             " unused=", r.firstUnusedName(), " directives=", r.processDirectives(),
+             " startsWith=", r.startsWith(string("(stmts")), " ", r.startsWith(string("(.nif")))
         with let:
             start = r.offset()
         _dump(r)
@@ -2054,14 +2054,14 @@ if comptime(__name__ == "__main__"):
         with var:
             tok = default(ExpandedToken)
         r.next(tok)
-        echo(string("jumped: "), _show(r, tok), string(" offset="), r.offset() - start)
+        echo("jumped: ", _show(r, tok), " offset=", r.offset() - start)
         close(r)
         removeFile(path)
         # from a buffer, with the symbols split
         with var:
             b = openFromBuffer(text, string("Buf"))
         b.splitSymbols()
-        echo(string("split: "), b.symbolsAreSplit(), string(" unused="), b.firstUnusedName())
+        echo("split: ", b.symbolsAreSplit(), " unused=", b.firstUnusedName())
         _dump(b)
         close(b)
 

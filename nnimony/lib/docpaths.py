@@ -102,8 +102,8 @@ def deriveRelpath(srcPath: string, projectRoot: string, stdlibRoot: string) -> s
 
 
 if comptime(__name__ == "__main__"):
-    assert ExternalBucket == string("_external")
-    assert toUnixPath(string("a/b/c.nim")) == string("a/b/c.nim")
+    assert ExternalBucket == "_external"
+    assert toUnixPath(string("a/b/c.nim")) == "a/b/c.nim"
     echo(ExternalBucket, "|", toUnixPath(string("a/b/c.nim")))
 
     with let:
@@ -114,13 +114,13 @@ if comptime(__name__ == "__main__"):
     # Bucket 1: under stdlibRoot
     with let:
         r1 = deriveRelpath(stdlibRoot / string("std/system.nim"), projectRoot, stdlibRoot)
-    assert r1 == string("std/system.html")
+    assert r1 == "std/system.html"
     echo(r1)
 
     # Bucket 2: under projectRoot
     with let:
         r2 = deriveRelpath(projectRoot / string("src/foo.nim"), projectRoot, stdlibRoot)
-    assert r2 == string("src/foo.html")
+    assert r2 == "src/foo.html"
     echo(r2)
 
     # Prefix boundary check: lib_other/ must not match lib

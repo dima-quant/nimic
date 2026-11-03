@@ -169,7 +169,7 @@ if comptime(__name__ == "__main__"):
     def _build(format: HtmlOutFormat) -> string:
         with var:
             b = initHtmlBuilder(format)
-        echo(string("format: "), b.format)
+        echo("format: ", b.format)
         with b.emitTag(string("html")):
             with b.emitTag(string("body")):
                 b.emitText(string("plain text"))

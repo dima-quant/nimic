@@ -417,14 +417,14 @@ if comptime(__name__ == "__main__"):
 
 if comptime(__name__ == "__main__"):
     def _echoIndex(idx: NifIndex):
-        echo(string("converters: "), idx.converters.len)
+        echo("converters: ", idx.converters.len)
         for (k, v) in idx.converters:
-            echo(string("  "), k, string(" -> "), v)
-        echo(string("exports: "), idx.exports.len)
+            echo("  ", k, " -> ", v)
+        echo("exports: ", idx.exports.len)
         for (path, kind, names) in idx.exports:
-            echo(string("  "), path, string(" "), kind, string(" "), names.len)
+            echo("  ", path, " ", kind, " ", names.len)
             for nm in names:
-                echo(string("    "), pool.strings[nm])
+                echo("    ", pool.strings[nm])
 
     def _indexText(infile: string) -> string:
         result = readFile(changeModuleExt(infile, string(".s.idx.nif")))
@@ -442,9 +442,9 @@ if comptime(__name__ == "__main__"):
         _echoIndex(readIndex(changeModuleExt(paramStr(1), string(".s.idx.nif"))))
 
         # private helpers
-        echo(_isImportant(string("a.b")), string(" "), _isImportant(string("a.b.c")), string(" "),
+        echo(_isImportant(string("a.b")), " ", _isImportant(string("a.b.c")), " ",
              _isImportant(string("")))
-        echo(_entryKind(TagId(TagEnum.ProcTagId)), string(" "), _entryKind(TagId(TagEnum.InlineTagId)), string(" "),
+        echo(_entryKind(TagId(TagEnum.ProcTagId)), " ", _entryKind(TagId(TagEnum.InlineTagId)), " ",
              _entryKind(TagId(TagEnum.StmtsTagId)))
 
         with let:
@@ -486,56 +486,56 @@ if comptime(__name__ == "__main__"):
             ckFile = dir + string("nimic_nifindexes_ck.s.nif")
         with let:
             base = _checksumOf(ckFile, string(
-                "(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))" +
-                " (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))" +
-                " (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))" +
-                " (template :t.0.m x . . (params) . . . (stmts 1))" +
-                " (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))"))
+                string("(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))") +
+                string(" (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))") +
+                string(" (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))") +
+                string(" (template :t.0.m x . . (params) . . . (stmts 1))") +
+                string(" (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))")))
         echo(base)
         with let:
             body = _checksumOf(ckFile, string(
-                "(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret 42)))" +
-                " (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))" +
-                " (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))" +
-                " (template :t.0.m x . . (params) . . . (stmts 1))" +
-                " (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))"))
-        echo(string("non-inline body: "), body == base)
+                string("(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret 42)))") +
+                string(" (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))") +
+                string(" (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))") +
+                string(" (template :t.0.m x . . (params) . . . (stmts 1))") +
+                string(" (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))")))
+        echo("non-inline body: ", body == base)
         with let:
             inl = _checksumOf(ckFile, string(
-                "(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))" +
-                " (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 2)))" +
-                " (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))" +
-                " (template :t.0.m x . . (params) . . . (stmts 1))" +
-                " (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))"))
-        echo(string("inline body: "), inl == base)
+                string("(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))") +
+                string(" (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 2)))") +
+                string(" (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))") +
+                string(" (template :t.0.m x . . (params) . . . (stmts 1))") +
+                string(" (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))")))
+        echo("inline body: ", inl == base)
         with let:
             gen = _checksumOf(ckFile, string(
-                "(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))" +
-                " (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))" +
-                " (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 2)))" +
-                " (template :t.0.m x . . (params) . . . (stmts 1))" +
-                " (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))"))
-        echo(string("generic body: "), gen == base)
+                string("(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))") +
+                string(" (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))") +
+                string(" (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 2)))") +
+                string(" (template :t.0.m x . . (params) . . . (stmts 1))") +
+                string(" (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))")))
+        echo("generic body: ", gen == base)
         with let:
             tmpl = _checksumOf(ckFile, string(
-                "(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))" +
-                " (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))" +
-                " (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))" +
-                " (template :t.0.m x . . (params) . . . (stmts 2))" +
-                " (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))"))
-        echo(string("template body: "), tmpl == base)
+                string("(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))") +
+                string(" (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))") +
+                string(" (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))") +
+                string(" (template :t.0.m x . . (params) . . . (stmts 2))") +
+                string(" (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))")))
+        echo("template body: ", tmpl == base)
         with let:
             vv = _checksumOf(ckFile, string(
-                "(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))" +
-                " (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))" +
-                " (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))" +
-                " (template :t.0.m x . . (params) . . . (stmts 1))" +
-                " (var :v.0.m x . (i +32) 6) (type :T.0.m x . . (object .)))"))
-        echo(string("var value: "), vv == base)
+                string("(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))") +
+                string(" (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))") +
+                string(" (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))") +
+                string(" (template :t.0.m x . . (params) . . . (stmts 1))") +
+                string(" (var :v.0.m x . (i +32) 6) (type :T.0.m x . . (object .)))")))
+        echo("var value: ", vv == base)
         # the index file is kept when its content is unchanged
         writeFile(changeModuleExt(ckFile, string(".s.idx.nif")), string("by hand"))
         createIndex(ckFile, True, NoLineInfo)
-        echo(string("rewritten: "), _indexText(ckFile) == vv)
+        echo("rewritten: ", _indexText(ckFile) == vv)
         removeFile(ckFile)
         removeFile(changeModuleExt(ckFile, string(".s.idx.nif")))
 
@@ -556,22 +556,22 @@ if comptime(__name__ == "__main__"):
             embFile = dir + string("nimic_nifindexes_emb.s.nif")
         with var:
             emb = parseFromBuffer(string(
-                "(stmts@1,1,m.nim (let@0,2 :x.0.m x . (i +32) 1) (proc@0,3 :p.0.m . . . (params) . . . (stmts" +
-                " (let@2,1 :loc.0 . . . 2)))" +
-                " (type@0,5,inc.nim :T.0.m x . . (object .)) (var@0,6 :w.1.m x . . 3)" +
-                " (stmts@0,9,inc.nim (var@0,1 :z.0.m x . . 4)))"), string("m"))
+                string("(stmts@1,1,m.nim (let@0,2 :x.0.m x . (i +32) 1) (proc@0,3 :p.0.m . . . (params) . . . (stmts") +
+                string(" (let@2,1 :loc.0 . . . 2)))") +
+                string(" (type@0,5,inc.nim :T.0.m x . . (object .)) (var@0,6 :w.1.m x . . 3)") +
+                string(" (stmts@0,9,inc.nim (var@0,1 :z.0.m x . . 4)))")), string("m"))
         writeFile(emb, embFile)
         echo(readFile(embFile))
         with var:
             r = nifreader.open(embFile)
         with var:
             tab = readEmbeddedIndex(r)
-        echo(string("entries: "), tab.len, string(" offset after: "), offset(r))
+        echo("entries: ", tab.len, " offset after: ", offset(r))
         for k, e in pairs(tab):  # in the order the index lists them
-            echo(k, string(" offset="), e.offset, string(" vis="), e.vis, string(" parent="), e.parentInfo.line,
-                 string(","), e.parentInfo.col, string(" "),
+            echo(k, " offset=", e.offset, " vis=", e.vis, " parent=", e.parentInfo.line,
+                 ",", e.parentInfo.col, " ",
                  pool.filenames[e.parentInfo.file] if isValid(e.parentInfo.file) else string("-"))
-        echo(string("loc.0 indexed: "), tab.hasKey(string("loc.0")))
+        echo("loc.0 indexed: ", tab.hasKey(string("loc.0")))
         close(r)
         removeFile(embFile)
         # a file without an embedded index
@@ -580,7 +580,7 @@ if comptime(__name__ == "__main__"):
         writeFile(plainFile, string("(.nif27)\n(stmts 1)\n"))
         with var:
             rp = nifreader.open(plainFile)
-        echo(string("plain entries: "), len(readEmbeddedIndex(rp)))
+        echo("plain entries: ", len(readEmbeddedIndex(rp)))
         close(rp)
         removeFile(plainFile)
 

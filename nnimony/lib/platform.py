@@ -283,14 +283,14 @@ def nameToCPU(name: string) -> TSystemCPU:
 
 if comptime(__name__ == "__main__"):
     # Array bounds and OS table entries
-    assert OS[low(TSystemOS)].name == string("embedded")
-    assert OS[TSystemOS.osEmbedded].name == string("embedded")
-    assert OS[TSystemOS.osDos].name == string("DOS")
-    assert OS[TSystemOS.osLinux].name == string("Linux")
-    assert OS[TSystemOS.osIllumos].name == string("illumos")
-    assert OS[TSystemOS.osWindows].exeExt == string(".exe")
-    assert OS[TSystemOS.osMacosx].dllFrmt == string("lib$1.dylib")
-    assert OS[high(TSystemOS)].name == string("Any")
+    assert OS[low(TSystemOS)].name == "embedded"
+    assert OS[TSystemOS.osEmbedded].name == "embedded"
+    assert OS[TSystemOS.osDos].name == "DOS"
+    assert OS[TSystemOS.osLinux].name == "Linux"
+    assert OS[TSystemOS.osIllumos].name == "illumos"
+    assert OS[TSystemOS.osWindows].exeExt == ".exe"
+    assert OS[TSystemOS.osMacosx].dllFrmt == "lib$1.dylib"
+    assert OS[high(TSystemOS)].name == "Any"
     echo(OS[low(TSystemOS)].name, "|", OS[TSystemOS.osLinux].name, "|", OS[TSystemOS.osIllumos].name, "|", OS[high(TSystemOS)].name)
 
     # OS Properties and set operations
@@ -304,22 +304,22 @@ if comptime(__name__ == "__main__"):
     echo(TInfoOSProp.ospPosix in OS[TSystemOS.osLinux].props, "|", TInfoOSProp.ospCaseInsensitive in OS[TSystemOS.osWindows].props)
 
     # CPU table entries and Endianness
-    assert EndianToStr[Endianness.littleEndian] == string("littleEndian")
-    assert EndianToStr[Endianness.bigEndian] == string("bigEndian")
+    assert EndianToStr[Endianness.littleEndian] == "littleEndian"
+    assert EndianToStr[Endianness.bigEndian] == "bigEndian"
     echo(EndianToStr[Endianness.littleEndian], "|", EndianToStr[Endianness.bigEndian])
 
-    assert CPU[succ(low(TSystemCPU))].name == string("i386")
+    assert CPU[succ(low(TSystemCPU))].name == "i386"
     assert CPU[TSystemCPU.cpuAmd64].intSize == 64
-    assert CPU[TSystemCPU.cpuArm].name == string("arm32")
+    assert CPU[TSystemCPU.cpuArm].name == "arm32"
     assert CPU[TSystemCPU.cpuArm].bit == 32
-    assert CPU[TSystemCPU.cpuArm64].name == string("arm64")
+    assert CPU[TSystemCPU.cpuArm64].name == "arm64"
     assert CPU[TSystemCPU.cpuArm64].bit == 64
     assert CPU[TSystemCPU.cpuAVR].intSize == 16
     assert CPU[TSystemCPU.cpuAVR].floatSize == 32
     assert CPU[TSystemCPU.cpuM68k].endian == Endianness.bigEndian
     assert CPU[TSystemCPU.cpuSparc64].endian == Endianness.bigEndian
     assert CPU[TSystemCPU.cpuAmd64].endian == Endianness.littleEndian
-    assert CPU[high(TSystemCPU)].name == string("loongarch64")
+    assert CPU[high(TSystemCPU)].name == "loongarch64"
     echo(CPU[succ(low(TSystemCPU))].name, "|", CPU[TSystemCPU.cpuArm].name, "|", CPU[TSystemCPU.cpuAmd64].intSize, "|", CPU[high(TSystemCPU)].name)
 
     # findOS and nameToOS tests (var TSystemOS parameter)

@@ -32,12 +32,12 @@ if comptime(__name__ == "__main__"):
 
     def _testPrelude():
         # nifcore's NifKind is not shadowed by nifreader's
-        echo(string("kind: "), NifKind.TagLit, string(" "), NifKind.StrLit)
+        echo("kind: ", NifKind.TagLit, " ", NifKind.StrLit)
 
         # pool + globalTags + bitabs
         with let:
             sid = getOrIncl(pool.strings, string("hello"))
-        echo(string("pool: "), pool.strings[sid], string(" tag: "), globalTags.tags[ErrT])
+        echo("pool: ", pool.strings[sid], " tag: ", globalTags.tags[ErrT])
 
         # buildTree (from nifpools / nifcore)
         with var:
@@ -46,7 +46,7 @@ if comptime(__name__ == "__main__"):
             addIdent(tb, string("item"), NoLineInfo)
             addStrLit(tb, string("val"), NoLineInfo)
             tb.addIntLit(42)
-        echo(string("tree: "), toString(tb, False))
+        echo("tree: ", toString(tb, False))
 
         # nifbuilder proc
         with var:
@@ -55,7 +55,7 @@ if comptime(__name__ == "__main__"):
         with withTree(bld, string("stmts")):
             addIdent(bld, string("foo"))
             addIntLit(bld, 7)
-        echo(string("builder: "), extract(bld))
+        echo("builder: ", extract(bld))
 
         # nifreader.open on a small file under getTempDir()
         with let:
@@ -67,11 +67,11 @@ if comptime(__name__ == "__main__"):
         with var:
             tk = default(nifreader.ExpandedToken)
         nifreader.next(r, tk)
-        echo(string("reader: "), tk.tk, string(" "), nifreader.decodeStr(r, tk))
+        echo("reader: ", tk.tk, " ", nifreader.decodeStr(r, tk))
         nifreader.close(r)
         removeFile(tmpPath)
 
         # nifroles pragma
-        echo(string("role: "), _roleHelper(10))
+        echo("role: ", _roleHelper(10))
 
     _testPrelude()

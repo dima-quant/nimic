@@ -1102,7 +1102,7 @@ if comptime(__name__ == "__main__"):
         with var:
             c = m.buf.beginRead()
         doAssert(kind(c) == NifKind.TagLit)
-        doAssert(m.buf.tags.tagName(cursorTagId(c)) == string("foo"))
+        doAssert(m.buf.tags.tagName(cursorTagId(c)) == "foo")
 
         # the non-mmap File reader must decode byte-for-byte the same buffer as the
         # mmap path (it walks the same varint header + alignment pad).
@@ -1148,19 +1148,19 @@ if comptime(__name__ == "__main__"):
         # entry 0: foo, exported; its pos points at the enclosing (sdef tag.
         with let:
             e0 = m.index[0]
-        doAssert(m.buf.pool.symString(e0.sym) == string("foo.3.mymod"))
+        doAssert(m.buf.pool.symString(e0.sym) == "foo.3.mymod")
         doAssert(e0.vis == IndexVis.ivExported)
         with var:
             c = m.buf.cursorAt(nint(e0.pos))
-        doAssert(kind(c) == NifKind.TagLit and m.buf.tags.tagName(cursorTagId(c)) == string("sdef"))
+        doAssert(kind(c) == NifKind.TagLit and m.buf.tags.tagName(cursorTagId(c)) == "sdef")
         # entry 1: bar, hidden.
-        doAssert(m.buf.pool.symString(m.index[1].sym) == string("bar.4.mymod"))
+        doAssert(m.buf.pool.symString(m.index[1].sym) == "bar.4.mymod")
         doAssert(m.index[1].vis == IndexVis.ivHidden)
 
         with let:
             foo = m.findDeclaration(string("foo.3.mymod"))
         doAssert(not foo.cursorIsNil())
-        doAssert(kind(foo) == NifKind.TagLit and m.buf.tags.tagName(cursorTagId(foo)) == string("sdef"))
+        doAssert(kind(foo) == NifKind.TagLit and m.buf.tags.tagName(cursorTagId(foo)) == "sdef")
         doAssert(m.findDeclaration(string("missing.0.mymod")).cursorIsNil())
         with var:
             declarationCount = 0
@@ -1251,7 +1251,7 @@ if comptime(__name__ == "__main__"):
         doAssert(m.index[0].vis == IndexVis.ivExported)
         with var:
             decl = m.buf.cursorAt(nint(m.index[0].pos))
-        doAssert(kind(decl) == NifKind.TagLit and tags.tags[cursorTagId(decl)] == string("sdef"),
+        doAssert(kind(decl) == NifKind.TagLit and tags.tags[cursorTagId(decl)] == "sdef",
                  string("index position does not point at the declaration's tag"))
         with var:
             body = sub(decl)
@@ -1329,7 +1329,7 @@ if comptime(__name__ == "__main__"):
         endRead(b)
         doAssert(fm.index[0].sym == symId(pool2, string("foo.3.mymod")))
 
-    echo(string("bif self-tests passed"))
+    echo("bif self-tests passed")
 
 
 if comptime(__name__ == "__main__"):
@@ -1356,27 +1356,27 @@ if comptime(__name__ == "__main__"):
         return True
 
     def _echoModule(label: string, m: mut @ BifModule):
-        echo(label, string(": tokens "), m.buf.len, string(" tags "), len(m.buf.tags.tags),
-             string(" strings "), len(m.buf.pool.strings), string(" syms "), syms(m.buf.pool).len,
-             string(" files "), len(m.buf.pool.filenames), string(" index "), m.index.len)
+        echo(label, ": tokens ", m.buf.len, " tags ", len(m.buf.tags.tags),
+             " strings ", len(m.buf.pool.strings), " syms ", syms(m.buf.pool).len,
+             " files ", len(m.buf.pool.filenames), " index ", m.index.len)
         for e in m.index:
-            echo(string("  "), m.buf.pool.symString(e.sym), string(" sym "), uint32(e.sym), string(" pos "), e.pos,
-                 string(" "), e.vis)
+            echo("  ", m.buf.pool.symString(e.sym), " sym ", uint32(e.sym), " pos ", e.pos,
+                 " ", e.vis)
         for name, visibility, declaration in m.declarations():
-            echo(string("  decl "), name, string(" "), visibility, string(" "),
+            echo("  decl ", name, " ", visibility, " ",
                  m.buf.tags.tagName(cursorTagId(declaration)))
 
     def _sameAs(label: string, src: mut @ TokenBuf, m: mut @ BifModule):
         with var:
             a = src.beginRead()
             b = m.buf.beginRead()
-        echo(label, string(": same tree "), _sameTree(a, b), string(", same tokens "), _sameTokens(src, m.buf),
-             string(", same pools "), _samePools(src, m.buf))
+        echo(label, ": same tree ", _sameTree(a, b), ", same tokens ", _sameTokens(src, m.buf),
+             ", same pools ", _samePools(src, m.buf))
         endRead(a)
         endRead(b)
 
     def _test():
-        echo(UnusedNameTag, string(" "), DependencyTag)
+        echo(UnusedNameTag, " ", DependencyTag)
         with let:
             tmpDir = getTempDir()
             p1 = tmpDir + string("nimic_bif_test_store.bif")
@@ -1388,32 +1388,32 @@ if comptime(__name__ == "__main__"):
         with var:
             src = _buildModule(string("foo.3.mymod"), string("shared.1.othermod"), string("some/where.nim"))
         # buildIndex: the self-module suffix decides which symbols are global
-        echo(string("buildIndex: "), buildIndex(src).len, string(" "), buildIndex(src, string(".mymod")).len,
-             string(" "), buildIndex(src, dottedSuffix=string(".3.mymod")).len)
+        echo("buildIndex: ", buildIndex(src).len, " ", buildIndex(src, string(".mymod")).len,
+             " ", buildIndex(src, dottedSuffix=string(".3.mymod")).len)
 
         # the three writers write the same bytes
         with let:
             bytes = storeToString(src, string(".mymod"))
             hx = _hexOf(bytes)
-        echo(string("storeToString: "), bytes.len, string(" bytes"))
+        echo("storeToString: ", bytes.len, " bytes")
         with var:
             i = 0
         while i < hx.len:
-            echo(string("  "), substr(hx, i, min(i + 63, hx.len - 1)))
+            echo("  ", substr(hx, i, min(i + 63, hx.len - 1)))
             i += 64
         store(src, p1, dottedSuffix=string(".mymod"))
         with var:
             f = open(p2, fmWrite)
         storeToFile(src, f, string(".mymod"))
         close(f)
-        echo(string("store == storeToString: "), readFile(p1) == bytes)
-        echo(string("storeToFile == storeToString: "), readFile(p2) == bytes)
+        echo("store == storeToString: ", readFile(p1) == bytes)
+        echo("storeToFile == storeToString: ", readFile(p2) == bytes)
 
         # isBifFile: a bif file, a text NIF file, a missing file, a file shorter than the magic
         writeFile(pText, string("(.nif27)\n(stmts)\n"))
         writeFile(pShort, substr(bytes, 0, 4))
-        echo(string("isBifFile: "), isBifFile(p1), string(" "), isBifFile(pText), string(" "),
-             isBifFile(pMissing), string(" "), isBifFile(pShort))
+        echo("isBifFile: ", isBifFile(p1), " ", isBifFile(pText), " ",
+             isBifFile(pMissing), " ", isBifFile(pShort))
 
         # every loader on the same file gives the same tokens and pools
         with var:
@@ -1446,49 +1446,49 @@ if comptime(__name__ == "__main__"):
         close(f)
         _echoModule(string("loadFromFileInto (same busy pools)"), m5)
         _sameAs(string("loadFromFileInto (same busy pools)"), src, m5)
-        echo(string("busy pools shared: "), m4.buf.pool == busyPool, string(" "), m5.buf.tags == busyTags,
-             string(", same index: "), m4.index[0].sym == m5.index[0].sym, string(" "),
+        echo("busy pools shared: ", m4.buf.pool == busyPool, " ", m5.buf.tags == busyTags,
+             ", same index: ", m4.index[0].sym == m5.index[0].sym, " ",
              m4.index[0].pos == m5.index[0].pos)
 
         # buildRemap: identity into empty pools, a real map into busy ones
         with let:
             rm1 = buildRemap(m1.buf, newPool(), newTagPool())
             rm2 = buildRemap(m1.buf, busyPool, busyTags)
-        echo(string("remap identity: "), rm1.identity, string(" "), rm2.identity)
-        for i in range(1, rm2.tags.len): echo(string("  tag "), i, string(" -> "), uint32(rm2.tags[i]))
-        for i in range(1, rm2.strings.len): echo(string("  string "), i, string(" -> "), uint32(rm2.strings[i]))
-        for i in range(1, rm2.syms.len): echo(string("  sym "), i, string(" -> "), uint32(rm2.syms[i]))
-        for i in range(1, rm2.files.len): echo(string("  file "), i, string(" -> "), uint32(rm2.files[i]))
+        echo("remap identity: ", rm1.identity, " ", rm2.identity)
+        for i in range(1, rm2.tags.len): echo("  tag ", i, " -> ", uint32(rm2.tags[i]))
+        for i in range(1, rm2.strings.len): echo("  string ", i, " -> ", uint32(rm2.strings[i]))
+        for i in range(1, rm2.syms.len): echo("  sym ", i, " -> ", uint32(rm2.syms[i]))
+        for i in range(1, rm2.files.len): echo("  file ", i, " -> ", uint32(rm2.files[i]))
 
         # findDeclaration on a loaded module
         with let:
             decl = m1.findDeclaration(string("foo.3.mymod"))
-        echo(string("findDeclaration: "), kind(decl), string(" "), m1.buf.tags.tagName(cursorTagId(decl)),
-             string(" "), m1.findDeclaration(string("shared.1.othermod")).cursorIsNil())
+        echo("findDeclaration: ", kind(decl), " ", m1.buf.tags.tagName(cursorTagId(decl)),
+             " ", m1.findDeclaration(string("shared.1.othermod")).cursorIsNil())
 
         # loadIndex / loadIndexFromFile / containsSym
         with let:
             idx = loadIndex(p1)
-        echo(string("loadIndex: "), idx.len)
-        for e in idx: echo(string("  sym "), uint32(e.sym), string(" pos "), e.pos, string(" "), e.vis)
+        echo("loadIndex: ", idx.len)
+        for e in idx: echo("  sym ", uint32(e.sym), " pos ", e.pos, " ", e.vis)
         f = open(p1, fmRead)
         with let:
             idx2 = loadIndexFromFile(f)
         close(f)
-        echo(string("loadIndexFromFile: "), idx2.len, string(" "), idx2[0].sym == idx[0].sym,
-             string(" "), idx2[0].pos == idx[0].pos)
-        echo(string("containsSym: "), containsSym(p1, string("foo.3.mymod")), string(" "),
-             containsSym(p1, string("shared.1.othermod")), string(" "),
-             containsSym(p1, string("shared.1.othermoe")), string(" "),
-             containsSym(p1, string("x")), string(" "),
-             containsSym(pText, string("foo.3.mymod")), string(" "),
-             containsSym(pMissing, string("foo.3.mymod")), string(" "),
+        echo("loadIndexFromFile: ", idx2.len, " ", idx2[0].sym == idx[0].sym,
+             " ", idx2[0].pos == idx[0].pos)
+        echo("containsSym: ", containsSym(p1, string("foo.3.mymod")), " ",
+             containsSym(p1, string("shared.1.othermod")), " ",
+             containsSym(p1, string("shared.1.othermoe")), " ",
+             containsSym(p1, string("x")), " ",
+             containsSym(pText, string("foo.3.mymod")), " ",
+             containsSym(pMissing, string("foo.3.mymod")), " ",
              containsSym(pShort, string("foo.3.mymod")))
         # a file cut inside the last symbol: the symbols before the cut are found, the cut one is not
         with let:
             at = find(bytes, string("shared.1.othermod"))
         writeFile(pCut, substr(bytes, 0, at + 4))
-        echo(string("containsSym (cut): "), containsSym(pCut, string("foo.3.mymod")), string(" "),
+        echo("containsSym (cut): ", containsSym(pCut, string("foo.3.mymod")), " ",
              containsSym(pCut, string("shared.1.othermod")))
 
         removeFile(p1)

@@ -316,14 +316,14 @@ if comptime(__name__ == "__main__"):
     assert getKeyId(t, string("none")) == u32(0)
 
     for i in range(100_000):
-        _ = getOrIncl(t, str(i) + "___" + str(i))
+        _ = getOrIncl(t, str(i) + string("___") + str(i))
 
     for i in range(100_000):
-        assert _idToIdx(getOrIncl(t, str(i) + "___" + str(i))) == i + 4
+        assert _idToIdx(getOrIncl(t, str(i) + string("___") + str(i))) == i + 4
     assert t._vals.len == 100004
 
-    assert t._vals[0] == string("hello")
-    assert t._vals[1004] == string("1000___1000")
+    assert t._vals[0] == "hello"
+    assert t._vals[1004] == "1000___1000"
 
     with var:
         tf = initBiTable[uint32, float64]()
@@ -342,10 +342,10 @@ if comptime(__name__ == "__main__"):
         with var:
             a = initBiTable[uint32, string]()
         for i in range(5_000):
-            assert _idToIdx(addOrdered(a, "s" + str(i))) == i     # same ids getOrIncl gives
+            assert _idToIdx(addOrdered(a, string("s") + str(i))) == i     # same ids getOrIncl gives
         assert a._vals.len == 5_000
-        assert a[uint32(1)] == string("s0")                              # id -> value, no index yet
-        assert a[uint32(5_000)] == string("s4999")
+        assert a[uint32(1)] == "s0"                              # id -> value, no index yet
+        assert a[uint32(5_000)] == "s4999"
 
         # `getKeyId` needs the index, and says so rather than answering wrongly
         assert not a.isIndexed()
@@ -356,11 +356,11 @@ if comptime(__name__ == "__main__"):
         assert getKeyId(a, string("s4999")) == u32(5_000)
         assert getKeyId(a, string("nope")) == u32(0)
         for i in range(5_000):
-            assert _idToIdx(getKeyId(a, "s" + str(i))) == i
+            assert _idToIdx(getKeyId(a, string("s") + str(i))) == i
 
         # and interning must now REUSE those ids rather than append duplicates
         for i in range(5_000):
-            assert _idToIdx(getOrIncl(a, "s" + str(i))) == i
+            assert _idToIdx(getOrIncl(a, string("s") + str(i))) == i
         assert a._vals.len == 5_000
         assert _idToIdx(getOrIncl(a, string("fresh"))) == 5_000
         assert a._vals.len == 5_001
@@ -369,7 +369,7 @@ if comptime(__name__ == "__main__"):
         # `getOrIncl` builds the index itself, so it needs no `ensureIndexed`
         with var:
             b = initBiTable[uint32, string]()
-        for i in range(100): _ = addOrdered(b, "t" + str(i))
+        for i in range(100): _ = addOrdered(b, string("t") + str(i))
         assert not b.isIndexed()
         assert _idToIdx(getOrIncl(b, string("t42"))) == 42
         assert b.isIndexed()
@@ -394,7 +394,7 @@ if comptime(__name__ == "__main__"):
         tab = initBiTable[uint32, string]()
     for i in range(40):
         with let:
-            id = getOrIncl(tab, "item_" + str(i))
+            id = getOrIncl(tab, string("item_") + str(i))
         doAssert(id == uint32(i + 1))
     doAssert(len(tab) == 40)
     doAssert(getOrIncl(tab, string("item_0")) == u32(1))

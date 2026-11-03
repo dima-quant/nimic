@@ -2825,7 +2825,7 @@ if comptime(__name__ == "__main__"):
         with let:
             xx = a
         if xx != b:
-            echo(string("test failed "), astToStr(a), string(": got "), xx, string(" expected "), b)
+            echo("test failed ", astToStr(a), ": got ", xx, " expected ", b)
             quit(1)
 
     # In a proc, not at module level: host Nim rejects the `{.nifWrap.}` statement of `into` /
@@ -3190,7 +3190,7 @@ if comptime(__name__ == "__main__"):
             with into(d):
                 test(intVal(d), i64(42)); d.inc()
 
-        echo(string("nifcore self-tests passed"))
+        echo("nifcore self-tests passed")
 
     _selfTest()
 
@@ -3214,35 +3214,35 @@ if comptime(__name__ == "__main__"):
                 b = createTokenBuf(4)
             b.addIntLit(10)
             b.addIntLit(20)
-            echo(string("built: rc "), _rc(b))
+            echo("built: rc ", _rc(b))
             with var:
                 c = b.beginRead()
-            echo(string("after beginRead: rc "), _rc(b))
+            echo("after beginRead: rc ", _rc(b))
 
             with block:  # the copy is destroyed at the end of the block
                 with var:
                     cc = c.copy()
                 cc.inc()
-                echo(string("with copied cursor: rc "), _rc(b), string(", copy at "), intVal(cc))
-            echo(string("after copied cursor gone: rc "), _rc(b))
+                echo("with copied cursor: rc ", _rc(b), ", copy at ", intVal(cc))
+            echo("after copied cursor gone: rc ", _rc(b))
             endRead(c)
-            echo(string("after endRead: rc "), _rc(b))
+            echo("after endRead: rc ", _rc(b))
 
             # a mutation while a cursor reads: prepareMutation copies, the old owner stays with the cursor
             with var:
                 c2 = b.beginRead()
             b.addIntLit(30)
-            echo(string("mutation while reading: buffer rc "), _rc(b), string(", cursor rc "), c2._owner._rc,
-                 string(", cursor still reads "), intVal(c2))
+            echo("mutation while reading: buffer rc ", _rc(b), ", cursor rc ", c2._owner._rc,
+                 ", cursor still reads ", intVal(c2))
             endRead(c2)
 
             # a mutation without cursors reclaims the owner header
             with var:
                 c3 = b.beginRead()
             endRead(c3)
-            echo(string("before reclaim: rc "), _rc(b))
+            echo("before reclaim: rc ", _rc(b))
             b.addIntLit(40)
-            echo(string("after reclaim: rc "), _rc(b), string(", len "), len(b))
+            echo("after reclaim: rc ", _rc(b), ", len ", len(b))
 
             with var:
                 b2 = createTokenBuf(4)
@@ -3255,41 +3255,41 @@ if comptime(__name__ == "__main__"):
                 tree = b2.beginRead()
             with var:
                 child = childCursor(tree)
-            echo(string("childCursor: rc "), _rc(b2), string(", rem "), child._rem, string(", first "), intVal(child))
+            echo("childCursor: rc ", _rc(b2), ", rem ", child._rem, ", first ", intVal(child))
             with var:
                 second = plus_bang(child, 1)
-            echo(string("+!: rc "), _rc(b2), string(", rem "), second._rem, string(", value "), intVal(second))
+            echo("+!: rc ", _rc(b2), ", rem ", second._rem, ", value ", intVal(second))
             endRead(second)
             endRead(child)
             endRead(tree)
-            echo(string("after all cursors ended: rc "), _rc(b2))
+            echo("after all cursors ended: rc ", _rc(b2))
 
         # the ids: `$`, `==`, hash; NifLineInfo and NifSymbol: ==, hash
         with block("ids_and_hashes"):
-            echo(TagId(u32(3)), string(" "), StrId(u32(4)), string(" "), SymId(u32(5)))
-            echo(TagId(u32(3)) == TagId(u32(3)), string(" "), hash(StrId(u32(4))) == hash(StrId(u32(4))))
+            echo(TagId(u32(3)), " ", StrId(u32(4)), " ", SymId(u32(5)))
+            echo(TagId(u32(3)) == TagId(u32(3)), " ", hash(StrId(u32(4))) == hash(StrId(u32(4))))
             with let:
                 li = NifLineInfo(file=FileId(u32(2)), line=i32(10), col=i32(3), comment=StrId(u32(0)))
             echo(li == NifLineInfo(file=FileId(u32(2)), line=i32(10), col=i32(3), comment=StrId(u32(0))),
-                 string(" "), li == NoNifLineInfo, string(" "), li.isValid(), string(" "), NoNifLineInfo.isValid())
-            echo(hash(li), string(" "), hash(NoNifLineInfo))
+                 " ", li == NoNifLineInfo, " ", li.isValid(), " ", NoNifLineInfo.isValid())
+            echo(hash(li), " ", hash(NoNifLineInfo))
             with let:
                 s = NifSymbol(name=StrId(u32(1)), disamb=i32(12), dedup=StrId(u32(0)), module=StrId(u32(2)))
-            echo(hash(s), string(" "), s == s, string(" "), s.isLocal())
+            echo(hash(s), " ", s == s, " ", s.isLocal())
 
         # token constructors and raw accessors
         with block("tokens"):
             with var:
                 n = tagLitToken(TagId(u32(3)), u32(5))
             setTag(n, TagId(u32(7)))
-            echo(_rawTag(n), string(" "), _rawJump(n), string(" "), kind(n))
-            echo(kind(dotToken()), string(" "), kind(charToken(ch("a"))), string(" "), uoperand(charToken(ch("a"))))
-            echo(kind(strLitToken(StrId(u32(9)))), string(" "), uoperand(symToken(SymId(u32(9)))),
-                 string(" "), kind(symdefToken(SymId(u32(9)))), string(" "), kind(identToken(StrId(u32(9)))))
+            echo(_rawTag(n), " ", _rawJump(n), " ", kind(n))
+            echo(kind(dotToken()), " ", kind(charToken(ch("a"))), " ", uoperand(charToken(ch("a"))))
+            echo(kind(strLitToken(StrId(u32(9)))), " ", uoperand(symToken(SymId(u32(9)))),
+                 " ", kind(symdefToken(SymId(u32(9)))), " ", kind(identToken(StrId(u32(9)))))
             with var:
                 b = createTokenBuf(4)
             b.addIntLit(-5)
-            echo(soperand(b[0]), string(" "), kind(b[0]))
+            echo(soperand(b[0]), " ", kind(b[0]))
 
         # the symbol API
         with block("symbols"):
@@ -3297,35 +3297,35 @@ if comptime(__name__ == "__main__"):
                 p = newPool()
             with let:
                 id = symId(p, string("abc.12.Ikey.mod"))
-            echo(p.symString(id), string("|"), p.symBasename(id), string("|"), p.symVersionedBasename(id),
-                 string("|"), p.symWithoutModule(id), string("|"), p.symModule(id))
-            echo(p.symIsInstantiation(id), string(" "), p.symIsLocal(id), string(" "), p.symModuleIs(id, string("mod")),
-                 string(" "), p.symModuleIs(id, string("other")), string(" "), symSpellingLen(p, id),
-                 string(" "), p.symString(id).len)
+            echo(p.symString(id), "|", p.symBasename(id), "|", p.symVersionedBasename(id),
+                 "|", p.symWithoutModule(id), "|", p.symModule(id))
+            echo(p.symIsInstantiation(id), " ", p.symIsLocal(id), " ", p.symModuleIs(id, string("mod")),
+                 " ", p.symModuleIs(id, string("other")), " ", symSpellingLen(p, id),
+                 " ", p.symString(id).len)
             with let:
                 other = symId(p, string("abc"), 12, string("other"), string("Ikey"))
-            echo(p.symSameEntity(id, other), string(" "), p.symSameEntity(id, id), string(" "), p.symString(other))
+            echo(p.symSameEntity(id, other), " ", p.symSameEntity(id, id), " ", p.symString(other))
             with let:
                 local = symId(p, string("p.0h107"))
-            echo(p.symString(local), string("|"), p.symBasename(local), string("|"), p.symIsLocal(local),
-                 string("|"), p.symIsInstantiation(local), string("|"), p.symModule(local))
+            echo(p.symString(local), "|", p.symBasename(local), "|", p.symIsLocal(local),
+                 "|", p.symIsInstantiation(local), "|", p.symModule(local))
             with let:
                 twoKeys = symId(p, string("foo.0.Ia.Ib.mod"))
-            echo(p.symIsInstantiation(twoKeys), string(" "), p.sym(twoKeys).disamb, string(" "), p.symNameId(id) == p.sym(id).name)
-            echo(parseDisamb(string("x.12"), 2, 2), string(" "), parseDisamb(string("00"), 0, 2), string(" "),
-                 parseDisamb(string("0"), 0, 1), string(" "), parseDisamb(string("1a"), 0, 2), string(" "),
+            echo(p.symIsInstantiation(twoKeys), " ", p.sym(twoKeys).disamb, " ", p.symNameId(id) == p.sym(id).name)
+            echo(parseDisamb(string("x.12"), 2, 2), " ", parseDisamb(string("00"), 0, 2), " ",
+                 parseDisamb(string("0"), 0, 1), " ", parseDisamb(string("1a"), 0, 2), " ",
                  parseDisamb(string(""), 0, 0))
             with let:
                 sp = syms(p)
-            echo(sp.getKeyId(string("abc.12.Ikey.mod")) == id, string(" "), sp.getKeyId(string("abc.12.Ikey.nomod")),
-                 string(" "), sp.getKeyId(string("zzz.1")), string(" "), sp[id], string(" "), sp.len,
-                 string(" "), sp.getOrIncl(string("abc.12.Ikey.mod")) == id, string(" "), p.poolSym(local))
+            echo(sp.getKeyId(string("abc.12.Ikey.mod")) == id, " ", sp.getKeyId(string("abc.12.Ikey.nomod")),
+                 " ", sp.getKeyId(string("zzz.1")), " ", sp[id], " ", sp.len,
+                 " ", sp.getOrIncl(string("abc.12.Ikey.mod")) == id, " ", p.poolSym(local))
 
         # tag pools: createTags, hasEscapes, escaped tags
         with block("tag_pools"):
             with let:
                 tp = createTags[_Color]()
-            echo(tp.tagName(TagId(u32(1))), string(" "), tp.tagName(TagId(u32(3))), string(" "), tp.hasEscapes())
+            echo(tp.tagName(TagId(u32(1))), " ", tp.tagName(TagId(u32(3))), " ", tp.hasEscapes())
             with let:
                 esc = newTagPool()
             esc.escapeTag = registerTag(esc, string("esc"))
@@ -3336,8 +3336,8 @@ if comptime(__name__ == "__main__"):
             b.closeTag()
             with var:
                 c = b.beginRead()
-            echo(esc.hasEscapes(), string(" "), isEscapedTag(c), string(" "), uint32(resolvedTagId(c)),
-                 string(" "), uint32(cursorTagId(c)), string(" "), escapeTagOf(c))
+            echo(esc.hasEscapes(), " ", isEscapedTag(c), " ", uint32(resolvedTagId(c)),
+                 " ", uint32(cursorTagId(c)), " ", escapeTagOf(c))
             endRead(c)
 
         # the builder API, positions, partial scopes
@@ -3354,30 +3354,30 @@ if comptime(__name__ == "__main__"):
             addSymUse(b, string("use.1"))
             addSymDef(b, string("def.2"))
             b.addUIntLit(u64(100))
-            echo(string("builder tokens: len "), len(b))
+            echo("builder tokens: len ", len(b))
             with var:
                 c = b.cursorAt(2)
-            echo(kind(c), string(" "), strVal(c), string(" "), strId(c) == getOrIncl(b.pool.strings, string("myIdent")),
-                 string(" "), b.cursorToPosition(c), string(" "), c.toUniqueId() == b.cursorAt(2).toUniqueId())
+            echo(kind(c), " ", strVal(c), " ", strId(c) == getOrIncl(b.pool.strings, string("myIdent")),
+                 " ", b.cursorToPosition(c), " ", c.toUniqueId() == b.cursorAt(2).toUniqueId())
             c.inc()
-            echo(symName(c), string(" "), symId(c) == sid, string(" "), internedSymToken(b.pool, NifKind.Symbol, sid) == load(c))
+            echo(symName(c), " ", symId(c) == sid, " ", internedSymToken(b.pool, NifKind.Symbol, sid) == load(c))
             c.unsafeDec()
-            echo(b.cursorToPosition(c), string(" "), c._rem, string(" "), c.hasCurrentToken(), string(" "), c.cursorIsNil())
+            echo(b.cursorToPosition(c), " ", c._rem, " ", c.hasCurrentToken(), " ", c.cursorIsNil())
             with var:
                 tail = b.cursorTailAt(len(b))
-            echo(tail._rem, string(" "), tail.hasCurrentToken(), string(" "), sharesPools(c, b.pool, b.tags),
-                 string(" "), sharesPools(c, newPool(), b.tags), string(" "), pool(c) == b.pool, string(" "), tags(c) == b.tags)
+            echo(tail._rem, " ", tail.hasCurrentToken(), " ", sharesPools(c, b.pool, b.tags),
+                 " ", sharesPools(c, newPool(), b.tags), " ", pool(c) == b.pool, " ", tags(c) == b.tags)
             endRead(c)
             endRead(tail)
             b.shrink(len(b) - 2)
-            echo(string("after shrink: len "), len(b))
+            echo("after shrink: len ", len(b))
 
             with var:
                 b2 = createTokenBuf(4)
             b2.addIntLit(111)
             b2.addIntLit(222)
             b.insert(b2, 1)
-            echo(string("after insert: len "), len(b), string(", at 1: "), intVal(b.cursorAt(1)))
+            echo("after insert: len ", len(b), ", at 1: ", intVal(b.cursorAt(1)))
 
             # readonlyCursorAt on a buffer that already has an owner
             with var:
@@ -3385,7 +3385,7 @@ if comptime(__name__ == "__main__"):
             endRead(cInit)
             with var:
                 cro = b.readonlyCursorAt(1)
-            echo(string("readonlyCursorAt: "), kind(cro), string(" "), intVal(cro))
+            echo("readonlyCursorAt: ", kind(cro), " ", intVal(cro))
             endRead(cro)
             # on a fresh buffer: the owner is minted through the cast view of `b`, and both cursors share it
             with var:
@@ -3396,11 +3396,11 @@ if comptime(__name__ == "__main__"):
                 ro1 = fresh.readonlyCursorAt(0)
             with var:
                 ro2 = fresh.readonlyCursorAt(1)
-            echo(string("readonlyCursorAt on a fresh buffer: rc "), _rc(fresh), string(", "), intVal(ro1),
-                 string(" "), intVal(ro2), string(", pools "), pool(ro1) == fresh.pool)
+            echo("readonlyCursorAt on a fresh buffer: rc ", _rc(fresh), ", ", intVal(ro1),
+                 " ", intVal(ro2), ", pools ", pool(ro1) == fresh.pool)
             endRead(ro1)
             endRead(ro2)
-            echo(string("after both ended: rc "), _rc(fresh))
+            echo("after both ended: rc ", _rc(fresh))
 
         # reopenLastTree, replace, sub, peekInto, peekPastEnd, subtreeWidth
         with block("trees"):
@@ -3418,18 +3418,18 @@ if comptime(__name__ == "__main__"):
             b.addIntLit(3)
             with var:
                 c = b.beginRead()
-            echo(string("reopened jump "), cursorJump(c), string(", width "), subtreeWidth(c))
+            echo("reopened jump ", cursorJump(c), ", width ", subtreeWidth(c))
             with let:
                 body = sub(c)
-            echo(string("sub: rem "), body._rem, string(", first "), intVal(body), string(", c still at "), kind(c))
+            echo("sub: rem ", body._rem, ", first ", intVal(body), ", c still at ", kind(c))
             with var:
                 first = body.copy()
             skip(first)
             skip(first)
-            echo(string("peekPastEnd: "), intVal(peekPastEnd(first)))
+            echo("peekPastEnd: ", intVal(peekPastEnd(first)))
             with peekInto(c):
-                echo(string("peekInto first child "), intVal(c))
-            echo(string("after peekInto: "), intVal(c), string(" rem "), c._rem)
+                echo("peekInto first child ", intVal(c))
+            echo("after peekInto: ", intVal(c), " rem ", c._rem)
             endRead(c)
 
             with var:
@@ -3444,9 +3444,9 @@ if comptime(__name__ == "__main__"):
             endRead(cb)
             with var:
                 r = b.beginRead()
-            echo(string("replace: len "), len(b), string(", tag "), b.tags.tagName(cursorTagId(r)), string(", jump "), cursorJump(r))
+            echo("replace: len ", len(b), ", tag ", b.tags.tagName(cursorTagId(r)), ", jump ", cursorJump(r))
             skip(r)
-            echo(string("after replaced tree: "), intVal(r))
+            echo("after replaced tree: ", intVal(r))
             endRead(r)
 
             # rootOf: the first Symbol of a subtree (a loop template: `for _ in n.loopInto():`)
@@ -3464,9 +3464,9 @@ if comptime(__name__ == "__main__"):
             lv.addIntLit(5)
             with var:
                 lc = lv.beginRead()
-            echo(string("rootOf: "), lv.pool.symString(rootOf(lc)))
+            echo("rootOf: ", lv.pool.symString(rootOf(lc)))
             skip(lc)
-            echo(string("rootOf an atom: "), rootOf(lc))
+            echo("rootOf an atom: ", rootOf(lc))
             endRead(lc)
 
         # adoptForeignTokens borrows the block, a mutation forks it; growRawUninit
@@ -3477,18 +3477,18 @@ if comptime(__name__ == "__main__"):
             src.addIntLit(6)
             with var:
                 adopted = adoptForeignTokens(src.rawTokenPtr(), len(src), src.pool, src.tags)
-            echo(string("adopted: len "), len(adopted), string(", rc "), _rc(adopted), string(", same block "),
+            echo("adopted: len ", len(adopted), ", rc ", _rc(adopted), ", same block ",
                  adopted.rawTokenPtr() == src.rawTokenPtr())
             adopted.addIntLit(7)
-            echo(string("after mutation: rc "), _rc(adopted), string(", same block "), adopted.rawTokenPtr() == src.rawTokenPtr(),
-                 string(", len "), len(adopted), string(", src len "), len(src))
+            echo("after mutation: rc ", _rc(adopted), ", same block ", adopted.rawTokenPtr() == src.rawTokenPtr(),
+                 ", len ", len(adopted), ", src len ", len(src))
             with var:
                 g = createTokenBuf(1)
             with let:
                 raw = g.growRawUninit(3)
-            echo(string("growRawUninit: len "), len(g), string(", nil "), isNil(raw))
+            echo("growRawUninit: len ", len(g), ", nil ", isNil(raw))
             g.shrink(0)
-            echo(string("shrunk: len "), len(g))
+            echo("shrunk: len ", len(g))
 
         # addBuffer, addBufferSamePool, withSparseLineInfo (and the constant NoNifLineInfo stays untouched)
         with block("buffers_and_sparse_info"):
@@ -3505,7 +3505,7 @@ if comptime(__name__ == "__main__"):
                 cd = dstB.beginRead()
             with var:
                 cs = same.beginRead()
-            echo(string("addBuffer: "), strVal(cd), string(", addBufferSamePool: "), strVal(cs))
+            echo("addBuffer: ", strVal(cd), ", addBufferSamePool: ", strVal(cs))
             endRead(cd)
             endRead(cs)
 
@@ -3518,7 +3518,7 @@ if comptime(__name__ == "__main__"):
             dense.addIntLit(3); dense.appendLineInfo(f, i32(8), i32(1))
             with var:
                 sparse = withSparseLineInfo(dense)
-            echo(string("withSparseLineInfo: len "), len(dense), string(" -> "), len(sparse))
-            echo(string("NoNifLineInfo unchanged: "), NoNifLineInfo.line, string(" "), uint32(NoNifLineInfo.file))
+            echo("withSparseLineInfo: len ", len(dense), " -> ", len(sparse))
+            echo("NoNifLineInfo unchanged: ", NoNifLineInfo.line, " ", uint32(NoNifLineInfo.file))
 
     _addedTests()

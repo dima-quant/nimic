@@ -154,7 +154,7 @@ def _addSplitSymbol(b: mut @ TokenBuf, r: mut @ rd.Reader,
                     dedupTok = t
                 else:
                     if dedups == 2: dedupStr = rd.decodeStr(r, dedupTok)
-                    dedupStr.add(char('.'))
+                    dedupStr.add(ch('.'))
                     dedupStr.add(rd.decodeStr(r, t))
             case rd.SymbolPart.SymModule:
                 moduleTok = t
@@ -174,16 +174,16 @@ def _addSplitSymbol(b: mut @ TokenBuf, r: mut @ rd.Reader,
         with var:
             spelling = rd.decodeStr(r, head)
         if hasDisamb:
-            spelling.add(char('.'))
+            spelling.add(ch('.'))
             spelling.add(disambText)
         if dedups == 1:
-            spelling.add(char('.'))
+            spelling.add(ch('.'))
             spelling.add(rd.decodeStr(r, dedupTok))
         elif dedups > 1:
-            spelling.add(char('.'))
+            spelling.add(ch('.'))
             spelling.add(dedupStr)
         if moduleTok.tk == NifKind.ExtendedSuffix:
-            spelling.add(char('.'))
+            spelling.add(ch('.'))
             spelling.add(rd.decodeStr(r, moduleTok))
         if isDef: addSymDef(b, spelling)
         else: addSymUse(b, spelling)
@@ -295,7 +295,7 @@ def parse(r: mut @ rd.Reader, b: mut @ TokenBuf,
                 with let:
                     info = _resolveInfo(b, tok, parents)
                 b.addFloatLit(rd.decodeFloat(tok)); emit(info)
-        if nested == 0 and tok.tk not in Tset(rd.NifKind.ParLe):
+        if nested == 0 and tok.tk not in Tset[rd.NifKind](rd.NifKind.ParLe):
             # A bare top-level atom is a complete "tree" on its own.
             break
 
@@ -695,7 +695,7 @@ if comptime(__name__ == "__main__"):
         with var:
             b2 = parseFromBuffer(txt, string("t"))
         result = _sameTokens(b1, b2)
-        if not result: echo(string("round-trip MISMATCH:\n"), txt)
+        if not result: echo("round-trip MISMATCH:\n", txt)
         return result
 
     # In a proc, not at module level: host Nim rejects the `{.nifWrap.}` statement of `into` expanded at
@@ -787,14 +787,14 @@ if comptime(__name__ == "__main__"):
 
     _selfTest()
 
-    echo(string("nifcoreparse self-tests passed"))
+    echo("nifcoreparse self-tests passed")
 
 if comptime(__name__ == "__main__"):
     importFrom("nimic.std.os", "getTempDir", "removeFile")
 
     def _showTree(title: string, b: mut @ TokenBuf):
         """`b` as text with and without line info, its token count and whether it round-trips."""
-        echo(title, string(": "), len(b), string(" tokens, round trip "), _roundTrips(b))
+        echo(title, ": ", len(b), " tokens, round trip ", _roundTrips(b))
         echo(toString(b))
         echo(toString(b, includeLineInfo=False))
 
@@ -804,9 +804,9 @@ if comptime(__name__ == "__main__"):
             c = b.beginRead()
         with into(c):
             while c.hasMore():
-                echo(string("  "), kind(c), string(" "), toString(c), string(" | "), toString(c, includeLineInfo=False))
+                echo("  ", kind(c), " ", toString(c), " | ", toString(c, includeLineInfo=False))
                 skip(c)
-        echo(string("  after the last value: ["), toString(c), string("]"))
+        echo("  after the last value: [", toString(c), "]")
 
     def _addedTests():
         # every atom kind, nesting, escapes, line info (absolute with an escaped filename, relative, negative,
@@ -839,12 +839,12 @@ if comptime(__name__ == "__main__"):
             unused = string("")
         with var:
             b4 = parseFromBuffer(modText, string("Mod"), unused)
-        echo(string("unusedName: "), unused)
+        echo("unusedName: ", unused)
         _showTree(string("with unusedName"), b4)
         unused = string("")
         with var:
             b5 = parseFromBuffer(modText, string("Mod"), unused, sizeHint=4, denseLineInfo=True)
-        echo(string("unusedName (keywords): "), unused)
+        echo("unusedName (keywords): ", unused)
         _showTree(string("with unusedName, dense"), b5)
         with var:
             b6 = parseFromBuffer(modText, string("Mod"), sizeHint=4)
@@ -863,8 +863,8 @@ if comptime(__name__ == "__main__"):
         # shared pools: the second buffer reuses the first one's strings, filenames and tags
         with var:
             shared = parseFromBuffer(denseText, string("t"), sharedPool=sparse.pool, sharedTags=sparse.tags)
-        echo(string("shared pools: "), shared.pool == sparse.pool, string(" "), shared.tags == sparse.tags,
-             string(" filenames "), len(sparse.pool.filenames), string(" tags "), len(sparse.tags.tags))
+        echo("shared pools: ", shared.pool == sparse.pool, " ", shared.tags == sparse.tags,
+             " filenames ", len(sparse.pool.filenames), " tags ", len(sparse.tags.tags))
 
         # parseFromFile, both overloads; the module suffix comes from the file name
         with let:
@@ -876,7 +876,7 @@ if comptime(__name__ == "__main__"):
         unused = string("")
         with var:
             f2 = parseFromFile(path, unused)
-        echo(string("file unusedName: "), unused)
+        echo("file unusedName: ", unused)
         _showTree(string("file with unusedName"), f2)
         with var:
             f3 = parseFromFile(path, sizeHint=2, denseLineInfo=True)
@@ -892,8 +892,8 @@ if comptime(__name__ == "__main__"):
             before = rd.offset(r)
         with let:
             root = peekRootInfo(r, pr.pool)
-        echo(string("root: "), pr.pool.filenames[root.file], string(" "), root.line, string(","), root.col,
-             string(" offset unchanged "), rd.offset(r) == before)
+        echo("root: ", pr.pool.filenames[root.file], " ", root.line, ",", root.col,
+             " offset unchanged ", rd.offset(r) == before)
         rd.jumpTo(r, modText.find(string("(b y)")))
         parse(r, pr, parentSeed=root)
         _showTree(string("seeded"), pr)
@@ -901,7 +901,7 @@ if comptime(__name__ == "__main__"):
             noFile = rd.openFromBuffer(string("(x@1,1 y)"), string("t"))
         with let:
             none = peekRootInfo(noFile, pr.pool)
-        echo(string("root without a file: valid "), none.isValid(), string(", same as NoNifLineInfo "),
+        echo("root without a file: valid ", none.isValid(), ", same as NoNifLineInfo ",
              none == NoNifLineInfo)
         # a seed with a file resolves the relative positions of a file-less text
         with var:
@@ -926,14 +926,14 @@ if comptime(__name__ == "__main__"):
         fl.addFloatLit(0.1); fl.appendLineInfo(ff, i32(4), i32(1))
         fl.addFloatLit(5e-324)
         fl.closeTag()
-        echo(string("floats: "), len(fl), string(" tokens"))
+        echo("floats: ", len(fl), " tokens")
         echo(toString(fl))
         echo(toString(fl, includeLineInfo=False))
         with let:
             flText = toString(fl)
         with var:
             fl2 = parseFromBuffer(flText, string("t"))
-        echo(string("floats parsed back: "), toString(fl2))
+        echo("floats parsed back: ", toString(fl2))
         _showValues(fl)
 
         # appendTo a builder of our own
@@ -942,7 +942,7 @@ if comptime(__name__ == "__main__"):
         appendTo(b1, bld, includeLineInfo=False)
         addRaw(bld, string("\n"))
         appendTo(dense, bld)
-        echo(string("appendTo: "), extract(bld))
+        echo("appendTo: ", extract(bld))
 
         # toModuleString: the header with `.indexat`, the body and the index of the global symbol definitions
         with let:
@@ -953,16 +953,16 @@ if comptime(__name__ == "__main__"):
             mb = parseFromBuffer(src, string("m"))
         with let:
             ms1 = toModuleString(mb)
-        echo(string("module:\n"), ms1)
+        echo("module:\n", ms1)
         with let:
             ms2 = toModuleString(mb, string(".m"))
-        echo(string("module, dottedSuffix:\n"), ms2)
+        echo("module, dottedSuffix:\n", ms2)
         with let:
             ms3 = toModuleString(mb, dottedSuffix=string(".m"), compact=True)
-        echo(string("module, compact:\n"), ms3)
+        echo("module, compact:\n", ms3)
         with let:
             ms4 = toModuleString(mb, sizeHint=16)
-        echo(string("module, sizeHint: same "), ms4 == ms1)
+        echo("module, sizeHint: same ", ms4 == ms1)
         # the module text parses back to the same tokens, with and without the dotted suffix
         with var:
             back1 = parseFromBuffer(ms1, string("m"))
@@ -970,13 +970,13 @@ if comptime(__name__ == "__main__"):
             back2 = parseFromBuffer(ms2, string("m"))
         with var:
             back3 = parseFromBuffer(ms3, string("m"))
-        echo(string("module parsed back: "), _sameTokens(mb, back1), string(" "), _sameTokens(mb, back2),
-             string(" "), _sameTokens(mb, back3))
+        echo("module parsed back: ", _sameTokens(mb, back1), " ", _sameTokens(mb, back2),
+             " ", _sameTokens(mb, back3))
         # the indexed form: each entry of the index gives a declaration's offset (delta-encoded) and the line
         # info its `parse` is seeded with, as an index lookup does
         with var:
             ir = rd.openFromBuffer(ms2.copy(), string("m"))
-        echo(string("indexat "), rd.indexStartsAt(ir), string(": "), ms2.substr(rd.indexStartsAt(ir)))
+        echo("indexat ", rd.indexStartsAt(ir), ": ", ms2.substr(rd.indexStartsAt(ir)))
         with var:
             idx = createTokenBuf()
         rd.jumpTo(ir, rd.indexStartsAt(ir))
@@ -1005,7 +1005,7 @@ if comptime(__name__ == "__main__"):
                     decl = createTokenBuf(sharedPool=idx.pool)
                 rd.jumpTo(ir, offs)
                 parse(ir, decl, parentSeed=seed)
-                echo(string("index "), entryTag, string(" "), name, string(" at "), offs, string(": "),
+                echo("index ", entryTag, " ", name, " at ", offs, ": ",
                      toString(decl, includeLineInfo=False))
                 echo(toString(decl))
 

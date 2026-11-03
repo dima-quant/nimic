@@ -119,7 +119,7 @@ if comptime(__name__ == "__main__"):
 
     def _tEmitSym(s: string) -> string:
         """{.nifEmits: "Y", nifBalanced.}"""
-        return s + "!"
+        return s + string("!")
 
-    echo(string("nifroles ok"))
+    echo("nifroles ok")
     echo(_tSkip(1), "|", _tEmitSym(string("x")))

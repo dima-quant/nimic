@@ -182,56 +182,56 @@ if comptime(__name__ == "__main__"):
         # the digest of small modules
         with let:
             base = _digestOf(string(
-                "(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 5)" +
-                " (proc :f.0 (params (param :a.0 . . (i +32))) (i +32) . (stmts (ret a.0)))" +
-                " (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 1)))" +
-                " (var :v.0 . . (f +64) 1.5) (let :ch.0 . . (c +8) 'x') (let :u.0 . . (u +64) 7u)" +
-                " (let :s.0 . . (string) \"str\") (let :n.0 . . (i +32) -3))"))
-        echo(string("base: "), base)
+                string("(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 5)") +
+                string(" (proc :f.0 (params (param :a.0 . . (i +32))) (i +32) . (stmts (ret a.0)))") +
+                string(" (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 1)))") +
+                string(" (var :v.0 . . (f +64) 1.5) (let :ch.0 . . (c +8) 'x') (let :u.0 . . (u +64) 7u)") +
+                string(" (let :s.0 . . (string) \"str\") (let :n.0 . . (i +32) -3))")))
+        echo("base: ", base)
         # only a non-inline body changes: the same digest
         with let:
             body = _digestOf(string(
-                "(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 5)" +
-                " (proc :f.0 (params (param :a.0 . . (i +32))) (i +32) . (stmts (ret 42) (call g.0)))" +
-                " (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 1)))" +
-                " (var :v.0 . . (f +64) 1.5) (let :ch.0 . . (c +8) 'x') (let :u.0 . . (u +64) 7u)" +
-                " (let :s.0 . . (string) \"str\") (let :n.0 . . (i +32) -3))"))
-        echo(string("non-inline body changed: "), body, string(" same: "), body == base)
+                string("(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 5)") +
+                string(" (proc :f.0 (params (param :a.0 . . (i +32))) (i +32) . (stmts (ret 42) (call g.0)))") +
+                string(" (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 1)))") +
+                string(" (var :v.0 . . (f +64) 1.5) (let :ch.0 . . (c +8) 'x') (let :u.0 . . (u +64) 7u)") +
+                string(" (let :s.0 . . (string) \"str\") (let :n.0 . . (i +32) -3))")))
+        echo("non-inline body changed: ", body, " same: ", body == base)
         # an inline body changes: a different digest
         with let:
             inl = _digestOf(string(
-                "(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 5)" +
-                " (proc :f.0 (params (param :a.0 . . (i +32))) (i +32) . (stmts (ret a.0)))" +
-                " (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 2)))" +
-                " (var :v.0 . . (f +64) 1.5) (let :ch.0 . . (c +8) 'x') (let :u.0 . . (u +64) 7u)" +
-                " (let :s.0 . . (string) \"str\") (let :n.0 . . (i +32) -3))"))
-        echo(string("inline body changed: "), inl, string(" same: "), inl == base)
+                string("(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 5)") +
+                string(" (proc :f.0 (params (param :a.0 . . (i +32))) (i +32) . (stmts (ret a.0)))") +
+                string(" (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 2)))") +
+                string(" (var :v.0 . . (f +64) 1.5) (let :ch.0 . . (c +8) 'x') (let :u.0 . . (u +64) 7u)") +
+                string(" (let :s.0 . . (string) \"str\") (let :n.0 . . (i +32) -3))")))
+        echo("inline body changed: ", inl, " same: ", inl == base)
         # a signature changes: a different digest
         with let:
             sig = _digestOf(string(
-                "(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 5)" +
-                " (proc :f.0 (params (param :a.0 . . (i +64))) (i +32) . (stmts (ret a.0)))" +
-                " (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 1)))" +
-                " (var :v.0 . . (f +64) 1.5) (let :ch.0 . . (c +8) 'x') (let :u.0 . . (u +64) 7u)" +
-                " (let :s.0 . . (string) \"str\") (let :n.0 . . (i +32) -3))"))
-        echo(string("signature changed: "), sig, string(" same: "), sig == base)
+                string("(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 5)") +
+                string(" (proc :f.0 (params (param :a.0 . . (i +64))) (i +32) . (stmts (ret a.0)))") +
+                string(" (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 1)))") +
+                string(" (var :v.0 . . (f +64) 1.5) (let :ch.0 . . (c +8) 'x') (let :u.0 . . (u +64) 7u)") +
+                string(" (let :s.0 . . (string) \"str\") (let :n.0 . . (i +32) -3))")))
+        echo("signature changed: ", sig, " same: ", sig == base)
         # a global's value changes: a different digest
         with let:
             val = _digestOf(string(
-                "(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 6)" +
-                " (proc :f.0 (params (param :a.0 . . (i +32))) (i +32) . (stmts (ret a.0)))" +
-                " (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 1)))" +
-                " (var :v.0 . . (f +64) 1.5) (let :ch.0 . . (c +8) 'x') (let :u.0 . . (u +64) 7u)" +
-                " (let :s.0 . . (string) \"str\") (let :n.0 . . (i +32) -3))"))
-        echo(string("const value changed: "), val == base)
+                string("(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 6)") +
+                string(" (proc :f.0 (params (param :a.0 . . (i +32))) (i +32) . (stmts (ret a.0)))") +
+                string(" (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 1)))") +
+                string(" (var :v.0 . . (f +64) 1.5) (let :ch.0 . . (c +8) 'x') (let :u.0 . . (u +64) 7u)") +
+                string(" (let :s.0 . . (string) \"str\") (let :n.0 . . (i +32) -3))")))
+        echo("const value changed: ", val == base)
         # line info is not part of the digest
-        echo(string("line info ignored: "), _digestOf(string("(stmts@1,2,a.nim (let@3,4 :x.0 . . . 1))")) ==
+        echo("line info ignored: ", _digestOf(string("(stmts@1,2,a.nim (let@3,4 :x.0 . . . 1))")) ==
              _digestOf(string("(stmts (let :x.0 . . . 1))")))
         # a module that is no tree, and an empty one
-        echo(string("atom: "), _digestOf(string("x")))
-        echo(string("empty stmts: "), _digestOf(string("(stmts)")))
+        echo("atom: ", _digestOf(string("x")))
+        echo("empty stmts: ", _digestOf(string("(stmts)")))
         # a proc with fewer than 4 sons
-        echo(string("short proc: "), _digestOf(string("(stmts (proc :p.0 (params)))")))
+        echo("short proc: ", _digestOf(string("(stmts (proc :p.0 (params)))")))
 
         # writeLengInterface under getTempDir()
         with let:
@@ -242,7 +242,7 @@ if comptime(__name__ == "__main__"):
         with var:
             buf = parseFromBuffer(string("(stmts (proc :f.0 (params) . . (stmts (ret 1))))"), string("lt"))
         writeLengInterface(buf, lengFile)
-        echo(string("written: "), fileExists(idxFile))
+        echo("written: ", fileExists(idxFile))
         echo(readFile(idxFile))
         # the same digest: the file is kept, so its modification time stays
         with let:
@@ -250,11 +250,11 @@ if comptime(__name__ == "__main__"):
         with var:
             buf2 = parseFromBuffer(string("(stmts (proc :f.0 (params) . . (stmts (ret 2))))"), string("lt"))
         writeLengInterface(buf2, lengFile)
-        echo(string("same mtime: "), getLastModificationTime(idxFile) == mtime1)
+        echo("same mtime: ", getLastModificationTime(idxFile) == mtime1)
         # replaced by hand: the content differs from the digest, so it is written again
         writeFile(idxFile, string("replaced by hand\n"))
         writeLengInterface(buf2, lengFile)
-        echo(string("rewritten: "), readFile(idxFile))
+        echo("rewritten: ", readFile(idxFile))
         # a changed signature rewrites it
         with var:
             buf3 = parseFromBuffer(string("(stmts (proc :f.0 (params (param :a.0 . . (i +8))) . . (stmts)))"),

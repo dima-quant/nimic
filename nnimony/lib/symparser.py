@@ -268,51 +268,51 @@ def cmpNames(a: string, b: string) -> nint:
 
 if comptime(__name__ == "__main__"):
     from nimic.std.assertions import *
-    assert extractVersionedBasename(string("abc.12.Mod132a3bc")) == string("abc.12")
-    assert extractVersionedBasename(string("abc.Mod132a3bc")) == string("")
+    assert extractVersionedBasename(string("abc.12.Mod132a3bc")) == "abc.12"
+    assert extractVersionedBasename(string("abc.Mod132a3bc")) == ""
 
     with let:
         sn = splitSymName(string("abc.12.Mod132a3bc"))
-    assert sn.name == string("abc.12")
-    assert sn.module == string("Mod132a3bc")
+    assert sn.name == "abc.12"
+    assert sn.module == "Mod132a3bc"
 
-    assert derivedName(string("outer.0"), string("env")) == string("outer`env.0")
-    assert derivedName(string("abc.12"), string("vt")) == string("abc`vt.12")
+    assert derivedName(string("outer.0"), string("env")) == "outer`env.0"
+    assert derivedName(string("abc.12"), string("vt")) == "abc`vt.12"
     # An instantiation stem ends in its key, not in a version: the tag and a fresh
     # number are appended so the key stays inside the identifier.
-    assert derivedName(string("gen.12.Iaaaa"), string("coro")) == string("gen.12.Iaaaa`coro.0")
+    assert derivedName(string("gen.12.Iaaaa"), string("coro")) == "gen.12.Iaaaa`coro.0"
     # Whatever a caller appends its module to, the result must NOT read back as an
     # instantiation — that is the whole point of the exercise.
     assert not isInstantiation(derivedName(string("outer.0"), string("env")) + string(".mymod"))
     assert not isInstantiation(derivedName(string("gen.12.Iaaaa"), string("coro")) + string(".mymod"))
     assert isInstantiation(string("gen.12.Iaaaa.mymod"))
     # ...and the module suffix must still be recoverable.
-    assert extractModule(derivedName(string("gen.12.Iaaaa"), string("coro")) + string(".mymod")) == string("mymod")
-    assert extractModule(derivedName(string("outer.0"), string("env")) + string(".mymod")) == string("mymod")
+    assert extractModule(derivedName(string("gen.12.Iaaaa"), string("coro")) + string(".mymod")) == "mymod"
+    assert extractModule(derivedName(string("outer.0"), string("env")) + string(".mymod")) == "mymod"
 
     with let:
         mp = splitModulePath(string("abc/def.2.nif"))
-    assert mp.dir == string("abc")
-    assert mp.name == string("def")
-    assert mp.ext == string(".2.nif")
+    assert mp.dir == "abc"
+    assert mp.name == "def"
+    assert mp.ext == ".2.nif"
 
     with let:
         mp2 = splitModulePath(string("def.2.nif"))
-    assert mp2.dir == string(""), mp2.dir
-    assert mp2.name == string("def"), mp2.name
-    assert mp2.ext == string(".2.nif")
+    assert mp2.dir == "", mp2.dir
+    assert mp2.name == "def", mp2.name
+    assert mp2.ext == ".2.nif"
 
     with let:
         mp3 = splitModulePath(string("def"))
-    assert mp3.dir == string(""), mp3.dir
-    assert mp3.name == string("def"), mp3.name
-    assert mp3.ext == string("")
+    assert mp3.dir == "", mp3.dir
+    assert mp3.name == "def", mp3.name
+    assert mp3.ext == ""
 
     with var:
         basename = string("")
         disamb = nint(0)
     assert splitLocalSymName(string("tmp.14"), basename, disamb)
-    assert basename == string("tmp")
+    assert basename == "tmp"
     assert disamb == 14
     assert not splitLocalSymName(string("tmp.14.mod"), basename, disamb)
     assert not splitLocalSymName(string("tmp.part.14"), basename, disamb)

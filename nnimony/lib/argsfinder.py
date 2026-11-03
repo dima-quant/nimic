@@ -158,15 +158,15 @@ def extractCCKey(val: string) -> string:
 
 if comptime(__name__ == "__main__"):
     from nimic.std.assertions import *
-    assert extractArgsKey(string("gcc")) == string("gcc")
-    assert extractArgsKey(string("/usr/bin/gcc")) == string("gcc")
-    assert extractArgsKey(string("/usr/bin/arm-linux-gnueabihf-gcc")) == string("arm-linux-gnueabihf-gcc")
-    assert extractArgsKey(string("/usr/bin/x86_64-w64-mingw32-gcc.exe -Wall")) == string("x86_64-w64-mingw32-gcc")
-    assert extractArgsKey(string("/usr/local/bin/clang")) == string("clang")
-    assert extractArgsKey(string("/usr/bin/x86_64-w64-mingw32-gcc.exe -Wall")) == string("x86_64-w64-mingw32-gcc")
-    assert extractArgsKey(string("/usr/local/bin/clang")) == string("clang")
+    assert extractArgsKey(string("gcc")) == "gcc"
+    assert extractArgsKey(string("/usr/bin/gcc")) == "gcc"
+    assert extractArgsKey(string("/usr/bin/arm-linux-gnueabihf-gcc")) == "arm-linux-gnueabihf-gcc"
+    assert extractArgsKey(string("/usr/bin/x86_64-w64-mingw32-gcc.exe -Wall")) == "x86_64-w64-mingw32-gcc"
+    assert extractArgsKey(string("/usr/local/bin/clang")) == "clang"
+    assert extractArgsKey(string("/usr/bin/x86_64-w64-mingw32-gcc.exe -Wall")) == "x86_64-w64-mingw32-gcc"
+    assert extractArgsKey(string("/usr/local/bin/clang")) == "clang"
 
-    assert extractArgsKey(string("'C:\\Program Files\\gcc\\bin\\gcc.exe' -Wall")) == string("gcc")
+    assert extractArgsKey(string("'C:\\Program Files\\gcc\\bin\\gcc.exe' -Wall")) == "gcc"
 
     echo(findArgs(string("."), string("gcc.args")))
 

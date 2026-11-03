@@ -58,7 +58,10 @@ UPSTREAM = {"lib/nifqueries", "lib/nifstreams", "lib/vfs"}
 
 class Canon(ast.NodeTransformer):
     """What the comparison takes as equal. Comments are gone with the parse; a docstring keeps only its
-    pragma part, comma-spaced; the rules' free choices are made equal (nimony_check_issues.md, issue 29)."""
+    pragma part, comma-spaced. Of the rules' free choices (nimony_check_issues.md, issue 29) only two are made
+    equal: a string literal's two forms, which rules §13.5 assigns by position, and `x.copy()` / `copy(x)`, both
+    valid spellings. The others have one canonical form (§13.5: `ch('x')`, `seq[T]`, `Tset[T]`, `echo(x)`,
+    `float64`, a set in import order), which both sides must write: a difference is a deviation."""
 
     def _doc(self, node):
         self.generic_visit(node)
@@ -77,11 +80,6 @@ class Canon(ast.NodeTransformer):
 
     visit_FunctionDef = visit_ClassDef = visit_Module = _doc
 
-    def visit_Name(self, node):
-        if node.id == "float":
-            node.id = "float64"  # rules §6: Nim's float is float64
-        return node
-
     def visit_Call(self, node):
         self.generic_visit(node)
         f = node.func
@@ -90,25 +88,10 @@ class Canon(ast.NodeTransformer):
             # rules §6: "abc" and string("abc") are the same literal (rule:stringliteral)
             if f.id == "string" and isinstance(a, ast.Constant) and isinstance(a.value, str):
                 return a
-            # rule:char: char('x') is ch('x')
-            if f.id == "char" and isinstance(a, ast.Constant) and isinstance(a.value, str) and len(a.value) == 1:
-                f.id = "ch"
-        if isinstance(f, ast.Name) and f.id == "overloads":
-            node.args.sort(key=ast.dump)  # rule:overloads: a set, its order free
-        # rule:seqlit / rule:setlit: seq[T]([...]) or seq([...]), seq[T]() or seq(); Tset[T](...) or Tset(...)
-        if isinstance(f, ast.Subscript) and isinstance(f.value, ast.Name) and f.value.id in ("seq", "Tset"):
-            node.func = f = f.value
-        if (isinstance(f, ast.Name) and f.id == "seq" and len(node.args) == 1 and isinstance(node.args[0], ast.List)
-                and not node.args[0].elts):
-            node.args = []
         # rule:copy: x.copy() and copy(x) are one copy (both `x` in Nim); nimicgen writes copy(x) for a scalar
         if isinstance(f, ast.Attribute) and f.attr == "copy" and not node.args and not node.keywords:
             node = ast.Call(func=ast.Name("copy", ast.Load()), args=[f.value], keywords=[])
             f = node.func
-        if isinstance(f, ast.Name) and f.id == "echo":
-            # rule:echodollar: the transpiler writes `$` for an argument that isn't a string
-            node.args = [a.args[0] if isinstance(a, ast.Call) and isinstance(a.func, ast.Name) and a.func.id == "str"
-                         and len(a.args) == 1 else a for a in node.args]
         return node
 
 

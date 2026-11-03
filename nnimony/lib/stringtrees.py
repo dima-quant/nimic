@@ -29,7 +29,7 @@ def _addUnique(s: mut @ seq[char], x: char):
     s.add(x)
 
 
-def _splitValue(a: openArray[Key], position: nint) -> tuple[char, float]:
+def _splitValue(a: openArray[Key], position: nint) -> tuple[char, float64]:
     with var:
         cand: seq[char] = seq[char]([])
     for t in items(a):

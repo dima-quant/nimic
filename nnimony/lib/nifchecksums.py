@@ -120,9 +120,9 @@ if comptime(__name__ == "__main__"):
             st = newSha1State()
         with var:
             found = nbool(False)
-        echo(string("  foundInline before: "), found)
+        echo("  foundInline before: ", found)
         updateLoop(st, c, inlineT, found)
-        echo(string("  foundInline after: "), found, string(" at end: "), not c.hasMore())
+        echo("  foundInline after: ", found, " at end: ", not c.hasMore())
         endRead(c)
         return string(str(SecureHash(finalize(st))))
 
@@ -141,10 +141,10 @@ if comptime(__name__ == "__main__"):
                 string("\"just a string\""),
             ]
         for t in trees:
-            echo(t, string(" -> "), _checksumOf(t))
+            echo(t, " -> ", _checksumOf(t))
 
         # the same tree with and without line info hashes the same
-        echo(string("line info ignored: "),
+        echo("line info ignored: ",
              _checksumOf(string("(stmts@1,2,f.nim (call@1,1 foo 1))")) == _checksumOf(string("(stmts (call foo 1))")))
 
         # floats the parser may not spell: built with addFloatLit
@@ -161,24 +161,24 @@ if comptime(__name__ == "__main__"):
             fb.addIntLit(int64(-42))
             fb.addUIntLit(high(uint64))
             fb.addCharLit(ch("z"))
-        echo(string("built: "), toString(fb, False))
+        echo("built: ", toString(fb, False))
         with var:
             fc = fb.beginRead()
-        echo(string("built -> "), computeChecksum(fc))
+        echo("built -> ", computeChecksum(fc))
         endRead(fc)
 
         # inline tag found / not found
         with let:
             inl = registerTag(string("inl"))
-        echo(string("inline found:"))
-        echo(string("  "), _hashedText(string("(stmts (inl 1) 2)"), inl))
-        echo(string("inline not found:"))
-        echo(string("  "), _hashedText(string("(stmts (call 1) 2)"), inl))
-        echo(string("inline with NoInlineTag:"))
-        echo(string("  "), _hashedText(string("(stmts (inl 1) 2)"), _NoInlineTag))
+        echo("inline found:")
+        echo("  ", _hashedText(string("(stmts (inl 1) 2)"), inl))
+        echo("inline not found:")
+        echo("  ", _hashedText(string("(stmts (call 1) 2)"), inl))
+        echo("inline with NoInlineTag:")
+        echo("  ", _hashedText(string("(stmts (inl 1) 2)"), _NoInlineTag))
 
         # strings
         for s in [string(""), string("abc"), string("hello world"), string("(stmts 1)")]:
-            echo(string("\""), s, string("\" -> "), computeChecksum(s))
+            echo("\"", s, "\" -> ", computeChecksum(s))
 
     _testChecksums()
