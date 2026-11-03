@@ -29,9 +29,9 @@ from nimic.ntypes import *
 
 from nimic.std.tables import *
 from .nifpools import (
-    add, addIntLit, appendLineInfo, beginRead, buildTree, charToken, childCursor, createTokenBuf, Cursor, cursorTagId,
-    dotToken, endRead, ErrT, getKeyId, getOrIncl, globalTags, identToken, inc, info, int28Token, intVal, kind, KindBits,
-    len, NifKind, NifToken, NoNifLineInfo, parseFromBuffer, Pool, pool, rawLineInfo, registerTag, soperand, StrId,
+    addIntLit, buildTree, charToken, childCursor, createTokenBuf, Cursor, cursorTagId,
+    dotToken, endRead, ErrT, getKeyId, getOrIncl, globalTags, identToken, info, int28Token, intVal, kind, KindBits,
+    NifKind, NifToken, NoNifLineInfo, parseFromBuffer, Pool, pool, registerTag, soperand, StrId,
     strId, strLitToken, symdefToken, SymId, symId, syms, symToken, tagId, tagLitToken, tags, TokenBuf, toString,
     uintVal, uoperand, writeFile)
 from . import nifpools
@@ -41,7 +41,7 @@ from . import nifpools
 # same-name const of a different type — either would be ambiguous or wrong for
 # ast2nif). The classic replacements are defined below / come from lineinfos.
 exportExcept(nifpools, "info", "NoLineInfo")
-from .lineinfos import isValid, LineInfoManager, pack, PackedLineInfo, unpack
+from .lineinfos import isValid, LineInfoManager, PackedLineInfo, unpack
 from . import lineinfos
 export(lineinfos)
 
@@ -121,8 +121,8 @@ def info(c: Cursor) -> PackedLineInfo:
     ## Classic packed view of a cursor's line info (ast2nif shadows this with
     ## its own NifLineInfo template; kept for any other classic reader).
     with let:
-        li = rawLineInfo(c)
-    if isValid(li.file): return pack(lineMan, li.file, li.line, li.col)
+        li = c.rawLineInfo()
+    if isValid(li.file): return lineMan.pack(li.file, li.line, li.col)
     else: return lineinfos.NoLineInfo
 
 
@@ -198,11 +198,11 @@ def uintId(c: Cursor) -> UIntId:
 
 @dispatch
 def addIntLit(dest: mut @ TokenBuf, id: IntId, info: PackedLineInfo):
-    addIntLit(dest, int64(id))
+    dest.addIntLit(int64(id))
     if isValid(info):
         with let:
             u = unpack(lineMan, info)
-        appendLineInfo(dest, u.file, u.line, u.col)
+        dest.appendLineInfo(u.file, u.line, u.col)
 
 # Classic single-token constructors with a (dropped) line-info argument.
 
@@ -244,6 +244,14 @@ class FloatId(uint32):  ## 1-based index into the global float pool
         """{.borrow.}"""
         return super().__eq__(b)
 
+    def floatToken(id: FloatId, info: PackedLineInfo) -> NifToken:
+        """{.inline.}"""
+        ## Transit-only token: carries the pool index so the receiver can decode it
+        ## via `pool.floats[t.floatId]`. It must never be appended to a TokenBuf
+        ## (nifcore stores floats inline as a multi-token encoding); the line info
+        ## is dropped like in the other classic token constructors.
+        return NifToken((uint32(id) << KindBits) | uint32(NifKind.FloatLit))
+
 
 class FloatPool(Object):
     values: seq[float64]
@@ -276,15 +284,6 @@ with var:
 @template
 def floats(p: Pool) -> mut @ FloatPool:
     return globalFloats
-
-
-def floatToken(id: FloatId, info: PackedLineInfo) -> NifToken:
-    """{.inline.}"""
-    ## Transit-only token: carries the pool index so the receiver can decode it
-    ## via `pool.floats[t.floatId]`. It must never be appended to a TokenBuf
-    ## (nifcore stores floats inline as a multi-token encoding); the line info
-    ## is dropped like in the other classic token constructors.
-    return NifToken((uint32(id) << KindBits) | uint32(NifKind.FloatLit))
 
 
 def floatId(n: NifToken) -> FloatId:
@@ -333,9 +332,6 @@ def open(filename: string) -> Stream:
 if comptime(__name__ == "__main__"):
     from nimic.std.formatfloat import *
     importFrom("nimic.std.os", "getTempDir", "removeFile")
-    from . import bitabs
-    # Nim overloads lineinfos' memSize and bitabs' (nifpools exports nifcore, which exports bitabs)
-    memSize = overloads(lineinfos.memSize, bitabs.memSize)
 
     def _testStream():
         # a small .nif file under getTempDir(), read back token by token
@@ -381,7 +377,7 @@ if comptime(__name__ == "__main__"):
              floats(pool)[nz], string(" "), floats(pool)[big])
         echo(string("globalFloats shared: "), globalFloats[big])
         with let:
-            ft = floatToken(big, lineinfos.NoLineInfo)
+            ft = big.floatToken(lineinfos.NoLineInfo)
         echo(string("floatToken: "), kind(ft), string(" "), floatId(ft) == big, string(" "),
              floats(pool)[floatId(ft)])
 
@@ -398,10 +394,10 @@ if comptime(__name__ == "__main__"):
         with var:
             b = parseFromBuffer(string("(nums -42 18446744073709551615u)"), string("m"))
         with var:
-            c = beginRead(b)
-        inc(c)
+            c = b.beginRead()
+        c.inc()
         echo(string("intId(cursor): "), int64(intId(c)))
-        inc(c)
+        c.inc()
         echo(string("uintId(cursor): "), uint64(uintId(c)))
         endRead(c)
 
@@ -410,25 +406,25 @@ if comptime(__name__ == "__main__"):
         with var:
             b = parseFromBuffer(string("(stmts@3,7,a.nim x (call y))"), string("m"))
         with var:
-            c = beginRead(b)
+            c = b.beginRead()
         with let:
             pi = info(c)
         with let:
             u = unpack(lineMan, pi)
         echo(string("info(cursor) valid: "), isValid(pi), string(" "), files(pool)[u.file],
              string(" line "), u.line, string(" col "), u.col)
-        echo(string("man is lineMan: "), memSize(man(pool)) == memSize(lineMan))
+        echo(string("man is lineMan: "), man(pool).memSize() == lineMan.memSize())
         with var:
             ch2 = firstSon(c)
         echo(string("firstSon: "), toString(ch2, False), string(" litId "), pool.strings[litId(ch2)])
-        inc(c)
-        inc(c)
+        c.inc()
+        c.inc()
         echo(string("nifcore tags(c) still: "), tags(c).tags[cursorTagId(c)])
         endRead(c)
         with var:
             b0 = parseFromBuffer(string("(stmts 1 2)"), string("m"))
         with var:
-            c0 = beginRead(b0)
+            c0 = b0.beginRead()
         echo(string("info(cursor) without line info valid: "), isValid(info(c0)))
         endRead(c0)
 
@@ -436,7 +432,7 @@ if comptime(__name__ == "__main__"):
         with let:
             fid = getOrIncl(pool.filenames, string("b.nim"))
         with let:
-            good = pack(lineMan, fid, i32(10), i32(4))
+            good = lineMan.pack(fid, i32(10), i32(4))
         with var:
             b = createTokenBuf(8)
         with buildTree(b, ErrT, NoNifLineInfo):

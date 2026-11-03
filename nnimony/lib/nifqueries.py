@@ -12,7 +12,7 @@ from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std.assertions import *
 from .nifcore import (
-    beginRead, childCursor, Cursor, cursorIsNil, cursorTagId, endRead, hasMore, kind, NifKind, skip, strVal, tagName,
+    childCursor, Cursor, cursorTagId, endRead, kind, NifKind, skip, strVal,
     tags)
 from . import nifcore
 
@@ -22,13 +22,13 @@ def tagName(cursor: Cursor) -> string:
     """{.noSideEffect, inline.}"""
     ## Returns the textual tag at ``cursor``.
     assert kind(cursor) == NifKind.TagLit
-    return tagName(tags(cursor), cursorTagId(cursor))
+    return tags(cursor).tagName(cursorTagId(cursor))
 
 
 def tagIs(cursor: Cursor, name: string) -> bool:
     """{.noSideEffect, inline.}"""
     ## Tests a cursor's tag without exposing its per-buffer tag pool.
-    return not cursorIsNil(cursor) and kind(cursor) == NifKind.TagLit and tagName(cursor) == name
+    return not cursor.cursorIsNil() and kind(cursor) == NifKind.TagLit and tagName(cursor) == name
 
 
 def findChildTag(node: Cursor, name: string) -> Cursor:
@@ -38,7 +38,7 @@ def findChildTag(node: Cursor, name: string) -> Cursor:
         return result
     with var:
         children = childCursor(node)
-    while hasMore(children):
+    while children.hasMore():
         if tagIs(children, name):
             return children
         skip(children)
@@ -52,13 +52,13 @@ def findDescendantTag(node: Cursor, name: string) -> Cursor:
         return result
     with var:
         children = childCursor(node)
-    while hasMore(children):
+    while children.hasMore():
         if tagIs(children, name):
             return children
         if kind(children) == NifKind.TagLit:
             with let:
                 nested = findDescendantTag(children, name)
-            if not cursorIsNil(nested):
+            if not nested.cursorIsNil():
                 return nested
         skip(children)
     return result
@@ -71,7 +71,7 @@ def findChildKind(node: Cursor, kind: NifKind) -> Cursor:
         return result
     with var:
         children = childCursor(node)
-    while hasMore(children):
+    while children.hasMore():
         if nifcore.kind(children) == kind:
             return children
         skip(children)
@@ -85,7 +85,7 @@ def findLastChildKind(node: Cursor, kind: NifKind) -> Cursor:
         return result
     with var:
         children = childCursor(node)
-    while hasMore(children):
+    while children.hasMore():
         if nifcore.kind(children) == kind:
             result = children.copy()
         skip(children)
@@ -99,7 +99,7 @@ if comptime(__name__ == "__main__"):
         tree = parseFromBuffer(
             string("(root (direct \"first\" \"last\") (nested (target value)))"), string("test"))
     with var:
-        root = beginRead(tree)
+        root = tree.beginRead()
     doAssert(tagIs(root, string("root")))
     with let:
         direct = findChildTag(root, string("direct"))
@@ -107,13 +107,13 @@ if comptime(__name__ == "__main__"):
     doAssert(strVal(findChildKind(direct, NifKind.StrLit)) == string("first"))
     doAssert(strVal(findLastChildKind(direct, NifKind.StrLit)) == string("last"))
     doAssert(tagIs(findDescendantTag(root, string("target")), string("target")))
-    doAssert(cursorIsNil(findChildTag(root, string("missing"))))
+    doAssert(findChildTag(root, string("missing")).cursorIsNil())
     endRead(root)
 
 if comptime(__name__ == "__main__"):
     def _show(title: string, c: Cursor):
         """The cursor a query returned: nil, or its kind and text."""
-        if cursorIsNil(c):
+        if c.cursorIsNil():
             echo(title, string(": nil"))
         else:
             echo(title, string(": "), kind(c), string(" "), toString(c, includeLineInfo=False))
@@ -123,7 +123,7 @@ if comptime(__name__ == "__main__"):
             t = parseFromBuffer(string(
                 "(top a \"s1\" 12 (x (y \"deep\" (z 3)) \"s2\") (y 7) \"s3\" (x 'c') ident2 -4)"), string("q"))
         with var:
-            top = beginRead(t)
+            top = t.beginRead()
         echo(string("tagName(top) = "), tagName(top))
         echo(string("tagIs top/top = "), tagIs(top, string("top")), string(", top/x = "), tagIs(top, string("x")))
         _show(string("findChildTag x"), findChildTag(top, string("x")))
@@ -154,7 +154,7 @@ if comptime(__name__ == "__main__"):
             nilCursor = default(Cursor)
         echo(string("tagIs nil = "), tagIs(nilCursor, string("top")))
         # the queries don't consume: `top` is still at the tree's head
-        echo(string("top after the queries: "), tagName(top), string(" "), cursorIsNil(top))
+        echo(string("top after the queries: "), tagName(top), string(" "), top.cursorIsNil())
         endRead(top)
 
     _addedTests()

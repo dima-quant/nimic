@@ -15,10 +15,10 @@ from nimic.std.formatfloat import *
 from . import bitabs
 from . import nifreader
 from .nifpools import (
-    addCharLit, addFloatLit, addIntLit, addUIntLit, beginRead, buildTree, createTokenBuf, Cursor, cursorTagId, endRead,
-    ErrT, floatVal, globalTags, hasMore, inc, into, intVal, isCharLit, isDotToken, isFloatLit, isIdent, isIntLit,
+    buildTree, createTokenBuf, Cursor, cursorTagId, endRead,
+    ErrT, floatVal, globalTags, into, intVal, isCharLit, isDotToken, isFloatLit, isIdent, isIntLit,
     isStringLit, isSymbol, isSymbolDef, isTagLit, isUIntLit, NoLineInfo, parseFromBuffer, pool, registerTag, strId,
-    symId, symString, TagId, tags, toString, uintVal, uoperand)
+    symId, TagId, tags, toString, uintVal, uoperand)
 from nimic.std.sha1 import finalize, update
 
 if comptime(defined("nimony")):
@@ -37,9 +37,9 @@ def _updateAtom(dest: mut @ Sha1State, n: Cursor):
     ## Hashes one leaf token (build-agnostic: the hashed content is the tag/sym
     ## name, string, or numeric value, so the digest matches classic byte-for-byte).
     if isSymbolDef(n):
-        update(dest, string(" :")); update(dest, symString(pool, symId(n)))
+        update(dest, string(" :")); update(dest, pool.symString(symId(n)))
     elif isSymbol(n):
-        update(dest, string(" ")); update(dest, symString(pool, symId(n)))
+        update(dest, string(" ")); update(dest, pool.symString(symId(n)))
     elif isIdent(n):
         update(dest, string(" ")); update(dest, pool.strings[strId(n)])
     elif isIntLit(n):
@@ -65,12 +65,12 @@ def updateLoop(dest: mut @ Sha1State, n: mut @ Cursor, inlineT: TagId, foundInli
         update(dest, globalTags.tags[cursorTagId(n)])
         if cursorTagId(n) == inlineT: foundInline <<= True
         with into(n):
-            while hasMore(n):
+            while n.hasMore():
                 updateLoop(dest, n, inlineT, foundInline)
         update(dest, string(")"))
     else:
         _updateAtom(dest, n)
-        inc(n)
+        n.inc()
 
 
 with const:
@@ -105,7 +105,7 @@ if comptime(__name__ == "__main__"):
         with var:
             b = parseFromBuffer(text, string("cs"))
         with var:
-            c = beginRead(b)
+            c = b.beginRead()
         result = computeChecksum(c)
         endRead(c)
         return result
@@ -115,14 +115,14 @@ if comptime(__name__ == "__main__"):
         with var:
             b = parseFromBuffer(text, string("cs"))
         with var:
-            c = beginRead(b)
+            c = b.beginRead()
         with var:
             st = newSha1State()
         with var:
             found = nbool(False)
         echo(string("  foundInline before: "), found)
         updateLoop(st, c, inlineT, found)
-        echo(string("  foundInline after: "), found, string(" at end: "), not hasMore(c))
+        echo(string("  foundInline after: "), found, string(" at end: "), not c.hasMore())
         endRead(c)
         return string(str(SecureHash(finalize(st))))
 
@@ -151,19 +151,19 @@ if comptime(__name__ == "__main__"):
         with var:
             fb = createTokenBuf(8)
         with buildTree(fb, ErrT, NoLineInfo):
-            addFloatLit(fb, 0.1)
-            addFloatLit(fb, 1e100)
-            addFloatLit(fb, -0.0)
-            addFloatLit(fb, 1.0)
-            addFloatLit(fb, 1e309)
-            addFloatLit(fb, -1e309)
-            addFloatLit(fb, 1e309 - 1e309)
-            addIntLit(fb, int64(-42))
-            addUIntLit(fb, high(uint64))
-            addCharLit(fb, ch("z"))
+            fb.addFloatLit(0.1)
+            fb.addFloatLit(1e100)
+            fb.addFloatLit(-0.0)
+            fb.addFloatLit(1.0)
+            fb.addFloatLit(1e309)
+            fb.addFloatLit(-1e309)
+            fb.addFloatLit(1e309 - 1e309)
+            fb.addIntLit(int64(-42))
+            fb.addUIntLit(high(uint64))
+            fb.addCharLit(ch("z"))
         echo(string("built: "), toString(fb, False))
         with var:
-            fc = beginRead(fb)
+            fc = fb.beginRead()
         echo(string("built -> "), computeChecksum(fc))
         endRead(fc)
 

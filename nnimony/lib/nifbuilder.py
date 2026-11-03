@@ -58,6 +58,37 @@ class Builder(Object):
     _nesting: nint
     _offs: nint
 
+    def attachedToFile(b: Builder) -> bool:
+        """{.inline.}"""
+        return b._mode == _Mode.UsesFile
+
+    def _drainPending(b: mut @ Builder):
+        ## No-op kept for source compatibility; both modes now buffer in
+        ## memory until `close`.
+        return
+
+    def _undoWhitespace(b: mut @ Builder):
+        with var:
+            i = b._offs - 1
+        while i >= 0 and b._raw[i] in Tset[char](char(' '), char('\n')):
+            i -= 1
+        b._offs = i + 1
+
+    def patchIndexAt(b: mut @ Builder, patchPos: nint, indexAt: nint):
+        with var:
+            s = string("")
+        s.addInt(indexAt)
+        for i in range(s.len):
+            b._raw[patchPos + i] = s[i]
+
+    def offset(b: Builder) -> nint:
+        """{.inline.}"""
+        ## Returns the current offset for index generation. The produced value might point to
+        ## whitespace that must first be skipped before the desired element is reached but
+        ## the nifreader will skip the whitespace automatically, so no harm is done.
+        result = b._offs.copy()
+        return result
+
 
 with const:
     _MinCapacity = 64
@@ -149,11 +180,6 @@ def open(sizeHint: nint, compact = False) -> Builder:
     return result
 
 
-def attachedToFile(b: Builder) -> bool:
-    """{.inline.}"""
-    return b._mode == _Mode.UsesFile
-
-
 def extract(b: sink @ Builder) -> string:
     ## Extracts the buffer from the builder.
     ## The builder should not be used afterwards.
@@ -203,20 +229,6 @@ def _put(b: mut @ Builder, s: char):
 def _putPending(b: mut @ Builder, s: string):
     """{.inline.}"""
     _put(b, s)
-
-
-def _drainPending(b: mut @ Builder):
-    ## No-op kept for source compatibility; both modes now buffer in
-    ## memory until `close`.
-    return
-
-
-def _undoWhitespace(b: mut @ Builder):
-    with var:
-        i = b._offs - 1
-    while i >= 0 and b._raw[i] in Tset[char](char(' '), char('\n')):
-        i -= 1
-    b._offs = i + 1
 
 
 with const:
@@ -475,7 +487,7 @@ def attachLineInfo(b: mut @ Builder, col: int32, line: int32, file = string(""))
     ## A no-op when all components are zero/empty.
     if col == 0 and line == 0 and file.len == 0:
         return
-    _drainPending(b)
+    b._drainPending()
     if col < 0:
         # Use the bare-`~` shorthand (no `@` introducer).
         _put(b, char('~'))
@@ -509,7 +521,7 @@ def attachComment(b: mut @ Builder, s: string):
     ## Append a NIF27 comment suffix `#<s>#` to the most recently emitted atom
     ## or tag name (or directly after a preceding `attachLineInfo`). No
     ## whitespace allowed before the `#`.
-    _drainPending(b)
+    b._drainPending()
     _put(b, char('#'))
     for c in s:
         if c._needsEscape():
@@ -521,7 +533,7 @@ def attachComment(b: mut @ Builder, s: string):
 
 def addKeyw(b: mut @ Builder, keyw: string):
     ## Adds a complete compound node that has no children like `(nil)`.
-    _drainPending(b)
+    b._drainPending()
     _put(b, char('('))
     _put(b, keyw)
     _put(b, char(')'))
@@ -531,7 +543,7 @@ def addTree(b: mut @ Builder, kind: string):
     ## Starts a new compound node. Must be closed with `endTree`.
     ## See also `withTree`.
     ## `kind` is allowed to start with a dot. This emits a directive then.
-    _drainPending(b)
+    b._drainPending()
     if not b._compact:
         if b._nesting > 0:
             _put(b, string("\n"))
@@ -548,7 +560,7 @@ def endTree(b: mut @ Builder):
         assert b._nesting > 0, "generating ')' would produce a syntax error"
     if b._nesting >= 0:
         b._nesting -= 1
-    _undoWhitespace(b)
+    b._undoWhitespace()
     _put(b, char(')'))
 
 
@@ -604,23 +616,6 @@ def addHeader27(b: mut @ Builder) -> nint:
     return result
 
 
-def patchIndexAt(b: mut @ Builder, patchPos: nint, indexAt: nint):
-    with var:
-        s = string("")
-    s.addInt(indexAt)
-    for i in range(s.len):
-        b._raw[patchPos + i] = s[i]
-
-
-def offset(b: Builder) -> nint:
-    """{.inline.}"""
-    ## Returns the current offset for index generation. The produced value might point to
-    ## whitespace that must first be skipped before the desired element is reached but
-    ## the nifreader will skip the whitespace automatically, so no harm is done.
-    result = b._offs.copy()
-    return result
-
-
 if comptime(__name__ == "__main__" and not defined("nimony")):
     def _test(b: sink @ Builder):
         addHeader(b, string("tester"), string("niftest"))
@@ -638,7 +633,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             endTree(b)
         endTree(b)
 
-        if attachedToFile(b):
+        if b.attachedToFile():
             close(b)
         else:
             echo(b.extract())
@@ -664,7 +659,7 @@ if comptime(__name__ == "__main__"):
 
         with var:
             bm = open(10)
-        echo(attachedToFile(bm))
+        echo(bm.attachedToFile())
         addHeader(bm, string("v"), string("d"))
         with withTree(bm, string("stmts")):
             addLineInfo(bm, 1, 2, string("a.nim"))
@@ -707,8 +702,8 @@ if comptime(__name__ == "__main__"):
             with withTree(bc, string("inner")):
                 addIntLit(bc, i64(7))
         with let:
-            idxOff = offset(bc)
-        patchIndexAt(bc, patchPos, idxOff)
+            idxOff = bc.offset()
+        bc.patchIndexAt(patchPos, idxOff)
         echo(idxOff)
         echo(extract(bc))
 
@@ -718,7 +713,7 @@ if comptime(__name__ == "__main__"):
             vfsRemove(tmpFile)
         with var:
             bf1 = open(tmpFile, compact=False, writeMode=FileWriteMode.OnlyIfChanged)
-        echo(attachedToFile(bf1))
+        echo(bf1.attachedToFile())
         with withTree(bf1, string("filetest")):
             addIntLit(bf1, i64(100))
         close(bf1)

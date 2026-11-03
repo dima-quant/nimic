@@ -53,6 +53,17 @@ class PackedLineInfo(uint32):
         """{.borrow, noSideEffect.}"""
         return hash(uint32(a))
 
+    def isPayload(i: PackedLineInfo) -> bool:
+        """{.inline.}"""
+        result = (uint32(i) & u32(3)) == u32(3)
+        return result
+
+    def getPayload(i: PackedLineInfo) -> uint32:
+        """{.inline.}"""
+        assert i.isPayload()
+        result = uint32(i) >> u32(2)
+        return result
+
 
 @distinct
 class FileId(uint32):
@@ -76,6 +87,35 @@ class LineInfoUnpacked(Object):
 class LineInfoManager(Object):
     _aside: seq[LineInfoUnpacked]
 
+    def pack(m: mut @ LineInfoManager, file: FileId, line: int32, col: int32) -> PackedLineInfo:
+        if uint32(file) <= uint32(_FileMax) and line <= _LineMax and col <= _ColMax:
+            with let:
+                col = u32(0) if col < i32(0) else uint32(col)
+                line = u32(0) if line < i32(0) else uint32(line)
+            # use inline representation:
+            result = PackedLineInfo((uint32(file) << u32(1)) | (line << uint32(_AsideBit + _FileBits)) |
+                (col << uint32(_AsideBit + _FileBits + _LineBits)))
+        else:
+            result = PackedLineInfo((m._aside.len << 2) | _AsideBit)
+            m._aside.add(LineInfoUnpacked(file=file, line=line, col=col))
+        return result
+
+    def packWithComment(m: mut @ LineInfoManager, file: FileId, line: int32, col: int32,
+                        comment: uint32) -> PackedLineInfo:
+        # Like `pack` but also attaches a `#comment#` to the position. Comment-bearing
+        # infos always use the aside path (the inline encoding has no room for a
+        # comment id). `comment == 0` means no comment — callers should use the plain
+        # `pack` in that case.
+        if comment == u32(0):
+            result = m.pack(file, line, col)
+        else:
+            result = PackedLineInfo((m._aside.len << 2) | _AsideBit)
+            m._aside.add(LineInfoUnpacked(file=file, line=line, col=col, comment=comment))
+        return result
+
+    def memSize(m: LineInfoManager) -> nint:
+        return m._aside.len
+
 
 with const:
     NoLineInfo = PackedLineInfo(u32(0))
@@ -94,40 +134,6 @@ def isValid(x: FileId) -> bool:
     return x != NoFile
 
 
-def pack(m: mut @ LineInfoManager, file: FileId, line: int32, col: int32) -> PackedLineInfo:
-    if uint32(file) <= uint32(_FileMax) and line <= _LineMax and col <= _ColMax:
-        with let:
-            col = u32(0) if col < i32(0) else uint32(col)
-            line = u32(0) if line < i32(0) else uint32(line)
-        # use inline representation:
-        result = PackedLineInfo((uint32(file) << u32(1)) | (line << uint32(_AsideBit + _FileBits)) |
-            (col << uint32(_AsideBit + _FileBits + _LineBits)))
-    else:
-        result = PackedLineInfo((m._aside.len << 2) | _AsideBit)
-        m._aside.add(LineInfoUnpacked(file=file, line=line, col=col))
-    return result
-
-
-def packWithComment(m: mut @ LineInfoManager, file: FileId, line: int32, col: int32,
-                    comment: uint32) -> PackedLineInfo:
-    # Like `pack` but also attaches a `#comment#` to the position. Comment-bearing
-    # infos always use the aside path (the inline encoding has no room for a
-    # comment id). `comment == 0` means no comment — callers should use the plain
-    # `pack` in that case.
-    if comment == u32(0):
-        result = pack(m, file, line, col)
-    else:
-        result = PackedLineInfo((m._aside.len << 2) | _AsideBit)
-        m._aside.add(LineInfoUnpacked(file=file, line=line, col=col, comment=comment))
-    return result
-
-
-def isPayload(i: PackedLineInfo) -> bool:
-    """{.inline.}"""
-    result = (uint32(i) & u32(3)) == u32(3)
-    return result
-
-
 def unpack(m: LineInfoManager, info: PackedLineInfo) -> LineInfoUnpacked:
     with let:
         i = uint32(info)
@@ -138,8 +144,8 @@ def unpack(m: LineInfoManager, info: PackedLineInfo) -> LineInfoUnpacked:
             line=int32((i >> uint32(_AsideBit + _FileBits)) & uint32(_LineMax)),
             col=int32((i >> uint32(_AsideBit + _FileBits + _LineBits)) & uint32(_ColMax))
         )
-    elif not isPayload(info):
-        result = m._aside[nint(i >> u32(2))]
+    elif not info.isPayload():
+        result = m._aside[nint(i >> u32(2))].copy()
     else:
         result = LineInfoUnpacked(file=NoFile)
     return result
@@ -154,14 +160,7 @@ def stripComment(m: mut @ LineInfoManager, info: PackedLineInfo) -> PackedLineIn
     if raw.comment == u32(0):
         result = info
     else:
-        result = pack(m, raw.file, raw.line, raw.col)
-    return result
-
-
-def getPayload(i: PackedLineInfo) -> uint32:
-    """{.inline.}"""
-    assert isPayload(i)
-    result = uint32(i) >> u32(2)
+        result = m.pack(raw.file, raw.line, raw.col)
     return result
 
 
@@ -176,18 +175,14 @@ def getFileId(m: LineInfoManager, i: PackedLineInfo) -> FileId:
     return result
 
 
-def memSize(m: LineInfoManager) -> nint:
-    return m._aside.len
-
-
 if comptime(__name__ == "__main__" and not defined("nimony")):
     with var:
         m = LineInfoManager(_aside=seq[LineInfoUnpacked]([]))
     for i in range(i32(0), i32(16388)):
         for col in range(i32(0), i32(100)):
             with let:
-                packed = pack(m, FileId(1023), i, col)
-            assert not isPayload(packed)
+                packed = m.pack(FileId(1023), i, col)
+            assert not packed.isPayload()
             with let:
                 u = unpack(m, packed)
             assert u.file == FileId(1023)
@@ -197,8 +192,8 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
 
     with let:
         i = toPayload(u32(8000))
-    assert isPayload(i)
-    assert getPayload(i) == u32(8000)
+    assert i.isPayload()
+    assert i.getPayload() == u32(8000)
 
 
 if comptime(__name__ == "__main__"):
@@ -209,47 +204,47 @@ if comptime(__name__ == "__main__"):
 
     # Inline bit-field edges: FileId(1023), line 16383, col 127
     with let:
-        pInline = pack(mgr, FileId(u32(1023)), i32(16383), i32(127))
+        pInline = mgr.pack(FileId(u32(1023)), i32(16383), i32(127))
         uInline = unpack(mgr, pInline)
-    echo(isValid(pInline), "|", isPayload(pInline), "|", uint32(uInline.file), "|", uInline.line, "|", uInline.col, "|", memSize(mgr))
+    echo(isValid(pInline), "|", pInline.isPayload(), "|", uint32(uInline.file), "|", uInline.line, "|", uInline.col, "|", mgr.memSize())
 
     # Negative line/col clamped to 0 in inline path
     with let:
-        pNeg = pack(mgr, FileId(u32(5)), i32(-3), i32(-1))
+        pNeg = mgr.pack(FileId(u32(5)), i32(-3), i32(-1))
         uNeg = unpack(mgr, pNeg)
-    echo(uint32(uNeg.file), "|", uNeg.line, "|", uNeg.col, "|", memSize(mgr))
+    echo(uint32(uNeg.file), "|", uNeg.line, "|", uNeg.col, "|", mgr.memSize())
 
     # Overflow edges trigger aside storage (file > 1023, line > 16383, col > 127)
     with let:
-        pFileOv = pack(mgr, FileId(u32(1024)), i32(10), i32(20))
-        pLineOv = pack(mgr, FileId(u32(1)), i32(16384), i32(20))
-        pColOv = pack(mgr, FileId(u32(1)), i32(10), i32(128))
+        pFileOv = mgr.pack(FileId(u32(1024)), i32(10), i32(20))
+        pLineOv = mgr.pack(FileId(u32(1)), i32(16384), i32(20))
+        pColOv = mgr.pack(FileId(u32(1)), i32(10), i32(128))
         uFileOv = unpack(mgr, pFileOv)
         uLineOv = unpack(mgr, pLineOv)
         uColOv = unpack(mgr, pColOv)
-    echo(uint32(uFileOv.file), "|", uFileOv.line, "|", uFileOv.col, "|", memSize(mgr))
+    echo(uint32(uFileOv.file), "|", uFileOv.line, "|", uFileOv.col, "|", mgr.memSize())
     echo(uint32(uLineOv.file), "|", uLineOv.line, "|", uLineOv.col)
     echo(uint32(uColOv.file), "|", uColOv.line, "|", uColOv.col)
 
     # packWithComment and stripComment
     with let:
-        pNoCmt = packWithComment(mgr, FileId(u32(7)), i32(42), i32(3), u32(0))
-        pWithCmt = packWithComment(mgr, FileId(u32(7)), i32(42), i32(3), u32(99))
+        pNoCmt = mgr.packWithComment(FileId(u32(7)), i32(42), i32(3), u32(0))
+        pWithCmt = mgr.packWithComment(FileId(u32(7)), i32(42), i32(3), u32(99))
         uWithCmt = unpack(mgr, pWithCmt)
         pStripped = stripComment(mgr, pWithCmt)
         uStripped = unpack(mgr, pStripped)
     echo(pNoCmt == pStripped, "|", stripComment(mgr, pNoCmt) == pNoCmt)
     echo(uint32(uWithCmt.file), "|", uWithCmt.line, "|", uWithCmt.col, "|", uWithCmt.comment)
     echo(uint32(uStripped.file), "|", uStripped.line, "|", uStripped.col, "|", uStripped.comment)
-    echo(uint32(getFileId(mgr, pWithCmt)), "|", memSize(mgr))
+    echo(uint32(getFileId(mgr, pWithCmt)), "|", mgr.memSize())
 
     # Payload helpers and unpack of payload
     with let:
         pay0 = toPayload(u32(0))
         payMax = toPayload(u32(123456))
         uPay = unpack(mgr, payMax)
-    echo(isPayload(pay0), "|", getPayload(pay0), "|", isPayload(payMax), "|", getPayload(payMax), "|", uint32(uPay.file))
+    echo(pay0.isPayload(), "|", pay0.getPayload(), "|", payMax.isPayload(), "|", payMax.getPayload(), "|", uint32(uPay.file))
 
     # Borrowed == and hash
-    echo(FileId(u32(42)) == FileId(u32(42)), "|", hash(FileId(u32(42))) == hash(FileId(u32(42))))
-    echo(pInline == pInline, "|", hash(pInline) == hash(pInline))
+    echo(FileId(u32(42)) == FileId(u32(42)), "|", FileId(u32(42)).hash() == FileId(u32(42)).hash())
+    echo(pInline == pInline, "|", pInline.hash() == pInline.hash())

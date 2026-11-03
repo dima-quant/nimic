@@ -4,6 +4,11 @@ type
   uintp* = uint
   intp* = int
 
+# `"""{.nimicModuleLevel.}"""`: a routine the methods rule would make a method, kept module-level because
+# of a call outside the modules converted when it was decided (rules §4, methods rule). A marker for
+# nimicgen, kept after that module is converted; no effect
+template nimicModuleLevel*() {.pragma.}
+
 when defined(nimPreviewSlimSystem) or defined(nimony):
   # under a slim system (nimony's is always slim) File / echo / assert / raiseAssert are not in
   # system: every transpiled module imports this prelude, so re-export them

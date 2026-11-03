@@ -41,12 +41,12 @@ if comptime(defined("nimony")):
 
 from nimic.std.assertions import *
 from .nifcore import (
-    add, addBufferSamePool, addCharLit, addDotToken, addFloatLit, addIdent, addIntLit, addStrLit, addSubtree, addSymDef,
-    addSymUse, addUIntLit, appendLineInfo, beginRead, buildTree, charLit, closeTag, createTokenBuf, Cursor, cursorTagId,
-    cursorToPosition, endRead, enterScope, getOrIncl, hasMore, inc, initTokenBuf, insert, internedSymToken, into,
-    isValid, JumpShift, kind, KindBits, len, load, newPool, newTagPool, NifKind, NifLineInfo, NifToken, NoNifLineInfo,
-    openTag, PayloadMask, Pool, rawLineInfo, readonlyCursorAt, registerTag, setJump, skip, soperand, StrId,
-    subtreeWidth, SymId, symId, TagId, TagMask, tagName, TagPool, tags, TagShift, TokenBuf, tokenWidth, toUniqueId,
+    addIdent, addStrLit, addSubtree, addSymDef,
+    addSymUse, charLit, createTokenBuf, Cursor, cursorTagId,
+    endRead, enterScope, getOrIncl, initTokenBuf, internedSymToken, into,
+    isValid, JumpShift, kind, KindBits, load, newPool, newTagPool, NifKind, NifLineInfo, NifToken, NoNifLineInfo,
+    PayloadMask, Pool, registerTag, setJump, skip, soperand, StrId,
+    subtreeWidth, SymId, symId, TagId, TagMask, TagPool, tags, TagShift, TokenBuf,
     uoperand)
 from . import nifcore
 from . import comesfrom
@@ -143,18 +143,18 @@ def typebits(n: NifToken) -> nint:
 @dispatch
 def info(c: Cursor) -> NifLineInfo:
     """{.inline.}"""
-    return rawLineInfo(c)
+    return c.rawLineInfo()
 
 
 def endInfo(c: Cursor) -> NifLineInfo:
     """{.inline.}"""
-    return rawLineInfo(c)
+    return c.rawLineInfo()
 
 
 def _emitInfo(dest: mut @ TokenBuf, info: NifLineInfo):
     """{.nifEmits: "None".}"""
     if info.isValid():
-        appendLineInfo(dest, info)
+        dest.appendLineInfo(info)
 
 
 @dispatch
@@ -188,61 +188,61 @@ def isTagLit(c: Cursor) -> bool:
     """{.inline.}"""
     ## True when the cursor is inside its scope and sits on a tag (compound) node
     ## — the nifcore-safe replacement for the classic `n.kind == ParLe`.
-    return hasMore(c) and kind(load(c)) == NifKind.TagLit
+    return c.hasMore() and kind(load(c)) == NifKind.TagLit
 
 
 @dispatch
 def isDotToken(c: Cursor) -> bool:
     """{.inline.}"""
-    return hasMore(c) and kind(load(c)) == NifKind.DotToken
+    return c.hasMore() and kind(load(c)) == NifKind.DotToken
 
 
 @dispatch
 def isIdent(c: Cursor) -> bool:
     """{.inline.}"""
-    return hasMore(c) and kind(load(c)) == NifKind.Ident
+    return c.hasMore() and kind(load(c)) == NifKind.Ident
 
 
 @dispatch
 def isSymbol(c: Cursor) -> bool:
     """{.inline.}"""
-    return hasMore(c) and kind(load(c)) == NifKind.Symbol
+    return c.hasMore() and kind(load(c)) == NifKind.Symbol
 
 
 @dispatch
 def isSymbolDef(c: Cursor) -> bool:
     """{.inline.}"""
-    return hasMore(c) and kind(load(c)) == NifKind.SymbolDef
+    return c.hasMore() and kind(load(c)) == NifKind.SymbolDef
 
 
 @dispatch
 def isStringLit(c: Cursor) -> bool:
     """{.inline.}"""
-    return hasMore(c) and kind(load(c)) == NifKind.StrLit
+    return c.hasMore() and kind(load(c)) == NifKind.StrLit
 
 
 @dispatch
 def isIntLit(c: Cursor) -> bool:
     """{.inline.}"""
-    return hasMore(c) and kind(load(c)) == NifKind.IntLit
+    return c.hasMore() and kind(load(c)) == NifKind.IntLit
 
 
 @dispatch
 def isUIntLit(c: Cursor) -> bool:
     """{.inline.}"""
-    return hasMore(c) and kind(load(c)) == NifKind.UIntLit
+    return c.hasMore() and kind(load(c)) == NifKind.UIntLit
 
 
 @dispatch
 def isFloatLit(c: Cursor) -> bool:
     """{.inline.}"""
-    return hasMore(c) and kind(load(c)) == NifKind.FloatLit
+    return c.hasMore() and kind(load(c)) == NifKind.FloatLit
 
 
 @dispatch
 def isCharLit(c: Cursor) -> bool:
     """{.inline.}"""
-    return hasMore(c) and kind(load(c)) == NifKind.CharLit
+    return c.hasMore() and kind(load(c)) == NifKind.CharLit
     ## Build-agnostic token predicates (also defined in nifcursors_classic): the
     ## sem port uses these instead of `n.kind == ParLe/DotToken/…` so one source
     ## compiles under both the classic and the `-d:useNifcore` (nifcore) builds.
@@ -306,7 +306,7 @@ def tagId(n: NifToken) -> TagId:
 
 def skipUntilEnd(c: mut @ Cursor):
     ## Skip a bounded cursor's remaining children (stops at the virtual close).
-    while hasMore(c): skip(c)
+    while c.hasMore(): skip(c)
 
 
 def isLastSon(n: Cursor) -> bool:
@@ -314,7 +314,7 @@ def isLastSon(n: Cursor) -> bool:
     with var:
         c = n.copy()
     skip(c)
-    result = not hasMore(c)
+    result = not c.hasMore()
     return result
 
 
@@ -378,13 +378,13 @@ def widenEnclosingSealed(dest: mut @ TokenBuf, pos: nint, growth: nint):
         i = 0
     while i < pos:
         with let:
-            c = readonlyCursorAt(dest, i)
+            c = dest.readonlyCursorAt(i)
         if kind(c) == NifKind.TagLit:
             with let:
                 total = subtreeWidth(c)  # head + suffix + body
             if i + total > pos:          # this scope encloses the insertion point
                 widenSealed(dest, i, growth)
-                i += tokenWidth(c)         # descend into the body
+                i += c.tokenWidth()         # descend into the body
             else:
                 i += total                 # sealed subtree entirely before `pos`
         else:
@@ -396,7 +396,7 @@ def cursorToPosition(base: Cursor, c: Cursor) -> nint:
     """{.inline.}"""
     ## Token distance of `c` from `base` (classic took two cursors; nifcore's
     ## same-named proc takes a TokenBuf, hence this overload).
-    return (toUniqueId(c) - toUniqueId(base)) // sizeof(NifToken)
+    return (c.toUniqueId() - base.toUniqueId()) // sizeof(NifToken)
 
 
 @dispatch
@@ -465,26 +465,26 @@ def isCharLit(n: NifToken) -> bool:
 
 def addParLe(dest: mut @ TokenBuf, tag: TagId, info=NoLineInfo):
     """{.nifOpens.}"""
-    openTag(dest, tag)
+    dest.openTag(tag)
     _emitInfo(dest, info)
 
 
 @dispatch
 def addParRi(dest: mut @ TokenBuf):
     """{.nifCloses.}"""
-    closeTag(dest)
+    dest.closeTag()
 
 
 @dispatch
 def addParRi(dest: mut @ TokenBuf, info: NifLineInfo):
     """{.nifCloses.}"""
-    closeTag(dest)
+    dest.closeTag()
 
 
 @dispatch
 def isUnknownToken(c: Cursor) -> bool:
     """{.inline.}"""
-    return hasMore(c) and kind(load(c)) == NifKind.UnknownToken
+    return c.hasMore() and kind(load(c)) == NifKind.UnknownToken
 
 
 @dispatch
@@ -499,7 +499,7 @@ def addUnstructured(dest: mut @ TokenBuf, c: Cursor):
     ## suffixes (line info). Handles a sequence of top-level trees/atoms.
     with var:
         c = c.copy()
-    while hasMore(c):
+    while c.hasMore():
         addSubtree(dest, c)
         skip(c)
 
@@ -510,7 +510,7 @@ def insert(dest: mut @ TokenBuf, src: Cursor, pos: nint):
     with var:
         tmp = createTokenBuf(subtreeWidth(src) + 2)
     addSubtree(tmp, src)
-    insert(dest, tmp, pos)
+    dest.insert(tmp, pos)
     ## nifcore has no close-token info; the arg is accepted for compatibility.
 
 # ── Atom builders carrying line info (classic `dest.add xToken(v, info)`) ──
@@ -535,7 +535,7 @@ def addSymDef(dest: mut @ TokenBuf, s: SymId, info: NifLineInfo):
 @dispatch
 def addDotToken(dest: mut @ TokenBuf, info: NifLineInfo):
     """{.nifEmits: "Dot".}"""
-    nifcore.addDotToken(dest)
+    dest.addDotToken()
     _emitInfo(dest, info)
 
 
@@ -556,28 +556,28 @@ def addIdent(dest: mut @ TokenBuf, s: string, info=NoLineInfo):
 @dispatch
 def addIntLit(dest: mut @ TokenBuf, v: int64, info: NifLineInfo):
     """{.nifEmits: "LIT".}"""
-    nifcore.addIntLit(dest, v)
+    dest.addIntLit(v)
     _emitInfo(dest, info)
 
 
 @dispatch
 def addUIntLit(dest: mut @ TokenBuf, v: uint64, info: NifLineInfo):
     """{.nifEmits: "LIT".}"""
-    nifcore.addUIntLit(dest, v)
+    dest.addUIntLit(v)
     _emitInfo(dest, info)
 
 
 @dispatch
 def addFloatLit(dest: mut @ TokenBuf, v: float64, info: NifLineInfo):
     """{.nifEmits: "LIT".}"""
-    nifcore.addFloatLit(dest, v)
+    dest.addFloatLit(v)
     _emitInfo(dest, info)
 
 
 @dispatch
 def addCharLit(dest: mut @ TokenBuf, v: char, info: NifLineInfo):
     """{.nifEmits: "LIT".}"""
-    nifcore.addCharLit(dest, v)
+    dest.addCharLit(v)
     _emitInfo(dest, info)
 
 
@@ -585,7 +585,7 @@ def addCharLit(dest: mut @ TokenBuf, v: char, info: NifLineInfo):
 def add(dest: mut @ TokenBuf, src: TokenBuf):
     """{.inline.}"""
     ## Append a whole buffer (classic `dest.add someTokenBuf`).
-    addBufferSamePool(dest, src)
+    dest.addBufferSamePool(src)
 
 
 importFrom(".nifcoreparse")
@@ -662,10 +662,10 @@ def linearScan(n: mut @ Cursor, body: untyped):
     ## (enters tags, steps atoms; suffixes are skipped by `tokenWidth`).
     if isTagLit(n):
         _ = enterScope(n)   # bound to the children; n now at the first child
-        while hasMore(n):
+        while n.hasMore():
             if isTagLit(n):
                 body
-            inc(n)
+            n.inc()
 
 
 @template
@@ -673,7 +673,7 @@ def copyInto(dest: mut @ TokenBuf, tag: TagId, info: NifLineInfo, body: untyped)
     pragma("nifWrap")
     addParLe(dest, tag, info)
     body
-    closeTag(dest)
+    dest.closeTag()
 
 
 @template
@@ -681,7 +681,7 @@ def copyIntoUnchecked(dest: mut @ TokenBuf, tag: string, info: NifLineInfo, body
     pragma("nifWrap")
     addParLe(dest, registerTag(globalTags, tag), info)
     body
-    closeTag(dest)
+    dest.closeTag()
 
 # ── Subtree / token moves ────────────────────────────────────────────────
 
@@ -724,7 +724,7 @@ def skip(c: mut @ Cursor, intent: SkipIntent):
 def inc(c: mut @ Cursor, intent: SkipIntent):
     """{.nifAdvance.}"""
     ## As `skip(c, intent)` but advances past the head only (`inc`).
-    inc(c)
+    c.inc()
 
 
 class TagClass(NIntEnum):
@@ -744,7 +744,7 @@ def skip(c: mut @ Cursor, expected: TagClass):
 @template
 def inc(c: mut @ Cursor, expected: TagClass):
     """{.nifAdvance.}"""
-    inc(c)
+    c.inc()
 
 
 def consumeParRi(c: mut @ Cursor):
@@ -752,7 +752,7 @@ def consumeParRi(c: mut @ Cursor):
     ## nifcore never materialises a close token — the scope end is implicit at
     ## `rem == 0`. There is nothing to advance past; this exists so classic
     ## `skipParRi` sites compile and stay no-ops.
-    assert not hasMore(c), string("consumeParRi: cursor not at a (virtual) ParRi")
+    assert not c.hasMore(), string("consumeParRi: cursor not at a (virtual) ParRi")
 
 
 @dispatch
@@ -803,12 +803,12 @@ if comptime(__name__ == "__main__"):
                                     high(TagEnum)]):
             echo(string("tag "), TagData[e][0], string(" ord "), ord(e), string(" id "),
                  uint32(registerTag(globalTags, TagData[e][0])), string(" name "),
-                 tagName(globalTags, TagId(uint32(ord(e)))))
+                 globalTags.tagName(TagId(uint32(ord(e)))))
         echo(string("ErrT "), uint32(ErrT), string(" InlineInt "), InlineInt)
         with let:
             newTag = registerTag(string("nifpoolsTestTag"))
         echo(string("new tag "), uint32(newTag) == uint32(ord(high(TagEnum))) + 1, string(" again "),
-             registerTag(string("nifpoolsTestTag")) == newTag, string(" name "), tagName(globalTags, newTag))
+             registerTag(string("nifpoolsTestTag")) == newTag, string(" name "), globalTags.tagName(newTag))
 
         # ── info-carrying builders, buildTree, copyInto, copyIntoUnchecked
         with let:
@@ -833,14 +833,14 @@ if comptime(__name__ == "__main__"):
                 addStrLit(b, string("s"), i2)
                 addStrLit(b, string("s none"), NoLineInfo)
                 addIntLit(b, int64(-5), i1)
-                addIntLit(b, int64(6))
+                b.addIntLit(int64(6))
                 addUIntLit(b, u64(7), i2)
                 addFloatLit(b, 2.5, i1)
                 addCharLit(b, ch('q'), i2)
                 addSymUse(b, sym, i1)
                 addSymDef(b, sym2, i2)
                 addDotToken(b, i1)
-                addDotToken(b)
+                b.addDotToken()
             with copyInto(b, TagId(ord(TagEnum.CallTagId)), i2):
                 addIdent(b, string("inner"), i1)
             with copyIntoUnchecked(b, string("customtag"), i1):
@@ -857,13 +857,13 @@ if comptime(__name__ == "__main__"):
 
         # ── predicates, line info and raw-token accessors at every position
         with var:
-            c = beginRead(b)
+            c = b.beginRead()
         _showPredicates(string("root"), c)
         _showInfo(string("info root"), info(c))
         _showInfo(string("endInfo root"), endInfo(c))
         with into(c):
             with into(c):
-                while hasMore(c):
+                while c.hasMore():
                     _showPredicates(string("  "), c)
                     _showInfo(string("  info"), info(c))
                     skip(c)
@@ -877,10 +877,10 @@ if comptime(__name__ == "__main__"):
             _showInfo(string("  raw info"), info(b[i]))
         echo(string("tagId of token 0 "), uint32(tagId(b[0])), string(" "), uint32(tagId(b[0])) == uint32(ord(TagEnum.StmtsTagId)))
         with var:
-            d = beginRead(b)
+            d = b.beginRead()
         with into(d):
             with into(d):
-                while hasMore(d):
+                while d.hasMore():
                     if isIntLit(d):
                         echo(string("int: typebits "), typebits(load(d)), string(" getInt28 "), getInt28(d),
                              string(" soperand "), soperand(d), string(" uoperand "), uoperand(d))
@@ -904,13 +904,13 @@ if comptime(__name__ == "__main__"):
         with var:
             cf = createTokenBuf()
         with buildTree(cf, ErrT, NoLineInfo):
-            add(cf, int28Token(int32(-77), NoLineInfo))
-            add(cf, int28Token(int32(0), NoLineInfo))
+            cf.add(int28Token(int32(-77), NoLineInfo))
+            cf.add(int28Token(int32(0), NoLineInfo))
             addDotToken(cf, NoLineInfo)
         with var:
-            g = beginRead(cf)
+            g = cf.beginRead()
         with into(g):
-            while hasMore(g):
+            while g.hasMore():
                 echo(string("cf getInt28 "), getInt28(g), string(" dot "), isDotToken(g))
                 skip(g)
         endRead(g)
@@ -937,7 +937,7 @@ if comptime(__name__ == "__main__"):
         with let:
             growth = len(src)
         with var:
-            sc = beginRead(src)
+            sc = src.beginRead()
         insert(w, sc, 2)
         endRead(sc)
         widenEnclosingSealed(w, 2, growth)
@@ -945,7 +945,7 @@ if comptime(__name__ == "__main__"):
         with var:
             w2 = parseFromBuffer(string("(a (b 1) 2)"), string("w"))
         with var:
-            sc2 = beginRead(src)
+            sc2 = src.beginRead()
         insert(w2, sc2, 3)
         endRead(sc2)
         widenEnclosingSealed(w2, 3, growth)
@@ -953,7 +953,7 @@ if comptime(__name__ == "__main__"):
         _showBuf(string("inserted after b"), w2)
         with var:
             w3 = parseFromBuffer(string("(a (b 1) 2)"), string("w"))
-        add(w3, int28Token(int32(0), NoLineInfo))
+        w3.add(int28Token(int32(0), NoLineInfo))
         widenSealed(w3, 1, 0)
         echo(string("widenSealed by 0 keeps "), toString(w3, False))
 
@@ -961,10 +961,10 @@ if comptime(__name__ == "__main__"):
         with var:
             t1 = parseFromBuffer(string("(r (p 1 (q 2)) (p 3) x (q (p 4)))"), string("t"))
         with var:
-            base = beginRead(t1)
+            base = t1.beginRead()
         with var:
             n = base.copy()
-        inc(n)
+        n.inc()
         echo(string("after inc: position "), cursorToPosition(base, n), string(" last son "), isLastSon(n))
         skip(n, SkipIntent.SkipFull)
         echo(string("after skip SkipFull: position "), cursorToPosition(base, n), string(" last son "), isLastSon(n))
@@ -983,14 +983,14 @@ if comptime(__name__ == "__main__"):
         with var:
             scan2 = base.copy()
         for _ in linearScan(scan2):
-            if tagName(globalTags, cursorTagId(scan2)) == string("q"):
+            if globalTags.tagName(cursorTagId(scan2)) == string("q"):
                 break
         echo(string("scan stopped at "), cursorToPosition(base, scan2), string(" "), toString(scan2, False))
         endRead(scan2)
         with var:
             atom = parseFromBuffer(string("x"), string("t"))
         with var:
-            ac = beginRead(atom)
+            ac = atom.beginRead()
         for _ in linearScan(ac):
             echo(string("scan of an atom runs its body"))
         echo(string("scan of an atom: "), toString(ac, False))
@@ -999,7 +999,7 @@ if comptime(__name__ == "__main__"):
             moved = createTokenBuf()
         with var:
             tk = base.copy()
-        inc(tk)
+        tk.inc()
         takeTree(moved, tk)
         takeTree(moved, tk)
         echo(string("takeTree twice: "), toString(moved, False), string(" | then at "), toString(tk, False))
@@ -1008,7 +1008,7 @@ if comptime(__name__ == "__main__"):
             rest = createTokenBuf()
         with var:
             ru = base.copy()
-        inc(ru)
+        ru.inc()
         skip(ru)
         with buildTree(rest, ErrT, NoLineInfo):
             addUnstructured(rest, ru)
@@ -1025,7 +1025,7 @@ if comptime(__name__ == "__main__"):
         echo(string("nifcoreparse.parseFromBuffer shares it "), own.pool == pool)
         _showBuf(string("parsed"), pb)
         with var:
-            pc = beginRead(pb)
+            pc = pb.beginRead()
         echo(string("toString(c) "), toString(pc))
         echo(string("toString(c, false) "), toString(pc, False))
         echo(string("toString(c, produceLineInfo = false) "), toString(pc, produceLineInfo=False))

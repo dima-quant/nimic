@@ -29,9 +29,9 @@ from nimic.ntypes import *
 
 from nimic.std.assertions import *
 from .nifcore import (
-    addDotToken, addIntLit, addSymDef, addSymUse, beginRead, closeTag, createTokenBuf, Cursor, cursorIsNil, cursorTagId,
-    endRead, hasMore, inc, into, kind, loopInto, newPool, newTagPool, NifKind, openTag, registerTag, skip, symName,
-    TagId, tagName, TagPool)
+    addSymDef, addSymUse, createTokenBuf, Cursor, cursorTagId,
+    endRead, into, kind, loopInto, newPool, newTagPool, NifKind, registerTag, skip, symName,
+    TagId, TagPool)
 from ..models.leng_tags import (
     LengExpr, LengOther, LengPragma, LengStmt, LengSym, LengType, LengTypeQualifier, rawTagIsLengExpr,
     rawTagIsLengOther, rawTagIsLengPragma, rawTagIsLengStmt, rawTagIsLengSym, rawTagIsLengType,
@@ -145,7 +145,7 @@ def elementType(n: Cursor) -> Cursor:
     ## First child of a (single-element) type node, e.g. the `T` of `(ptr T)`.
     ## In `nifcore`, `inc` past a `TagLit` head lands on the first body token.
     result = n.copy()
-    inc(result)
+    result.inc()
     return result
 
 
@@ -295,7 +295,7 @@ def takeProcType(n: mut @ Cursor) -> ProcType:
         result.pragmas = n
         skip(n)
         if kind(n) == NifKind.DotToken:
-            inc(n)
+            n.inc()
     else:
         assert stmtKind(n) == LengStmt.ProcS or typeKind(n) == LengType.ProctypeT
         with into(n):  # enter (proc ...) / (proctype ...)
@@ -307,9 +307,9 @@ def takeProcType(n: mut @ Cursor) -> ProcType:
             skip(n)
             result.pragmas = n
             skip(n)
-            if hasMore(n) and kind(n) == NifKind.DotToken:
-                inc(n)
-            while hasMore(n):
+            if n.hasMore() and kind(n) == NifKind.DotToken:
+                n.inc()
+            while n.hasMore():
                 skip(n)
     return result
 
@@ -407,7 +407,7 @@ def inc(c: mut @ Cursor, expected: LengTagKind):
     """{.tagDispatch.}"""
     assert _kindMatches(c, expected), (
         string("inc ") + str(expected) + string(": cursor at kind=") + str(kind(c)))
-    inc(c)
+    c.inc()
 
 
 @template
@@ -439,119 +439,119 @@ if comptime(__name__ == "__main__"):
             b = createTokenBuf(cap=128, sharedPool=pool, sharedTags=tags)
 
         # Verify tag pool seeding
-        echo(tagName(tags, TagId(uint32(ord(TagEnum.StmtsTagId)))))
-        echo(tagName(tags, TagId(uint32(ord(TagEnum.ProcTagId)))))
+        echo(tags.tagName(TagId(uint32(ord(TagEnum.StmtsTagId)))))
+        echo(tags.tagName(TagId(uint32(ord(TagEnum.ProcTagId)))))
 
         # Root (stmts ...)
-        openTag(b, _tid(TagEnum.StmtsTagId))
+        b.openTag(_tid(TagEnum.StmtsTagId))
 
         # 1. (type :MyType.0.m (pragmas (packed)) (object . (fld :x.0.m . (i +32))))
-        openTag(b, _tid(TagEnum.TypeTagId))
+        b.openTag(_tid(TagEnum.TypeTagId))
         addSymDef(b, string("MyType.0.m"))
-        openTag(b, _tid(TagEnum.PragmasTagId))
-        openTag(b, _tid(TagEnum.PackedTagId))
-        closeTag(b)
-        closeTag(b)
-        openTag(b, _tid(TagEnum.ObjectTagId))
-        addDotToken(b)
-        openTag(b, _tid(TagEnum.FldTagId))
+        b.openTag(_tid(TagEnum.PragmasTagId))
+        b.openTag(_tid(TagEnum.PackedTagId))
+        b.closeTag()
+        b.closeTag()
+        b.openTag(_tid(TagEnum.ObjectTagId))
+        b.addDotToken()
+        b.openTag(_tid(TagEnum.FldTagId))
         addSymDef(b, string("x.0.m"))
-        addDotToken(b)
-        openTag(b, _tid(TagEnum.ITagId))
-        addIntLit(b, i64(32))
-        closeTag(b)
-        closeTag(b)
-        closeTag(b)
-        closeTag(b)
+        b.addDotToken()
+        b.openTag(_tid(TagEnum.ITagId))
+        b.addIntLit(i64(32))
+        b.closeTag()
+        b.closeTag()
+        b.closeTag()
+        b.closeTag()
 
         # 2. Union branches: (of (ranges +1) (object .)) and (else .)
-        openTag(b, _tid(TagEnum.OfTagId))
-        openTag(b, _tid(TagEnum.RangesTagId))
-        addIntLit(b, i64(1))
-        closeTag(b)
-        openTag(b, _tid(TagEnum.ObjectTagId))
-        addDotToken(b)
-        closeTag(b)
-        closeTag(b)
+        b.openTag(_tid(TagEnum.OfTagId))
+        b.openTag(_tid(TagEnum.RangesTagId))
+        b.addIntLit(i64(1))
+        b.closeTag()
+        b.openTag(_tid(TagEnum.ObjectTagId))
+        b.addDotToken()
+        b.closeTag()
+        b.closeTag()
 
-        openTag(b, _tid(TagEnum.ElseTagId))
-        addDotToken(b)
-        closeTag(b)
+        b.openTag(_tid(TagEnum.ElseTagId))
+        b.addDotToken()
+        b.closeTag()
 
         # 3. (proc :fn.0.m (params (param :a.0.m . (ptr (i +32)))) . (pragmas (inline) (cdecl)) (stmts (ret .)))
-        openTag(b, _tid(TagEnum.ProcTagId))
+        b.openTag(_tid(TagEnum.ProcTagId))
         addSymDef(b, string("fn.0.m"))
-        openTag(b, _tid(TagEnum.ParamsTagId))
-        openTag(b, _tid(TagEnum.ParamTagId))
+        b.openTag(_tid(TagEnum.ParamsTagId))
+        b.openTag(_tid(TagEnum.ParamTagId))
         addSymDef(b, string("a.0.m"))
-        addDotToken(b)
-        openTag(b, _tid(TagEnum.PtrTagId))
-        openTag(b, _tid(TagEnum.ITagId))
-        addIntLit(b, i64(32))
-        closeTag(b)
-        closeTag(b)
-        closeTag(b)
-        closeTag(b)
-        addDotToken(b)
-        openTag(b, _tid(TagEnum.PragmasTagId))
-        openTag(b, _tid(TagEnum.InlineTagId))
-        closeTag(b)
-        openTag(b, _tid(TagEnum.CdeclTagId))
-        closeTag(b)
-        closeTag(b)
-        openTag(b, _tid(TagEnum.StmtsTagId))
-        openTag(b, _tid(TagEnum.RetTagId))
-        addDotToken(b)
-        closeTag(b)
-        closeTag(b)
-        closeTag(b)
+        b.addDotToken()
+        b.openTag(_tid(TagEnum.PtrTagId))
+        b.openTag(_tid(TagEnum.ITagId))
+        b.addIntLit(i64(32))
+        b.closeTag()
+        b.closeTag()
+        b.closeTag()
+        b.closeTag()
+        b.addDotToken()
+        b.openTag(_tid(TagEnum.PragmasTagId))
+        b.openTag(_tid(TagEnum.InlineTagId))
+        b.closeTag()
+        b.openTag(_tid(TagEnum.CdeclTagId))
+        b.closeTag()
+        b.closeTag()
+        b.openTag(_tid(TagEnum.StmtsTagId))
+        b.openTag(_tid(TagEnum.RetTagId))
+        b.addDotToken()
+        b.closeTag()
+        b.closeTag()
+        b.closeTag()
 
         # 4. (proctype . (params) (u +64) (pragmas (fastcall)) .)
-        openTag(b, _tid(TagEnum.ProctypeTagId))
-        addDotToken(b)
-        openTag(b, _tid(TagEnum.ParamsTagId))
-        closeTag(b)
-        openTag(b, _tid(TagEnum.UTagId))
-        addIntLit(b, i64(64))
-        closeTag(b)
-        openTag(b, _tid(TagEnum.PragmasTagId))
-        openTag(b, _tid(TagEnum.FastcallTagId))
-        closeTag(b)
-        closeTag(b)
-        addDotToken(b)
-        closeTag(b)
+        b.openTag(_tid(TagEnum.ProctypeTagId))
+        b.addDotToken()
+        b.openTag(_tid(TagEnum.ParamsTagId))
+        b.closeTag()
+        b.openTag(_tid(TagEnum.UTagId))
+        b.addIntLit(i64(64))
+        b.closeTag()
+        b.openTag(_tid(TagEnum.PragmasTagId))
+        b.openTag(_tid(TagEnum.FastcallTagId))
+        b.closeTag()
+        b.closeTag()
+        b.addDotToken()
+        b.closeTag()
 
         # 5. (gvar :gv.0.m . (ro (i +32)) (addr g)) and (var :lv.0.m . (atomic (i +32)) (haddr g))
-        openTag(b, _tid(TagEnum.GvarTagId))
+        b.openTag(_tid(TagEnum.GvarTagId))
         addSymDef(b, string("gv.0.m"))
-        addDotToken(b)
-        openTag(b, _tid(TagEnum.RoTagId))
-        openTag(b, _tid(TagEnum.ITagId))
-        addIntLit(b, i64(32))
-        closeTag(b)
-        closeTag(b)
-        openTag(b, _tid(TagEnum.AddrTagId))
+        b.addDotToken()
+        b.openTag(_tid(TagEnum.RoTagId))
+        b.openTag(_tid(TagEnum.ITagId))
+        b.addIntLit(i64(32))
+        b.closeTag()
+        b.closeTag()
+        b.openTag(_tid(TagEnum.AddrTagId))
         addSymUse(b, string("g.0.m"))
-        closeTag(b)
-        closeTag(b)
+        b.closeTag()
+        b.closeTag()
 
-        openTag(b, _tid(TagEnum.VarTagId))
+        b.openTag(_tid(TagEnum.VarTagId))
         addSymDef(b, string("lv.0.m"))
-        addDotToken(b)
-        openTag(b, _tid(TagEnum.AtomicTagId))
-        openTag(b, _tid(TagEnum.ITagId))
-        addIntLit(b, i64(32))
-        closeTag(b)
-        closeTag(b)
-        openTag(b, _tid(TagEnum.HaddrTagId))
+        b.addDotToken()
+        b.openTag(_tid(TagEnum.AtomicTagId))
+        b.openTag(_tid(TagEnum.ITagId))
+        b.addIntLit(i64(32))
+        b.closeTag()
+        b.closeTag()
+        b.openTag(_tid(TagEnum.HaddrTagId))
         addSymUse(b, string("g.0.m"))
-        closeTag(b)
-        closeTag(b)
+        b.closeTag()
+        b.closeTag()
 
-        closeTag(b)  # end root (stmts ...)
+        b.closeTag()  # end root (stmts ...)
 
         with var:
-            c = beginRead(b)
+            c = b.beginRead()
 
         # Root tag decoders
         echo(tagEnumOf(c), " ", tagEnum(c), " ", stmtKind(c), " ", exprKind(c),
@@ -586,12 +586,12 @@ if comptime(__name__ == "__main__"):
             with let:
                 ubPeek = asUnionBranch(c)
                 ubOf = takeUnionBranch(c)
-            echo("ubOf=", cursorIsNil(ubPeek.ranges), " ", substructureKind(ubOf.ranges),
+            echo("ubOf=", ubPeek.ranges.cursorIsNil(), " ", substructureKind(ubOf.ranges),
                  " ", typeKind(ubOf.body))
             echo("isUnionBranch else=", isUnionBranch(c))
             with let:
                 ubElse = takeUnionBranch(c)
-            echo("ubElse=", cursorIsNil(ubElse.ranges), " ", kind(ubElse.body),
+            echo("ubElse=", ubElse.ranges.cursorIsNil(), " ", kind(ubElse.body),
                  " ", typeKind(ubElse.body))
 
             # 3. ProcS: test takeProcType (both from ProcS and from ParamsT) and takeProcDecl
@@ -609,7 +609,7 @@ if comptime(__name__ == "__main__"):
                     ptFromParams = takeProcType(procCopy2)
                 echo("ptFromParams=", typeKind(ptFromParams.params), " ",
                      typeKind(ptFromParams.returnType), " ", substructureKind(ptFromParams.pragmas))
-                while hasMore(procCopy2):
+                while procCopy2.hasMore():
                     skip(procCopy2)
 
             with let:

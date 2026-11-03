@@ -69,7 +69,7 @@ class SplittedSymName(Object):
         if s.module.len > 0:
             result = s.name + string(".") + s.module
         else:
-            result = s.name
+            result = s.name.copy()
         return result
 
 
@@ -214,11 +214,11 @@ def removeModule(s: string) -> string:
     while i > 0:
         if s[i] == ch('.'):
             if s[i + 1] in Tset[char](inrange(ch('0'), ch('9'))):
-                return s
+                return s.copy()
             else:
                 return substr(s, 0, i - 1)
         i -= 1
-    return s
+    return s.copy()
 
 
 class SplittedModulePath(Object):

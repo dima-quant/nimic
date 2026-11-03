@@ -25,17 +25,16 @@ from nimic.ntypes import *
 from nimic.std.assertions import *
 from nimic.std.math import *
 from .nifcore import (
-    addDotToken, addSymDef, addSymUse, appendLineInfo, beginRead, charLit, closeTag, createTokenBuf, Cursor,
-    cursorTagId, FirstEscapeId, floatVal, getOrIncl, getOrInclFromView, hasMore, inc, InlineJumpCap, into, intVal,
-    isEscapedTag, kind, len, newTagPool, NifKind, NifLineInfo, NifSymbol, NoDisamb, NoNifLineInfo, openTag, parseDisamb,
-    Pool, pool, rawLineInfo, registerTag, resolvedTagId, skip, StrId, StrInlineMaxLen, strVal, subtreeWidth, symId,
+    addSymDef, addSymUse, charLit, createTokenBuf, Cursor,
+    cursorTagId, FirstEscapeId, floatVal, getOrIncl, getOrInclFromView, InlineJumpCap, into, intVal,
+    isEscapedTag, kind, newTagPool, NifKind, NifLineInfo, NifSymbol, NoDisamb, NoNifLineInfo, parseDisamb,
+    Pool, pool, registerTag, resolvedTagId, skip, StrId, StrInlineMaxLen, strVal, subtreeWidth, symId,
     symName, TagMask, TagPool, tags, TokenBuf, uintVal)
 from . import nifcore
 from . import nifreader as rd
 from .nifbuilder import (
     addCharLit, addEmpty, addFloatLit, addHeader27, addIdent, addIntLit, addRaw, addStrLit, addSymbol, addSymbolDef,
-    addSymbolDefRetIsGlobal, addTree, addUIntLit, attachComment, attachLineInfo, Builder, endTree, extract, offset,
-    patchIndexAt)
+    addSymbolDefRetIsGlobal, addTree, addUIntLit, attachComment, attachLineInfo, Builder, endTree, extract)
 from . import nifbuilder
 from .stringviews import add
 from .lineinfos import FileId, isValid  # for `==`(FileId) used by NifLineInfo's structural `==`
@@ -49,12 +48,7 @@ from . import comesfrom
 export(comesfrom)
 # one name of two imports, called free: Nim overloads them (rule:overloads)
 addIdent = overloads(nifbuilder.addIdent, nifcore.addIdent)
-addCharLit = overloads(nifbuilder.addCharLit, nifcore.addCharLit)
-addIntLit = overloads(nifbuilder.addIntLit, nifcore.addIntLit)
-addUIntLit = overloads(nifbuilder.addUIntLit, nifcore.addUIntLit)
-addFloatLit = overloads(nifbuilder.addFloatLit, nifcore.addFloatLit)
 addStrLit = overloads(nifbuilder.addStrLit, nifcore.addStrLit)
-offset = overloads(nifbuilder.offset, rd.offset)
 
 
 class _Parent(NTuple):
@@ -234,7 +228,7 @@ def parse(r: mut @ rd.Reader, b: mut @ TokenBuf,
     @template
     def emit(info: NifLineInfo):
         if info.isValid() and (denseLineInfo or info != last):
-            appendLineInfo(b, info)
+            b.appendLineInfo(info)
             last = info
 
     while True:
@@ -252,19 +246,19 @@ def parse(r: mut @ rd.Reader, b: mut @ TokenBuf,
                 # No escape handling here: `openTag` folds an id that does not fit the
                 # 9-bit tag field into the adapter's escape tag by itself, and the
                 # line-info suffix lands on the head either way.
-                openTag(b, getOrInclFromView(b.tags.tags, tok.data))
+                b.openTag(getOrInclFromView(b.tags.tags, tok.data))
                 emit(info)
                 parents.add((info.file, info.line, info.col))
                 nested += 1
             case rd.NifKind.ParRi:
-                closeTag(b)
+                b.closeTag()
                 if parents.len > 1: _ = parents.pop()
                 nested -= 1
                 if nested == 0: break
             case rd.NifKind.DotToken:
                 with let:
                     info = _resolveInfo(b, tok, parents)
-                addDotToken(b); emit(info)
+                b.addDotToken(); emit(info)
             case rd.NifKind.Ident:
                 with let:
                     info = _resolveInfo(b, tok, parents)
@@ -288,19 +282,19 @@ def parse(r: mut @ rd.Reader, b: mut @ TokenBuf,
             case rd.NifKind.CharLit:
                 with let:
                     info = _resolveInfo(b, tok, parents)
-                addCharLit(b, rd.decodeChar(tok)); emit(info)
+                b.addCharLit(rd.decodeChar(tok)); emit(info)
             case rd.NifKind.IntLit:
                 with let:
                     info = _resolveInfo(b, tok, parents)
-                addIntLit(b, rd.decodeInt(tok)); emit(info)
+                b.addIntLit(rd.decodeInt(tok)); emit(info)
             case rd.NifKind.UIntLit:
                 with let:
                     info = _resolveInfo(b, tok, parents)
-                addUIntLit(b, rd.decodeUInt(tok)); emit(info)
+                b.addUIntLit(rd.decodeUInt(tok)); emit(info)
             case rd.NifKind.FloatLit:
                 with let:
                     info = _resolveInfo(b, tok, parents)
-                addFloatLit(b, rd.decodeFloat(tok)); emit(info)
+                b.addFloatLit(rd.decodeFloat(tok)); emit(info)
         if nested == 0 and tok.tk not in Tset(rd.NifKind.ParLe):
             # A bare top-level atom is a complete "tree" on its own.
             break
@@ -417,7 +411,7 @@ def _emitValueWithLineInfo(bld: mut @ Builder, c: mut @ Cursor,
     ## `cur` is the running absolute line info (a head with no `LineInfoLit`
     ## inherits it); `parents` holds enclosing-tag infos for relative encoding.
     with let:
-        li = rawLineInfo(c)
+        li = c.rawLineInfo()
     with let:
         abs = li if li.isValid() else cur.copy()
     if li.isValid():
@@ -431,44 +425,44 @@ def _emitValueWithLineInfo(bld: mut @ Builder, c: mut @ Cursor,
             _emitRelLineInfo(bld, abs, parents[back(1)], pool)
             parents.add(abs)
             with into(c):
-                if escaped: inc(c)               # the escaped id IS the tag name above
-                while hasMore(c):
+                if escaped: c.inc()               # the escaped id IS the tag name above
+                while c.hasMore():
                     _emitValueWithLineInfo(bld, c, cur, parents, tags, pool)
             _ = parents.pop()
             endTree(bld)
         case NifKind.DotToken:
-            addEmpty(bld); _emitRelLineInfo(bld, abs, parents[back(1)], pool); inc(c)
+            addEmpty(bld); _emitRelLineInfo(bld, abs, parents[back(1)], pool); c.inc()
         case NifKind.Ident:
             addIdent(bld, strVal(c, pool))
             _emitRelLineInfo(bld, abs, parents[back(1)], pool)
-            inc(c)
+            c.inc()
         case NifKind.StrLit:
             addStrLit(bld, strVal(c, pool))
             _emitRelLineInfo(bld, abs, parents[back(1)], pool)
-            inc(c)
+            c.inc()
         case NifKind.Symbol:
             addSymbol(bld, symName(c, pool))
             _emitRelLineInfo(bld, abs, parents[back(1)], pool)
-            inc(c)
+            c.inc()
         case NifKind.SymbolDef:
             addSymbolDef(bld, symName(c, pool))
             _emitRelLineInfo(bld, abs, parents[back(1)], pool)
-            inc(c)
+            c.inc()
         case NifKind.CharLit:
             addCharLit(bld, charLit(c))
             _emitRelLineInfo(bld, abs, parents[back(1)], pool)
-            inc(c)
+            c.inc()
         case NifKind.IntLit:
             addIntLit(bld, intVal(c))
             _emitRelLineInfo(bld, abs, parents[back(1)], pool)
-            inc(c)
+            c.inc()
         case NifKind.UIntLit:
             addUIntLit(bld, uintVal(c))
             _emitRelLineInfo(bld, abs, parents[back(1)], pool)
-            inc(c)
+            c.inc()
         case NifKind.FloatLit:
             _emitFloatLit(bld, floatVal(c), abs, parents[back(1)], pool)
-            inc(c)
+            c.inc()
         case (NifKind.ExtendedSuffix | NifKind.LineInfoLit | NifKind.UnknownToken | NifKind.EofToken |
               NifKind.ParLe | NifKind.ParRi):
             assert False, "suffix token is not a value head"
@@ -483,28 +477,28 @@ def _emitValueWithoutLineInfo(bld: mut @ Builder, c: mut @ Cursor,
                 escaped = isEscapedTag(c)
             addTree(bld, tags.tags[resolvedTagId(c)])
             with into(c):
-                if escaped: inc(c)
-                while hasMore(c):
+                if escaped: c.inc()
+                while c.hasMore():
                     _emitValueWithoutLineInfo(bld, c, tags, pool)
             endTree(bld)
         case NifKind.DotToken:
-            addEmpty(bld); inc(c)
+            addEmpty(bld); c.inc()
         case NifKind.Ident:
-            addIdent(bld, strVal(c, pool)); inc(c)
+            addIdent(bld, strVal(c, pool)); c.inc()
         case NifKind.StrLit:
-            addStrLit(bld, strVal(c, pool)); inc(c)
+            addStrLit(bld, strVal(c, pool)); c.inc()
         case NifKind.Symbol:
-            addSymbol(bld, symName(c, pool)); inc(c)
+            addSymbol(bld, symName(c, pool)); c.inc()
         case NifKind.SymbolDef:
-            addSymbolDef(bld, symName(c, pool)); inc(c)
+            addSymbolDef(bld, symName(c, pool)); c.inc()
         case NifKind.CharLit:
-            addCharLit(bld, charLit(c)); inc(c)
+            addCharLit(bld, charLit(c)); c.inc()
         case NifKind.IntLit:
-            addIntLit(bld, intVal(c)); inc(c)
+            addIntLit(bld, intVal(c)); c.inc()
         case NifKind.UIntLit:
-            addUIntLit(bld, uintVal(c)); inc(c)
+            addUIntLit(bld, uintVal(c)); c.inc()
         case NifKind.FloatLit:
-            addFloatLit(bld, floatVal(c)); inc(c)
+            addFloatLit(bld, floatVal(c)); c.inc()
         case (NifKind.ExtendedSuffix | NifKind.LineInfoLit | NifKind.UnknownToken | NifKind.EofToken |
               NifKind.ParLe | NifKind.ParRi):
             assert False, "suffix token is not a value head"
@@ -514,16 +508,16 @@ def appendTo(b: mut @ TokenBuf, dest: mut @ Builder,
              includeLineInfo=True):
     ## Appends canonical NIF text for the whole buffer to `dest`.
     with var:
-        c = beginRead(b)
+        c = b.beginRead()
     if includeLineInfo:
         with var:
             cur = NoNifLineInfo.copy()
         with var:
             parents = seq[NifLineInfo]([NoNifLineInfo])
-        while hasMore(c):
+        while c.hasMore():
             _emitValueWithLineInfo(dest, c, cur, parents, b.tags, b.pool)
     else:
-        while hasMore(c):
+        while c.hasMore():
             _emitValueWithoutLineInfo(dest, c, b.tags, b.pool)
 
 
@@ -543,7 +537,7 @@ def toString(b: mut @ TokenBuf, sizeHint=0,
 def toString(node: Cursor, sizeHint=0,
              includeLineInfo=True) -> string:
     ## Canonical NIF text for the value or subtree at `node`.
-    if not hasMore(node):
+    if not node.hasMore():
         return string("")
     with var:
         bld = nifbuilder.open(
@@ -575,7 +569,7 @@ def _emitValueIndexed(bld: mut @ Builder, c: mut @ Cursor, cur: mut @ NifLineInf
     ## `nifstreams.toModuleString` so the embedded index is byte-compatible with the
     ## canonical reader (`nifindexes.readEmbeddedIndex`).
     with let:
-        li = rawLineInfo(c)
+        li = c.rawLineInfo()
     with let:
         abs = li if li.isValid() else cur.copy()
     if li.isValid():
@@ -583,15 +577,15 @@ def _emitValueIndexed(bld: mut @ Builder, c: mut @ Cursor, cur: mut @ NifLineInf
         cur.comment = StrId(0)   # a comment is a one-shot decoration, never inherited
     match kind(c):
         case NifKind.TagLit:
-            mostRecentOffset <<= offset(bld)            # offset of this `(`
+            mostRecentOffset <<= bld.offset()           # offset of this `(`
             with let:
                 escaped = isEscapedTag(c)
             addTree(bld, tags.tags[resolvedTagId(c)])
             _emitRelLineInfo(bld, abs, parents[back(1)], pool)
             parents.add(abs)
             with into(c):
-                if escaped: inc(c)
-                while hasMore(c):
+                if escaped: c.inc()
+                while c.hasMore():
                     _emitValueIndexed(bld, c, cur, parents, tags, pool, index, dottedSuffix,
                                       mostRecentOffset, previousOffset, rootInfo)
             _ = parents.pop()
@@ -602,7 +596,7 @@ def _emitValueIndexed(bld: mut @ Builder, c: mut @ Cursor, cur: mut @ NifLineInf
             with let:
                 isGlobal = addSymbolDefRetIsGlobal(bld, name, dottedSuffix)
             _emitRelLineInfo(bld, abs, parents[back(1)], pool)
-            inc(c)
+            c.inc()
             if isGlobal:
                 # Hidden if the next sibling is the empty export marker (`.`), else exported.
                 if kind(c) == NifKind.DotToken: addTree(index, string("h"))
@@ -619,21 +613,21 @@ def _emitValueIndexed(bld: mut @ Builder, c: mut @ Cursor, cur: mut @ NifLineInf
                 endTree(index)
         case NifKind.Symbol:
             addSymbol(bld, symName(c, pool), dottedSuffix)
-            _emitRelLineInfo(bld, abs, parents[back(1)], pool); inc(c)
+            _emitRelLineInfo(bld, abs, parents[back(1)], pool); c.inc()
         case NifKind.DotToken:
-            addEmpty(bld); _emitRelLineInfo(bld, abs, parents[back(1)], pool); inc(c)
+            addEmpty(bld); _emitRelLineInfo(bld, abs, parents[back(1)], pool); c.inc()
         case NifKind.Ident:
-            addIdent(bld, strVal(c, pool)); _emitRelLineInfo(bld, abs, parents[back(1)], pool); inc(c)
+            addIdent(bld, strVal(c, pool)); _emitRelLineInfo(bld, abs, parents[back(1)], pool); c.inc()
         case NifKind.StrLit:
-            addStrLit(bld, strVal(c, pool)); _emitRelLineInfo(bld, abs, parents[back(1)], pool); inc(c)
+            addStrLit(bld, strVal(c, pool)); _emitRelLineInfo(bld, abs, parents[back(1)], pool); c.inc()
         case NifKind.CharLit:
-            addCharLit(bld, charLit(c)); _emitRelLineInfo(bld, abs, parents[back(1)], pool); inc(c)
+            addCharLit(bld, charLit(c)); _emitRelLineInfo(bld, abs, parents[back(1)], pool); c.inc()
         case NifKind.IntLit:
-            addIntLit(bld, intVal(c)); _emitRelLineInfo(bld, abs, parents[back(1)], pool); inc(c)
+            addIntLit(bld, intVal(c)); _emitRelLineInfo(bld, abs, parents[back(1)], pool); c.inc()
         case NifKind.UIntLit:
-            addUIntLit(bld, uintVal(c)); _emitRelLineInfo(bld, abs, parents[back(1)], pool); inc(c)
+            addUIntLit(bld, uintVal(c)); _emitRelLineInfo(bld, abs, parents[back(1)], pool); c.inc()
         case NifKind.FloatLit:
-            _emitFloatLit(bld, floatVal(c), abs, parents[back(1)], pool); inc(c)
+            _emitFloatLit(bld, floatVal(c), abs, parents[back(1)], pool); c.inc()
         case (NifKind.ExtendedSuffix | NifKind.LineInfoLit | NifKind.UnknownToken | NifKind.EofToken |
               NifKind.ParLe | NifKind.ParRi):
             assert False, "suffix token is not a value head"
@@ -658,7 +652,7 @@ def toModuleString(b: mut @ TokenBuf, dottedSuffix=string(""), sizeHint=0,
     with let:
         patchPos = addHeader27(bld)
     with var:
-        c = beginRead(b)
+        c = b.beginRead()
     with var:
         cur = NoNifLineInfo.copy()
     with var:
@@ -667,17 +661,17 @@ def toModuleString(b: mut @ TokenBuf, dottedSuffix=string(""), sizeHint=0,
         index = nifbuilder.open(len(b) // 2)
     addTree(index, string(".index"))
     with let:
-        rootInfo = rawLineInfo(c)
+        rootInfo = c.rawLineInfo()
     if rootInfo.isValid():
         _emitRelLineInfo(index, rootInfo, NoNifLineInfo, b.pool)
     with var:
         mostRecentOffset = nint(0)
     with var:
         previousOffset = nint(0)
-    while hasMore(c):
+    while c.hasMore():
         _emitValueIndexed(bld, c, cur, parents, b.tags, b.pool, index, dottedSuffix,
                           mostRecentOffset, previousOffset, rootInfo)
-    patchIndexAt(bld, patchPos, offset(bld))
+    bld.patchIndexAt(patchPos, bld.offset())
     result = extract(bld)
     endTree(index)
     result.add(extract(index))
@@ -723,9 +717,9 @@ if comptime(__name__ == "__main__"):
                 b1 = createTokenBuf(nint(InlineJumpCap) + 16)
             with let:
                 t = registerTag(b1.tags, string("big"))
-            openTag(b1, t)
-            for i in range(nint(InlineJumpCap) + 5): addIntLit(b1, int64(i & 7))
-            closeTag(b1)
+            b1.openTag(t)
+            for i in range(nint(InlineJumpCap) + 5): b1.addIntLit(int64(i & 7))
+            b1.closeTag()
             doAssert(_roundTrips(b1))
 
         with block("line_info"):
@@ -736,11 +730,11 @@ if comptime(__name__ == "__main__"):
                 t = registerTag(b1.tags, string("stmts"))
             with let:
                 f = getOrIncl(b1.pool.filenames, string("test.nim"))
-            openTag(b1, t);            appendLineInfo(b1, f, i32(1), i32(1))
-            addIdent(b1, string("a"));         appendLineInfo(b1, f, i32(2), i32(3))
-            addIntLit(b1, 99);         appendLineInfo(b1, f, i32(2), i32(5))   # same line, new col
-            addStrLit(b1, string("z"));        appendLineInfo(b1, f, i32(40000), i32(9))  # wide layout
-            closeTag(b1)
+            b1.openTag(t);            b1.appendLineInfo(f, i32(1), i32(1))
+            addIdent(b1, string("a"));         b1.appendLineInfo(f, i32(2), i32(3))
+            b1.addIntLit(99);         b1.appendLineInfo(f, i32(2), i32(5))   # same line, new col
+            addStrLit(b1, string("z"));        b1.appendLineInfo(f, i32(40000), i32(9))  # wide layout
+            b1.closeTag()
             doAssert(_roundTrips(b1))
 
         with block("escape_space"):
@@ -755,7 +749,7 @@ if comptime(__name__ == "__main__"):
                 _ = registerTag(result, string("mov"))
                 # Pad the pool out to the edge of the tag field, so the next two
                 # spellings genuinely do not fit and take the escape.
-                while uint32(len(result.tags)) < TagMask: _ = registerTag(result, string("pad") + str(len(result.tags)))
+                while uint32(result.tags.len()) < TagMask: _ = registerTag(result, string("pad") + str(result.tags.len()))
                 doAssert(uint32(registerTag(result, string("movzx"))) == FirstEscapeId)
                 doAssert(uint32(registerTag(result, string("syscall"))) == FirstEscapeId + u32(1))
                 return result
@@ -767,11 +761,11 @@ if comptime(__name__ == "__main__"):
             # In the BUFFER the two overflowing tags are escape headers carrying their
             # id inline; `mov` is untouched, so a tag that fits still costs one token.
             with var:
-                c = beginRead(b1)
+                c = b1.beginRead()
             with var:
                 seen = 0
             with into(c):
-                while hasMore(c):
+                while c.hasMore():
                     if isEscapedTag(c):
                         doAssert(uint32(resolvedTagId(c)) >= FirstEscapeId)
                         seen += 1
@@ -807,9 +801,9 @@ if comptime(__name__ == "__main__"):
     def _showValues(b: mut @ TokenBuf):
         """Every child of the top-level node, through `toString` of a cursor."""
         with var:
-            c = beginRead(b)
+            c = b.beginRead()
         with into(c):
-            while hasMore(c):
+            while c.hasMore():
                 echo(string("  "), kind(c), string(" "), toString(c), string(" | "), toString(c, includeLineInfo=False))
                 skip(c)
         echo(string("  after the last value: ["), toString(c), string("]"))
@@ -924,14 +918,14 @@ if comptime(__name__ == "__main__"):
             fl = createTokenBuf()
         with let:
             ff = getOrIncl(fl.pool.filenames, string("float.nim"))
-        openTag(fl, registerTag(fl.tags, string("floats"))); appendLineInfo(fl, ff, i32(1), i32(1))
-        addFloatLit(fl, Inf); appendLineInfo(fl, ff, i32(2), i32(3))
-        addFloatLit(fl, NaN); appendLineInfo(fl, ff, i32(2), i32(4))
-        addFloatLit(fl, -Inf); appendLineInfo(fl, ff, i32(3), i32(1))
-        addFloatLit(fl, -0.0)
-        addFloatLit(fl, 0.1); appendLineInfo(fl, ff, i32(4), i32(1))
-        addFloatLit(fl, 5e-324)
-        closeTag(fl)
+        fl.openTag(registerTag(fl.tags, string("floats"))); fl.appendLineInfo(ff, i32(1), i32(1))
+        fl.addFloatLit(Inf); fl.appendLineInfo(ff, i32(2), i32(3))
+        fl.addFloatLit(NaN); fl.appendLineInfo(ff, i32(2), i32(4))
+        fl.addFloatLit(-Inf); fl.appendLineInfo(ff, i32(3), i32(1))
+        fl.addFloatLit(-0.0)
+        fl.addFloatLit(0.1); fl.appendLineInfo(ff, i32(4), i32(1))
+        fl.addFloatLit(5e-324)
+        fl.closeTag()
         echo(string("floats: "), len(fl), string(" tokens"))
         echo(toString(fl))
         echo(toString(fl, includeLineInfo=False))
@@ -988,25 +982,25 @@ if comptime(__name__ == "__main__"):
         rd.jumpTo(ir, rd.indexStartsAt(ir))
         parse(ir, idx)
         with var:
-            e = beginRead(idx)
+            e = idx.beginRead()
         with var:
             offs = nint(0)
         with let:
-            indexInfo = rawLineInfo(e)
+            indexInfo = e.rawLineInfo()
         with into(e):
-            while hasMore(e):
+            while e.hasMore():
                 with let:
                     entryTag = idx.tags.tags[cursorTagId(e)]
                 # an entry without line info of its own inherits the index's
                 with let:
-                    seed = rawLineInfo(e) if rawLineInfo(e).isValid() else indexInfo
+                    seed = e.rawLineInfo() if e.rawLineInfo().isValid() else indexInfo
                 with var:
                     name = string("")
                 with into(e):
                     name = symName(e)
-                    inc(e)
+                    e.inc()
                     offs += nint(intVal(e))
-                    inc(e)
+                    e.inc()
                 with var:
                     decl = createTokenBuf(sharedPool=idx.pool)
                 rd.jumpTo(ir, offs)

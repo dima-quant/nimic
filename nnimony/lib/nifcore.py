@@ -70,7 +70,7 @@ else:
 from nimic.std.assertions import *
 from nimic.std.hashes import *
 from . import bitabs, lineinfos, nifroles
-from .bitabs import BiTable, ensureIndexed, getKeyId, getOrIncl, hash, initBiTable, len
+from .bitabs import BiTable, ensureIndexed, getKeyId, getOrIncl, initBiTable
 from .lineinfos import FileId, isValid, NoFile
 export(nifroles)  # a `{.nifWrap.}` in a template body is resolved where it expands
 export(bitabs)  # adapters touching pool.strings / tags need getOrIncl etc.
@@ -468,6 +468,10 @@ class NifSymbol(Object):
         result = cast[Hash](h)
         return result
 
+    def isLocal(s: NifSymbol) -> bool:
+        """{.inline, noSideEffect.}"""
+        return s.module == StrId(u32(0))
+
 
 with const:
     NoDisamb = i32(-1)
@@ -485,6 +489,164 @@ class Pool(Object):
     filenames: BiTable[FileId, string]
     ## Source filenames referenced by `LineInfoLit` tokens. Line/col are
     ## encoded inline in the token; only the filename is interned here.
+
+    @template
+    def poolStr(p: Pool, s: StrId) -> lent @ string:
+        return p.strings[s]
+
+    # ── Asking a symbol what it is ───────────────────────────────────────────
+
+    def sym(p: Pool, id: SymId) -> NifSymbol:
+        """{.inline, noSideEffect.}"""
+        ## The symbol `id`, taken apart. A field read.
+        return p.symbols[id].copy()
+
+    def _strOrEmpty(p: Pool, s: StrId) -> string:
+        """{.inline, noSideEffect.}"""
+        return string("") if s == StrId(u32(0)) else p.strings[s]
+
+    def symBasename(p: Pool, id: SymId) -> string:
+        ## The identifier of `id`, without disambiguator, key or module suffix:
+        ## `abc.12.Ikey.mod` gives `abc`. A name may contain dots itself
+        ## (`Pool.Obj.0` gives `Pool.Obj`), and an atom that is not a symbol at all
+        ## gives `""` -- it has no identifier to name.
+        """{.noSideEffect.}"""
+        with let:
+            s = p.symbols[id]
+        return string("") if s.disamb == NoDisamb else p.strings[s.name]
+
+    def symNameId(p: Pool, id: SymId) -> StrId:
+        """{.inline, noSideEffect.}"""
+        ## `symBasename` as an id -- the one to compare identifiers by.
+        return p.symbols[id].name
+
+    def symVersionedBasename(p: Pool, id: SymId) -> string:
+        ## The identifier AND its disambiguator, without key or module suffix:
+        ## `abc.12.Ikey.mod` gives `abc.12`. That is a name for the ROUTINE, not for
+        ## one instantiation of it -- `symWithoutModule` is the one that keeps the
+        ## key. An atom that is not a symbol gives `""`.
+        """{.noSideEffect.}"""
+        with let:
+            s = p.symbols[id]
+        if s.disamb == NoDisamb:
+            result = string("")
+        else:
+            result = p.strings[s.name].copy()
+            result.add(ch("."))
+            result.addInt(s.disamb)
+        return result
+
+    def symIsInstantiation(p: Pool, id: SymId) -> bool:
+        ## Whether `id` carries a deduplication key -- the `Ikey` of
+        ## `abc.12.Ikey.mod`, which every module needing that instantiation derives
+        ## the same way. That is what makes `symWithoutModule` a cross-module
+        ## identity for it and only for it.
+        ##
+        ## ONE key, spelled the way nimony spells one: a name with two of them
+        ## (`foo.0.Ia.Ib.mod`) is not an instantiation of anything this toolchain
+        ## minted, and nifasm merges symbols by this answer -- it once hand-rolled
+        ## its own and merged such a name wrongly.
+        """{.noSideEffect.}"""
+        with let:
+            d = p.symbols[id].dedup
+        if d == StrId(u32(0)):
+            return False
+        with let:
+            key = p.strings[d]
+        if key.len == 0 or key[0] != ch("I"):
+            return False
+        for c in key:
+            if c == ch("."):
+                return False
+        result = True
+        return result
+
+    def symWithoutModule(p: Pool, id: SymId) -> string:
+        ## `id` minus its module suffix: `abc.12.Ikey.mod` gives `abc.12.Ikey`, and a
+        ## local symbol gives itself. For an instantiation this is the name every
+        ## module that needs it arrives at independently, so it is the key to merge
+        ## the copies by -- DCE, the type-key builder and overload resolution all use
+        ## it for exactly that.
+        """{.noSideEffect.}"""
+        with let:
+            s = p.symbols[id]
+        result = p.strings[s.name].copy()
+        if s.disamb != NoDisamb:
+            result.add(ch("."))
+            result.addInt(s.disamb)
+        if s.dedup != StrId(u32(0)):
+            result.add(ch("."))
+            result.add(p.strings[s.dedup])
+        return result
+
+    def symSameEntity(p: Pool, a: SymId, b: SymId) -> bool:
+        ## Whether two DIFFERENT symbols name the same entity seen from two modules:
+        ## both are instantiations and everything but the module suffix matches.
+        """{.noSideEffect.}"""
+        if a == b:
+            return True
+        with let:
+            sa = p.symbols[a]
+        with let:
+            sb = p.symbols[b]
+        result = (sa.dedup != StrId(u32(0)) and sa.dedup == sb.dedup and
+                  sa.name == sb.name and sa.disamb == sb.disamb)
+        return result
+
+    def symModule(p: Pool, id: SymId) -> string:
+        """{.inline, noSideEffect.}"""
+        ## The module suffix of `id`, `""` when it is local. For the places that need
+        ## the suffix as a string -- a table key, a file name, a `(strlit)` -- while
+        ## `sym(p, id).module` is what a COMPARISON should use.
+        return p._strOrEmpty(p.symbols[id].module)
+
+    def symIsLocal(p: Pool, id: SymId) -> bool:
+        """{.inline, noSideEffect.}"""
+        ## Whether `id` has no module suffix. A question about the module, never
+        ## about how many dots the spelling has: real names contain dots
+        ## (`Pool.Obj`, `dollar`.CaseMode`, `..<`).
+        return p.symbols[id].module == StrId(u32(0))
+
+    def symModuleIs(p: Pool, id: SymId, suffix: string) -> bool:
+        ## Whether `id` comes from the module `suffix`. Builds nothing.
+        """{.noSideEffect.}"""
+        with let:
+            m = p.symbols[id].module
+        result = m != StrId(u32(0)) and p.strings[m] == suffix
+        return result
+
+    @dispatch
+    def symString(p: Pool, s: NifSymbol) -> string:
+        ## The spelling `s` would be interned under.
+        """{.noSideEffect.}"""
+        result = p.strings[s.name].copy()
+        if s.disamb != NoDisamb:
+            result.add(ch("."))
+            result.addInt(s.disamb)
+        if s.dedup != StrId(u32(0)):
+            result.add(ch("."))
+            result.add(p.strings[s.dedup])
+        if s.module != StrId(u32(0)):
+            result.add(ch("."))
+            result.add(p.strings[s.module])
+        return result
+
+    @dispatch
+    def symString(p: Pool, id: SymId) -> string:
+        """{.inline, noSideEffect.}"""
+        ## The whole spelling of `id`. Builds a string, so it is for the places that
+        ## genuinely need one -- the C mangler, error messages, serialization -- and
+        ## never for asking a question the accessors above answer.
+        return p.symString(p.symbols[id])
+
+    @template
+    def poolSym(p: Pool, s: SymId) -> string:
+        return p.symString(s)
+        ## The classic name for `symString`, and the fourth thing the Nim compiler's
+        ## IC modules ask (`ast2nif.indexFromBif`). It used to yield `lent string`
+        ## straight out of the pool; the pool has no string to lend now, so this
+        ## builds one -- the callers all wanted a copy anyway (a table key, a name to
+        ## re-emit).
 
 
 @ref
@@ -511,6 +673,14 @@ class TagPool(Object):
     ## What an adapter DOES have to know is that an escaped node's id is not
     ## `cursorTagId` (ask `resolvedTagId`) and that its operands start one
     ## token later.
+
+    @template
+    def hasEscapes(tp: TagPool) -> bool:
+        return tp.escapeTag != TagId(u32(0))
+
+    @template
+    def tagName(tp: TagPool, t: TagId) -> lent @ string:
+        return tp.tags[t]
 
 
 def newPool() -> Pool:
@@ -542,11 +712,6 @@ with const:
     ## otherwise unaffected: `registerTag` keeps counting.
 
 
-@template
-def hasEscapes(tp: TagPool) -> bool:
-    return tp.escapeTag != TagId(u32(0))
-
-
 @generic
 def createTags[E: enum]() -> TagPool:
     ## One-shot tag-pool builder for an adapter's enum. Registers every
@@ -565,150 +730,9 @@ def createTags[E: enum]() -> TagPool:
             string("createTags: enum/TagId misalignment for ") + str(e) + string(" (got id ") + str(id) + string(")"))
     return result
 
-
-@template
-def tagName(tp: TagPool, t: TagId) -> lent @ string:
-    return tp.tags[t]
 # Direct pool lookups (only meaningful for pool-mode payloads — inline
 # strings/syms don't have ids). Prefer the cursor-side `strVal(c)` /
 # `symName(c)` accessors which handle both modes transparently.
-
-
-@template
-def poolStr(p: Pool, s: StrId) -> lent @ string:
-    return p.strings[s]
-
-# ── Asking a symbol what it is ───────────────────────────────────────────
-
-
-def sym(p: Pool, id: SymId) -> NifSymbol:
-    """{.inline, noSideEffect.}"""
-    ## The symbol `id`, taken apart. A field read.
-    return p.symbols[id]
-
-
-def _strOrEmpty(p: Pool, s: StrId) -> string:
-    """{.inline, noSideEffect.}"""
-    return string("") if s == StrId(u32(0)) else p.strings[s]
-
-
-def symBasename(p: Pool, id: SymId) -> string:
-    ## The identifier of `id`, without disambiguator, key or module suffix:
-    ## `abc.12.Ikey.mod` gives `abc`. A name may contain dots itself
-    ## (`Pool.Obj.0` gives `Pool.Obj`), and an atom that is not a symbol at all
-    ## gives `""` -- it has no identifier to name.
-    """{.noSideEffect.}"""
-    with let:
-        s = p.symbols[id]
-    return string("") if s.disamb == NoDisamb else p.strings[s.name]
-
-
-def symNameId(p: Pool, id: SymId) -> StrId:
-    """{.inline, noSideEffect.}"""
-    ## `symBasename` as an id -- the one to compare identifiers by.
-    return p.symbols[id].name
-
-
-def symVersionedBasename(p: Pool, id: SymId) -> string:
-    ## The identifier AND its disambiguator, without key or module suffix:
-    ## `abc.12.Ikey.mod` gives `abc.12`. That is a name for the ROUTINE, not for
-    ## one instantiation of it -- `symWithoutModule` is the one that keeps the
-    ## key. An atom that is not a symbol gives `""`.
-    """{.noSideEffect.}"""
-    with let:
-        s = p.symbols[id]
-    if s.disamb == NoDisamb:
-        result = string("")
-    else:
-        result = p.strings[s.name].copy()
-        result.add(ch("."))
-        result.addInt(s.disamb)
-    return result
-
-
-def symIsInstantiation(p: Pool, id: SymId) -> bool:
-    ## Whether `id` carries a deduplication key -- the `Ikey` of
-    ## `abc.12.Ikey.mod`, which every module needing that instantiation derives
-    ## the same way. That is what makes `symWithoutModule` a cross-module
-    ## identity for it and only for it.
-    ##
-    ## ONE key, spelled the way nimony spells one: a name with two of them
-    ## (`foo.0.Ia.Ib.mod`) is not an instantiation of anything this toolchain
-    ## minted, and nifasm merges symbols by this answer -- it once hand-rolled
-    ## its own and merged such a name wrongly.
-    """{.noSideEffect.}"""
-    with let:
-        d = p.symbols[id].dedup
-    if d == StrId(u32(0)):
-        return False
-    with let:
-        key = p.strings[d]
-    if key.len == 0 or key[0] != ch("I"):
-        return False
-    for c in key:
-        if c == ch("."):
-            return False
-    result = True
-    return result
-
-
-def symWithoutModule(p: Pool, id: SymId) -> string:
-    ## `id` minus its module suffix: `abc.12.Ikey.mod` gives `abc.12.Ikey`, and a
-    ## local symbol gives itself. For an instantiation this is the name every
-    ## module that needs it arrives at independently, so it is the key to merge
-    ## the copies by -- DCE, the type-key builder and overload resolution all use
-    ## it for exactly that.
-    """{.noSideEffect.}"""
-    with let:
-        s = p.symbols[id]
-    result = p.strings[s.name].copy()
-    if s.disamb != NoDisamb:
-        result.add(ch("."))
-        result.addInt(s.disamb)
-    if s.dedup != StrId(u32(0)):
-        result.add(ch("."))
-        result.add(p.strings[s.dedup])
-    return result
-
-
-def symSameEntity(p: Pool, a: SymId, b: SymId) -> bool:
-    ## Whether two DIFFERENT symbols name the same entity seen from two modules:
-    ## both are instantiations and everything but the module suffix matches.
-    """{.noSideEffect.}"""
-    if a == b:
-        return True
-    with let:
-        sa = p.symbols[a]
-    with let:
-        sb = p.symbols[b]
-    result = (sa.dedup != StrId(u32(0)) and sa.dedup == sb.dedup and
-              sa.name == sb.name and sa.disamb == sb.disamb)
-    return result
-
-
-def symModule(p: Pool, id: SymId) -> string:
-    """{.inline, noSideEffect.}"""
-    ## The module suffix of `id`, `""` when it is local. For the places that need
-    ## the suffix as a string -- a table key, a file name, a `(strlit)` -- while
-    ## `sym(p, id).module` is what a COMPARISON should use.
-    return _strOrEmpty(p, p.symbols[id].module)
-
-
-def symIsLocal(p: Pool, id: SymId) -> bool:
-    """{.inline, noSideEffect.}"""
-    ## Whether `id` has no module suffix. A question about the module, never
-    ## about how many dots the spelling has: real names contain dots
-    ## (`Pool.Obj`, `dollar`.CaseMode`, `..<`).
-    return p.symbols[id].module == StrId(u32(0))
-
-
-def symModuleIs(p: Pool, id: SymId, suffix: string) -> bool:
-    ## Whether `id` comes from the module `suffix`. Builds nothing.
-    """{.noSideEffect.}"""
-    with let:
-        m = p.symbols[id].module
-    result = m != StrId(u32(0)) and p.strings[m] == suffix
-    return result
 
 
 def _digitCount(x: int32) -> nint:
@@ -736,32 +760,6 @@ def symSpellingLen(p: Pool, id: SymId) -> nint:
     if s.module != StrId(u32(0)):
         result += 1 + p.strings[s.module].len
     return result
-
-
-@dispatch
-def symString(p: Pool, s: NifSymbol) -> string:
-    ## The spelling `s` would be interned under.
-    """{.noSideEffect.}"""
-    result = p.strings[s.name].copy()
-    if s.disamb != NoDisamb:
-        result.add(ch("."))
-        result.addInt(s.disamb)
-    if s.dedup != StrId(u32(0)):
-        result.add(ch("."))
-        result.add(p.strings[s.dedup])
-    if s.module != StrId(u32(0)):
-        result.add(ch("."))
-        result.add(p.strings[s.module])
-    return result
-
-
-@dispatch
-def symString(p: Pool, id: SymId) -> string:
-    """{.inline, noSideEffect.}"""
-    ## The whole spelling of `id`. Builds a string, so it is for the places that
-    ## genuinely need one -- the C mangler, error messages, serialization -- and
-    ## never for asking a question the accessors above answer.
-    return symString(p, p.symbols[id])
 
 
 with const:
@@ -913,11 +911,6 @@ def symId(p: Pool, s: NifSymbol) -> SymId:
     """{.inline.}"""
     return getOrIncl(p.symbols, s)
 
-
-def isLocal(s: NifSymbol) -> bool:
-    """{.inline, noSideEffect.}"""
-    return s.module == StrId(u32(0))
-
 # ── The classic string-shaped view of the symbol pool ────────────────────
 #
 # The Nim compiler's IC modules speak to the symbol pool as a
@@ -949,12 +942,12 @@ class SymPool(Object):
 
     def __getitem__(s: SymPool, id: SymId) -> string:
         """{.inline, noSideEffect.}"""
-        return symString(s._pool, id)
+        return s._pool.symString(id)
 
     @property
     def len(s: SymPool) -> nint:
         """{.inline, noSideEffect.}"""
-        return len(s._pool.symbols)
+        return s._pool.symbols.len()
 
     def getKeyId(s: SymPool, name: string) -> SymId:
         ## The id `name` already has, or `SymId(0)` when the pool does not hold it.
@@ -987,16 +980,6 @@ class SymPool(Object):
 def syms(p: Pool) -> SymPool:
     return SymPool(_pool=p)
 
-
-@template
-def poolSym(p: Pool, s: SymId) -> string:
-    return symString(p, s)
-    ## The classic name for `symString`, and the fourth thing the Nim compiler's
-    ## IC modules ask (`ast2nif.indexFromBif`). It used to yield `lent string`
-    ## straight out of the pool; the pool has no string to lend now, so this
-    ## builds one -- the callers all wanted a copy anyway (a table key, a name to
-    ## re-emit).
-
 # ── Storage / CursorOwner / Cursor ───────────────────────────────────────
 
 _Storage = ptr[UncheckedArray[NifToken]]
@@ -1018,6 +1001,188 @@ class Cursor(Object):
     _owner: _CursorOwner
     _p: ptr[NifToken]
     _rem: nint
+
+    def toUniqueId(c: Cursor) -> nint:
+        """{.inline, noSideEffect.}"""
+        ## A stable identity for the cursor's *position*: two cursors over the same
+        ## buffer at the same token share it, distinct positions differ. Suitable as a
+        ## `HashSet[int]`/`IntSet` key (e.g. type-traversal dedup). Not stable across
+        ## buffers or runs — it is the underlying token pointer reinterpreted.
+        return cast[intp](c._p)
+
+    @template
+    def _peekAhead(c: Cursor, offset: nint) -> NifToken:
+        return cast[ptr[NifToken]](cast[uintp](c._p) +
+                                   uint(offset) * uint(sizeof(NifToken))).contents
+
+    @template
+    def _advanceBy(c: mut @ Cursor, n: nint):
+        # Capture `n` once — callers pass `tokenWidth(c)`, which reads c.p, and
+        # re-evaluating after we move c.p would read the wrong token.
+        with let:
+            advance = n
+        c._p = cast[ptr[NifToken]](cast[uintp](c._p) +
+                                   uint(advance) * uint(sizeof(NifToken)))
+        if c._rem > 0:
+            c._rem = c._rem - advance if c._rem >= advance else 0
+
+    def cursorIsNil(c: Cursor) -> bool:
+        """{.inline, noSideEffect.}"""
+        return isNil(c._p)
+
+    def tokenWidth(c: Cursor) -> nint:
+        """{.alwaysInline, noSideEffect.}"""
+        ## Tokens occupied by the head of the current value — the kinded
+        ## token plus any consecutive `ExtendedSuffix` tokens chained behind
+        ## it. NOT including a TagLit's body.
+        ##
+        ## Chains are unbounded in principle; in practice the writers in
+        ## nifcore emit at most 2 suffixes (enough to cover int64/float64 /
+        ## 47-bit jumps / 55-bit pool ids). The hot path — no suffix at all
+        ## — is one peek + one branch.
+        ##
+        ## Written as NESTED `if`s ending in `break`s rather than a `while` over a
+        ## conjunction, and deliberately WITHOUT a `noinline` slow-path helper.
+        ##
+        ## Do NOT give this one the hot/cold treatment `combinedPayload` gets, even
+        ## though the two look alike. Measured on nifbench: splitting `combinedPayload`
+        ## is −0.68 % instructions, splitting THIS is **+6.5 M (a loss)**, and doing
+        ## both is only −0.46 % — the loss here eats a third of the win there. The hot
+        ## path returns a *constant*, so the call it saves is already the cheapest kind
+        ## while the wrapper still costs a branch at all 10 M call sites. Reasons:
+        ##  * a conjunction whose second operand contains a call cannot be handed to
+        ##    the backend as branches, so it materialises a bool in an if/else
+        ##    diamond — 9 x86 instructions and ~90 NIFC tokens for two compares;
+        ##  * factoring the chain walk into a helper made this routine a NON-LEAF,
+        ##    and arkham then homes its locals in callee-saved registers and pushes
+        ##    them in the prologue on EVERY call, including the overwhelmingly common
+        ##    no-suffix path. That cost more than the loop it removed (`parse` +8%).
+        ##
+        ## `{.alwaysInline.}` is load-bearing for the native backend. Hexer's
+        ## inliner ignores `.inline` (it only auto-splices bodies ≤ 100 tokens, and
+        ## this one is larger once `peekAhead` expands) while GCC `-O3` inlines the
+        ## `static inline` C anyway. Without the force-splice, `skip`/`inc` call
+        ## this and copy the 24-byte Cursor onto the stack for the by-value
+        ## argument — the dominant arkham-vs-GCC gap on nifbench's walk/parse.
+        ##
+        ## Measured, not assumed: at 262 asm-NIF tokens this sits
+        ## above `InlineTinyBound`, so the size heuristic never took it, and it is the
+        ## one shape that pays — scalar in, scalar out, few live values, so the callee's
+        ## push/pop and call/ret vanish and the caller adds no spill traffic. Measured
+        ## on nimsem (128-invocation `check`, `-d:danger`): 55.320 G → 55.035 G Ir,
+        ## **−0.51 %**, for +4 KB of image.
+        ##
+        ## The two neighbours that looked like the same shape on nifbench do NOT
+        ## survive this measurement — do not annotate them: `inc` on top of this one is
+        ## −0.36 % (i.e. it gives back a third of the win, while nifbench said it added
+        ## to it), and `rawLineInfo` is **+0.22 %, a loss** — it returns an aggregate
+        ## and holds ~20 live values, so the push/pop it removes comes straight back as
+        ## frame traffic in every caller.
+        result = 1
+        if c._rem > 1:
+            if kind(c._peekAhead(1)) >= NifKind.ExtendedSuffix:
+                result = 2
+                while c._rem > result:
+                    if kind(c._peekAhead(result)) < NifKind.ExtendedSuffix:
+                        break
+                    result += 1
+        return result
+
+    def valueWidth(c: Cursor) -> nint:
+        """{.inline, noSideEffect.}"""
+        ## Tokens carrying value bits — the kinded token plus consecutive
+        ## `ExtendedSuffix` tokens. Excludes trailing LineInfoLit (which
+        ## `tokenWidth` does include for advance-past purposes). This is the
+        ## width sign-extension wants for IntLit; it lines up exactly with
+        ## what `combinedPayload` chooses to OR together.
+        result = 1
+        while c._rem > result and kind(c._peekAhead(result)) == NifKind.ExtendedSuffix:
+            result += 1
+        return result
+
+    def rawLineInfo(c: Cursor) -> NifLineInfo:
+        ## Decode the `LineInfoLit` trailing the value at `c`, if present, returning
+        ## a `FileId` (resolve against `pool.filenames`) plus line/col, and an
+        ## optional `comment` `StrId` (a NIF `#…#` decoration; `StrId(0)` = none).
+        ## Returns `NoNifLineInfo` when the head carries no line info. The
+        ## `LineInfoLit` sits after the value's `ExtendedSuffix` chain (`valueWidth`);
+        ## file and comment are interned, so cross-pool readers must map them via the
+        ## right pool. Layout is selected structurally by the count `k` of
+        ## `ExtendedSuffix` words trailing the `LineInfoLit` (see the section header):
+        ## `k==0` common/no-comment, `k==1` wide/no-comment, `k>=2` wide + comment.
+        # Walk past the value carrier's own ExtendedSuffix chain.
+        """{.noSideEffect.}"""
+        with var:
+            off = 1
+        while c._rem > off and kind(c._peekAhead(off)) == NifKind.ExtendedSuffix:
+            off += 1
+        if c._rem <= off or kind(c._peekAhead(off)) != NifKind.LineInfoLit:
+            return NoNifLineInfo
+        with let:
+            lit = c._peekAhead(off)
+        # Count the ExtendedSuffix words trailing the LineInfoLit (position + comment).
+        with var:
+            ext = off + 1
+        while c._rem > ext and kind(c._peekAhead(ext)) == NifKind.ExtendedSuffix:
+            ext += 1
+        with let:
+            extCount = ext - (off + 1)
+        if extCount == 0:
+            # common layout: col 7 | file 7 | line 14 in 28 bits
+            with let:
+                p = uoperand(lit)
+            result = NifLineInfo(
+                col=int32(p & LiColMaxC),
+                file=FileId((p >> LiColBitsC) & LiFileMaxC),
+                line=int32((p >> (LiColBitsC + LiFileBitsC)) & LiLineMaxC))
+        else:
+            # overflow layout: col 10 | file 14 | line 32 across 56 bits (lit + word 0)
+            with let:
+                combined = (uint64(uoperand(lit)) |
+                            (uint64(uoperand(c._peekAhead(off + 1))) << PayloadBits))
+            result = NifLineInfo(
+                col=int32(combined & _LiColMaskX),
+                file=FileId((combined >> _LiColBitsX) & _LiFileMaskX),
+                line=int32((combined >> (_LiColBitsX + _LiFileBitsX)) & _LiLineMaskX))
+            # Words 1.. hold the comment StrId as 28-bit chunks, low first.
+            if extCount >= 2:
+                with var:
+                    cid = u64(0)
+                with var:
+                    shift = u64(0)
+                for i in range(1, extCount):
+                    cid = cid | (uint64(uoperand(c._peekAhead(off + 1 + i))) << shift)
+                    shift += uint64(PayloadBits)
+                result.comment = StrId(cid)
+        return result
+
+    @dispatch
+    def inc(c: mut @ Cursor):
+        """{.inline, nifAdvance, noSideEffect.}"""
+        ## Advance past the *head* of the current value (kinded token plus its
+        ## suffix, if any). For a TagLit this lands at the first body token;
+        ## use `skip` to jump past the whole subtree.
+        assert c._rem != 0, "advancing past end of scope"
+        c._advanceBy(c.tokenWidth())
+
+    @template
+    def hasMore(c: Cursor) -> bool:
+        ## True while there are more tokens in the current bounded scope. No
+        ## sentinel: `rem` does all the work.
+        return c._rem > 0
+
+    def hasCurrentToken(c: Cursor) -> bool:
+        """{.inline, noSideEffect.}"""
+        ## True if `c` points at a readable token (pointer + bound check). Prefer
+        ## `hasMore` in regular traversal; this survives malformed input.
+        return not isNil(c._p) and c._rem > 0
+
+    def unsafeDec(c: mut @ Cursor):
+        """{.inline, noSideEffect.}"""
+        ## Move one token backwards (no bounds check). Only valid on a cursor known
+        ## to sit past a real token; used by backward scans over a raw buffer.
+        c._p = cast[ptr[NifToken]](cast[uintp](c._p) - uint(sizeof(NifToken)))
+        c._rem += 1
 
 
 class CursorScope(Object):  ## Saved outer bounds for bounded cursor traversal.
@@ -1125,15 +1290,6 @@ def escapeTagOf(c: Cursor) -> TagId:
     return result
 
 
-def toUniqueId(c: Cursor) -> nint:
-    """{.inline, noSideEffect.}"""
-    ## A stable identity for the cursor's *position*: two cursors over the same
-    ## buffer at the same token share it, distinct positions differ. Suitable as a
-    ## `HashSet[int]`/`IntSet` key (e.g. type-traversal dedup). Not stable across
-    ## buffers or runs — it is the underlying token pointer reinterpreted.
-    return cast[intp](c._p)
-
-
 if comptime(defined("nimAllowNonVarDestructor") and defined("gcDestructors")):
     @hook("destroy")
     def destroyCursor(c: Cursor):
@@ -1201,29 +1357,6 @@ def load(c: Cursor) -> NifToken:
     return c._p.contents
 
 
-@template
-def _peekAhead(c: Cursor, offset: nint) -> NifToken:
-    return cast[ptr[NifToken]](cast[uintp](c._p) +
-                               uint(offset) * uint(sizeof(NifToken))).contents
-
-
-@template
-def _advanceBy(c: mut @ Cursor, n: nint):
-    # Capture `n` once — callers pass `tokenWidth(c)`, which reads c.p, and
-    # re-evaluating after we move c.p would read the wrong token.
-    with let:
-        advance = n
-    c._p = cast[ptr[NifToken]](cast[uintp](c._p) +
-                               uint(advance) * uint(sizeof(NifToken)))
-    if c._rem > 0:
-        c._rem = c._rem - advance if c._rem >= advance else 0
-
-
-def cursorIsNil(c: Cursor) -> bool:
-    """{.inline, noSideEffect.}"""
-    return isNil(c._p)
-
-
 @dispatch
 def kind(c: Cursor) -> NifKind:
     """{.inline, noSideEffect.}"""
@@ -1231,65 +1364,6 @@ def kind(c: Cursor) -> NifKind:
     ## mask — the cursor lands on the kinded token; any `ExtendedSuffix`
     ## sits *after* it and is only consulted when extended bits are needed.
     return kind(load(c))
-
-
-def tokenWidth(c: Cursor) -> nint:
-    """{.alwaysInline, noSideEffect.}"""
-    ## Tokens occupied by the head of the current value — the kinded
-    ## token plus any consecutive `ExtendedSuffix` tokens chained behind
-    ## it. NOT including a TagLit's body.
-    ##
-    ## Chains are unbounded in principle; in practice the writers in
-    ## nifcore emit at most 2 suffixes (enough to cover int64/float64 /
-    ## 47-bit jumps / 55-bit pool ids). The hot path — no suffix at all
-    ## — is one peek + one branch.
-    ##
-    ## Written as NESTED `if`s ending in `break`s rather than a `while` over a
-    ## conjunction, and deliberately WITHOUT a `noinline` slow-path helper.
-    ##
-    ## Do NOT give this one the hot/cold treatment `combinedPayload` gets, even
-    ## though the two look alike. Measured on nifbench: splitting `combinedPayload`
-    ## is −0.68 % instructions, splitting THIS is **+6.5 M (a loss)**, and doing
-    ## both is only −0.46 % — the loss here eats a third of the win there. The hot
-    ## path returns a *constant*, so the call it saves is already the cheapest kind
-    ## while the wrapper still costs a branch at all 10 M call sites. Reasons:
-    ##  * a conjunction whose second operand contains a call cannot be handed to
-    ##    the backend as branches, so it materialises a bool in an if/else
-    ##    diamond — 9 x86 instructions and ~90 NIFC tokens for two compares;
-    ##  * factoring the chain walk into a helper made this routine a NON-LEAF,
-    ##    and arkham then homes its locals in callee-saved registers and pushes
-    ##    them in the prologue on EVERY call, including the overwhelmingly common
-    ##    no-suffix path. That cost more than the loop it removed (`parse` +8%).
-    ##
-    ## `{.alwaysInline.}` is load-bearing for the native backend. Hexer's
-    ## inliner ignores `.inline` (it only auto-splices bodies ≤ 100 tokens, and
-    ## this one is larger once `peekAhead` expands) while GCC `-O3` inlines the
-    ## `static inline` C anyway. Without the force-splice, `skip`/`inc` call
-    ## this and copy the 24-byte Cursor onto the stack for the by-value
-    ## argument — the dominant arkham-vs-GCC gap on nifbench's walk/parse.
-    ##
-    ## Measured, not assumed: at 262 asm-NIF tokens this sits
-    ## above `InlineTinyBound`, so the size heuristic never took it, and it is the
-    ## one shape that pays — scalar in, scalar out, few live values, so the callee's
-    ## push/pop and call/ret vanish and the caller adds no spill traffic. Measured
-    ## on nimsem (128-invocation `check`, `-d:danger`): 55.320 G → 55.035 G Ir,
-    ## **−0.51 %**, for +4 KB of image.
-    ##
-    ## The two neighbours that looked like the same shape on nifbench do NOT
-    ## survive this measurement — do not annotate them: `inc` on top of this one is
-    ## −0.36 % (i.e. it gives back a third of the win, while nifbench said it added
-    ## to it), and `rawLineInfo` is **+0.22 %, a loss** — it returns an aggregate
-    ## and holds ~20 live values, so the push/pop it removes comes straight back as
-    ## frame traffic in every caller.
-    result = 1
-    if c._rem > 1:
-        if kind(_peekAhead(c, 1)) >= NifKind.ExtendedSuffix:
-            result = 2
-            while c._rem > result:
-                if kind(_peekAhead(c, result)) < NifKind.ExtendedSuffix:
-                    break
-                result += 1
-    return result
 
 
 def _combinedPayloadSlow(c: Cursor) -> uint64:
@@ -1301,16 +1375,16 @@ def _combinedPayloadSlow(c: Cursor) -> uint64:
     with var:
         shift = PayloadBits.copy()
     while True:
-        result = result | (uint64(uoperand(_peekAhead(c, i))) << shift)
+        result = result | (uint64(uoperand(c._peekAhead(i))) << shift)
         i += 1
         shift += PayloadBits
         if shift >= u32(64):
             break
         if c._rem <= i:
             break
-        if kind(_peekAhead(c, i)) != NifKind.ExtendedSuffix:
+        if kind(c._peekAhead(i)) != NifKind.ExtendedSuffix:
             break
-    assert not (c._rem > i and kind(_peekAhead(c, i)) == NifKind.ExtendedSuffix), (
+    assert not (c._rem > i and kind(c._peekAhead(i)) == NifKind.ExtendedSuffix), (
         "too many ExtendedSuffix tokens!")
     return result
 
@@ -1331,7 +1405,7 @@ def combinedPayload(c: Cursor) -> uint64:
     ##
     ## `tokenWidth` looks like the same shape but must NOT get the same treatment
     ## — see the measurement in its doc comment.
-    if c._rem > 1 and kind(_peekAhead(c, 1)) == NifKind.ExtendedSuffix:
+    if c._rem > 1 and kind(c._peekAhead(1)) == NifKind.ExtendedSuffix:
         result = _combinedPayloadSlow(c)
     else:
         result = uint64(uoperand(load(c)))
@@ -1460,7 +1534,7 @@ def symName(c: Cursor, pool: Pool) -> string:
     if (payload & StrInlineFlag) != u32(0):
         return _readInlineStr(payload)
     else:
-        return symString(pool, SymId(uint32(combinedPayload(c) >> 1)))
+        return pool.symString(SymId(uint32(combinedPayload(c) >> 1)))
 
 
 @dispatch
@@ -1517,24 +1591,11 @@ def symId(c: Cursor) -> SymId:
 # common case (no suffix → one peek + one branch).
 
 
-def valueWidth(c: Cursor) -> nint:
-    """{.inline, noSideEffect.}"""
-    ## Tokens carrying value bits — the kinded token plus consecutive
-    ## `ExtendedSuffix` tokens. Excludes trailing LineInfoLit (which
-    ## `tokenWidth` does include for advance-past purposes). This is the
-    ## width sign-extension wants for IntLit; it lines up exactly with
-    ## what `combinedPayload` chooses to OR together.
-    result = 1
-    while c._rem > result and kind(_peekAhead(c, result)) == NifKind.ExtendedSuffix:
-        result += 1
-    return result
-
-
 def intVal(c: Cursor) -> int64:
     """{.inline, noSideEffect.}"""
     assert kind(c) == NifKind.IntLit
     with let:
-        width = uint32(valueWidth(c)) * PayloadBits      # 28, 56, or 84
+        width = uint32(c.valueWidth()) * PayloadBits      # 28, 56, or 84
     with let:
         combined = combinedPayload(c)
     if width >= u32(64):
@@ -1586,80 +1647,14 @@ def cursorJump(c: Cursor) -> uint64:
 # ── Line info reader ─────────────────────────────────────────────────────
 
 
-def rawLineInfo(c: Cursor) -> NifLineInfo:
-    ## Decode the `LineInfoLit` trailing the value at `c`, if present, returning
-    ## a `FileId` (resolve against `pool.filenames`) plus line/col, and an
-    ## optional `comment` `StrId` (a NIF `#…#` decoration; `StrId(0)` = none).
-    ## Returns `NoNifLineInfo` when the head carries no line info. The
-    ## `LineInfoLit` sits after the value's `ExtendedSuffix` chain (`valueWidth`);
-    ## file and comment are interned, so cross-pool readers must map them via the
-    ## right pool. Layout is selected structurally by the count `k` of
-    ## `ExtendedSuffix` words trailing the `LineInfoLit` (see the section header):
-    ## `k==0` common/no-comment, `k==1` wide/no-comment, `k>=2` wide + comment.
-    # Walk past the value carrier's own ExtendedSuffix chain.
-    """{.noSideEffect.}"""
-    with var:
-        off = 1
-    while c._rem > off and kind(_peekAhead(c, off)) == NifKind.ExtendedSuffix:
-        off += 1
-    if c._rem <= off or kind(_peekAhead(c, off)) != NifKind.LineInfoLit:
-        return NoNifLineInfo
-    with let:
-        lit = _peekAhead(c, off)
-    # Count the ExtendedSuffix words trailing the LineInfoLit (position + comment).
-    with var:
-        ext = off + 1
-    while c._rem > ext and kind(_peekAhead(c, ext)) == NifKind.ExtendedSuffix:
-        ext += 1
-    with let:
-        extCount = ext - (off + 1)
-    if extCount == 0:
-        # common layout: col 7 | file 7 | line 14 in 28 bits
-        with let:
-            p = uoperand(lit)
-        result = NifLineInfo(
-            col=int32(p & LiColMaxC),
-            file=FileId((p >> LiColBitsC) & LiFileMaxC),
-            line=int32((p >> (LiColBitsC + LiFileBitsC)) & LiLineMaxC))
-    else:
-        # overflow layout: col 10 | file 14 | line 32 across 56 bits (lit + word 0)
-        with let:
-            combined = (uint64(uoperand(lit)) |
-                        (uint64(uoperand(_peekAhead(c, off + 1))) << PayloadBits))
-        result = NifLineInfo(
-            col=int32(combined & _LiColMaskX),
-            file=FileId((combined >> _LiColBitsX) & _LiFileMaskX),
-            line=int32((combined >> (_LiColBitsX + _LiFileBitsX)) & _LiLineMaskX))
-        # Words 1.. hold the comment StrId as 28-bit chunks, low first.
-        if extCount >= 2:
-            with var:
-                cid = u64(0)
-            with var:
-                shift = u64(0)
-            for i in range(1, extCount):
-                cid = cid | (uint64(uoperand(_peekAhead(c, off + 1 + i))) << shift)
-                shift += uint64(PayloadBits)
-            result.comment = StrId(cid)
-    return result
-
-
 def lineInfoFile(c: Cursor) -> string:
     ## The filename for the value's line info, resolved against `c.pool.filenames`.
     ## Empty string when there is no line info.
     with let:
-        li = rawLineInfo(c)
+        li = c.rawLineInfo()
     return pool(c).filenames[li.file] if isValid(li.file) and pool(c) is not None else string("")
 
 # ── inc / skip / into ────────────────────────────────────────────────────
-
-
-def inc(c: mut @ Cursor):
-    """{.inline, nifAdvance, noSideEffect.}"""
-    ## Advance past the *head* of the current value (kinded token plus its
-    ## suffix, if any). For a TagLit this lands at the first body token;
-    ## use `skip` to jump past the whole subtree.
-    assert c._rem != 0, "advancing past end of scope"
-    _advanceBy(c, tokenWidth(c))
 
 
 def skip(c: mut @ Cursor):
@@ -1667,17 +1662,10 @@ def skip(c: mut @ Cursor):
     ## Advance past the current value, including all descendants of a TagLit.
     if kind(c) == NifKind.TagLit:
         with let:
-            span = nint(uint64(tokenWidth(c)) + cursorJump(c))
-        _advanceBy(c, span)
+            span = nint(uint64(c.tokenWidth()) + cursorJump(c))
+        c._advanceBy(span)
     else:
-        _advanceBy(c, tokenWidth(c))
-
-
-@template
-def hasMore(c: Cursor) -> bool:
-    ## True while there are more tokens in the current bounded scope. No
-    ## sentinel: `rem` does all the work.
-    return c._rem > 0
+        c._advanceBy(c.tokenWidth())
 
 
 def enterScope(c: mut @ Cursor) -> CursorScope:
@@ -1688,7 +1676,7 @@ def enterScope(c: mut @ Cursor) -> CursorScope:
     result = CursorScope(_savedP=c._p, _savedRem=c._rem,
                          _bodyLen=nint(cursorJump(c)))
     with let:
-        headWidth = tokenWidth(c)
+        headWidth = c.tokenWidth()
     c._p = cast[ptr[NifToken]](cast[uintp](c._p) +
                                uint(headWidth) * uint(sizeof(NifToken)))
     c._rem = result._bodyLen
@@ -1736,7 +1724,7 @@ def _isEscapedBody(c: Cursor) -> bool:
     ## precondition here — it is what `sub`'s own assert wants.
     with let:
         body = sub(c)
-    result = hasMore(body) and kind(load(body)) == NifKind.IntLit
+    result = body.hasMore() and kind(load(body)) == NifKind.IntLit
     return result
 
 
@@ -1785,7 +1773,7 @@ def into(c: mut @ Cursor, body: untyped):
 def loopInto(c: mut @ Cursor, body: untyped):
     pragma("nifWrap")
     with into(c):
-        while hasMore(c):
+        while c.hasMore():
             body
 
 
@@ -1816,7 +1804,7 @@ def peekInto(c: mut @ Cursor, body: untyped):
 def rootOf(c: Cursor) -> SymId:
     ## The access root of an lvalue: the first `Symbol` in the subtree at `c`
     ## — `x` in `x.f[i]` — or `SymId(0)` if there is none.
-    if not hasMore(c):
+    if not c.hasMore():
         return SymId(u32(0))
     match kind(c):
         case NifKind.Symbol:
@@ -1852,6 +1840,491 @@ class TokenBuf(Object):
     def len(b: TokenBuf) -> nint:
         """{.inline, noSideEffect.}"""
         return b._len
+
+    @template
+    def requirePools(b: mut @ TokenBuf):
+        ## A buffer the interning builders and the cross-pool copy are about to write
+        ## through must carry both of its pools. They are THREADED in at construction
+        ## (`createTokenBuf` / `initTokenBuf`) and never invented here: a literals
+        ## pool decides what a token's payload id means and a tag pool is the
+        ## buffer's whole kind space, so substituting a fresh one for either silently
+        ## reinterprets everything already in the buffer. `default(TokenBuf)` is not
+        ## a usable buffer; `initTokenBuf` is the zero-allocation way to spell one.
+        ##
+        ## The plugin build is the exception, and only there: it binds its
+        ## process-wide pools rather than reject the buffer, because
+        ## `plugins.NifBuilder` is a public alias whose `default` shape must keep
+        ## working. See the `nimonyPlugin` block above.
+        if comptime(defined("nimonyPlugin")):
+            if b.pool is None:
+                b.pool = fallbackPool
+            if b.tags is None:
+                b.tags = fallbackTags
+        assert b.pool is not None, "TokenBuf has no literals pool"
+        assert b.tags is not None, "TokenBuf has no tag pool"
+
+    def __getitem__(b: TokenBuf, i: nint) -> NifToken:
+        """{.inline, noSideEffect.}"""
+        assert i >= 0 and i < b._len
+        return b._data[i]
+
+    def __setitem__(b: mut @ TokenBuf, i: nint, v: NifToken):
+        """{.inline.}"""
+        assert i >= 0 and i < b._len
+        b._data[i] = v
+
+    def prepareMutation(b: mut @ TokenBuf):
+        """{.inline.}"""
+        if not isNil(b._owner):
+            if b._owner._rc == 1:
+                # Reclaim the owner header; b.data keeps its allocation. Detach
+                # data first so decRcAndFree's data-dealloc path doesn't free
+                # what the TokenBuf is about to keep using.
+                b._owner._data = None
+                _decRcAndFree(b._owner)
+                b._owner = None
+            else:
+                # `max(.., 1)`: never `alloc(0)` — see `createTokenBuf`. A borrowed
+                # zero-token block (`adoptForeignTokens(_, 0)`) reaches this with cap 0.
+                with let:
+                    newData = cast[_Storage](alloc(sizeof(NifToken) * max(b._cap, 1)))
+                copyMem(newData, b._data, sizeof(NifToken) * b._len)
+                _decRcAndFree(b._owner)
+                b._owner = None
+                b._data = newData
+
+    def expectUnique(b: mut @ TokenBuf):
+        """{.inline, noSideEffect.}"""
+        if comptime(defined("debug")):
+            assert isNil(b._owner) or b._owner._rc == 1, (
+                "TokenBuf has live cursors; missing endRead before mutation")
+
+    @template
+    def _ensureCap(b: mut @ TokenBuf):
+        if b._len >= b._cap:
+            b._cap = max(b._cap // 2 + b._cap, 8)
+            b._data = cast[_Storage](realloc(b._data, sizeof(NifToken) * b._cap))
+
+    def add(b: mut @ TokenBuf, t: NifToken):
+        """{.inline.}"""
+        ## Plain append. Use `openTag` / `closeTag` for nested TagLits.
+        if not isNil(b._owner):
+            b.prepareMutation()
+        b._ensureCap()
+        b._data[b._len] = t
+        b._len += 1
+
+    # ── Raw bulk token access (for binary serialization, see bif.nim) ────────
+    # These expose the contiguous token storage for direct block I/O. They bypass
+    # all structural bookkeeping (jumps, openTags, suffix chains) — the caller must
+    # hand over / consume a stream that is already well-formed. The pools are
+    # serialized separately; because token payloads only reference *pool ids*
+    # (assigned 1,2,… in intern order), a loader that re-interns the pool values in
+    # the same order reproduces identical ids, so the raw token words stay valid.
+
+    def shrink(b: mut @ TokenBuf, newLen: nint):
+        ## Truncate to `newLen` tokens. Any still-open tags at or past the cut are
+        ## discarded from the build-time stack so later `closeTag` calls keep
+        ## sealing the right opens (rollback-past-an-open-tag pattern).
+        assert newLen >= 0 and newLen <= b._len
+        if not isNil(b._owner):
+            b.prepareMutation()
+        while b._openTags.len > 0 and b._openTags[back(1)] >= newLen:
+            b._openTags.setLen(b._openTags.len - 1)
+        b._len = newLen
+
+    def rawTokenPtr(b: TokenBuf) -> pointer:
+        """{.inline, noSideEffect.}"""
+        ## Pointer to the first token word; `len(b) * sizeof(NifToken)` bytes follow.
+        return b._data
+
+    def growRawUninit(b: mut @ TokenBuf, count: nint) -> pointer:
+        ## Grow storage to hold exactly `count` tokens, set `len = count`, and return
+        ## the storage pointer so the caller can fill it directly (e.g. `readBuffer`).
+        ## The contents are left uninitialized. Binary loaders only.
+        if not isNil(b._owner):
+            b.prepareMutation()
+        if count > b._cap:
+            b._cap = count
+            b._data = cast[_Storage](realloc(b._data, sizeof(NifToken) * b._cap))
+        b._len = count
+        return b._data
+
+    def insert(dest: mut @ TokenBuf, src: TokenBuf, pos: nint):
+        ## Splice `src`'s tokens into `dest` at index `pos` (raw). Enclosing sealed
+        ## scopes' jumps are NOT adjusted — the caller must `widenSealed` them.
+        assert pos >= 0 and pos <= dest._len
+        with let:
+            n = src._len
+        if n == 0:
+            return
+        with let:
+            oldLen = dest._len.copy()
+        if not isNil(dest._owner):
+            dest.prepareMutation()
+        _ = dest.growRawUninit(oldLen + n)
+        for i in countdown(oldLen - 1, pos):
+            dest._data[i + n] = dest._data[i]
+        for i in range(0, n):
+            dest._data[pos + i] = src._data[i]
+
+    # ── Builder API (interns, emits suffix on overflow) ──────────────────────
+
+    @dispatch
+    def appendLineInfo(b: mut @ TokenBuf, file: FileId, line: int32, col: int32,
+                       comment: StrId = StrId(u32(0))):
+        ## Append a `LineInfoLit` suffix (plus one `ExtendedSuffix` on overflow) to
+        ## the head token / `openTag` just emitted — call it *immediately* after, so
+        ## it lands as that head's trailing suffix. Implements no policy: the caller
+        ## decides when the position actually changed (emit-on-change). No-op when
+        ## `file` is invalid. The filename must already be interned in `b.pool.filenames`.
+        ## Optionally attach `comment` (a `StrId` into `b.pool.strings`, `StrId(0)` =
+        ## none) — a NIF `#…#` decoration on this head. A non-zero comment forces the
+        ## overflow position layout and rides as one further `ExtendedSuffix` (a second
+        ## only for ids past 2^28), so `rawLineInfo` recovers it unambiguously.
+        b.requirePools()
+        if not isValid(file):
+            return
+        with var:
+            line = line
+        with var:
+            col = col
+        if line < i32(0):
+            line = i32(0)
+        if col < i32(0):
+            col = i32(0)
+        with let:
+            cid = uint32(comment)
+        if cid == u32(0) and _fitsCommonLineInfo(file, line, col):
+            b.add(NifToken(_toX(NifKind.LineInfoLit, _encodeLineInfoCommon(file, line, col))))
+        else:
+            assert uint64(uint32(file)) <= _LiFileMaskX, "too many files for LineInfoLit"
+            with let:
+                combined = _encodeLineInfoWide(file, line, col)
+            b.add(NifToken(_toX(NifKind.LineInfoLit, uint32(combined & uint64(PayloadMask)))))
+            b.add(extendedSuffixToken(uint32((combined >> PayloadBits) & uint64(PayloadMask))))
+            if cid != u32(0):
+                b.add(extendedSuffixToken(cid & PayloadMask))
+                if uint64(cid) > uint64(PayloadMask):
+                    b.add(extendedSuffixToken(cid >> PayloadBits))
+
+    @dispatch
+    def appendLineInfo(b: mut @ TokenBuf, info: NifLineInfo):
+        """{.inline.}"""
+        b.appendLineInfo(info.file, info.line, info.col, info.comment)
+
+    @template
+    def _addSuffixIfNeeded(b: mut @ TokenBuf, payload: uint64):
+        ## Emit an ExtendedSuffix token carrying `payload`'s high 28 bits if
+        ## the value doesn't fit in 28 bits. `payload` is uint64 because the
+        ## shifted-by-1 pool ids used by IntLit/UIntLit can overflow uint32.
+        if payload > uint64(PayloadMask):
+            b.add(extendedSuffixToken(uint32(payload >> PayloadBits)))
+
+    def addDotToken(b: mut @ TokenBuf):
+        """{.inline, nifEmits: "Dot".}"""
+        ## Appends an empty dot placeholder.
+        b.add(dotToken())
+
+    def addCharLit(b: mut @ TokenBuf, c: char):
+        """{.inline, nifEmits: "LIT".}"""
+        ## Appends a character literal.
+        b.add(charToken(c))
+
+    @template
+    def _emitChained(b: mut @ TokenBuf, kind: NifKind, bits: uint64):
+        ## Emit a value carrier (kinded token plus 0/1/2 ExtendedSuffix
+        ## tokens) holding `bits`. Picks the minimum chain length whose
+        ## carrier width covers all the set bits.
+        b.add(NifToken(_toX(kind, uint32(bits & uint64(PayloadMask)))))
+        if bits > uint64(PayloadMask):
+            b.add(extendedSuffixToken(uint32((bits >> PayloadBits) &
+                                             uint64(PayloadMask))))
+            if bits >> (PayloadBits * u32(2)) != u64(0):
+                b.add(extendedSuffixToken(uint32(bits >> (PayloadBits * u32(2)))))
+
+    def addIntLit(b: mut @ TokenBuf, v: int64):
+        """{.nifEmits: "LIT".}"""
+        ## Pure inline. Writer picks the shortest carrier whose SIGNED width holds `v`:
+        ##   28-bit (one token)    for v in [-2^27, 2^27),
+        ##   56-bit (two tokens)   for v in [-2^55, 2^55),
+        ##   84-bit (three tokens) otherwise.
+        ## The token COUNT must follow the chosen *signed* width, not `v`'s unsigned
+        ## magnitude: a positive `v` whose top carrier bit is set (e.g. 2^27 ≤ v < 2^28)
+        ## still needs the wider carrier, or the reader's sign-extend-from-width would
+        ## read it back negative. (Hence this does NOT go through `emitChained`, which
+        ## trims by magnitude — correct for unsigned/float, wrong for signed.)
+        with let:
+            bits = cast[uint64](v)
+        b.add(NifToken(_toX(NifKind.IntLit, uint32(bits & uint64(PayloadMask)))))
+        if v >= -(i64(1) << 27) and v < (i64(1) << 27):
+            pass                                   # 28-bit: one token suffices
+        elif v >= -(i64(1) << 55) and v < (i64(1) << 55):
+            b.add(extendedSuffixToken(uint32((bits >> PayloadBits) & uint64(PayloadMask))))
+        else:
+            b.add(extendedSuffixToken(uint32((bits >> PayloadBits) & uint64(PayloadMask))))
+            b.add(extendedSuffixToken(uint32(bits >> (PayloadBits * u32(2)))))
+
+    def addUIntLit(b: mut @ TokenBuf, v: uint64):
+        """{.nifEmits: "LIT".}"""
+        ## Appends an unsigned integer literal using the shortest token chain.
+        b._emitChained(NifKind.UIntLit, v)
+
+    def addFloatLit(b: mut @ TokenBuf, v: float64):
+        """{.nifEmits: "LIT".}"""
+        ## Appends a floating-point literal using its exact bit representation.
+        b._emitChained(NifKind.FloatLit, cast[uint64](v))
+
+    # ── Open / close tags (the only mutations that touch `openTags`) ─────────
+
+    def _openTagEscaped(b: mut @ TokenBuf, t: TagId):
+        ## Slow path of `openTag`: a tag id past the 9-bit field, spelled
+        ## `(<escapeTag> <id> …)` — see `TagPool.escapeTag`. The id is an ordinary
+        ## child, so `closeTag`'s jump counts it and every cursor walk works
+        ## unchanged; what an adapter must know is that operands start one token
+        ## later.
+        assert b.tags is not None and b.tags.escapeTag != TagId(u32(0)), (
+            string("tag id ") + str(uint32(t)) + string(" exceeds the 9-bit tag field and this tag pool ") +
+            string("declares no escape tag"))
+        b._ensureCap()
+        b._openTags.add(b._len)
+        b._data[b._len] = tagLitToken(b.tags.escapeTag, u32(0))
+        b._len += 1
+        b.addIntLit(int64(uint32(t)))
+
+    def openTag(b: mut @ TokenBuf, t: TagId):
+        """{.inline, nifOpens.}"""
+        ## Begin a new tagged subtree. The matching `closeTag` patches the
+        ## emitted TagLit's jump in place (or splices in an `ExtendedSuffix`
+        ## right after the TagLit if the body overflows the 19-bit jump field).
+        ##
+        ## An id past `TagMask` does not fit the token and goes through the adapter's
+        ## escape tag instead; callers never have to sort the two apart.
+        if not isNil(b._owner):
+            b.prepareMutation()
+        if uint32(t) >= FirstEscapeId:
+            b._openTagEscaped(t)
+            return
+        b._ensureCap()
+        b._openTags.add(b._len)
+        b._data[b._len] = tagLitToken(t, u32(0))
+        b._len += 1
+
+    def reopenLastTree(b: mut @ TokenBuf, pos: nint):
+        ## Reopen the finished tree headed by the TagLit at `pos` so more children can
+        ## be appended; close it again with `closeTag` (which recomputes the jump over
+        ## the old + new children). The tree's subtree must be the last content of `b`.
+        if not isNil(b._owner):
+            b.prepareMutation()
+        assert kind(b._data[pos]) == NifKind.TagLit, "reopenLastTree: no TagLit at pos"
+        b._openTags.add(pos)
+
+    def closeTag(b: mut @ TokenBuf):
+        """{.nifCloses.}"""
+        ## Seal the most recently opened tag.
+        if not isNil(b._owner):
+            b.prepareMutation()
+        assert b._openTags.len > 0, "closeTag with no matching openTag"
+        with let:
+            p = b._openTags.pop()
+        # The TagLit at `p` may already carry trailing suffix tokens (a
+        # `LineInfoLit`, and its own `ExtendedSuffix` on overflow, appended by
+        # `openTag`). Those belong to the head — `tokenWidth` counts them — not to
+        # the body, so the jump must exclude them. Find where the body starts.
+        with var:
+            headWidth = 1
+        while p + headWidth < b._len and kind(b._data[p + headWidth]) >= NifKind.ExtendedSuffix:
+            headWidth += 1
+        with let:
+            count = uint64(b._len - p - headWidth)
+        if count <= uint64(InlineJumpCap):
+            setJump(b._data[p], uint32(count))
+        else:
+            # Body too big for the 19-bit jump field. Splice a jump `ExtendedSuffix`
+            # immediately after the TagLit (before any line-info suffix), shifting the
+            # rest right by one. The TagLit keeps the low 19 bits of `count`; the
+            # suffix carries the high bits. `tokenWidth` already counts that spliced
+            # suffix as head, so the jump still encodes just the body `count` (no +1).
+            # Still-open outer ancestors have positions < p, so their stored positions
+            # stay valid — they see the extra token in their own count when they close.
+            with let:
+                highBits = uint32(count >> JumpBits)
+            with let:
+                lowBits = uint32(count & uint64(InlineJumpCap))
+            assert highBits <= PayloadMask, (
+                string("subtree exceeds 47-bit jump (size ") + str(count) + string(")"))
+            b._ensureCap()
+            # Shift [p+1 .. b.len-1] right by one to make a hole at p+1.
+            for i in countdown(b._len, p + 2):
+                b._data[i] = b._data[i - 1]
+            b._len += 1
+            setJump(b._data[p], lowBits)
+            b._data[p + 1] = extendedSuffixToken(highBits)
+
+    @template
+    def buildTree(b: mut @ TokenBuf, tag: TagId, body: untyped):
+        b.openTag(tag)
+        body
+        b.closeTag()
+
+    # ── Cursor construction ──────────────────────────────────────────────────
+
+    def _ensureOwner(b: mut @ TokenBuf):
+        """{.inline.}"""
+        ## Lazily allocate the CursorOwner header, taking tracked references on
+        ## both pool and tag pool so they stay alive for cursors even if the
+        ## TokenBuf is freed first. Idempotent.
+        if isNil(b._owner):
+            b._owner = cast[_CursorOwner](alloc0(sizeof(_CursorOwnerObj)))
+            b._owner._data = b._data
+            b._owner._pool = b.pool
+            b._owner._tags = b.tags
+            GC_ref(b._owner._pool)
+            GC_ref(b._owner._tags)
+            b._owner._rc = 1
+
+    def unclosedTagPositions(b: TokenBuf) -> seq[nint]:
+        ## Debug helper: build-time stack of still-open TagLit positions.
+        """{.noSideEffect.}"""
+        return b._openTags.copy()
+
+    def beginRead(b: mut @ TokenBuf) -> Cursor:
+        assert b._openTags.len == 0, "beginRead with unclosed tags"
+        b._ensureOwner()
+        b._owner._rc += 1
+        result = Cursor(_owner=b._owner,
+                        _p=addr(b._data[0]),
+                        _rem=b._len)
+        return result
+
+    def cursorAt(b: mut @ TokenBuf, i: nint) -> Cursor:
+        assert i >= 0 and i < b._len
+        b._ensureOwner()
+        b._owner._rc += 1
+        result = Cursor(_owner=b._owner,
+                        _p=addr(b._data[i]),
+                        _rem=b._len - i)
+        return result
+
+    def cursorTailAt(b: mut @ TokenBuf, i: nint) -> Cursor:
+        ## Like `cursorAt` but accepts `i == b.len` (a sealed tree's implicit close
+        ## can leave the next position at end-of-buffer). Then `rem == 0` and the
+        ## cursor reports a virtual close — only `kind`-style probes are valid.
+        assert i >= 0 and i <= b._len
+        b._ensureOwner()
+        b._owner._rc += 1
+        result = Cursor(_owner=b._owner,
+                        _p=cast[ptr[NifToken]](cast[uintp](b._data) +
+                             uint(i) * uint(sizeof(NifToken))),
+                        _rem=b._len - i)
+        return result
+
+    def cursorToPosition(b: TokenBuf, c: Cursor) -> nint:
+        """{.inline, noSideEffect.}"""
+        ## Token index of `c` within `b` (inverse of `cursorAt`). Stable key for
+        ## per-expression tables (e.g. a register allocator's location map).
+        return (cast[intp](c._p) - cast[intp](b._data)) // sizeof(NifToken)
+
+    def readonlyCursorAt(b: TokenBuf, i: nint) -> Cursor:
+        ## Like `cursorAt` but does not require `var b`.
+        ##
+        ## The `CursorOwner` header is minted on demand — through a cast, since `b`
+        ## is only borrowed here. It has to be: the owner is where a cursor's pools
+        ## live, so an ownerless cursor answers `nil` for both `pool` and `tags` and
+        ## every pool-backed payload read and every `addSubtree` off it would have to
+        ## guess which pool world it came from. That guess is what the compiler's
+        ## former `fallbackPool`/`fallbackTags` globals used to make. Minting the
+        ## header also
+        ## makes the cursor keep the tokens alive like any other cursor instead of
+        ## dangling the moment `b` dies.
+        ##
+        ## The header costs one small allocation, and only for a buffer that has none
+        ## yet; a following mutation reclaims it on the cheap `rc == 1` path.
+        assert i >= 0 and i < b._len
+        with let:
+            mb = cast[ptr[TokenBuf]](unsafe_addr(b))
+        mb.contents._ensureOwner()
+        mb._owner._rc += 1
+        result = Cursor(_owner=mb._owner,
+                        _p=cast[ptr[NifToken]](unsafe_addr(b._data[i])),
+                        _rem=b._len - i)
+        return result
+
+    def _reinternLineInfo(dest: mut @ TokenBuf, c: Cursor,
+                          srcPool: Pool) -> NifLineInfo:
+        ## Map the source head's trailing line info into `dest`'s pools — the filename
+        ## and, if present, the `#comment#` string. Returns `NoNifLineInfo` when none.
+        ##
+        ## Takes the source pool rather than asking `c` for it: as a parameter the ref
+        ## is borrowed, while `c.pool` would return an owned temporary and pay an
+        ## incRef/decRef — twice, here — per token copied. See `sharesPools`.
+        dest.requirePools()
+        with let:
+            li = c.rawLineInfo()
+        if not li.isValid():
+            return NoNifLineInfo
+        with let:
+            fname = srcPool.filenames[li.file] if srcPool is not None else string("")
+        with var:
+            comment = StrId(u32(0))
+        if uint32(li.comment) != u32(0) and srcPool is not None:
+            comment = getOrIncl(dest.pool.strings, srcPool.strings[li.comment])
+        result = NifLineInfo(file=getOrIncl(dest.pool.filenames, fname),
+                             line=li.line, col=li.col, comment=comment)
+        return result
+
+    def addBufferSamePool(dest: mut @ TokenBuf, src: TokenBuf):
+        """{.nifEmits: "Any".}"""
+        ## Append a closed buffer that shares `dest`'s literal and tag pools.
+        ##
+        ## The source is borrowed and remains usable. Matching pools make the
+        ## append one bulk copy without constructing a read cursor.
+        assert src._openTags.len == 0, "addBufferSamePool with unclosed source tags"
+        if src._len == 0:
+            # an empty buffer may never have been written to, leaving its pool
+            # refs nil — nothing to copy, nothing to check
+            return
+        assert dest._data != src._data, "cannot append a TokenBuf to itself"
+        # Both buffers carry their pools from construction (a plugin build's may be
+        # the process defaults), so this is a plain identity test — a bulk copy is
+        # only valid when the two interned id spaces are literally the same objects.
+        dest.requirePools()
+        with let:
+            spool = (src.pool if src.pool is not None else _defaultPool())
+        with let:
+            stags = (src.tags if src.tags is not None else _defaultTags())
+        assert dest.pool == spool and dest.tags == stags, (
+            "addBufferSamePool requires matching pools")
+        if not isNil(dest._owner):
+            dest.prepareMutation()
+        if dest._len + src._len > dest._cap:
+            dest._cap = max(dest._cap // 2 + dest._cap, dest._len + src._len)
+            dest._data = cast[_Storage](
+                realloc(dest._data, sizeof(NifToken) * dest._cap))
+        copyMem(addr(dest._data[dest._len]), src._data,
+                src._len * sizeof(NifToken))
+        dest._len += src._len
+
+    def _addWithSparseLineInfo(dest: mut @ TokenBuf, c: mut @ Cursor,
+                               last: mut @ NifLineInfo):
+        with let:
+            info = c.rawLineInfo()
+        if kind(c) == NifKind.TagLit:
+            dest.openTag(cursorTagId(c))
+            if info.isValid() and info != last:
+                dest.appendLineInfo(info)
+                last <<= info
+            with into(c):
+                while c.hasMore():
+                    dest._addWithSparseLineInfo(c, last)
+            dest.closeTag()
+        else:
+            for i in range(0, c.valueWidth()):
+                dest.add(c._peekAhead(i))
+            if info.isValid() and info != last:
+                dest.appendLineInfo(info)
+                last <<= info
+            c.inc()
 
 
 @hook("copy")
@@ -1891,29 +2364,6 @@ else:
             _decRcAndFree(dest._owner)
         elif not isNil(dest._data):
             dealloc(dest._data)
-
-
-@template
-def requirePools(b: mut @ TokenBuf):
-    ## A buffer the interning builders and the cross-pool copy are about to write
-    ## through must carry both of its pools. They are THREADED in at construction
-    ## (`createTokenBuf` / `initTokenBuf`) and never invented here: a literals
-    ## pool decides what a token's payload id means and a tag pool is the
-    ## buffer's whole kind space, so substituting a fresh one for either silently
-    ## reinterprets everything already in the buffer. `default(TokenBuf)` is not
-    ## a usable buffer; `initTokenBuf` is the zero-allocation way to spell one.
-    ##
-    ## The plugin build is the exception, and only there: it binds its
-    ## process-wide pools rather than reject the buffer, because
-    ## `plugins.NifBuilder` is a public alias whose `default` shape must keep
-    ## working. See the `nimonyPlugin` block above.
-    if comptime(defined("nimonyPlugin")):
-        if b.pool is None:
-            b.pool = fallbackPool
-        if b.tags is None:
-            b.tags = fallbackTags
-    assert b.pool is not None, "TokenBuf has no literals pool"
-    assert b.tags is not None, "TokenBuf has no tag pool"
 
 
 def createTokenBuf(cap: nint = 16, sharedPool: Pool = None,
@@ -1985,120 +2435,19 @@ def adoptForeignTokens(data: pointer, count: nint,
     return result
 
 
-@ufcs(TokenBuf)
-@dispatch
-def __getitem__(b: TokenBuf, i: nint) -> NifToken:
-    """{.inline, noSideEffect.}"""
-    assert i >= 0 and i < b._len
-    return b._data[i]
-
-
-@ufcs(TokenBuf)
-@dispatch
-def __setitem__(b: mut @ TokenBuf, i: nint, v: NifToken):
-    """{.inline.}"""
-    assert i >= 0 and i < b._len
-    b._data[i] = v
-
-
-def prepareMutation(b: mut @ TokenBuf):
-    """{.inline.}"""
-    if not isNil(b._owner):
-        if b._owner._rc == 1:
-            # Reclaim the owner header; b.data keeps its allocation. Detach
-            # data first so decRcAndFree's data-dealloc path doesn't free
-            # what the TokenBuf is about to keep using.
-            b._owner._data = None
-            _decRcAndFree(b._owner)
-            b._owner = None
-        else:
-            # `max(.., 1)`: never `alloc(0)` — see `createTokenBuf`. A borrowed
-            # zero-token block (`adoptForeignTokens(_, 0)`) reaches this with cap 0.
-            with let:
-                newData = cast[_Storage](alloc(sizeof(NifToken) * max(b._cap, 1)))
-            copyMem(newData, b._data, sizeof(NifToken) * b._len)
-            _decRcAndFree(b._owner)
-            b._owner = None
-            b._data = newData
-
-
-def expectUnique(b: mut @ TokenBuf):
-    """{.inline, noSideEffect.}"""
-    if comptime(defined("debug")):
-        assert isNil(b._owner) or b._owner._rc == 1, (
-            "TokenBuf has live cursors; missing endRead before mutation")
-
-
-@template
-def _ensureCap(b: mut @ TokenBuf):
-    if b._len >= b._cap:
-        b._cap = max(b._cap // 2 + b._cap, 8)
-        b._data = cast[_Storage](realloc(b._data, sizeof(NifToken) * b._cap))
-
-
-@dispatch
-def add(b: mut @ TokenBuf, t: NifToken):
-    """{.inline.}"""
-    ## Plain append. Use `openTag` / `closeTag` for nested TagLits.
-    if not isNil(b._owner):
-        prepareMutation(b)
-    _ensureCap(b)
-    b._data[b._len] = t
-    b._len += 1
-
-# ── Raw bulk token access (for binary serialization, see bif.nim) ────────
-# These expose the contiguous token storage for direct block I/O. They bypass
-# all structural bookkeeping (jumps, openTags, suffix chains) — the caller must
-# hand over / consume a stream that is already well-formed. The pools are
-# serialized separately; because token payloads only reference *pool ids*
-# (assigned 1,2,… in intern order), a loader that re-interns the pool values in
-# the same order reproduces identical ids, so the raw token words stay valid.
-
-
-def shrink(b: mut @ TokenBuf, newLen: nint):
-    ## Truncate to `newLen` tokens. Any still-open tags at or past the cut are
-    ## discarded from the build-time stack so later `closeTag` calls keep
-    ## sealing the right opens (rollback-past-an-open-tag pattern).
-    assert newLen >= 0 and newLen <= b._len
-    if not isNil(b._owner):
-        prepareMutation(b)
-    while b._openTags.len > 0 and b._openTags[back(1)] >= newLen:
-        b._openTags.setLen(b._openTags.len - 1)
-    b._len = newLen
-
-
-def rawTokenPtr(b: TokenBuf) -> pointer:
-    """{.inline, noSideEffect.}"""
-    ## Pointer to the first token word; `len(b) * sizeof(NifToken)` bytes follow.
-    return b._data
-
-
-def growRawUninit(b: mut @ TokenBuf, count: nint) -> pointer:
-    ## Grow storage to hold exactly `count` tokens, set `len = count`, and return
-    ## the storage pointer so the caller can fill it directly (e.g. `readBuffer`).
-    ## The contents are left uninitialized. Binary loaders only.
-    if not isNil(b._owner):
-        prepareMutation(b)
-    if count > b._cap:
-        b._cap = count
-        b._data = cast[_Storage](realloc(b._data, sizeof(NifToken) * b._cap))
-    b._len = count
-    return b._data
-
-
 def subtreeWidth(c: Cursor) -> nint:
     ## Total tokens occupied by the value at `c` (head + body).
     """{.noSideEffect.}"""
     if kind(c) == NifKind.TagLit:
-        return nint(uint64(tokenWidth(c)) + cursorJump(c))
+        return nint(uint64(c.tokenWidth()) + cursorJump(c))
     else:
-        return tokenWidth(c)
+        return c.tokenWidth()
 
 
 def replace(dest: mut @ TokenBuf, by: Cursor, pos: nint):
     ## Replace the sealed subtree at `pos` with the sealed subtree `by`.
     if not isNil(dest._owner):
-        prepareMutation(dest)
+        dest.prepareMutation()
     with var:
         at = Cursor(_p=cast[ptr[NifToken]](cast[uintp](dest._data) +
                        uint(pos) * uint(sizeof(NifToken))), _rem=dest._len - pos)
@@ -2115,7 +2464,7 @@ def replace(dest: mut @ TokenBuf, by: Cursor, pos: nint):
             if dest._openTags[k] >= pos + actualLen:
                 dest._openTags[k] += delta
     if delta > 0:
-        _ = growRawUninit(dest, oldLen + delta)
+        _ = dest.growRawUninit(oldLen + delta)
         for i in countdown(oldLen - 1, pos + actualLen):
             dest._data[i + delta] = dest._data[i]
     elif delta < 0:
@@ -2127,81 +2476,6 @@ def replace(dest: mut @ TokenBuf, by: Cursor, pos: nint):
                                 uint(i) * uint(sizeof(NifToken))).contents
 
 
-def insert(dest: mut @ TokenBuf, src: TokenBuf, pos: nint):
-    ## Splice `src`'s tokens into `dest` at index `pos` (raw). Enclosing sealed
-    ## scopes' jumps are NOT adjusted — the caller must `widenSealed` them.
-    assert pos >= 0 and pos <= dest._len
-    with let:
-        n = src._len
-    if n == 0:
-        return
-    with let:
-        oldLen = dest._len.copy()
-    if not isNil(dest._owner):
-        prepareMutation(dest)
-    _ = growRawUninit(dest, oldLen + n)
-    for i in countdown(oldLen - 1, pos):
-        dest._data[i + n] = dest._data[i]
-    for i in range(0, n):
-        dest._data[pos + i] = src._data[i]
-
-# ── Builder API (interns, emits suffix on overflow) ──────────────────────
-
-
-@dispatch
-def appendLineInfo(b: mut @ TokenBuf, file: FileId, line: int32, col: int32,
-                   comment: StrId = StrId(u32(0))):
-    ## Append a `LineInfoLit` suffix (plus one `ExtendedSuffix` on overflow) to
-    ## the head token / `openTag` just emitted — call it *immediately* after, so
-    ## it lands as that head's trailing suffix. Implements no policy: the caller
-    ## decides when the position actually changed (emit-on-change). No-op when
-    ## `file` is invalid. The filename must already be interned in `b.pool.filenames`.
-    ## Optionally attach `comment` (a `StrId` into `b.pool.strings`, `StrId(0)` =
-    ## none) — a NIF `#…#` decoration on this head. A non-zero comment forces the
-    ## overflow position layout and rides as one further `ExtendedSuffix` (a second
-    ## only for ids past 2^28), so `rawLineInfo` recovers it unambiguously.
-    requirePools(b)
-    if not isValid(file):
-        return
-    with var:
-        line = line
-    with var:
-        col = col
-    if line < i32(0):
-        line = i32(0)
-    if col < i32(0):
-        col = i32(0)
-    with let:
-        cid = uint32(comment)
-    if cid == u32(0) and _fitsCommonLineInfo(file, line, col):
-        add(b, NifToken(_toX(NifKind.LineInfoLit, _encodeLineInfoCommon(file, line, col))))
-    else:
-        assert uint64(uint32(file)) <= _LiFileMaskX, "too many files for LineInfoLit"
-        with let:
-            combined = _encodeLineInfoWide(file, line, col)
-        add(b, NifToken(_toX(NifKind.LineInfoLit, uint32(combined & uint64(PayloadMask)))))
-        add(b, extendedSuffixToken(uint32((combined >> PayloadBits) & uint64(PayloadMask))))
-        if cid != u32(0):
-            add(b, extendedSuffixToken(cid & PayloadMask))
-            if uint64(cid) > uint64(PayloadMask):
-                b.add(extendedSuffixToken(cid >> PayloadBits))
-
-
-@dispatch
-def appendLineInfo(b: mut @ TokenBuf, info: NifLineInfo):
-    """{.inline.}"""
-    appendLineInfo(b, info.file, info.line, info.col, info.comment)
-
-
-@template
-def _addSuffixIfNeeded(b: mut @ TokenBuf, payload: uint64):
-    ## Emit an ExtendedSuffix token carrying `payload`'s high 28 bits if
-    ## the value doesn't fit in 28 bits. `payload` is uint64 because the
-    ## shifted-by-1 pool ids used by IntLit/UIntLit can overflow uint32.
-    if payload > uint64(PayloadMask):
-        b.add(extendedSuffixToken(uint32(payload >> PayloadBits)))
-
-
 @template
 def _lowBits(x: uint32) -> uint32:
     return x & PayloadMask
@@ -2210,18 +2484,6 @@ def _lowBits(x: uint32) -> uint32:
 @template
 def _lowBits(x: uint64) -> uint32:
     return uint32(x & uint64(PayloadMask))
-
-
-def addDotToken(b: mut @ TokenBuf):
-    """{.inline, nifEmits: "Dot".}"""
-    ## Appends an empty dot placeholder.
-    add(b, dotToken())
-
-
-def addCharLit(b: mut @ TokenBuf, c: char):
-    """{.inline, nifEmits: "LIT".}"""
-    ## Appends a character literal.
-    add(b, charToken(c))
 
 
 def _encodeInlineStr(s: string) -> uint32:
@@ -2237,16 +2499,16 @@ def _encodeInlineStr(s: string) -> uint32:
 def _addStringLike(b: mut @ TokenBuf, kind: NifKind, s: string, pool: untyped):
     ## Shared body for StrLit/Ident/Symbol/SymbolDef. Inlines bytes for
     ## `s.len <= 3`; otherwise interns in the given `pool` BiTable.
-    requirePools(b)
+    b.requirePools()
     if s.len <= StrInlineMaxLen:
-        add(b, NifToken(_toX(kind, _encodeInlineStr(s))))
+        b.add(NifToken(_toX(kind, _encodeInlineStr(s))))
     else:
         with let:
             id = uint32(getOrIncl(pool, s))
         with let:
             payload = uint64(id) << u64(1)               # bit 0 = 0 ⇒ pool ref
-        add(b, NifToken(_toX(kind, _lowBits(payload))))
-        _addSuffixIfNeeded(b, payload)
+        b.add(NifToken(_toX(kind, _lowBits(payload))))
+        b._addSuffixIfNeeded(payload)
 
 
 @dispatch
@@ -2271,7 +2533,7 @@ def addStrLit(b: mut @ TokenBuf, s: openArray[char]):
     ## reading someone else's buffer this saves cutting a slice out of it first:
     ## a short value costs nothing at all, and a long one costs the single copy
     ## the pool was going to make anyway.
-    requirePools(b)
+    b.requirePools()
     if s.len <= StrInlineMaxLen:
         b.add(NifToken(_toX(NifKind.StrLit, _encodeInlineStrView(s))))
     else:
@@ -2284,7 +2546,7 @@ def addStrLit(b: mut @ TokenBuf, s: openArray[char]):
         with let:
             payload = uint64(id) << u64(1)               # bit 0 = 0 => pool ref
         b.add(NifToken(_toX(NifKind.StrLit, _lowBits(payload))))
-        _addSuffixIfNeeded(b, payload)
+        b._addSuffixIfNeeded(payload)
 
 
 def addIdent(b: mut @ TokenBuf, s: string):
@@ -2297,14 +2559,14 @@ def addIdent(b: mut @ TokenBuf, s: string):
 def _addSymLike(b: mut @ TokenBuf, kind: NifKind, s: string):
     ## `addStringLike` for the SYMBOL pool, which does not take a spelling: the
     ## pool stores the taken-apart form, so interning goes through `symId`.
-    requirePools(b)
+    b.requirePools()
     if s.len <= StrInlineMaxLen:
-        add(b, NifToken(_toX(kind, _encodeInlineStr(s))))
+        b.add(NifToken(_toX(kind, _encodeInlineStr(s))))
     else:
         with let:
             payload = uint64(uint32(symId(b.pool, s))) << u64(1)  # bit 0 = 0 => pool ref
-        add(b, NifToken(_toX(kind, _lowBits(payload))))
-        _addSuffixIfNeeded(b, payload)
+        b.add(NifToken(_toX(kind, _lowBits(payload))))
+        b._addSuffixIfNeeded(payload)
 
 
 @dispatch
@@ -2322,17 +2584,17 @@ def addSymDef(b: mut @ TokenBuf, s: string):
 
 
 def _addInternedSymbol(b: mut @ TokenBuf, kind: NifKind, id: SymId):
-    requirePools(b)
+    b.requirePools()
     # `symSpellingLen` rather than `symString`: this runs on every emitted
     # symbol, and only the rare name short enough to live inside the token is
     # worth building.
     if symSpellingLen(b.pool, id) <= StrInlineMaxLen:
-        b.add(NifToken(_toX(kind, _encodeInlineStr(symString(b.pool, id)))))
+        b.add(NifToken(_toX(kind, _encodeInlineStr(b.pool.symString(id)))))
     else:
         with let:
             payload = uint64(uint32(id)) << u64(1)
-        add(b, NifToken(_toX(kind, _lowBits(payload))))
-        _addSuffixIfNeeded(b, payload)
+        b.add(NifToken(_toX(kind, _lowBits(payload))))
+        b._addSuffixIfNeeded(payload)
 
 
 def internedSymToken(p: Pool, kind: NifKind, id: SymId) -> NifToken:
@@ -2345,7 +2607,7 @@ def internedSymToken(p: Pool, kind: NifKind, id: SymId) -> NifToken:
     """{.noSideEffect.}"""
     assert kind == NifKind.Symbol or kind == NifKind.SymbolDef, string("not a symbol kind: ") + str(kind)
     if symSpellingLen(p, id) <= StrInlineMaxLen:
-        return NifToken(_toX(kind, _encodeInlineStr(symString(p, id))))
+        return NifToken(_toX(kind, _encodeInlineStr(p.symString(id))))
     else:
         assert uint32(id) <= IdPayloadMax, (
             string("symbol id ") + str(id) + string(" needs an ExtendedSuffix chain: no single token fits"))
@@ -2367,184 +2629,6 @@ def addSymUse(b: mut @ TokenBuf, id: SymId):
     _addInternedSymbol(b, NifKind.Symbol, id)
 
 
-@template
-def _emitChained(b: mut @ TokenBuf, kind: NifKind, bits: uint64):
-    ## Emit a value carrier (kinded token plus 0/1/2 ExtendedSuffix
-    ## tokens) holding `bits`. Picks the minimum chain length whose
-    ## carrier width covers all the set bits.
-    add(b, NifToken(_toX(kind, uint32(bits & uint64(PayloadMask)))))
-    if bits > uint64(PayloadMask):
-        add(b, extendedSuffixToken(uint32((bits >> PayloadBits) &
-                                         uint64(PayloadMask))))
-        if bits >> (PayloadBits * u32(2)) != u64(0):
-            add(b, extendedSuffixToken(uint32(bits >> (PayloadBits * u32(2)))))
-
-
-def addIntLit(b: mut @ TokenBuf, v: int64):
-    """{.nifEmits: "LIT".}"""
-    ## Pure inline. Writer picks the shortest carrier whose SIGNED width holds `v`:
-    ##   28-bit (one token)    for v in [-2^27, 2^27),
-    ##   56-bit (two tokens)   for v in [-2^55, 2^55),
-    ##   84-bit (three tokens) otherwise.
-    ## The token COUNT must follow the chosen *signed* width, not `v`'s unsigned
-    ## magnitude: a positive `v` whose top carrier bit is set (e.g. 2^27 ≤ v < 2^28)
-    ## still needs the wider carrier, or the reader's sign-extend-from-width would
-    ## read it back negative. (Hence this does NOT go through `emitChained`, which
-    ## trims by magnitude — correct for unsigned/float, wrong for signed.)
-    with let:
-        bits = cast[uint64](v)
-    add(b, NifToken(_toX(NifKind.IntLit, uint32(bits & uint64(PayloadMask)))))
-    if v >= -(i64(1) << 27) and v < (i64(1) << 27):
-        pass                                   # 28-bit: one token suffices
-    elif v >= -(i64(1) << 55) and v < (i64(1) << 55):
-        add(b, extendedSuffixToken(uint32((bits >> PayloadBits) & uint64(PayloadMask))))
-    else:
-        add(b, extendedSuffixToken(uint32((bits >> PayloadBits) & uint64(PayloadMask))))
-        add(b, extendedSuffixToken(uint32(bits >> (PayloadBits * u32(2)))))
-
-
-def addUIntLit(b: mut @ TokenBuf, v: uint64):
-    """{.nifEmits: "LIT".}"""
-    ## Appends an unsigned integer literal using the shortest token chain.
-    _emitChained(b, NifKind.UIntLit, v)
-
-
-def addFloatLit(b: mut @ TokenBuf, v: float64):
-    """{.nifEmits: "LIT".}"""
-    ## Appends a floating-point literal using its exact bit representation.
-    _emitChained(b, NifKind.FloatLit, cast[uint64](v))
-
-# ── Open / close tags (the only mutations that touch `openTags`) ─────────
-
-
-def _openTagEscaped(b: mut @ TokenBuf, t: TagId):
-    ## Slow path of `openTag`: a tag id past the 9-bit field, spelled
-    ## `(<escapeTag> <id> …)` — see `TagPool.escapeTag`. The id is an ordinary
-    ## child, so `closeTag`'s jump counts it and every cursor walk works
-    ## unchanged; what an adapter must know is that operands start one token
-    ## later.
-    assert b.tags is not None and b.tags.escapeTag != TagId(u32(0)), (
-        string("tag id ") + str(uint32(t)) + string(" exceeds the 9-bit tag field and this tag pool ") +
-        string("declares no escape tag"))
-    _ensureCap(b)
-    b._openTags.add(b._len)
-    b._data[b._len] = tagLitToken(b.tags.escapeTag, u32(0))
-    b._len += 1
-    addIntLit(b, int64(uint32(t)))
-
-
-def openTag(b: mut @ TokenBuf, t: TagId):
-    """{.inline, nifOpens.}"""
-    ## Begin a new tagged subtree. The matching `closeTag` patches the
-    ## emitted TagLit's jump in place (or splices in an `ExtendedSuffix`
-    ## right after the TagLit if the body overflows the 19-bit jump field).
-    ##
-    ## An id past `TagMask` does not fit the token and goes through the adapter's
-    ## escape tag instead; callers never have to sort the two apart.
-    if not isNil(b._owner):
-        prepareMutation(b)
-    if uint32(t) >= FirstEscapeId:
-        _openTagEscaped(b, t)
-        return
-    _ensureCap(b)
-    b._openTags.add(b._len)
-    b._data[b._len] = tagLitToken(t, u32(0))
-    b._len += 1
-
-
-def reopenLastTree(b: mut @ TokenBuf, pos: nint):
-    ## Reopen the finished tree headed by the TagLit at `pos` so more children can
-    ## be appended; close it again with `closeTag` (which recomputes the jump over
-    ## the old + new children). The tree's subtree must be the last content of `b`.
-    if not isNil(b._owner):
-        prepareMutation(b)
-    assert kind(b._data[pos]) == NifKind.TagLit, "reopenLastTree: no TagLit at pos"
-    b._openTags.add(pos)
-
-
-def closeTag(b: mut @ TokenBuf):
-    """{.nifCloses.}"""
-    ## Seal the most recently opened tag.
-    if not isNil(b._owner):
-        prepareMutation(b)
-    assert b._openTags.len > 0, "closeTag with no matching openTag"
-    with let:
-        p = b._openTags.pop()
-    # The TagLit at `p` may already carry trailing suffix tokens (a
-    # `LineInfoLit`, and its own `ExtendedSuffix` on overflow, appended by
-    # `openTag`). Those belong to the head — `tokenWidth` counts them — not to
-    # the body, so the jump must exclude them. Find where the body starts.
-    with var:
-        headWidth = 1
-    while p + headWidth < b._len and kind(b._data[p + headWidth]) >= NifKind.ExtendedSuffix:
-        headWidth += 1
-    with let:
-        count = uint64(b._len - p - headWidth)
-    if count <= uint64(InlineJumpCap):
-        setJump(b._data[p], uint32(count))
-    else:
-        # Body too big for the 19-bit jump field. Splice a jump `ExtendedSuffix`
-        # immediately after the TagLit (before any line-info suffix), shifting the
-        # rest right by one. The TagLit keeps the low 19 bits of `count`; the
-        # suffix carries the high bits. `tokenWidth` already counts that spliced
-        # suffix as head, so the jump still encodes just the body `count` (no +1).
-        # Still-open outer ancestors have positions < p, so their stored positions
-        # stay valid — they see the extra token in their own count when they close.
-        with let:
-            highBits = uint32(count >> JumpBits)
-        with let:
-            lowBits = uint32(count & uint64(InlineJumpCap))
-        assert highBits <= PayloadMask, (
-            string("subtree exceeds 47-bit jump (size ") + str(count) + string(")"))
-        _ensureCap(b)
-        # Shift [p+1 .. b.len-1] right by one to make a hole at p+1.
-        for i in countdown(b._len, p + 2):
-            b._data[i] = b._data[i - 1]
-        b._len += 1
-        setJump(b._data[p], lowBits)
-        b._data[p + 1] = extendedSuffixToken(highBits)
-
-
-@template
-def buildTree(b: mut @ TokenBuf, tag: TagId, body: untyped):
-    openTag(b, tag)
-    body
-    closeTag(b)
-
-# ── Cursor construction ──────────────────────────────────────────────────
-
-
-def _ensureOwner(b: mut @ TokenBuf):
-    """{.inline.}"""
-    ## Lazily allocate the CursorOwner header, taking tracked references on
-    ## both pool and tag pool so they stay alive for cursors even if the
-    ## TokenBuf is freed first. Idempotent.
-    if isNil(b._owner):
-        b._owner = cast[_CursorOwner](alloc0(sizeof(_CursorOwnerObj)))
-        b._owner._data = b._data
-        b._owner._pool = b.pool
-        b._owner._tags = b.tags
-        GC_ref(b._owner._pool)
-        GC_ref(b._owner._tags)
-        b._owner._rc = 1
-
-
-def unclosedTagPositions(b: TokenBuf) -> seq[nint]:
-    ## Debug helper: build-time stack of still-open TagLit positions.
-    """{.noSideEffect.}"""
-    return b._openTags
-
-
-def beginRead(b: mut @ TokenBuf) -> Cursor:
-    assert b._openTags.len == 0, "beginRead with unclosed tags"
-    _ensureOwner(b)
-    b._owner._rc += 1
-    result = Cursor(_owner=b._owner,
-                    _p=addr(b._data[0]),
-                    _rem=b._len)
-    return result
-
-
 def childCursor(c: Cursor) -> Cursor:
     ## Returns a bounded cursor over the children of the `TagLit` at `c`.
     ## The input cursor is not advanced.
@@ -2552,7 +2636,7 @@ def childCursor(c: Cursor) -> Cursor:
     assert kind(c) == NifKind.TagLit, "childCursor requires cursor at TagLit"
     result = c.copy()
     with let:
-        headWidth = tokenWidth(result)
+        headWidth = result.tokenWidth()
     result._p = cast[ptr[NifToken]](cast[uintp](result._p) +
                                     uint(headWidth) * uint(sizeof(NifToken)))
     result._rem = nint(cursorJump(c))
@@ -2564,63 +2648,6 @@ def endRead(c: mut @ Cursor):
     if not isNil(c._owner):
         _decRcAndFree(c._owner)
     wasMovedCursor(c)
-
-
-def cursorAt(b: mut @ TokenBuf, i: nint) -> Cursor:
-    assert i >= 0 and i < b._len
-    _ensureOwner(b)
-    b._owner._rc += 1
-    result = Cursor(_owner=b._owner,
-                    _p=addr(b._data[i]),
-                    _rem=b._len - i)
-    return result
-
-
-def cursorTailAt(b: mut @ TokenBuf, i: nint) -> Cursor:
-    ## Like `cursorAt` but accepts `i == b.len` (a sealed tree's implicit close
-    ## can leave the next position at end-of-buffer). Then `rem == 0` and the
-    ## cursor reports a virtual close — only `kind`-style probes are valid.
-    assert i >= 0 and i <= b._len
-    _ensureOwner(b)
-    b._owner._rc += 1
-    result = Cursor(_owner=b._owner,
-                    _p=cast[ptr[NifToken]](cast[uintp](b._data) +
-                         uint(i) * uint(sizeof(NifToken))),
-                    _rem=b._len - i)
-    return result
-
-
-def cursorToPosition(b: TokenBuf, c: Cursor) -> nint:
-    """{.inline, noSideEffect.}"""
-    ## Token index of `c` within `b` (inverse of `cursorAt`). Stable key for
-    ## per-expression tables (e.g. a register allocator's location map).
-    return (cast[intp](c._p) - cast[intp](b._data)) // sizeof(NifToken)
-
-
-def readonlyCursorAt(b: TokenBuf, i: nint) -> Cursor:
-    ## Like `cursorAt` but does not require `var b`.
-    ##
-    ## The `CursorOwner` header is minted on demand — through a cast, since `b`
-    ## is only borrowed here. It has to be: the owner is where a cursor's pools
-    ## live, so an ownerless cursor answers `nil` for both `pool` and `tags` and
-    ## every pool-backed payload read and every `addSubtree` off it would have to
-    ## guess which pool world it came from. That guess is what the compiler's
-    ## former `fallbackPool`/`fallbackTags` globals used to make. Minting the
-    ## header also
-    ## makes the cursor keep the tokens alive like any other cursor instead of
-    ## dangling the moment `b` dies.
-    ##
-    ## The header costs one small allocation, and only for a buffer that has none
-    ## yet; a following mutation reclaims it on the cheap `rc == 1` path.
-    assert i >= 0 and i < b._len
-    with let:
-        mb = cast[ptr[TokenBuf]](unsafe_addr(b))
-    _ensureOwner(mb.contents)
-    mb._owner._rc += 1
-    result = Cursor(_owner=mb._owner,
-                    _p=cast[ptr[NifToken]](unsafe_addr(b._data[i])),
-                    _rem=b._len - i)
-    return result
 
 
 @operator("+!")
@@ -2635,21 +2662,6 @@ def plus_bang(c: Cursor, diff: nint) -> Cursor:
         c._owner._rc += 1
         result._owner = c._owner
     return result
-
-
-def hasCurrentToken(c: Cursor) -> bool:
-    """{.inline, noSideEffect.}"""
-    ## True if `c` points at a readable token (pointer + bound check). Prefer
-    ## `hasMore` in regular traversal; this survives malformed input.
-    return not isNil(c._p) and c._rem > 0
-
-
-def unsafeDec(c: mut @ Cursor):
-    """{.inline, noSideEffect.}"""
-    ## Move one token backwards (no bounds check). Only valid on a cursor known
-    ## to sit past a real token; used by backward scans over a raw buffer.
-    c._p = cast[ptr[NifToken]](cast[uintp](c._p) - uint(sizeof(NifToken)))
-    c._rem += 1
 
 
 def peekPastEnd(n: Cursor) -> Cursor:
@@ -2679,30 +2691,6 @@ def sharesPools(c: Cursor, p: Pool, t: TagPool) -> bool:
 # ── Subtree copy ─────────────────────────────────────────────────────────
 
 
-def _reinternLineInfo(dest: mut @ TokenBuf, c: Cursor,
-                      srcPool: Pool) -> NifLineInfo:
-    ## Map the source head's trailing line info into `dest`'s pools — the filename
-    ## and, if present, the `#comment#` string. Returns `NoNifLineInfo` when none.
-    ##
-    ## Takes the source pool rather than asking `c` for it: as a parameter the ref
-    ## is borrowed, while `c.pool` would return an owned temporary and pay an
-    ## incRef/decRef — twice, here — per token copied. See `sharesPools`.
-    requirePools(dest)
-    with let:
-        li = rawLineInfo(c)
-    if not li.isValid():
-        return NoNifLineInfo
-    with let:
-        fname = srcPool.filenames[li.file] if srcPool is not None else string("")
-    with var:
-        comment = StrId(u32(0))
-    if uint32(li.comment) != u32(0) and srcPool is not None:
-        comment = getOrIncl(dest.pool.strings, srcPool.strings[li.comment])
-    result = NifLineInfo(file=getOrIncl(dest.pool.filenames, fname),
-                         line=li.line, col=li.col, comment=comment)
-    return result
-
-
 def _addAcrossPools(dest: mut @ TokenBuf, c: mut @ Cursor,
                     srcPool: Pool, srcTags: TagPool):
     ## Internal: copy one value (atom or whole TagLit subtree) from `c`
@@ -2716,39 +2704,39 @@ def _addAcrossPools(dest: mut @ TokenBuf, c: mut @ Cursor,
     ## — an incRef, a decRef, and the pool's destructor behind the decRef — per
     ## token. The public wrapper below reads them once.
     with let:
-        destLi = _reinternLineInfo(dest, c, srcPool)
+        destLi = dest._reinternLineInfo(c, srcPool)
     match kind(c):
         case NifKind.TagLit:
             with let:
                 tagStr = srcTags.tags[cursorTagId(c)]
             with let:
                 newTag = getOrIncl(dest.tags.tags, tagStr)
-            openTag(dest, TagId(newTag))
-            appendLineInfo(dest, destLi)          # right after the tag head
+            dest.openTag(TagId(newTag))
+            dest.appendLineInfo(destLi)          # right after the tag head
             with into(c):
-                while hasMore(c):
+                while c.hasMore():
                     _addAcrossPools(dest, c, srcPool, srcTags)
-            closeTag(dest)
+            dest.closeTag()
         case NifKind.StrLit:
-            addStrLit(dest, strVal(c, srcPool)); appendLineInfo(dest, destLi); inc(c)
+            addStrLit(dest, strVal(c, srcPool)); dest.appendLineInfo(destLi); c.inc()
         case NifKind.IntLit:
-            addIntLit(dest, intVal(c)); appendLineInfo(dest, destLi); inc(c)
+            dest.addIntLit(intVal(c)); dest.appendLineInfo(destLi); c.inc()
         case NifKind.UIntLit:
-            addUIntLit(dest, uintVal(c)); appendLineInfo(dest, destLi); inc(c)
+            dest.addUIntLit(uintVal(c)); dest.appendLineInfo(destLi); c.inc()
         case NifKind.FloatLit:
-            addFloatLit(dest, floatVal(c)); appendLineInfo(dest, destLi); inc(c)
+            dest.addFloatLit(floatVal(c)); dest.appendLineInfo(destLi); c.inc()
         case NifKind.Symbol:
-            addSymUse(dest, symName(c, srcPool)); appendLineInfo(dest, destLi); inc(c)
+            addSymUse(dest, symName(c, srcPool)); dest.appendLineInfo(destLi); c.inc()
         case NifKind.SymbolDef:
-            addSymDef(dest, symName(c, srcPool)); appendLineInfo(dest, destLi); inc(c)
+            addSymDef(dest, symName(c, srcPool)); dest.appendLineInfo(destLi); c.inc()
         case NifKind.Ident:
-            addIdent(dest, strVal(c, srcPool)); appendLineInfo(dest, destLi); inc(c)
+            addIdent(dest, strVal(c, srcPool)); dest.appendLineInfo(destLi); c.inc()
         case NifKind.CharLit:
-            addCharLit(dest, charLit(c)); appendLineInfo(dest, destLi); inc(c)
+            dest.addCharLit(charLit(c)); dest.appendLineInfo(destLi); c.inc()
         case NifKind.DotToken:
-            addDotToken(dest); appendLineInfo(dest, destLi); inc(c)
+            dest.addDotToken(); dest.appendLineInfo(destLi); c.inc()
         case NifKind.LineInfoLit:
-            dest.add(load(c)); inc(c)              # defensive: not a valid head token
+            dest.add(load(c)); c.inc()              # defensive: not a valid head token
         case NifKind.ExtendedSuffix:
             assert False, "ExtendedSuffix cannot be a head token"
         case NifKind.UnknownToken | NifKind.EofToken | NifKind.ParLe | NifKind.ParRi:
@@ -2765,7 +2753,7 @@ def addSubtree(dest: mut @ TokenBuf, c: Cursor):
         with let:
             n = subtreeWidth(c)
         if not isNil(dest._owner):
-            prepareMutation(dest)
+            dest.prepareMutation()
         if dest._len + n > dest._cap:
             dest._cap = max(dest._cap // 2 + dest._cap, dest._len + n)
             dest._data = cast[_Storage](realloc(dest._data, sizeof(NifToken) * dest._cap))
@@ -2786,39 +2774,6 @@ def addSubtree(dest: mut @ TokenBuf, c: Cursor):
         _addAcrossPools(dest, cc, srcPool, srcTags)
 
 
-def addBufferSamePool(dest: mut @ TokenBuf, src: TokenBuf):
-    """{.nifEmits: "Any".}"""
-    ## Append a closed buffer that shares `dest`'s literal and tag pools.
-    ##
-    ## The source is borrowed and remains usable. Matching pools make the
-    ## append one bulk copy without constructing a read cursor.
-    assert src._openTags.len == 0, "addBufferSamePool with unclosed source tags"
-    if src._len == 0:
-        # an empty buffer may never have been written to, leaving its pool
-        # refs nil — nothing to copy, nothing to check
-        return
-    assert dest._data != src._data, "cannot append a TokenBuf to itself"
-    # Both buffers carry their pools from construction (a plugin build's may be
-    # the process defaults), so this is a plain identity test — a bulk copy is
-    # only valid when the two interned id spaces are literally the same objects.
-    requirePools(dest)
-    with let:
-        spool = (src.pool if src.pool is not None else _defaultPool())
-    with let:
-        stags = (src.tags if src.tags is not None else _defaultTags())
-    assert dest.pool == spool and dest.tags == stags, (
-        "addBufferSamePool requires matching pools")
-    if not isNil(dest._owner):
-        prepareMutation(dest)
-    if dest._len + src._len > dest._cap:
-        dest._cap = max(dest._cap // 2 + dest._cap, dest._len + src._len)
-        dest._data = cast[_Storage](
-            realloc(dest._data, sizeof(NifToken) * dest._cap))
-    copyMem(addr(dest._data[dest._len]), src._data,
-            src._len * sizeof(NifToken))
-    dest._len += src._len
-
-
 def addBuffer(dest: mut @ TokenBuf, src: mut @ TokenBuf):
     """{.nifEmits: "Any".}"""
     ## Append all complete top-level values from `src` to `dest`.
@@ -2830,35 +2785,13 @@ def addBuffer(dest: mut @ TokenBuf, src: mut @ TokenBuf):
     if src._len == 0:
         return
     if dest.pool == src.pool and dest.tags == src.tags:
-        addBufferSamePool(dest, src)
+        dest.addBufferSamePool(src)
     else:
         with var:
-            c = beginRead(src)
-        while hasMore(c):
+            c = src.beginRead()
+        while c.hasMore():
             addSubtree(dest, c)
             skip(c)
-
-
-def _addWithSparseLineInfo(dest: mut @ TokenBuf, c: mut @ Cursor,
-                           last: mut @ NifLineInfo):
-    with let:
-        info = rawLineInfo(c)
-    if kind(c) == NifKind.TagLit:
-        openTag(dest, cursorTagId(c))
-        if info.isValid() and info != last:
-            appendLineInfo(dest, info)
-            last <<= info
-        with into(c):
-            while hasMore(c):
-                _addWithSparseLineInfo(dest, c, last)
-        closeTag(dest)
-    else:
-        for i in range(0, valueWidth(c)):
-            add(dest, _peekAhead(c, i))
-        if info.isValid() and info != last:
-            appendLineInfo(dest, info)
-            last <<= info
-        inc(c)
 
 
 def withSparseLineInfo(src: mut @ TokenBuf) -> TokenBuf:
@@ -2872,11 +2805,11 @@ def withSparseLineInfo(src: mut @ TokenBuf) -> TokenBuf:
     ## seeing sparse input without a render-and-reparse round trip.
     result = createTokenBuf(src._len, src.pool, src.tags)
     with var:
-        c = beginRead(src)
+        c = src.beginRead()
     with var:
         last = NoNifLineInfo.copy()
-    while hasMore(c):
-        _addWithSparseLineInfo(result, c, last)
+    while c.hasMore():
+        result._addWithSparseLineInfo(c, last)
     endRead(c)
     return result
 
@@ -2918,17 +2851,17 @@ if comptime(__name__ == "__main__"):
                 tFoo = registerTag(b.tags, string("foo"))
             with let:
                 tBar = registerTag(b.tags, string("bar"))
-            with buildTree(b, tFoo):
-                with buildTree(b, tBar):
+            with b.buildTree(tFoo):
+                with b.buildTree(tBar):
                     addStrLit(b, string("hi"))
-                    addIntLit(b, 42)
-                addFloatLit(b, 3.14)
+                    b.addIntLit(42)
+                b.addFloatLit(3.14)
             # 1 foo + (1 bar + 1 "hi" + 1 (small int 42)) + 3 (3.14 needs 3 tokens
             # for the full float64 bit pattern) = 7 tokens.
             test(b._len, 7)
 
             with var:
-                c = beginRead(b)
+                c = b.beginRead()
             test(kind(c), NifKind.TagLit)
             test(cursorTagId(c), tFoo)
             test(cursorJump(c), u64(6))
@@ -2938,34 +2871,34 @@ if comptime(__name__ == "__main__"):
                 test(cursorJump(c), u64(2))
                 with into(c):
                     test(kind(c), NifKind.StrLit)
-                    test(strVal(c), string("hi")); inc(c)
+                    test(strVal(c), string("hi")); c.inc()
                     test(kind(c), NifKind.IntLit)
-                    test(intVal(c), 42); inc(c)
+                    test(intVal(c), 42); c.inc()
                 test(kind(c), NifKind.FloatLit)
-                test(floatVal(c), 3.14); inc(c)
+                test(floatVal(c), 3.14); c.inc()
 
         with block("add_subtree_cross_pool"):
             with var:
                 src = createTokenBuf(4)
             with let:
                 tFoo = registerTag(src.tags, string("foo"))
-            with buildTree(src, tFoo):
+            with src.buildTree(tFoo):
                 addStrLit(src, string("hello"))
-                addIntLit(src, 7)
+                src.addIntLit(7)
             with var:
                 dest = createTokenBuf(4)
             test((src.pool == dest.pool), False)
             test((src.tags == dest.tags), False)
             with var:
-                c = beginRead(src)
+                c = src.beginRead()
             addSubtree(dest, c)                       # re-interns via cross-pool path
             with var:
-                d = beginRead(dest)
+                d = dest.beginRead()
             test(kind(d), NifKind.TagLit)
-            test(tagName(dest.tags, cursorTagId(d)), string("foo"))
+            test(dest.tags.tagName(cursorTagId(d)), string("foo"))
             with into(d):
-                test(strVal(d), string("hello")); inc(d)
-                test(intVal(d), 7); inc(d)
+                test(strVal(d), string("hello")); d.inc()
+                test(intVal(d), 7); d.inc()
 
         with block("add_subtree_same_pools"):
             # Both pools shared → bulk copyMem.
@@ -2977,9 +2910,9 @@ if comptime(__name__ == "__main__"):
                 src = createTokenBuf(4, p, tp)
             with let:
                 tBar = registerTag(tp, string("bar"))
-            with buildTree(src, tBar):
+            with src.buildTree(tBar):
                 addStrLit(src, string("longish"))   # > 3 bytes → pool path, exercises sharing
-                addIntLit(src, 9)
+                src.addIntLit(9)
             with var:
                 dest = createTokenBuf(4, p, tp)
             test((src.pool == dest.pool), True)
@@ -2987,16 +2920,16 @@ if comptime(__name__ == "__main__"):
             with let:
                 srcStrId = uint32(getOrIncl(p.strings, string("longish")))
             with var:
-                c = beginRead(src)
+                c = src.beginRead()
             addSubtree(dest, c)
             with var:
-                d = beginRead(dest)
+                d = dest.beginRead()
             test(kind(d), NifKind.TagLit)
             with into(d):
                 # Same pool → bulk-copied; the token payload's pool id is preserved.
                 test((uoperand(load(d)) >> 1), srcStrId)
-                inc(d)
-                inc(d)
+                d.inc()
+                d.inc()
 
         with block("add_subtree_shared_literals_different_tags"):
             # Real-world cross-format use: jsonnif and htmlnif share a literals
@@ -3007,20 +2940,20 @@ if comptime(__name__ == "__main__"):
                 src = createTokenBuf(4, p)            # gets its own fresh tag pool
             with let:
                 tJ = registerTag(src.tags, string("oconstr"))
-            with buildTree(src, tJ):
+            with src.buildTree(tJ):
                 addStrLit(src, string("sharedlonger"))
             with var:
                 dest = createTokenBuf(4, p)           # different tag pool
             with var:
-                c = beginRead(src)
+                c = src.beginRead()
             addSubtree(dest, c)                          # must re-intern the tag…
             with var:
-                d = beginRead(dest)
-            test(tagName(dest.tags, cursorTagId(d)), string("oconstr"))
+                d = dest.beginRead()
+            test(dest.tags.tagName(cursorTagId(d)), string("oconstr"))
             # …but the literal "sharedlonger" stays at the same StrId in p.
             with into(d):
                 test((uoperand(load(d)) >> 1), uint32(getOrIncl(p.strings, string("sharedlonger"))))
-                inc(d)
+                d.inc()
 
         with block("inline_short_str"):
             # Strings ≤ 3 bytes inline directly into the token. No pool touch.
@@ -3031,14 +2964,14 @@ if comptime(__name__ == "__main__"):
             addStrLit(b, string("ab"))
             addStrLit(b, string("abc"))
             addStrLit(b, string("abcd"))   # length 4 → pool
-            test(len(b.pool.strings), 1)     # only "abcd" interned
+            test(b.pool.strings.len(), 1)     # only "abcd" interned
             with var:
-                c = beginRead(b)
-            test(isInlineLit(c), True);  test(strVal(c, b.pool), string(""));    inc(c)
-            test(isInlineLit(c), True);  test(strVal(c, b.pool), string("x"));   inc(c)
-            test(isInlineLit(c), True);  test(strVal(c, b.pool), string("ab"));  inc(c)
-            test(isInlineLit(c), True);  test(strVal(c, b.pool), string("abc")); inc(c)
-            test(isInlineLit(c), False); test(strVal(c, b.pool), string("abcd")); inc(c)
+                c = b.beginRead()
+            test(isInlineLit(c), True);  test(strVal(c, b.pool), string(""));    c.inc()
+            test(isInlineLit(c), True);  test(strVal(c, b.pool), string("x"));   c.inc()
+            test(isInlineLit(c), True);  test(strVal(c, b.pool), string("ab"));  c.inc()
+            test(isInlineLit(c), True);  test(strVal(c, b.pool), string("abc")); c.inc()
+            test(isInlineLit(c), False); test(strVal(c, b.pool), string("abcd")); c.inc()
 
         with block("inline_int_chain"):
             # 28-bit signed → 1 token; 56-bit → 2 tokens; > 56-bit → 3 tokens.
@@ -3047,53 +2980,53 @@ if comptime(__name__ == "__main__"):
                 b = createTokenBuf(16)
             with let:
                 beforeShort = b._len.copy()
-            addIntLit(b, 0);                  test(b._len - beforeShort, 1)
+            b.addIntLit(0);                  test(b._len - beforeShort, 1)
             with let:
                 beforeSmall = b._len.copy()
-            addIntLit(b, 1_000_000);          test(b._len - beforeSmall, 1)
+            b.addIntLit(1_000_000);          test(b._len - beforeSmall, 1)
             with let:
                 beforeWide = b._len.copy()
-            addIntLit(b, i64(1) << 40);       test(b._len - beforeWide, 2)
+            b.addIntLit(i64(1) << 40);       test(b._len - beforeWide, 2)
             with let:
                 beforeVeryWide = b._len.copy()
-            addIntLit(b, high(int64));        test(b._len - beforeVeryWide, 3)
+            b.addIntLit(high(int64));        test(b._len - beforeVeryWide, 3)
             with let:
                 beforeNeg = b._len.copy()
-            addIntLit(b, low(int64));         test(b._len - beforeNeg, 3)
+            b.addIntLit(low(int64));         test(b._len - beforeNeg, 3)
 
             with var:
-                c = beginRead(b)
-            test(intVal(c), i64(0));            inc(c)
-            test(intVal(c), i64(1_000_000));    inc(c)
-            test(intVal(c), i64(1) << 40);     inc(c)
-            test(intVal(c), high(int64));      inc(c)
-            test(intVal(c), low(int64));       inc(c)
+                c = b.beginRead()
+            test(intVal(c), i64(0));            c.inc()
+            test(intVal(c), i64(1_000_000));    c.inc()
+            test(intVal(c), i64(1) << 40);     c.inc()
+            test(intVal(c), high(int64));      c.inc()
+            test(intVal(c), low(int64));       c.inc()
 
         with block("inline_uint_chain"):
             with var:
                 b = createTokenBuf(8)
-            addUIntLit(b, u64(0))
-            addUIntLit(b, u64(1) << 27)         # 2 tokens (just past 28-bit unsigned cap)
-            addUIntLit(b, u64(1) << 50)         # 2 tokens
-            addUIntLit(b, high(uint64))         # 3 tokens
+            b.addUIntLit(u64(0))
+            b.addUIntLit(u64(1) << 27)         # 2 tokens (just past 28-bit unsigned cap)
+            b.addUIntLit(u64(1) << 50)         # 2 tokens
+            b.addUIntLit(high(uint64))         # 3 tokens
             with var:
-                c = beginRead(b)
-            test(uintVal(c), u64(0));            inc(c)
-            test(uintVal(c), u64(1) << 27);     inc(c)
-            test(uintVal(c), u64(1) << 50);     inc(c)
-            test(uintVal(c), high(uint64));     inc(c)
+                c = b.beginRead()
+            test(uintVal(c), u64(0));            c.inc()
+            test(uintVal(c), u64(1) << 27);     c.inc()
+            test(uintVal(c), u64(1) << 50);     c.inc()
+            test(uintVal(c), high(uint64));     c.inc()
 
         with block("inline_float_chain"):
             with var:
                 b = createTokenBuf(6)
-            addFloatLit(b, 0.0)     # all-zero bit pattern → 1 token
-            addFloatLit(b, 3.14)    # all 64 bits used → 3 tokens
-            addFloatLit(b, -0.5)    # 3 tokens
+            b.addFloatLit(0.0)     # all-zero bit pattern → 1 token
+            b.addFloatLit(3.14)    # all 64 bits used → 3 tokens
+            b.addFloatLit(-0.5)    # 3 tokens
             with var:
-                c = beginRead(b)
-            test(floatVal(c), 0.0);  inc(c)
-            test(floatVal(c), 3.14); inc(c)
-            test(floatVal(c), -0.5); inc(c)
+                c = b.beginRead()
+            test(floatVal(c), 0.0);  c.inc()
+            test(floatVal(c), 3.14); c.inc()
+            test(floatVal(c), -0.5); c.inc()
 
         with block("extended_suffix_jump"):
             # Build a subtree larger than InlineJumpCap so `closeTag` splices an
@@ -3104,9 +3037,9 @@ if comptime(__name__ == "__main__"):
                 b = createTokenBuf(big + 4)
             with let:
                 tT = registerTag(b.tags, string("t"))
-            with buildTree(b, tT):
+            with b.buildTree(tT):
                 for _ in range(0, big):
-                    addDotToken(b)
+                    b.addDotToken()
             # After splice: 1 (TagLit) + 1 (suffix) + big body = big + 2
             test(b._len, big + 2)
             test(kind(b[0]), NifKind.TagLit)
@@ -3114,7 +3047,7 @@ if comptime(__name__ == "__main__"):
             test(kind(b[1]), NifKind.ExtendedSuffix)
 
             with var:
-                c = beginRead(b)
+                c = b.beginRead()
             test(kind(c), NifKind.TagLit)                          # one load, no branch
             test(cursorTagId(c), tT)
             test(cursorJump(c), uint64(big))               # body count (suffix is head)
@@ -3129,40 +3062,40 @@ if comptime(__name__ == "__main__"):
             with let:
                 fB = getOrIncl(b.pool.filenames, string("b.nim"))
             # common layout (fits 7/7/14)
-            addStrLit(b, string("x"));  appendLineInfo(b, fA, i32(100), i32(12))
+            addStrLit(b, string("x"));  b.appendLineInfo(fA, i32(100), i32(12))
             # a value with its own ExtendedSuffix chain, plus line info after it
-            addIntLit(b, i64(1) << 40);  appendLineInfo(b, fA, i32(101), i32(1))
+            b.addIntLit(i64(1) << 40);  b.appendLineInfo(fA, i32(101), i32(1))
             # overflow layout (line beyond 14 bits → wide)
-            addStrLit(b, string("y"));  appendLineInfo(b, fB, i32(200000), i32(5))
+            addStrLit(b, string("y"));  b.appendLineInfo(fB, i32(200000), i32(5))
             # a head with no line info
-            addCharLit(b, ch("z"))
+            b.addCharLit(ch("z"))
 
             with var:
-                c = beginRead(b)
+                c = b.beginRead()
             with block:
                 test(kind(c), NifKind.StrLit); test(strVal(c), string("x"))
                 with let:
-                    li = rawLineInfo(c)
+                    li = c.rawLineInfo()
                 test(uint32(li.file), uint32(fA)); test(li.line, i32(100)); test(li.col, i32(12))
                 test(lineInfoFile(c), string("a.nim"))
-                inc(c)
+                c.inc()
             with block:
                 test(kind(c), NifKind.IntLit); test(intVal(c), i64(1) << 40)
                 with let:
-                    li = rawLineInfo(c)            # info read past the value's suffix
+                    li = c.rawLineInfo()            # info read past the value's suffix
                 test(uint32(li.file), uint32(fA)); test(li.line, i32(101)); test(li.col, i32(1))
-                inc(c)
+                c.inc()
             with block:
                 test(kind(c), NifKind.StrLit); test(strVal(c), string("y"))
                 with let:
-                    li = rawLineInfo(c)            # overflow (wide) layout
+                    li = c.rawLineInfo()            # overflow (wide) layout
                 test(uint32(li.file), uint32(fB)); test(li.line, i32(200000)); test(li.col, i32(5))
                 test(lineInfoFile(c), string("b.nim"))
-                inc(c)
+                c.inc()
             with block:
                 test(kind(c), NifKind.CharLit); test(charLit(c), ch("z"))
-                test(rawLineInfo(c).isValid(), False)    # no line info present
-                inc(c)
+                test(c.rawLineInfo().isValid(), False)    # no line info present
+                c.inc()
 
         with block("line_info_with_comment"):
             with var:
@@ -3172,46 +3105,46 @@ if comptime(__name__ == "__main__"):
             with let:
                 doc = getOrIncl(b.pool.strings, string("## a doc comment"))
             # comment on a head whose position would fit the common layout → forced wide
-            addStrLit(b, string("x"));          appendLineInfo(b, f, i32(10), i32(4), doc)
+            addStrLit(b, string("x"));          b.appendLineInfo(f, i32(10), i32(4), doc)
             # comment alongside a value that has its OWN ExtendedSuffix chain
-            addIntLit(b, i64(1) << 40); appendLineInfo(b, f, i32(11), i32(2), doc)
+            b.addIntLit(i64(1) << 40); b.appendLineInfo(f, i32(11), i32(2), doc)
             # line info without a comment still reports comment 0
-            addStrLit(b, string("y"));          appendLineInfo(b, f, i32(12), i32(1))
+            addStrLit(b, string("y"));          b.appendLineInfo(f, i32(12), i32(1))
 
             with var:
-                c = beginRead(b)
+                c = b.beginRead()
             with block:
                 test(kind(c), NifKind.StrLit); test(strVal(c), string("x"))
                 with let:
-                    li = rawLineInfo(c)
+                    li = c.rawLineInfo()
                 test(uint32(li.file), uint32(f)); test(li.line, i32(10)); test(li.col, i32(4))
                 test(uint32(li.comment), uint32(doc))
                 test(b.pool.strings[li.comment], string("## a doc comment"))
-                inc(c)
+                c.inc()
             with block:
                 test(kind(c), NifKind.IntLit); test(intVal(c), i64(1) << 40)
                 with let:
-                    li = rawLineInfo(c)            # comment read past the value's suffix
+                    li = c.rawLineInfo()            # comment read past the value's suffix
                 test(li.line, i32(11)); test(li.col, i32(2)); test(uint32(li.comment), uint32(doc))
-                inc(c)
+                c.inc()
             with block:
                 test(kind(c), NifKind.StrLit); test(strVal(c), string("y"))
                 with let:
-                    li = rawLineInfo(c)
+                    li = c.rawLineInfo()
                 test(li.line, i32(12)); test(uint32(li.comment), u32(0))   # no comment
-                inc(c)
+                c.inc()
 
             # cross-pool copy of the first value must re-intern the comment string
             with var:
                 dest = createTokenBuf(16)
             with var:
-                cc = beginRead(b)
+                cc = b.beginRead()
             addSubtree(dest, cc)                    # different pools → addAcrossPools
             with var:
-                d = beginRead(dest)
+                d = dest.beginRead()
             test(kind(d), NifKind.StrLit); test(strVal(d), string("x"))
             with let:
-                dli = rawLineInfo(d)
+                dli = d.rawLineInfo()
             test((uint32(dli.comment) != u32(0)), True)
             test(dest.pool.strings[dli.comment], string("## a doc comment"))
             test(dli.line, i32(10)); test(dli.col, i32(4))
@@ -3223,37 +3156,37 @@ if comptime(__name__ == "__main__"):
                 t = registerTag(src.tags, string("stmt"))
             with let:
                 f = getOrIncl(src.pool.filenames, string("m.nim"))
-            openTag(src, t)
-            appendLineInfo(src, f, i32(7), i32(3))       # line info on the tag head
-            addIntLit(src, 42)
-            closeTag(src)
+            src.openTag(t)
+            src.appendLineInfo(f, i32(7), i32(3))       # line info on the tag head
+            src.addIntLit(42)
+            src.closeTag()
             # tag jump must count only the body (the IntLit), not the LineInfoLit head
             with block:
                 with var:
-                    c = beginRead(src)
+                    c = src.beginRead()
                 test(kind(c), NifKind.TagLit); test(cursorJump(c), u64(1))
                 with let:
-                    li = rawLineInfo(c)
+                    li = c.rawLineInfo()
                 test(li.line, i32(7)); test(li.col, i32(3)); test(lineInfoFile(c), string("m.nim"))
                 with into(c):
-                    test(intVal(c), i64(42)); inc(c)       # into must land past the tag head
+                    test(intVal(c), i64(42)); c.inc()       # into must land past the tag head
             # cross-pool copy must re-intern the filename and preserve line/col
             with var:
                 dest = createTokenBuf(8)
             with block:
                 with var:
-                    c = beginRead(src)
+                    c = src.beginRead()
                 addSubtree(dest, c)                       # different pools → addAcrossPools
             with var:
-                d = beginRead(dest)
+                d = dest.beginRead()
             test(kind(d), NifKind.TagLit)
-            test(tagName(dest.tags, cursorTagId(d)), string("stmt"))
+            test(dest.tags.tagName(cursorTagId(d)), string("stmt"))
             with let:
-                dli = rawLineInfo(d)
+                dli = d.rawLineInfo()
             test(dli.line, i32(7)); test(dli.col, i32(3))
             test(lineInfoFile(d), string("m.nim"))
             with into(d):
-                test(intVal(d), i64(42)); inc(d)
+                test(intVal(d), i64(42)); d.inc()
 
         echo(string("nifcore self-tests passed"))
 
@@ -3277,17 +3210,17 @@ if comptime(__name__ == "__main__"):
         with block("ownership"):
             with var:
                 b = createTokenBuf(4)
-            addIntLit(b, 10)
-            addIntLit(b, 20)
+            b.addIntLit(10)
+            b.addIntLit(20)
             echo(string("built: rc "), _rc(b))
             with var:
-                c = beginRead(b)
+                c = b.beginRead()
             echo(string("after beginRead: rc "), _rc(b))
 
             with block:  # the copy is destroyed at the end of the block
                 with var:
                     cc = c.copy()
-                inc(cc)
+                cc.inc()
                 echo(string("with copied cursor: rc "), _rc(b), string(", copy at "), intVal(cc))
             echo(string("after copied cursor gone: rc "), _rc(b))
             endRead(c)
@@ -3295,29 +3228,29 @@ if comptime(__name__ == "__main__"):
 
             # a mutation while a cursor reads: prepareMutation copies, the old owner stays with the cursor
             with var:
-                c2 = beginRead(b)
-            addIntLit(b, 30)
+                c2 = b.beginRead()
+            b.addIntLit(30)
             echo(string("mutation while reading: buffer rc "), _rc(b), string(", cursor rc "), c2._owner._rc,
                  string(", cursor still reads "), intVal(c2))
             endRead(c2)
 
             # a mutation without cursors reclaims the owner header
             with var:
-                c3 = beginRead(b)
+                c3 = b.beginRead()
             endRead(c3)
             echo(string("before reclaim: rc "), _rc(b))
-            addIntLit(b, 40)
+            b.addIntLit(40)
             echo(string("after reclaim: rc "), _rc(b), string(", len "), len(b))
 
             with var:
                 b2 = createTokenBuf(4)
             with let:
                 t = registerTag(b2.tags, string("t"))
-            with buildTree(b2, t):
-                addIntLit(b2, 1)
-                addIntLit(b2, 2)
+            with b2.buildTree(t):
+                b2.addIntLit(1)
+                b2.addIntLit(2)
             with var:
-                tree = beginRead(b2)
+                tree = b2.beginRead()
             with var:
                 child = childCursor(tree)
             echo(string("childCursor: rc "), _rc(b2), string(", rem "), child._rem, string(", first "), intVal(child))
@@ -3340,7 +3273,7 @@ if comptime(__name__ == "__main__"):
             echo(hash(li), string(" "), hash(NoNifLineInfo))
             with let:
                 s = NifSymbol(name=StrId(u32(1)), disamb=i32(12), dedup=StrId(u32(0)), module=StrId(u32(2)))
-            echo(hash(s), string(" "), s == s, string(" "), isLocal(s))
+            echo(hash(s), string(" "), s == s, string(" "), s.isLocal())
 
         # token constructors and raw accessors
         with block("tokens"):
@@ -3353,7 +3286,7 @@ if comptime(__name__ == "__main__"):
                  string(" "), kind(symdefToken(SymId(u32(9)))), string(" "), kind(identToken(StrId(u32(9)))))
             with var:
                 b = createTokenBuf(4)
-            addIntLit(b, -5)
+            b.addIntLit(-5)
             echo(soperand(b[0]), string(" "), kind(b[0]))
 
         # the symbol API
@@ -3362,21 +3295,21 @@ if comptime(__name__ == "__main__"):
                 p = newPool()
             with let:
                 id = symId(p, string("abc.12.Ikey.mod"))
-            echo(symString(p, id), string("|"), symBasename(p, id), string("|"), symVersionedBasename(p, id),
-                 string("|"), symWithoutModule(p, id), string("|"), symModule(p, id))
-            echo(symIsInstantiation(p, id), string(" "), symIsLocal(p, id), string(" "), symModuleIs(p, id, string("mod")),
-                 string(" "), symModuleIs(p, id, string("other")), string(" "), symSpellingLen(p, id),
-                 string(" "), symString(p, id).len)
+            echo(p.symString(id), string("|"), p.symBasename(id), string("|"), p.symVersionedBasename(id),
+                 string("|"), p.symWithoutModule(id), string("|"), p.symModule(id))
+            echo(p.symIsInstantiation(id), string(" "), p.symIsLocal(id), string(" "), p.symModuleIs(id, string("mod")),
+                 string(" "), p.symModuleIs(id, string("other")), string(" "), symSpellingLen(p, id),
+                 string(" "), p.symString(id).len)
             with let:
                 other = symId(p, string("abc"), 12, string("other"), string("Ikey"))
-            echo(symSameEntity(p, id, other), string(" "), symSameEntity(p, id, id), string(" "), symString(p, other))
+            echo(p.symSameEntity(id, other), string(" "), p.symSameEntity(id, id), string(" "), p.symString(other))
             with let:
                 local = symId(p, string("p.0h107"))
-            echo(symString(p, local), string("|"), symBasename(p, local), string("|"), symIsLocal(p, local),
-                 string("|"), symIsInstantiation(p, local), string("|"), symModule(p, local))
+            echo(p.symString(local), string("|"), p.symBasename(local), string("|"), p.symIsLocal(local),
+                 string("|"), p.symIsInstantiation(local), string("|"), p.symModule(local))
             with let:
                 twoKeys = symId(p, string("foo.0.Ia.Ib.mod"))
-            echo(symIsInstantiation(p, twoKeys), string(" "), sym(p, twoKeys).disamb, string(" "), symNameId(p, id) == sym(p, id).name)
+            echo(p.symIsInstantiation(twoKeys), string(" "), p.sym(twoKeys).disamb, string(" "), p.symNameId(id) == p.sym(id).name)
             echo(parseDisamb(string("x.12"), 2, 2), string(" "), parseDisamb(string("00"), 0, 2), string(" "),
                  parseDisamb(string("0"), 0, 1), string(" "), parseDisamb(string("1a"), 0, 2), string(" "),
                  parseDisamb(string(""), 0, 0))
@@ -3384,24 +3317,24 @@ if comptime(__name__ == "__main__"):
                 sp = syms(p)
             echo(sp.getKeyId(string("abc.12.Ikey.mod")) == id, string(" "), sp.getKeyId(string("abc.12.Ikey.nomod")),
                  string(" "), sp.getKeyId(string("zzz.1")), string(" "), sp[id], string(" "), sp.len,
-                 string(" "), sp.getOrIncl(string("abc.12.Ikey.mod")) == id, string(" "), poolSym(p, local))
+                 string(" "), sp.getOrIncl(string("abc.12.Ikey.mod")) == id, string(" "), p.poolSym(local))
 
         # tag pools: createTags, hasEscapes, escaped tags
         with block("tag_pools"):
             with let:
                 tp = createTags[_Color]()
-            echo(tagName(tp, TagId(u32(1))), string(" "), tagName(tp, TagId(u32(3))), string(" "), hasEscapes(tp))
+            echo(tp.tagName(TagId(u32(1))), string(" "), tp.tagName(TagId(u32(3))), string(" "), tp.hasEscapes())
             with let:
                 esc = newTagPool()
             esc.escapeTag = registerTag(esc, string("esc"))
             with var:
                 b = createTokenBuf(4, None, esc)
-            openTag(b, TagId(FirstEscapeId + u32(5)))
-            addIntLit(b, 999)
-            closeTag(b)
+            b.openTag(TagId(FirstEscapeId + u32(5)))
+            b.addIntLit(999)
+            b.closeTag()
             with var:
-                c = beginRead(b)
-            echo(hasEscapes(esc), string(" "), isEscapedTag(c), string(" "), uint32(resolvedTagId(c)),
+                c = b.beginRead()
+            echo(esc.hasEscapes(), string(" "), isEscapedTag(c), string(" "), uint32(resolvedTagId(c)),
                  string(" "), uint32(cursorTagId(c)), string(" "), escapeTagOf(c))
             endRead(c)
 
@@ -3409,8 +3342,8 @@ if comptime(__name__ == "__main__"):
         with block("builders_and_positions"):
             with var:
                 b = createTokenBuf(4)
-            addDotToken(b)
-            addCharLit(b, ch("k"))
+            b.addDotToken()
+            b.addCharLit(ch("k"))
             addIdent(b, string("myIdent"))
             with let:
                 sid = symId(b.pool, string("sym.0"))
@@ -3418,49 +3351,49 @@ if comptime(__name__ == "__main__"):
             addSymDef(b, sid)
             addSymUse(b, string("use.1"))
             addSymDef(b, string("def.2"))
-            addUIntLit(b, u64(100))
+            b.addUIntLit(u64(100))
             echo(string("builder tokens: len "), len(b))
             with var:
-                c = cursorAt(b, 2)
+                c = b.cursorAt(2)
             echo(kind(c), string(" "), strVal(c), string(" "), strId(c) == getOrIncl(b.pool.strings, string("myIdent")),
-                 string(" "), cursorToPosition(b, c), string(" "), toUniqueId(c) == toUniqueId(cursorAt(b, 2)))
-            inc(c)
+                 string(" "), b.cursorToPosition(c), string(" "), c.toUniqueId() == b.cursorAt(2).toUniqueId())
+            c.inc()
             echo(symName(c), string(" "), symId(c) == sid, string(" "), internedSymToken(b.pool, NifKind.Symbol, sid) == load(c))
-            unsafeDec(c)
-            echo(cursorToPosition(b, c), string(" "), c._rem, string(" "), hasCurrentToken(c), string(" "), cursorIsNil(c))
+            c.unsafeDec()
+            echo(b.cursorToPosition(c), string(" "), c._rem, string(" "), c.hasCurrentToken(), string(" "), c.cursorIsNil())
             with var:
-                tail = cursorTailAt(b, len(b))
-            echo(tail._rem, string(" "), hasCurrentToken(tail), string(" "), sharesPools(c, b.pool, b.tags),
+                tail = b.cursorTailAt(len(b))
+            echo(tail._rem, string(" "), tail.hasCurrentToken(), string(" "), sharesPools(c, b.pool, b.tags),
                  string(" "), sharesPools(c, newPool(), b.tags), string(" "), pool(c) == b.pool, string(" "), tags(c) == b.tags)
             endRead(c)
             endRead(tail)
-            shrink(b, len(b) - 2)
+            b.shrink(len(b) - 2)
             echo(string("after shrink: len "), len(b))
 
             with var:
                 b2 = createTokenBuf(4)
-            addIntLit(b2, 111)
-            addIntLit(b2, 222)
-            insert(b, b2, 1)
-            echo(string("after insert: len "), len(b), string(", at 1: "), intVal(cursorAt(b, 1)))
+            b2.addIntLit(111)
+            b2.addIntLit(222)
+            b.insert(b2, 1)
+            echo(string("after insert: len "), len(b), string(", at 1: "), intVal(b.cursorAt(1)))
 
             # readonlyCursorAt on a buffer that already has an owner
             with var:
-                cInit = beginRead(b)
+                cInit = b.beginRead()
             endRead(cInit)
             with var:
-                cro = readonlyCursorAt(b, 1)
+                cro = b.readonlyCursorAt(1)
             echo(string("readonlyCursorAt: "), kind(cro), string(" "), intVal(cro))
             endRead(cro)
             # on a fresh buffer: the owner is minted through the cast view of `b`, and both cursors share it
             with var:
                 fresh = createTokenBuf(4)
-            addIntLit(fresh, 5)
-            addIntLit(fresh, 6)
+            fresh.addIntLit(5)
+            fresh.addIntLit(6)
             with var:
-                ro1 = readonlyCursorAt(fresh, 0)
+                ro1 = fresh.readonlyCursorAt(0)
             with var:
-                ro2 = readonlyCursorAt(fresh, 1)
+                ro2 = fresh.readonlyCursorAt(1)
             echo(string("readonlyCursorAt on a fresh buffer: rc "), _rc(fresh), string(", "), intVal(ro1),
                  string(" "), intVal(ro2), string(", pools "), pool(ro1) == fresh.pool)
             endRead(ro1)
@@ -3475,14 +3408,14 @@ if comptime(__name__ == "__main__"):
                 t = registerTag(b.tags, string("t"))
             with let:
                 u = registerTag(b.tags, string("u"))
-            with buildTree(b, t):
-                addIntLit(b, 1)
-            reopenLastTree(b, 0)
-            addIntLit(b, 2)
-            closeTag(b)
-            addIntLit(b, 3)
+            with b.buildTree(t):
+                b.addIntLit(1)
+            b.reopenLastTree(0)
+            b.addIntLit(2)
+            b.closeTag()
+            b.addIntLit(3)
             with var:
-                c = beginRead(b)
+                c = b.beginRead()
             echo(string("reopened jump "), cursorJump(c), string(", width "), subtreeWidth(c))
             with let:
                 body = sub(c)
@@ -3499,17 +3432,17 @@ if comptime(__name__ == "__main__"):
 
             with var:
                 by = createTokenBuf(4, b.pool, b.tags)
-            with buildTree(by, u):
-                addIntLit(by, 7)
-                addIntLit(by, 8)
-                addIntLit(by, 9)
+            with by.buildTree(u):
+                by.addIntLit(7)
+                by.addIntLit(8)
+                by.addIntLit(9)
             with var:
-                cb = beginRead(by)
+                cb = by.beginRead()
             replace(b, cb, 0)
             endRead(cb)
             with var:
-                r = beginRead(b)
-            echo(string("replace: len "), len(b), string(", tag "), tagName(b.tags, cursorTagId(r)), string(", jump "), cursorJump(r))
+                r = b.beginRead()
+            echo(string("replace: len "), len(b), string(", tag "), b.tags.tagName(cursorTagId(r)), string(", jump "), cursorJump(r))
             skip(r)
             echo(string("after replaced tree: "), intVal(r))
             endRead(r)
@@ -3521,15 +3454,15 @@ if comptime(__name__ == "__main__"):
                 dot = registerTag(lv.tags, string("dot"))
             with let:
                 bracket = registerTag(lv.tags, string("at"))
-            with buildTree(lv, dot):
-                addIntLit(lv, 1)
-                with buildTree(lv, bracket):
+            with lv.buildTree(dot):
+                lv.addIntLit(1)
+                with lv.buildTree(bracket):
                     addSymUse(lv, string("abcd.1"))
                 addSymUse(lv, string("zz.2"))
-            addIntLit(lv, 5)
+            lv.addIntLit(5)
             with var:
-                lc = beginRead(lv)
-            echo(string("rootOf: "), symString(lv.pool, rootOf(lc)))
+                lc = lv.beginRead()
+            echo(string("rootOf: "), lv.pool.symString(rootOf(lc)))
             skip(lc)
             echo(string("rootOf an atom: "), rootOf(lc))
             endRead(lc)
@@ -3538,21 +3471,21 @@ if comptime(__name__ == "__main__"):
         with block("foreign_tokens"):
             with var:
                 src = createTokenBuf(4)
-            addIntLit(src, 5)
-            addIntLit(src, 6)
+            src.addIntLit(5)
+            src.addIntLit(6)
             with var:
-                adopted = adoptForeignTokens(rawTokenPtr(src), len(src), src.pool, src.tags)
+                adopted = adoptForeignTokens(src.rawTokenPtr(), len(src), src.pool, src.tags)
             echo(string("adopted: len "), len(adopted), string(", rc "), _rc(adopted), string(", same block "),
-                 rawTokenPtr(adopted) == rawTokenPtr(src))
-            addIntLit(adopted, 7)
-            echo(string("after mutation: rc "), _rc(adopted), string(", same block "), rawTokenPtr(adopted) == rawTokenPtr(src),
+                 adopted.rawTokenPtr() == src.rawTokenPtr())
+            adopted.addIntLit(7)
+            echo(string("after mutation: rc "), _rc(adopted), string(", same block "), adopted.rawTokenPtr() == src.rawTokenPtr(),
                  string(", len "), len(adopted), string(", src len "), len(src))
             with var:
                 g = createTokenBuf(1)
             with let:
-                raw = growRawUninit(g, 3)
+                raw = g.growRawUninit(3)
             echo(string("growRawUninit: len "), len(g), string(", nil "), isNil(raw))
-            shrink(g, 0)
+            g.shrink(0)
             echo(string("shrunk: len "), len(g))
 
         # addBuffer, addBufferSamePool, withSparseLineInfo (and the constant NoNifLineInfo stays untouched)
@@ -3565,11 +3498,11 @@ if comptime(__name__ == "__main__"):
             addBuffer(dstB, srcB)
             with var:
                 same = createTokenBuf(4, srcB.pool, srcB.tags)
-            addBufferSamePool(same, srcB)
+            same.addBufferSamePool(srcB)
             with var:
-                cd = beginRead(dstB)
+                cd = dstB.beginRead()
             with var:
-                cs = beginRead(same)
+                cs = same.beginRead()
             echo(string("addBuffer: "), strVal(cd), string(", addBufferSamePool: "), strVal(cs))
             endRead(cd)
             endRead(cs)
@@ -3578,9 +3511,9 @@ if comptime(__name__ == "__main__"):
                 dense = createTokenBuf(8)
             with let:
                 f = getOrIncl(dense.pool.filenames, string("s.nim"))
-            addIntLit(dense, 1); appendLineInfo(dense, f, i32(7), i32(1))
-            addIntLit(dense, 2); appendLineInfo(dense, f, i32(7), i32(1))
-            addIntLit(dense, 3); appendLineInfo(dense, f, i32(8), i32(1))
+            dense.addIntLit(1); dense.appendLineInfo(f, i32(7), i32(1))
+            dense.addIntLit(2); dense.appendLineInfo(f, i32(7), i32(1))
+            dense.addIntLit(3); dense.appendLineInfo(f, i32(8), i32(1))
             with var:
                 sparse = withSparseLineInfo(dense)
             echo(string("withSparseLineInfo: len "), len(dense), string(" -> "), len(sparse))

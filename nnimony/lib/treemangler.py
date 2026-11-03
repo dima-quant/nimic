@@ -26,6 +26,83 @@ class Mangler(Object):
     _seen: Table[string, nint]
     bits: nint
 
+    @dispatch
+    def _put(b: mut @ Mangler, s: string):
+        """{.inline.}"""
+        b._buf.add(s)
+
+    @dispatch
+    def _put(b: mut @ Mangler, s: char):
+        """{.inline.}"""
+        b._buf.add(s)
+
+    def _undoWhitespace(b: mut @ Mangler):
+        with var:
+            i = len(b._buf) - 1
+        while i >= 0 and b._buf[i] == char('S'):
+            i -= 1
+        b._buf.setLen(i + 1)
+
+    def _escape(b: mut @ Mangler, c: char):
+        with const:
+            _HexChars = string("0123456789abcdef")
+        with var:
+            n = nint(c)
+        b._put(char('X'))
+        b._put(_HexChars[(n >> 4) & 0xF])
+        b._put(_HexChars[n & 0xF])
+
+    def addRaw(b: mut @ Mangler, s: string):
+        b._put(s)
+
+    def _addSep(b: mut @ Mangler):
+        if len(b._buf) > 0 and b._buf[len(b._buf) - 1] == char('Z'):
+            pass  # space not required
+        b._put(char('S'))
+
+    def _addBegin(b: mut @ Mangler):
+        if len(b._buf) > 0 and b._buf[len(b._buf) - 1] == char('S'):
+            b._buf[len(b._buf) - 1] = char('A')
+        else:
+            b._put(char('A'))
+
+    def _referencePrevious(b: mut @ Mangler, s: string) -> bool:
+        result = False
+        if len(s) > 2:
+            with let:
+                existing = b._seen.getOrDefault(s)
+                oldLen = len(b._buf)
+            if existing == 0:
+                b._seen[s] = oldLen
+            else:
+                b._buf.add(char('R'))
+                b._buf.addInt(existing - 1)
+                if len(b._buf) - oldLen >= len(s):
+                    # undo, it was a pessimization!
+                    b._buf.setLen(oldLen)
+                else:
+                    result = True
+        return result
+
+    def addEmpty(b: mut @ Mangler, count: nint = 1):
+        b._addSep()
+        for i in inrange(1, count):
+            b._put(char('E'))
+
+    def addIntLit(b: mut @ Mangler, i: BiggestInt):
+        b._addSep()
+        b._put(str(i))
+
+    def addUIntLit(b: mut @ Mangler, u: BiggestUInt):
+        b._addSep()
+        b._put(str(u))
+
+    def endTree(b: mut @ Mangler):
+        assert b._nesting > 0, "generating ')' would produce a syntax error"
+        b._nesting -= 1
+        b._undoWhitespace()
+        b._put(char('Z'))
+
 
 @hook("copy")
 def _copy(dest: mut @ Mangler, src: Mangler):
@@ -50,36 +127,6 @@ def extract(b: sink @ Mangler) -> string:
     return result
 
 
-@dispatch
-def _put(b: mut @ Mangler, s: string):
-    """{.inline.}"""
-    b._buf.add(s)
-
-
-@dispatch
-def _put(b: mut @ Mangler, s: char):
-    """{.inline.}"""
-    b._buf.add(s)
-
-
-def _undoWhitespace(b: mut @ Mangler):
-    with var:
-        i = len(b._buf) - 1
-    while i >= 0 and b._buf[i] == char('S'):
-        i -= 1
-    b._buf.setLen(i + 1)
-
-
-def _escape(b: mut @ Mangler, c: char):
-    with const:
-        _HexChars = string("0123456789abcdef")
-    with var:
-        n = nint(c)
-    _put(b, char('X'))
-    _put(b, _HexChars[(n >> 4) & 0xF])
-    _put(b, _HexChars[n & 0xF])
-
-
 with const:
     _ControlLetters = Tset[char](char('A'), char('Z'), char('E'), char('S'), char('O'), char('U'), char('X'), char('R'))  # not yet necessary: 'K'
 
@@ -89,159 +136,100 @@ def _needsEscape(c: char) -> bool:
     return c not in (Tset[char](inrange(char('a'), char('z')), inrange(char('0'), char('9')), char('_')) - _ControlLetters)
 
 
-def addRaw(b: mut @ Mangler, s: string):
-    _put(b, s)
-
-
-def _addSep(b: mut @ Mangler):
-    if len(b._buf) > 0 and b._buf[len(b._buf) - 1] == char('Z'):
-        pass  # space not required
-    _put(b, char('S'))
-
-
-def _addBegin(b: mut @ Mangler):
-    if len(b._buf) > 0 and b._buf[len(b._buf) - 1] == char('S'):
-        b._buf[len(b._buf) - 1] = char('A')
-    else:
-        _put(b, char('A'))
-
-
-def _referencePrevious(b: mut @ Mangler, s: string) -> bool:
-    result = False
-    if len(s) > 2:
-        with let:
-            existing = b._seen.getOrDefault(s)
-            oldLen = len(b._buf)
-        if existing == 0:
-            b._seen[s] = oldLen
-        else:
-            b._buf.add(char('R'))
-            b._buf.addInt(existing - 1)
-            if len(b._buf) - oldLen >= len(s):
-                # undo, it was a pessimization!
-                b._buf.setLen(oldLen)
-            else:
-                result = True
-    return result
-
-
 #  ------------ Atoms ------------------------
 
 
 def putTag(b: mut @ Mangler, tag: string):
-    if not _referencePrevious(b, tag):
+    if not b._referencePrevious(tag):
         for c in tag:
             if _needsEscape(c):
-                _escape(b, c)
+                b._escape(c)
             else:
-                _put(b, c)
+                b._put(c)
 
 
 def addIdent(b: mut @ Mangler, s: string):
-    _addSep(b)
-    if not _referencePrevious(b, s):
+    b._addSep()
+    if not b._referencePrevious(s):
         for c in s:
             if c == char('.') or _needsEscape(c):
-                _escape(b, c)
+                b._escape(c)
             else:
-                _put(b, c)
+                b._put(c)
 
 
 def _addSymbolBody(b: mut @ Mangler, s: string):
     for part in s.split(char('.')):
-        if not _referencePrevious(b, part):
+        if not b._referencePrevious(part):
             for c in part:
                 if _needsEscape(c):
-                    _escape(b, c)
+                    b._escape(c)
                 else:
-                    _put(b, c)
+                    b._put(c)
 
 
 def addSymbol(b: mut @ Mangler, s: string):
-    _addSep(b)
-    if not _referencePrevious(b, s):
+    b._addSep()
+    if not b._referencePrevious(s):
         _addSymbolBody(b, s)
 
 
 def addSymbolDef(b: mut @ Mangler, s: string):
-    _addSep(b)
-    _put(b, char('O'))
-    if not _referencePrevious(b, s):
+    b._addSep()
+    b._put(char('O'))
+    if not b._referencePrevious(s):
         _addSymbolBody(b, s)
 
 
 def addStrLit(b: mut @ Mangler, s: string):
-    _addSep(b)
-    _put(b, char('U'))
+    b._addSep()
+    b._put(char('U'))
     for c in s:
         if _needsEscape(c):
-            _escape(b, c)
+            b._escape(c)
         else:
-            _put(b, c)
-    _put(b, char('U'))
-
-
-def addEmpty(b: mut @ Mangler, count: nint = 1):
-    _addSep(b)
-    for i in inrange(1, count):
-        _put(b, char('E'))
+            b._put(c)
+    b._put(char('U'))
 
 
 def addCharLit(b: mut @ Mangler, c: char):
-    _addSep(b)
-    _escape(b, char("'"))
+    b._addSep()
+    b._escape(char("'"))
     if _needsEscape(c):
-        _escape(b, c)
+        b._escape(c)
     else:
-        _put(b, c)
-    _escape(b, char("'"))
-
-
-def addIntLit(b: mut @ Mangler, i: BiggestInt):
-    _addSep(b)
-    _put(b, str(i))
-
-
-def addUIntLit(b: mut @ Mangler, u: BiggestUInt):
-    _addSep(b)
-    _put(b, str(u))
+        b._put(c)
+    b._escape(char("'"))
 
 
 def addFloatLit(b: mut @ Mangler, f: BiggestFloat):
-    _addSep(b)
+    b._addSep()
     with var:
         x = string("")
     x.addFloat(f)
     for c in x:
         if c == char('e'):
-            _put(b, char('E'))
+            b._put(char('E'))
         elif _needsEscape(c):
-            _escape(b, c)
+            b._escape(c)
         else:
-            _put(b, c)
+            b._put(c)
 
 
 def addKeyw(b: mut @ Mangler, keyw: string):
     ## Adds a complete compound node that has no children like `(nil)`.
-    _addBegin(b)
+    b._addBegin()
     putTag(b, keyw)
-    _put(b, char('Z'))
+    b._put(char('Z'))
 
 
 def addTree(b: mut @ Mangler, kind: string):
     ## Starts a new compound node. Must be closed with `endTree`.
     ## See also `withTree`.
     ## `kind` is allowed to start with a dot. This emits a directive then.
-    _addBegin(b)
+    b._addBegin()
     putTag(b, kind)
     b._nesting += 1
-
-
-def endTree(b: mut @ Mangler):
-    assert b._nesting > 0, "generating ')' would produce a syntax error"
-    b._nesting -= 1
-    _undoWhitespace(b)
-    _put(b, char('Z'))
 
 
 @template
@@ -250,7 +238,7 @@ def withTree(b: mut @ Mangler, kind: string, body: untyped = None):
     ## calls.
     addTree(b, kind)
     body
-    endTree(b)
+    b.endTree()
 
 
 if comptime(__name__ == "__main__"):
@@ -260,7 +248,7 @@ if comptime(__name__ == "__main__"):
         with withTree(b, string("stmts")):
             with withTree(b, string("call")):
                 addSymbol(b, string("foo.3.mymod"))
-                addIntLit(b, 3423)
+                b.addIntLit(3423)
                 addFloatLit(b, 50.4)
 
         echo(extract(b))
@@ -270,14 +258,14 @@ if comptime(__name__ == "__main__"):
             m = createMangler(60)
         with withTree(m, string("array")):
             with withTree(m, string("range")):
-                addIntLit(m, 0)
-                addIntLit(m, 9)
+                m.addIntLit(0)
+                m.addIntLit(9)
             with withTree(m, string("array")):
                 with withTree(m, string("range")):
-                    addIntLit(m, 0)
-                    addIntLit(m, 4)
+                    m.addIntLit(0)
+                    m.addIntLit(4)
                 with withTree(m, string("i")):
-                    addIntLit(m, 8)
+                    m.addIntLit(8)
 
         assert extract(m) == string("AarrayArangeS0S9ZAR0AR6S0S4ZAiS8")
 

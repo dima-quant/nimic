@@ -98,7 +98,7 @@ def realFile(fname: string) -> string:
     """{.noSideEffect.}"""
     ## The actual source file, with any expansion provenance stripped. Returns
     ## `fname` unchanged when it carries none, so every consumer can call it.
-    if not isCrucialFile(fname): return fname
+    if not isCrucialFile(fname): return fname.copy()
     with var:
         last = -1
     for i in range(0, fname.len):

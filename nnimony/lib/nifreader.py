@@ -17,7 +17,7 @@ from nimic.std import parseutils
 from nimic.std.assertions import *
 from .stringviews import beginStore, endStore, pchar, StringView
 from .vfs import initBlob, VfsBlob, vfsOpenMmap
-from .nifcore import add, len, NifKind  # the ONE token-kind enum, shared with the binary token model
+from .nifcore import NifKind  # the ONE token-kind enum, shared with the binary token model
 from . import nifcore
 from nimic.std import memfiles, syncio
 # one name of two imports, overloaded by the reader's (rule:overloads)
@@ -135,6 +135,19 @@ class ExpandedToken(Object):
                 result = string("<") + str(t.tk) + string(">")
         return result
 
+    def decodeDisamb(t: ExpandedToken) -> nint:
+        """The value of a `SymDisamb` component: `abc.12.mod` gives 12. Only the
+        leading digits are read (a well-formed symbol has nothing else there)."""
+        result = default(nint)
+        assert t.tk == NifKind.ExtendedSuffix and t.part == SymbolPart.SymDisamb
+        result = 0
+        with var:
+            i = 0
+        while i < t.data.len and t.data[i] in _Digits:
+            result = result * 10 + (ord(t.data[i]) - ord(char("0")))
+            i += 1
+        return result
+
 
 class Reader(Object):
     _p: pchar
@@ -161,6 +174,10 @@ class Reader(Object):
     _lineBased: bool
     _inLineNode: bool
     _depth: int32
+
+    def symbolsAreSplit(r: Reader) -> bool:
+        """{.inline.}"""
+        return r._splitSyms
 
 
 @template
@@ -561,20 +578,6 @@ def decodeInt(t: ExpandedToken) -> BiggestInt:
     return result
 
 
-def decodeDisamb(t: ExpandedToken) -> nint:
-    """The value of a `SymDisamb` component: `abc.12.mod` gives 12. Only the
-    leading digits are read (a well-formed symbol has nothing else there)."""
-    result = default(nint)
-    assert t.tk == NifKind.ExtendedSuffix and t.part == SymbolPart.SymDisamb
-    result = 0
-    with var:
-        i = 0
-    while i < t.data.len and t.data[i] in _Digits:
-        result = result * 10 + (ord(t.data[i]) - ord(char("0")))
-        i += 1
-    return result
-
-
 @template_expand
 def _digitsWithSeparators(p: mut @ pchar, eof: pointer, len: mut @ nint,
                           digitSet: Tset[char]) -> bool:
@@ -818,12 +821,6 @@ def splitSymbols(r: mut @ Reader, enable=True):
     ## `_exit.sys.mod`) still yields its module; only the name/disambiguator
     ## boundary needs the digit, so everything but the module is the name."""
     r._splitSyms = enable
-
-
-@ufcs(Reader)
-def symbolsAreSplit(r: Reader) -> bool:
-    """{.inline.}"""
-    return r._splitSyms
 
 
 def _hasEscapes(data: StringView, first: nint, last: nint) -> bool:
@@ -1392,9 +1389,10 @@ def processDirectives(r: mut @ Reader) -> DirectivesResult:
     return result
 
 
+# module-level for `rd.fileSize(r)` in lengc/nifmodules.nim (rules §4, methods rule: nimicModuleLevel)
 @ufcs(Reader)
 def fileSize(r: mut @ Reader) -> nint:
-    """{.inline.}"""
+    """{.inline, nimicModuleLevel.}"""
     return r._f.size
 
 
@@ -1469,7 +1467,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
                     with var:
                         s = string(str(tok.part)) + string(":") + r.decodeStr(tok)
                     if tok.part == SymbolPart.SymDisamb:
-                        s.add(string("=") + str(decodeDisamb(tok)))
+                        s.add(string("=") + str(tok.decodeDisamb()))
                     result.add(s)
                 case NifKind.ParLe:
                     result.add(string("(") + str(tok.data))

@@ -29,6 +29,41 @@ class BiTable[Id, T](Object):  # Id must be an int/uint or a distinct type there
     _vals: seq[T]  # indexed by LitId
     _keys: seq[Id]  # indexed by hash(val)
 
+    def len[Id, T](t: BiTable[Id, T]) -> nint:
+        """{.noSideEffect.}"""
+        return t._vals.len
+
+    def isIndexed[Id, T](t: BiTable[Id, T]) -> bool:
+        """{.inline.}"""
+        # Whether the reverse (value -> id) index exists. It does not, and only does
+        # not, between an `addOrdered` fill and the first thing that needs it.
+        return t._keys.len != 0 or t._vals.len == 0
+
+    @dispatch
+    def hash[Id, T](t: BiTable[Id, T]) -> Hash:
+        # as the keys are hashes of the values, we simply use them instead
+        with var:
+            h: Hash = 0
+        for i, n in pairs(t._keys):
+            h = mix_hash(h, hash((i, n)))
+        result = finish_hash(h)
+        return result
+
+    @dispatch
+    def memSize[Id, T](t: BiTable[Id, T]) -> nint:
+        if comptime(issubclass(T, string)):
+            with var:
+                shorts = 0
+            result = 0
+            for x in items(t._vals):
+                if x.len <= 3: shorts += 1
+                result += x.len
+            result += t._vals.len * sizeof(T) + t._keys.len * sizeof(Id)
+            echo("SHORT STRINGS ", shorts)
+        else:
+            result = t._vals.len * sizeof(T) + t._keys.len * sizeof(Id)
+        return result
+
 
 @generic
 def initBiTable[Id, T]() -> BiTable[Id, T]:
@@ -50,12 +85,6 @@ def _maxHash(t) -> untyped:
 @template
 def _isFilled(x: untyped) -> bool:
     return uint32(x) > u32(0)
-
-
-@dispatch
-def len[Id, T](t: BiTable[Id, T]) -> nint:
-    """{.noSideEffect.}"""
-    return t._vals.len
 
 
 def _mustRehash(length: nint, counter: nint) -> bool:
@@ -121,14 +150,6 @@ def _rebuildIndex[Id, T](t: mut @ BiTable[Id, T]):
 
 
 @dispatch
-def isIndexed[Id, T](t: BiTable[Id, T]) -> bool:
-    """{.inline.}"""
-    # Whether the reverse (value -> id) index exists. It does not, and only does
-    # not, between an `addOrdered` fill and the first thing that needs it.
-    return t._keys.len != 0 or t._vals.len == 0
-
-
-@dispatch
 def ensureIndexed[Id, T](t: mut @ BiTable[Id, T]):
     # Build the reverse index if `addOrdered` left it unbuilt. Idempotent, and
     # free for a table that was interned into normally.
@@ -138,7 +159,7 @@ def ensureIndexed[Id, T](t: mut @ BiTable[Id, T]):
     # the sake of the rare one — so a caller that looks up BY VALUE in a table
     # that might have been filled with `addOrdered` calls this first. Getting it
     # wrong is an assertion in `getKeyId`, not a wrong answer.
-    if not isIndexed(t): _rebuildIndex(t)
+    if not t.isIndexed(): _rebuildIndex(t)
 
 
 @dispatch
@@ -163,7 +184,7 @@ def addOrdered[Id, T](t: mut @ BiTable[Id, T], v: sink @ T) -> Id:
 
 @dispatch
 def getKeyId[Id, T](t: BiTable[Id, T], v: T) -> Id:
-    assert isIndexed(t), "getKeyId on a table filled by addOrdered: call ensureIndexed first"
+    assert t.isIndexed(), "getKeyId on a table filled by addOrdered: call ensureIndexed first"
     with let:
         origH = hash(v)
     with var:
@@ -265,51 +286,20 @@ else:
         return result
 
 
-@dispatch
-def hash[Id, T](t: BiTable[Id, T]) -> Hash:
-    # as the keys are hashes of the values, we simply use them instead
-    with var:
-        h: Hash = 0
-    for i, n in pairs(t._keys):
-        h = mix_hash(h, hash((i, n)))
-    result = finish_hash(h)
-    return result
-
-
-@dispatch
-def memSize[Id, T](t: BiTable[Id, T]) -> nint:
-    if comptime(issubclass(T, string)):
-        with var:
-            shorts = 0
-        result = 0
-        for x in items(t._vals):
-            if x.len <= 3: shorts += 1
-            result += x.len
-        result += t._vals.len * sizeof(T) + t._keys.len * sizeof(Id)
-        echo("SHORT STRINGS ", shorts)
-    else:
-        result = t._vals.len * sizeof(T) + t._keys.len * sizeof(Id)
-    return result
-
-
 # we need to distinguish `0.0` and `-0.0` even if `0.0 == -0.0`
 # as signbit and copySign procs returns the different value.
 @distinct
 class BiTableFloat[Id](BiTable[Id, uint64]):
-    pass
+    @dispatch
+    def __getitem__[Id](t: BiTableFloat[Id], strId: Id) -> float64:
+        """{.inline.}"""
+        return cast[float64](BiTable[Id, uint64](t)[strId])
 
 
 @dispatch
 def getOrIncl[Id](t: mut @ BiTableFloat[Id], v: float64) -> Id:
     """{.inline.}"""
     return getOrIncl(BiTable[Id, uint64](t), cast[uint64](v))
-
-
-@ufcs(BiTableFloat)
-@dispatch
-def __getitem__[Id](t: BiTableFloat[Id], strId: Id) -> float64:
-    """{.inline.}"""
-    return cast[float64](BiTable[Id, uint64](t)[strId])
 
 
 if comptime(__name__ == "__main__"):
@@ -361,9 +351,9 @@ if comptime(__name__ == "__main__"):
         assert a[uint32(5_000)] == string("s4999")
 
         # `getKeyId` needs the index, and says so rather than answering wrongly
-        assert not isIndexed(a)
+        assert not a.isIndexed()
         ensureIndexed(a)
-        assert isIndexed(a)
+        assert a.isIndexed()
         ensureIndexed(a)                                                # idempotent
         assert getKeyId(a, string("s0")) == u32(1)
         assert getKeyId(a, string("s4999")) == u32(5_000)
@@ -383,9 +373,9 @@ if comptime(__name__ == "__main__"):
         with var:
             b = initBiTable[uint32, string]()
         for i in range(100): _ = addOrdered(b, "t" + str(i))
-        assert not isIndexed(b)
+        assert not b.isIndexed()
         assert _idToIdx(getOrIncl(b, string("t42"))) == 42
-        assert isIndexed(b)
+        assert b.isIndexed()
         assert b._vals.len == 100
         assert getKeyId(b, string("t99")) == u32(100)
 
@@ -394,9 +384,9 @@ if comptime(__name__ == "__main__"):
         # costs it nothing and `getKeyId` never trips its assertion
         with var:
             d = initBiTable[uint32, string]()
-        assert isIndexed(d)                                             # empty counts as indexed
+        assert d.isIndexed()                                             # empty counts as indexed
         _ = getOrIncl(d, string("only"))
-        assert isIndexed(d)
+        assert d.isIndexed()
         ensureIndexed(d)
         assert getKeyId(d, string("only")) == u32(1)
 

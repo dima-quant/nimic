@@ -29,8 +29,8 @@ from nimic.std.syncio import *
 from nimic.std.assertions import *
 from nimic.std.formatfloat import *
 from .nifcore import (
-    beginRead, charLit, Cursor, cursorTagId, endRead, floatVal, hasMore, inc, into, intVal, kind, NifKind, skip, strVal,
-    symName, tagName, tags, TokenBuf, uintVal)
+    charLit, Cursor, cursorTagId, endRead, floatVal, into, intVal, kind, NifKind, skip, strVal,
+    symName, tags, TokenBuf, uintVal)
 from .nifbuilder import addHeader, addStrLit, close, withTree
 from . import nifbuilder
 from nimic.std.sha1 import finalize, update
@@ -64,51 +64,51 @@ def _hashTree(s: mut @ Sha1State, n: mut @ Cursor, foundInline: mut @ bool):
     match kind(n):
         case NifKind.TagLit:
             with let:
-                tag = tagName(tags(n), cursorTagId(n))
+                tag = tags(n).tagName(cursorTagId(n))
             if tag == "inline": foundInline <<= True
             update(s, string("("))
             update(s, tag)
             with into(n):
-                while hasMore(n):
+                while n.hasMore():
                     _hashTree(s, n, foundInline)
             update(s, string(")"))
         case NifKind.Symbol:
             update(s, string(" "))
             update(s, symName(n))
-            inc(n)
+            n.inc()
         case NifKind.SymbolDef:
             update(s, string(" :"))
             update(s, symName(n))
-            inc(n)
+            n.inc()
         case NifKind.Ident:
             update(s, string(" "))
             update(s, strVal(n))
-            inc(n)
+            n.inc()
         case NifKind.StrLit:
             update(s, string(" \""))
             update(s, strVal(n))
-            inc(n)
+            n.inc()
         case NifKind.IntLit:
             update(s, string(" "))
             update(s, str(intVal(n)))
-            inc(n)
+            n.inc()
         case NifKind.UIntLit:
             update(s, string(" "))
             update(s, str(uintVal(n)))
-            inc(n)
+            n.inc()
         case NifKind.FloatLit:
             update(s, string(" "))
             update(s, str(floatVal(n)))
-            inc(n)
+            n.inc()
         case NifKind.CharLit:
             update(s, string(" '"))
             update(s, str(ord(charLit(n))))
-            inc(n)
+            n.inc()
         case NifKind.DotToken:
             update(s, string(" ."))
-            inc(n)
+            n.inc()
         case _:
-            inc(n)
+            n.inc()
 
 
 def lengInterfaceDigest(buf: mut @ TokenBuf) -> string:
@@ -116,13 +116,13 @@ def lengInterfaceDigest(buf: mut @ TokenBuf) -> string:
     with var:
         s = newSha1State()
     with var:
-        n = beginRead(buf)
+        n = buf.beginRead()
     if kind(n) == NifKind.TagLit:
         update(s, string("("))
-        update(s, tagName(tags(n), cursorTagId(n)))
+        update(s, tags(n).tagName(cursorTagId(n)))
         with into(n):
-            while hasMore(n):
-                if kind(n) == NifKind.TagLit and tagName(tags(n), cursorTagId(n)) == "proc":
+            while n.hasMore():
+                if kind(n) == NifKind.TagLit and tags(n).tagName(cursorTagId(n)) == "proc":
                     # (proc SymbolDef Params Type ProcPragmas Body)
                     update(s, string("(proc"))
                     with var:
@@ -130,10 +130,10 @@ def lengInterfaceDigest(buf: mut @ TokenBuf) -> string:
                     with into(n):
                         with var:
                             i = nint(0)
-                        while i < 4 and hasMore(n):
+                        while i < 4 and n.hasMore():
                             _hashTree(s, n, isInline)
                             i += 1
-                        while hasMore(n):
+                        while n.hasMore():
                             if isInline:
                                 with var:
                                     ignored = nbool(False)
@@ -164,7 +164,7 @@ def writeLengInterface(buf: mut @ TokenBuf, lengFile: string):
 
 
 if comptime(__name__ == "__main__"):
-    from .nifcoreparse import len, parseFromBuffer
+    from .nifcoreparse import parseFromBuffer
     importFrom("nimic.std.os", "getTempDir", "removeFile", "fileExists", "getLastModificationTime")
 
     def _digestOf(text: string) -> string:

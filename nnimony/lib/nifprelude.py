@@ -45,7 +45,7 @@ if comptime(__name__ == "__main__"):
         with buildTree(tb, ErrT, NoLineInfo):
             addIdent(tb, string("item"), NoLineInfo)
             addStrLit(tb, string("val"), NoLineInfo)
-            addIntLit(tb, 42)
+            tb.addIntLit(42)
         echo(string("tree: "), toString(tb, False))
 
         # nifbuilder proc

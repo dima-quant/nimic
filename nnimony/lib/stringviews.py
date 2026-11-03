@@ -27,6 +27,26 @@ class StringView(Object):
     def __getitem__(s: StringView, i: nint) -> char:
         return s.p[i]
 
+    def startsWith(s: StringView, prefix: string) -> bool:
+        with let:
+            prefixLen = prefix.len
+            sLen = s.len
+        with var:
+            i = 0
+        while True:
+            if i >= prefixLen: return True
+            if i >= sLen or s[i] != prefix[i]: return False
+            i += 1
+        return False
+
+    @dispatch
+    def hash(a: StringView) -> Hash:
+        """{.inline.}"""
+        if comptime(defined("nimony")):
+            return hash(borrowCStringUnsafe(cast[cstring](a.p), a.len))
+        else:
+            return hash(toOpenArray(a.p, 0, a.len - 1))
+
 
 if comptime(not defined("nimony")):
     pragma("pragma: untyped")
@@ -57,19 +77,6 @@ def __eq__(a: StringView, b: StringView) -> bool:
 def __eq__(a: StringView, b: string) -> bool:
     _eqImpl()
     return result
-
-
-def startsWith(s: StringView, prefix: string) -> bool:
-    with let:
-        prefixLen = prefix.len
-        sLen = s.len
-    with var:
-        i = 0
-    while True:
-        if i >= prefixLen: return True
-        if i >= sLen or s[i] != prefix[i]: return False
-        i += 1
-    return False
 
 
 def add(s: mut @ string, b: StringView):
@@ -123,15 +130,6 @@ def toStringViewUnsafe(s: string) -> StringView:
     return result
 
 
-@dispatch
-def hash(a: StringView) -> Hash:
-    """{.inline.}"""
-    if comptime(defined("nimony")):
-        return hash(borrowCStringUnsafe(cast[cstring](a.p), a.len))
-    else:
-        return hash(toOpenArray(a.p, 0, a.len - 1))
-
-
 if comptime(__name__ == "__main__"):
     with let:
         s1 = string("hello world")
@@ -147,8 +145,8 @@ if comptime(__name__ == "__main__"):
     echo(v1, "|", vEmpty)
     echo(v1 == v2, "|", v1 == v3, "|", v1 == vEmpty, "|", vEmpty == toStringViewUnsafe(string("")))
     echo(v1 == s1, "|", v1 == s3, "|", vEmpty == empty, "|", vEmpty == s1)
-    echo(startsWith(v1, string("hello")), "|", startsWith(v1, string("world")), "|", startsWith(v1, string("")), "|", startsWith(v1, string("hello world!")))
-    echo(startsWith(vEmpty, string("")), "|", startsWith(vEmpty, string("a")))
+    echo(v1.startsWith(string("hello")), "|", v1.startsWith(string("world")), "|", v1.startsWith(string("")), "|", v1.startsWith(string("hello world!")))
+    echo(vEmpty.startsWith(string("")), "|", vEmpty.startsWith(string("a")))
 
     with var:
         acc = string("prefix:")
@@ -156,4 +154,4 @@ if comptime(__name__ == "__main__"):
     add(acc, vEmpty)
     echo(acc)
 
-    echo(hash(v1) == hash(v2), "|", hash(vEmpty) == hash(toStringViewUnsafe(string(""))))
+    echo(v1.hash() == v2.hash(), "|", vEmpty.hash() == toStringViewUnsafe(string("")).hash())

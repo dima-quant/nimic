@@ -30,9 +30,9 @@ from nimic.ntypes import *
 
 from nimic.std.tables import *
 from .nifcore import (
-    add, addSubtree, beginRead, createTokenBuf, Cursor, cursorAt, inc, lineInfoFile, newPool, newTagPool, NifKind, Pool,
-    pool, rawLineInfo, sym, symId, symName, symString, TagPool, TokenBuf)
-from .nifcoreparse import len, parse, parseFromBuffer, peekRootInfo, toModuleString, toString
+    addSubtree, createTokenBuf, Cursor, lineInfoFile, newPool, newTagPool, NifKind, Pool,
+    pool, symId, symName, TagPool, TokenBuf)
+from .nifcoreparse import parse, parseFromBuffer, peekRootInfo, toModuleString, toString
 from .nifreader import close, decodeInt, decodeStr, ExpandedToken, indexStartsAt, jumpTo, next, offset, Reader
 from . import nifreader
 from . import stringviews
@@ -86,7 +86,7 @@ class ForeignModule(Object):
             # The decl subtree is already resident; `addSubtree` re-interns literals,
             # tag names and line-info filenames across pools (the bif buffer keeps its
             # own fresh pools), so the copy lands in the caller's `tags`/`pool` world.
-            addSubtree(buf, cursorAt(m.bifBuf, pos))
+            addSubtree(buf, m.bifBuf.cursorAt(pos))
         else:
             if withLineInfo:
                 m.r.jumpTo(m._rootOffset)
@@ -103,7 +103,7 @@ class ForeignModule(Object):
         # when `declBufs` later grows and relocates its elements. Doing `beginRead` on
         # the already-stored seq element instead corrupts the heap once a second decl
         # forces the seq to reallocate.
-        result = beginRead(buf)
+        result = buf.beginRead()
         m.declBufs.add(ensureMove(buf))
         m.decls[name] = result
         return result
@@ -161,7 +161,7 @@ def openForeignModule(path: string) -> ForeignModule:
         with var:
             bm = bif.load(path)
         for e in bm.index:
-            result.index[symString(bm.buf.pool, e.sym)] = nint(e.pos)
+            result.index[bm.buf.pool.symString(e.sym)] = nint(e.pos)
         result.bifBuf = ensureMove(bm.buf)
     else:
         result = ForeignModule(r=nifreader.open(path),
@@ -194,7 +194,7 @@ if comptime(__name__ == "__main__"):
 
     def _firstInfo(c: Cursor) -> string:
         with let:
-            info = rawLineInfo(c)
+            info = c.rawLineInfo()
         result = lineInfoFile(c) + string(":") + str(info.line) + string(",") + str(info.col)
         return result
 
@@ -286,8 +286,8 @@ if comptime(__name__ == "__main__"):
                 a = fresh.getDecl(string("p12.0.m"), tags).copy()
             with var:
                 b = pooled.getDecl(string("p12.0.m"), tags, shared).copy()
-            inc(a)
-            inc(b)
+            a.inc()
+            b.inc()
             echo(string("pool nil: "), symName(a), string(" matches shared "), symId(a) == symId(shared, string("p12.0.m")),
                  string(" | shared pool: "), symName(b), string(" matches shared "), symId(b) == symId(shared, string("p12.0.m")))
 

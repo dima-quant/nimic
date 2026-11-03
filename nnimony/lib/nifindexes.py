@@ -18,7 +18,7 @@ from nimic.std.assertions import *
 from nimic.std.hashes import *
 from nimic.std.syncio import *
 from nimic.std.strutils import *
-from .bitabs import getOrIncl, len
+from .bitabs import getOrIncl
 from .nifreader import (
     close,
     decodeFilename,
@@ -32,9 +32,9 @@ from .nifreader import (
     Reader)
 from . import nifreader
 from .nifpools import (
-    addDotToken, addIdent, addParLe, addParRi, addStrLit, addSymUse, beginRead, createTokenBuf, Cursor, cursorAt,
-    cursorTagId, hasMore, inc, info, into, isDotToken, isIdent, isStringLit, isSymbol, isTagLit, isValid, loopInto,
-    NifKind, NifLineInfo, NoLineInfo, NoNifLineInfo, parseFromBuffer, pool, skip, StrId, strId, SymId, symId, symString,
+    addDotToken, addIdent, addParLe, addParRi, addStrLit, addSymUse, createTokenBuf, Cursor,
+    cursorTagId, info, into, isDotToken, isIdent, isStringLit, isSymbol, isTagLit, isValid, loopInto,
+    NifKind, NifLineInfo, NoLineInfo, NoNifLineInfo, parseFromBuffer, pool, skip, StrId, strId, SymId, symId,
     TagId, TokenBuf, toString)
 from .nifchecksums import updateLoop
 from .symparser import changeModuleExt
@@ -103,7 +103,7 @@ def _processDeclForChecksum(dest: mut @ Sha1State, n: mut @ Cursor):
                     updateLoop(dest, n, inlineT, foundInline)  # pragmas
                     updateLoop(dest, n, inlineT, foundInline)  # type
                     updateLoop(dest, n, inlineT, foundInline)  # value
-                    while hasMore(n): skip(n)
+                    while n.hasMore(): skip(n)
             case NifIndexKind.TemplateIdx | NifIndexKind.MacroIdx | NifIndexKind.IteratorIdx:
                 # these always have inline semantics
                 with into(n):  # tag
@@ -116,7 +116,7 @@ def _processDeclForChecksum(dest: mut @ Sha1State, n: mut @ Cursor):
                     updateLoop(dest, n, inlineT, foundInline)  # pragmas
                     updateLoop(dest, n, inlineT, foundInline)  # effects
                     updateLoop(dest, n, inlineT, foundInline)  # body
-                    while hasMore(n): skip(n)
+                    while n.hasMore(): skip(n)
             case NifIndexKind.ProcIdx | NifIndexKind.FuncIdx | NifIndexKind.MethodIdx | NifIndexKind.ConverterIdx:
                 with into(n):  # tag
                     with var:
@@ -137,7 +137,7 @@ def _processDeclForChecksum(dest: mut @ Sha1State, n: mut @ Cursor):
                         updateLoop(dest, n, inlineT, dummy)  # body
                     else:
                         skip(n)
-                    while hasMore(n): skip(n)
+                    while n.hasMore(): skip(n)
             case NifIndexKind.NoIndexTag | NifIndexKind.InlineIdx | NifIndexKind.KvIdx | NifIndexKind.VvIdx | \
                     NifIndexKind.BuildIdx | NifIndexKind.BundleIdx | NifIndexKind.IndexIdx | \
                     NifIndexKind.DependencyIdx | NifIndexKind.LinkIdx | \
@@ -145,12 +145,12 @@ def _processDeclForChecksum(dest: mut @ Sha1State, n: mut @ Cursor):
                 for _ in loopInto(n):
                     _processDeclForChecksum(dest, n)
     else:
-        inc(n)
+        n.inc()
 
 
 def _processForChecksum(dest: mut @ Sha1State, content: mut @ TokenBuf):
     with var:
-        n = beginRead(content)
+        n = content.beginRead()
     _processDeclForChecksum(dest, n)
 
 
@@ -252,7 +252,7 @@ def writeFileAndIndex(outfile: string, content: TokenBuf):
     """{.canRaise.}"""
     vfsWrite(outfile, toString(content, True))
     with var:
-        c = cursorAt(cast[ptr[TokenBuf]](unsafe_addr(content)).contents, 0)
+        c = cast[ptr[TokenBuf]](unsafe_addr(content)).contents.cursorAt(0)
     createIndex(outfile, True, info(c))
 
 
@@ -277,7 +277,7 @@ class NifIndex(Object):
 
 
 def _symOrIdentOrDot(n: mut @ Cursor) -> string:
-    if isSymbol(n): result = symString(pool, symId(n))
+    if isSymbol(n): result = pool.symString(symId(n))
     elif isIdent(n): result = pool.strings[n.strId()].copy()
     elif isDotToken(n): result = string(".")
     else: result = string("")
@@ -288,7 +288,7 @@ def _symOrIdentOrDot(n: mut @ Cursor) -> string:
 def _readSymbolSectionC(n: mut @ Cursor, tab: mut @ seq[tuple[string, string]]):
     ## Cursor walk of a `(converter (kv key value) …)` section.
     with into(n):
-        while hasMore(n):
+        while n.hasMore():
             if isTagLit(n) and cursorTagId(n) == TagId(NifIndexKind.KvIdx):
                 with into(n):
                     with let:
@@ -309,12 +309,12 @@ def readIndex(indexName: string) -> NifIndex:
     close(r)
     result = default(NifIndex)
     with var:
-        n = beginRead(buf)
+        n = buf.beginRead()
     if not (isTagLit(n) and cursorTagId(n) == TagId(NifIndexKind.IndexIdx)):
         assert False, "expected 'index' tag"
         return result
     with into(n):
-        while hasMore(n):
+        while n.hasMore():
             if isTagLit(n):
                 with let:
                     t = cursorTagId(n)
@@ -331,7 +331,7 @@ def readIndex(indexName: string) -> NifIndex:
                         skip(n)
                         with var:
                             names: seq[StrId] = seq[StrId]([])  # Nim: `= @[]` (nimony: initialized)
-                        while hasMore(n):
+                        while n.hasMore():
                             if isIdent(n): names.add(strId(n))
                             skip(n)
                         result.exports.add((path, kind, names))
