@@ -21,8 +21,8 @@ from .nifcore import NifKind  # the ONE token-kind enum, shared with the binary 
 from . import nifcore
 from nimic.std import memfiles, syncio
 # one name of two imports, overloaded by the reader's (rule:overloads)
-open = overloads(syncio.open, memfiles.open)
-close = overloads(syncio.close, memfiles.close)
+open = overloads(memfiles.open, syncio.open)
+close = overloads(memfiles.close, syncio.close)
 
 exportFrom(nifcore, "NifKind")
 

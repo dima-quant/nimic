@@ -2995,6 +2995,12 @@ def _n_len_of_object(self) -> int:
     return int(n() if callable(n) else n)
 
 
+def _n_hash_of_object(self) -> int:
+    """`hash(b)` of an Object whose class declares a `hash` method: Nim's `hash(b)` is `b.hash`, so Python's
+    builtin hash (and a dict or set) agrees with nimic.std.hashes' `hash`."""
+    return int(self.hash())
+
+
 class Trange:
     """Nim's ``range[low..high]`` subrange type. ``Trange[warnMin, hintMax]``
     returns a base class that carries the bounds. Subclass it to create a named
@@ -4169,6 +4175,10 @@ class _Object(Ntype):
 
 class Object(_Object, metaclass=NMetaClass):
     def __init_subclass__(cls) -> None:
+        if callable(cls.__dict__.get("hash")) and cls.__dict__.get("__hash__") is None:
+            # a `hash` method (rules §4) is also Python's hash(b): one call in Nim, `hash(b)` / `b.hash`. Set
+            # before the `==` case below, which otherwise brings back the inherited (identity) hash
+            cls.__hash__ = _n_hash_of_object
         if "__eq__" in cls.__dict__ and cls.__dict__.get("__hash__", 0) is None:
             # Python drops __hash__ when a class defines __eq__; in Nim `==` and `hash` are independent
             # procs, so an overloaded `==` keeps the inherited hashing (e.g. PIdent's `==`)

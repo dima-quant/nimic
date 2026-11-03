@@ -6699,6 +6699,38 @@ class TestNTypes(unittest.TestCase):
         self.assertTrue(bool(_TLenProp(n=nint(0))))
         self.assertTrue(bool(_TLenMethod(n=nint(0))))
 
+    def test_object_hash_method_answers_hash(self):
+        """A `hash` method an Object class declares (rules §4, methods rule) is what Python's builtin `hash(b)`
+        and dict / set lookups use, as Nim's `hash(b)` and `b.hash` are one call, with or without
+        `nimic.std.hashes` imported. Also with an `==` (Python drops `__hash__` then), inherited by a subclass;
+        a `__hash__` the class writes itself wins."""
+        class _THashed(Object):
+            n: nint
+
+            def __eq__(a: _THashed, b: _THashed) -> bool:
+                return a.n == b.n
+
+            def hash(b: _THashed) -> nint:
+                return nint(1000 + b.n)
+
+        class _THashedSub(_THashed):
+            pass
+
+        class _TOwnHash(Object):
+            n: nint
+
+            def hash(b: _TOwnHash) -> nint:
+                return nint(1)
+
+            def __hash__(self) -> int:
+                return 7
+
+        a, b = _THashed(n=nint(5)), _THashed(n=nint(5))
+        self.assertEqual((a.hash(), builtins.hash(a)), (1005, 1005))
+        self.assertEqual(builtins.hash(_THashedSub(n=nint(6))), 1006)
+        self.assertEqual({a: "x"}[b], "x")
+        self.assertEqual(builtins.hash(_TOwnHash(n=nint(0))), 7)
+
     def test_ref_object_int_fields_hold_declared_type(self):
         """A plain int assigned to an integer field of a ref object becomes the declared type, so the
         field can be passed as a `var int` (and keeps its width)."""
@@ -7653,6 +7685,29 @@ def addWord(b: mut@Builder, w: string) -> None:
         out = unparse(ast.parse(expr))[0]
         self.assertNotIn("return", out)
         self.assertIn("    true\n", out)
+        # a try in tail position (no else / finally) is Nim's try expression: the returns ending its body
+        # and handlers are the value; a handler ending in a noreturn call stays (compat2's onRaiseQuit)
+        trye = textwrap.dedent('''
+            @template
+            def _onRaiseQuit(call: untyped) -> untyped:
+                try:
+                    return call
+                except:
+                    quit(string("FAILURE: ") + astToStr(call))
+        ''')
+        out = unparse(ast.parse(trye))[0]
+        self.assertNotIn("return", out)
+        self.assertIn("  try:\n    call\n  except:\n    quit(", out)
+        # with a finally it is a statement: a return stays one
+        tryf = textwrap.dedent('''
+            @template
+            def t(call: untyped) -> untyped:
+                try:
+                    return call
+                finally:
+                    echo("done")
+        ''')
+        self.assertIn("return call", unparse(ast.parse(tryf))[0])
 
     def test_transpile_range(self):
         """rule:range -> Python's range is written as Nim's `..<` (nimony's `range` is the type constructor,

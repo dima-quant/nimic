@@ -181,9 +181,8 @@ if comptime(__name__ == "__main__"):
     from nimic.std.algorithm import *
     from nimic.std.strutils import *
     from nimic.std import syncio
-    from . import nifreader
     # one name of two imports, called free: Nim overloads them (rule:overloads)
-    close = overloads(syncio.close, nifreader.close)
+    close = overloads(nifreader.close, syncio.close)
 
     def _sortedKeys(t: Table[string, nint]) -> seq[string]:
         result = seq[string]()

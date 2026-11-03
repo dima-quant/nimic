@@ -118,7 +118,8 @@ Control flow:
   rule:fortupleunpack -> tuple unpacking in for-loops emits parenthesized (a, b) syntax, except for Nim's
     multi-value magic iterators fields(a, b) / fieldPairs(x), which need bare `for a, b in`
   rule:templatereturn -> in templates, a "return expr" in tail position (end of every path: last statement, both
-    arms of if/else, all arms of a match with case _) emits just the expression (template value); any other
+    arms of if/else, all arms of a match with case _, the body and handlers of a try without else / finally,
+    Nim's try expression) emits just the expression (template value); any other
     `return` stays, since in Nim it leaves the enclosing routine
 
 Operators & renaming:
@@ -2363,8 +2364,9 @@ class _Unparser(NodeVisitor):
 
     def _tail_returns(self, stmts) -> set:
         """ids of the `return` statements in tail position of a template body: the template's
-        value on every path (last statement, or the tails of an if/else or a match with `case _`
-        that is itself in tail position). Other returns leave the enclosing routine, as in Nim."""
+        value on every path (last statement, or the tails of an if/else, a match with `case _`, or a try
+        without else / finally, that is itself in tail position). Other returns leave the enclosing
+        routine, as in Nim."""
         if not stmts:
             return set()
         last = stmts[-1]
@@ -2379,6 +2381,11 @@ class _Unparser(NodeVisitor):
             return set().union(*tails) if all(tails) else set()
         if isinstance(last, With):
             return self._tail_returns(last.body)
+        if isinstance(last, Try) and last.handlers and not last.orelse and not last.finalbody:
+            # Nim's try expression: the body's tail and each handler's (a handler may end in a noreturn
+            # call, `quit(...)`, or a raise instead)
+            body = self._tail_returns(last.body)
+            return body.union(*(self._tail_returns(h.body) for h in last.handlers)) if body else set()
         return set()
 
     def _get_pragma(self, docstring_value):

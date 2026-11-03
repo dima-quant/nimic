@@ -22,9 +22,9 @@ if comptime(__name__ == "__main__"):
     importFrom("nimic.std.os", "getTempDir", "removeFile")
     from . import nifbuilder, nifpools
     # one name of two imports, called free: Nim overloads them (rule:overloads)
-    addIdent = overloads(nifbuilder.addIdent, nifpools.addIdent)
-    addIntLit = overloads(nifbuilder.addIntLit, nifpools.addIntLit)
-    addStrLit = overloads(nifbuilder.addStrLit, nifpools.addStrLit)
+    addIdent = overloads(nifpools.addIdent, nifbuilder.addIdent)
+    addIntLit = overloads(nifpools.addIntLit, nifbuilder.addIntLit)
+    addStrLit = overloads(nifpools.addStrLit, nifbuilder.addStrLit)
 
     def _roleHelper(n: nint) -> nint:
         """{.nifBalanced.}"""

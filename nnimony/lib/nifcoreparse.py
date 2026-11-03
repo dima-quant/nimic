@@ -47,8 +47,8 @@ from . import comesfrom
 # template-expansion provenance the front end forged into it.
 export(comesfrom)
 # one name of two imports, called free: Nim overloads them (rule:overloads)
-addIdent = overloads(nifbuilder.addIdent, nifcore.addIdent)
-addStrLit = overloads(nifbuilder.addStrLit, nifcore.addStrLit)
+addIdent = overloads(nifcore.addIdent, nifbuilder.addIdent)
+addStrLit = overloads(nifcore.addStrLit, nifbuilder.addStrLit)
 
 
 class _Parent(NTuple):

@@ -107,7 +107,7 @@ from .nifcore import (
 from .vfs import vfsOpenMmap, vfsWrite
 from . import nifcore
 
-include("compat2")   # `onRaiseQuit`: run a raising call and `quit` on failure; identity under Nim
+include("compat2")   # `_onRaiseQuit`: run a raising call and `quit` on failure; identity under Nim
 
 # Bulk string data access. Under Nimony these come from `system`; a `string`'s
 # payload cannot be reached with a bare `addr s[0]` (it may be inline-stored), so
@@ -256,19 +256,19 @@ def _magic() -> array[_MagicLen, char]:
 # A `.bif` file is a machine-local cache; a read/write/seek error is unrecoverable
 # here. Under Nimony the syncio primitives are `{.raises.}`, so rather than thread
 # `raises` through the whole module we funnel every raising call through these thin
-# wrappers and `quit` on failure (via compat2's `onRaiseQuit`, an identity on host
+# wrappers and `quit` on failure (via compat2's `_onRaiseQuit`, an identity on host
 # Nim). Everything above this line is pure; everything below only does I/O via
 # these four wrappers, so no `.raises` call ever escapes.
 
 
-def _readBytes(f: File, p: pointer, n: nint) -> nint: return onRaiseQuit(f.readBuffer(p, n))
-def _getPos(f: File) -> int64: return onRaiseQuit(getFilePos(f))
-def _setPos(f: File, pos: int64): onRaiseQuit(setFilePos(f, pos))
+def _readBytes(f: File, p: pointer, n: nint) -> nint: return _onRaiseQuit(f.readBuffer(p, n))
+def _getPos(f: File) -> int64: return _onRaiseQuit(getFilePos(f))
+def _setPos(f: File, pos: int64): _onRaiseQuit(setFilePos(f, pos))
 
 
 def _writeExact(f: File, p: pointer, n: nint):
     with let:
-        written = onRaiseQuit(f.writeBuffer(p, n))
+        written = _onRaiseQuit(f.writeBuffer(p, n))
     assert written == n
 
 

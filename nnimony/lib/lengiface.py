@@ -39,7 +39,7 @@ from nimic.std import syncio
 from . import nifbuilder, nifcore
 # one name of two imports, called free: Nim overloads them (rule:overloads)
 close = overloads(syncio.close, nifbuilder.close)
-addStrLit = overloads(nifbuilder.addStrLit, nifcore.addStrLit)
+addStrLit = overloads(nifcore.addStrLit, nifbuilder.addStrLit)
 
 if comptime(defined("nimony")):
     from nimic.std.sha1 import *

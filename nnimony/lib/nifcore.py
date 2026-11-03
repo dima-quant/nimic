@@ -1496,6 +1496,7 @@ def strVal(c: Cursor) -> string:
         return strVal(c, c._owner._pool)
 
 
+@ufcs(Cursor)
 @dispatch
 def strId(c: Cursor, pool: Pool) -> StrId:
     ## Stable pool id of the StrLit/Ident at `c` — the inverse of `strVal`.
@@ -1511,6 +1512,7 @@ def strId(c: Cursor, pool: Pool) -> StrId:
         return StrId(uint32(combinedPayload(c) >> 1))
 
 
+@ufcs(Cursor)
 @dispatch
 def strId(c: Cursor) -> StrId:
     """{.inline.}"""

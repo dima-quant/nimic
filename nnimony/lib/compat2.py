@@ -21,8 +21,7 @@ else:
 
 if comptime(defined("nimony")):
     @template
-    def onRaiseQuit(call: untyped) -> untyped:
-        """{.private.}"""
+    def _onRaiseQuit(call: untyped) -> untyped:
         ## Calls a `{.raises.}` proc from a non-raising context: wraps in
         ## try/except and aborts with a useful diagnostic on failure. Lets us
         ## keep `raises` from spreading virally through every layer in `sem.nim`
@@ -31,13 +30,12 @@ if comptime(defined("nimony")):
         ## so each user file gets its own private copy and there is no
         ## cross-module ambiguity.
         try:
-            call
+            return call
         except:
             quit(string("FAILURE: ") + astToStr(call))
 else:
     @template
-    def onRaiseQuit(call: untyped) -> untyped:
-        """{.private.}"""
+    def _onRaiseQuit(call: untyped) -> untyped:
         return call
 
 if comptime(not defined("nimony")):

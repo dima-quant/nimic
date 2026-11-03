@@ -97,7 +97,7 @@ with const:
 
 
 @hook("copy")
-def _copy(dest: mut @ Builder, src: Builder):
+def _copyBuilder(dest: mut @ Builder, src: Builder):
     """{.error.}"""
     pass
 

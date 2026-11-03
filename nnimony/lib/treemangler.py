@@ -105,7 +105,7 @@ class Mangler(Object):
 
 
 @hook("copy")
-def _copy(dest: mut @ Mangler, src: Mangler):
+def _copyMangler(dest: mut @ Mangler, src: Mangler):
     """{.error.}"""
     pass
 
