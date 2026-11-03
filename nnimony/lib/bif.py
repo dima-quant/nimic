@@ -1011,12 +1011,10 @@ if comptime(__name__ == "__main__"):
     if comptime(defined("nimony")):
         # Nimony's `system` has `assert` but not `doAssert`; the self-test wants an
         # always-on check, so provide the two arities it uses.
-        @dispatch
         @template
         def doAssert(cond: bool):
             if not cond: quit(string("bif self-test: assertion failed"))
 
-        @dispatch
         @template
         def doAssert(cond: bool, msg: string):
             if not cond: quit(string("bif self-test: ") + msg)

@@ -180,6 +180,7 @@ def open(sizeHint: nint, compact = False) -> Builder:
     return result
 
 
+@ufcs(Builder)
 def extract(b: sink @ Builder) -> string:
     ## Extracts the buffer from the builder.
     ## The builder should not be used afterwards.
