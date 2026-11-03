@@ -101,6 +101,10 @@ class Canon(ast.NodeTransformer):
         if (isinstance(f, ast.Name) and f.id == "seq" and len(node.args) == 1 and isinstance(node.args[0], ast.List)
                 and not node.args[0].elts):
             node.args = []
+        # rule:copy: x.copy() and copy(x) are one copy (both `x` in Nim); nimicgen writes copy(x) for a scalar
+        if isinstance(f, ast.Attribute) and f.attr == "copy" and not node.args and not node.keywords:
+            node = ast.Call(func=ast.Name("copy", ast.Load()), args=[f.value], keywords=[])
+            f = node.func
         if isinstance(f, ast.Name) and f.id == "echo":
             # rule:echodollar: the transpiler writes `$` for an argument that isn't a string
             node.args = [a.args[0] if isinstance(a, ast.Call) and isinstance(a.func, ast.Name) and a.func.id == "str"

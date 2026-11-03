@@ -518,7 +518,7 @@ class Pool(Object):
     def symNameId(p: Pool, id: SymId) -> StrId:
         """{.inline, noSideEffect.}"""
         ## `symBasename` as an id -- the one to compare identifiers by.
-        return p.symbols[id].name
+        return p.symbols[id].name.copy()
 
     def symVersionedBasename(p: Pool, id: SymId) -> string:
         ## The identifier AND its disambiguator, without key or module suffix:
@@ -1281,7 +1281,7 @@ def escapeTagOf(c: Cursor) -> TagId:
     ## pool that outlives the program. Reading the field through the raw owner
     ## pointer takes no reference and reaches no hook.
     if not isNil(c._owner) and c._owner._tags is not None:
-        result = c._owner._tags.escapeTag
+        result = c._owner._tags.escapeTag.copy()
     else:
         result = TagId(u32(0))
         if comptime(defined("nimonyPlugin")):
@@ -1354,7 +1354,7 @@ def load(c: Cursor) -> NifToken:
     """{.inline, noSideEffect.}"""
     if comptime(nifcoreChecks):
         assert not isNil(c._p) and c._rem > 0
-    return c._p.contents
+    return c._p.contents.copy()
 
 
 @dispatch
@@ -1841,7 +1841,7 @@ class TokenBuf(Object):
     @property
     def len(b: TokenBuf) -> nint:
         """{.inline, noSideEffect.}"""
-        return b._len
+        return b._len.copy()
 
     @template
     def requirePools(b: mut @ TokenBuf):
@@ -1868,7 +1868,7 @@ class TokenBuf(Object):
     def __getitem__(b: TokenBuf, i: nint) -> NifToken:
         """{.inline, noSideEffect.}"""
         assert i >= 0 and i < b._len
-        return b._data[i]
+        return b._data[i].copy()
 
     def __setitem__(b: mut @ TokenBuf, i: nint, v: NifToken):
         """{.inline.}"""

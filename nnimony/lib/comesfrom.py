@@ -143,7 +143,7 @@ def crucialOrigins(fname: string) -> CrucialOrigin:
     if isCrucialFile(fname):
         with var:
             start = CrucialPrefix.len
-            i = start
+            i = copy(start)
         while i < fname.len:
             if fname[i] == ch('\0'):
                 yield _parseCrucialOrigin(fname.substr(start, i - 1))

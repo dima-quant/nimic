@@ -158,7 +158,7 @@ def stripComment(m: mut @ LineInfoManager, info: PackedLineInfo) -> PackedLineIn
     with let:
         raw = unpack(m, info)
     if raw.comment == u32(0):
-        result = info
+        result = info.copy()
     else:
         result = m.pack(raw.file, raw.line, raw.col)
     return result

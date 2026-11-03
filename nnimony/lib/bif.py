@@ -775,25 +775,25 @@ class PoolRemap(Object):
         with let:
             i = nint(uint32(id))
         if i <= 0 or i >= m.strings.len: quit(string("bif: string id ") + str(id) + string(" out of range"))
-        return m.strings[i]
+        return m.strings[i].copy()
 
     def _mapSym(m: PoolRemap, id: SymId) -> SymId:
         with let:
             i = nint(uint32(id))
         if i <= 0 or i >= m.syms.len: quit(string("bif: symbol id ") + str(id) + string(" out of range"))
-        return m.syms[i]
+        return m.syms[i].copy()
 
     def _mapFile(m: PoolRemap, id: FileId) -> FileId:
         with let:
             i = nint(uint32(id))
         if i <= 0 or i >= m.files.len: quit(string("bif: file id ") + str(i) + string(" out of range"))
-        return m.files[i]
+        return m.files[i].copy()
 
     def _mapTag(m: PoolRemap, id: TagId) -> TagId:
         with let:
             i = nint(uint32(id))
         if i <= 0 or i >= m.tags.len: quit(string("bif: tag id ") + str(id) + string(" out of range"))
-        return m.tags[i]
+        return m.tags[i].copy()
 
 
 def buildRemap(src: mut @ TokenBuf, pool: Pool, tags: TagPool) -> PoolRemap:
@@ -1011,12 +1011,14 @@ if comptime(__name__ == "__main__"):
     if comptime(defined("nimony")):
         # Nimony's `system` has `assert` but not `doAssert`; the self-test wants an
         # always-on check, so provide the two arities it uses.
+        @dispatch
         @template
-        def _doAssert(cond: bool):
+        def doAssert(cond: bool):
             if not cond: quit(string("bif self-test: assertion failed"))
 
+        @dispatch
         @template
-        def _doAssert(cond: bool, msg: string):
+        def doAssert(cond: bool, msg: string):
             if not cond: quit(string("bif self-test: ") + msg)
 
     def _sameTokens(a: TokenBuf, b: TokenBuf) -> bool:

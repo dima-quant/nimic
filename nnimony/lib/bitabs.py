@@ -39,7 +39,6 @@ class BiTable[Id, T](Object):  # Id must be an int/uint or a distinct type there
         # not, between an `addOrdered` fill and the first thing that needs it.
         return t._keys.len != 0 or t._vals.len == 0
 
-    @dispatch
     def hash[Id, T](t: BiTable[Id, T]) -> Hash:
         # as the keys are hashes of the values, we simply use them instead
         with var:
@@ -103,7 +102,6 @@ def _idToIdx(x: untyped) -> nint:
     return nint(x) - _idStart
 
 
-@dispatch
 def hasId[Id, T](t: BiTable[Id, T], x: Id) -> bool:
     """{.inline.}"""
     with let:
@@ -149,7 +147,6 @@ def _rebuildIndex[Id, T](t: mut @ BiTable[Id, T]):
         t._keys[j] = Id(i + _idStart)
 
 
-@dispatch
 def ensureIndexed[Id, T](t: mut @ BiTable[Id, T]):
     # Build the reverse index if `addOrdered` left it unbuilt. Idempotent, and
     # free for a table that was interned into normally.

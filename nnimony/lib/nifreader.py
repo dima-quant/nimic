@@ -826,7 +826,7 @@ def splitSymbols(r: mut @ Reader, enable=True):
 def _hasEscapes(data: StringView, first: nint, last: nint) -> bool:
     result = default(bool)
     with var:
-        i = first
+        i = copy(first)
     while i <= last:
         if data[i] == char("\\"):
             return True
@@ -854,7 +854,7 @@ def _splitSymbol(r: mut @ Reader, result: mut @ ExpandedToken):
         k = 0
     while k < origLen:
         if result.data[k] == char("."):
-            lastDot = k
+            lastDot = copy(k)
         k += 1
 
     with var:
@@ -1393,7 +1393,7 @@ def processDirectives(r: mut @ Reader) -> DirectivesResult:
 @ufcs(Reader)
 def fileSize(r: mut @ Reader) -> nint:
     """{.inline, nimicModuleLevel.}"""
-    return r._f.size
+    return r._f.size.copy()
 
 
 @ufcs(Reader)
@@ -1420,7 +1420,7 @@ def jumpTo(r: mut @ Reader, offset: nint):
 
 @ufcs(Reader)
 def indexStartsAt(r: Reader) -> nint:
-    return r._indexAt
+    return r._indexAt.copy()
 
 
 @ufcs(Reader)

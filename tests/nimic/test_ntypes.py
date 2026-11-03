@@ -610,6 +610,14 @@ class TestNTypes(unittest.TestCase):
         q = copy(holder.p)
         self.assertIsNot(q, holder.p)
         self.assertTrue(q == holder.p)
+        # Python's immutable values need no copy (rules §1.1) and have no `.copy()`: `copy(x)` gives them
+        # back (a `len`, a literal bound to a local); a nimic integer, a cell, is copied
+        for v in (5, 2.5, True, "s", b"s"):
+            self.assertIs(copy(v), v)
+        n = nint(5)
+        m = copy(n)
+        m += 1
+        self.assertEqual((n, m), (5, 6))
         self.assertEqual(q[1], ch("b"))
         t = copy(s)
         t.add(ch("c"))
@@ -7549,6 +7557,16 @@ def addWord(b: mut@Builder, w: string) -> None:
                     """{.inline.}"""
                     return t._a
             '''), [])
+        # also returning a copy (rules §1.1: a `-> T` result of a shared value), `.copy()` or `copy(...)`:
+        # transpiled, it is the same getter
+        for ret in ("t._a.copy()", "copy(t._a)"):
+            self.assertEqual(collisions(f'''\
+                class T(Object):
+                    _a: int32
+                    @property
+                    def a(t: T) -> int32:
+                        return {ret}
+                '''), [])
         self.assertEqual(collisions('''\
             class T(Object):
                 _a: int32

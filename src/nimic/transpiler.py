@@ -4045,14 +4045,20 @@ def _is_private(name):
 
 
 def _field_getter(fn) -> str | None:
-    """The field _x a @property x returns and does nothing else with (`return self._x`, after a docstring):
-    Nim's getter `proc x*(o: T): U = o.x`. Else None."""
+    """The field _x a @property x returns and does nothing else with (`return self._x`, after a docstring;
+    also its copy, `self._x.copy()` or `copy(self._x)`, rules §1.1: rule:copy drops it): Nim's getter
+    `proc x*(o: T): U = o.x`. Else None."""
     body = [s for s in fn.body if not (isinstance(s, Expr) and isinstance(s.value, Constant))]
+    value = body[0].value if len(body) == 1 and isinstance(body[0], Return) else None
+    if isinstance(value, Call) and not value.args and isinstance(value.func, Attribute) and value.func.attr == "copy":
+        value = value.func.value  # self._x.copy()
+    elif (isinstance(value, Call) and len(value.args) == 1 and isinstance(value.func, Name)
+          and value.func.id == "copy"):
+        value = value.args[0]  # copy(self._x)
     if (any(isinstance(d, Name) and d.id == "property" for d in fn.decorator_list) and len(fn.args.args) == 1
-            and len(body) == 1 and isinstance(body[0], Return) and isinstance(body[0].value, Attribute)
-            and isinstance(body[0].value.value, Name) and body[0].value.value.id == fn.args.args[0].arg
-            and body[0].value.attr == "_" + fn.name):
-        return body[0].value.attr
+            and isinstance(value, Attribute) and isinstance(value.value, Name)
+            and value.value.id == fn.args.args[0].arg and value.attr == "_" + fn.name):
+        return value.attr
     return None
 
 

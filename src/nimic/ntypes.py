@@ -255,8 +255,14 @@ discard = None
 def copy(x):
     """`copy(x)`: `x.copy()` of a value that may be nil (rule:copy). Nim's assignment copies a value, written
     `.copy()` where the difference shows (rules §1); nil is Python's None, which has no method, and copies to nil.
-    Transpiled to `x`."""
-    return None if x is None else x.copy()
+    A Python immutable value (a plain int from a `len` or a literal, a float, bool, str, bytes) needs no copy
+    (rules §1.1) and is given back; a nimic integer is a cell and is copied. Transpiled to `x`."""
+    if x is None or type(x) in _N_IMMUTABLE_BUILTINS:
+        return x
+    return x.copy()
+
+
+_N_IMMUTABLE_BUILTINS = frozenset((int, float, bool, str, bytes))
 
 # compiler hints
 let = contextlib.nullcontext()
