@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.hashes import *
+from nimic.std.hashes import Hash, hash
 
 if comptime(defined("nimony")):
     pragma('feature: "lenientnils"')
@@ -39,7 +39,6 @@ class StringView(Object):
             i += 1
         return False
 
-    @dispatch
     def hash(a: StringView) -> Hash:
         """{.inline.}"""
         if comptime(defined("nimony")):

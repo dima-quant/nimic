@@ -11,10 +11,10 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.syncio import *
-from nimic.std.tables import *
-from nimic.std.hashes import *
-from nimic.std.strutils import *
+from nimic.std import syncio
+from nimic.std.tables import initOrderedTable, initTable, OrderedTable, Table
+from nimic.std import hashes
+from nimic.std.strutils import find
 
 if comptime(defined("nimony")):
     pragma('feature: "assumeSync"')  # compiler-internal globals; single threaded

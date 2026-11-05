@@ -92,18 +92,16 @@ from nimic.ntypes import *
 if comptime(defined("nimony")):
     pragma('feature: "lenientnils"')
 
-from nimic.std.syncio import *
-from nimic.std.assertions import *
-from nimic.std.strutils import *
-from nimic.std.varints import *
+from nimic.std.syncio import getFilePos, setFilePos
+from nimic.std import assertions
+from nimic.std.strutils import find, toHex
+from nimic.std.varints import maxVarIntLen, readVu64, writeVu64
 from .nifcore import (
-    addIdent, addOrdered, addStrLit, addSymDef, addSymUse,
-    adoptForeignTokens, charLit, combinedPayload,
-    createTokenBuf, Cursor, cursorTagId, endRead, FileId, floatVal, getOrIncl,
-    IdPayloadMax, into, intVal, isInlineLit, isValid, kind, KindBits, LiFileMaxC,
-    lineInfoFile, load, newPool, newTagPool, NifKind, NifLineInfo, NifToken, NoNifLineInfo, peekInto, Pool,
-    registerTag, StrId, strVal, sub, SymId, symId, symName, symRecord, syms,
-    TagId, TagMask, TagPool, TokenBuf, uintVal)
+    addIdent, addOrdered, addStrLit, addSymDef, addSymUse, adoptForeignTokens, charLit, combinedPayload,
+    createTokenBuf, Cursor, cursorTagId, endRead, FileId, floatVal, getOrIncl, IdPayloadMax, into, intVal,
+    isInlineLit, kind, KindBits, LiFileMaxC, lineInfoFile, load, newPool, newTagPool, NifKind, NifLineInfo,
+    NifToken, NoNifLineInfo, peekInto, Pool, registerTag, StrId, strVal, sub, SymId, symId, symName, symRecord,
+    syms, TagId, TagMask, TagPool, TokenBuf, uintVal)
 from .vfs import vfsOpenMmap, vfsWrite
 from . import nifcore
 
@@ -897,7 +895,7 @@ def _remapValue(dest: mut @ TokenBuf, c: mut @ Cursor, t: mut @ _Translator):
     match kind(c):
         case NifKind.TagLit:
             with let:
-                destPos = dest.len.copy()
+                destPos = dest.len
             t._noteTagPos(c, destPos)
             dest.openTag(t._m._mapTag(cursorTagId(c)))
             dest.appendLineInfo(destLi)          # right after the tag head
@@ -905,7 +903,7 @@ def _remapValue(dest: mut @ TokenBuf, c: mut @ Cursor, t: mut @ _Translator):
                 while c.hasMore():
                     _remapValue(dest, c, t)
             with let:
-                lenBefore = dest.len.copy()
+                lenBefore = dest.len
             dest.closeTag()
             if dest.len != lenBefore:
                 # The body outgrew the 19-bit jump field, so `closeTag` spliced an
@@ -1019,7 +1017,7 @@ if comptime(__name__ == "__main__"):
         def doAssert(cond: bool, msg: string):
             if not cond: quit(string("bif self-test: ") + msg)
 
-    def _sameTokens(a: TokenBuf, b: TokenBuf) -> bool:
+    def sameTokens(a: TokenBuf, b: TokenBuf) -> bool:
         if a.len != b.len: return False
         for i in range(a.len):
             if not (a[i] == b[i]): return False
@@ -1028,7 +1026,7 @@ if comptime(__name__ == "__main__"):
     # Structural (not bitwise) comparison: `loadInto` re-emits the stream, so a
     # remapped buffer is only required to *mean* the same thing — token widths
     # legitimately differ when a line info moves to the wide file layout.
-    def _sameValue(a: Cursor, b: Cursor) -> bool:
+    def sameValue(a: Cursor, b: Cursor) -> bool:
         if kind(a) != kind(b): return False
         with let:
             la = a.rawLineInfo()
@@ -1046,16 +1044,16 @@ if comptime(__name__ == "__main__"):
             case NifKind.DotToken:                     return True
             case _:                                    return False
 
-    def _sameTree(a: mut @ Cursor, b: mut @ Cursor) -> bool:
+    def sameTree(a: mut @ Cursor, b: mut @ Cursor) -> bool:
         result = True
         while a.hasMore() and b.hasMore():
-            if not _sameValue(a, b): return False
+            if not sameValue(a, b): return False
             if kind(a) == NifKind.TagLit:
                 with var:
                     ok = True
                 with peekInto(a):
                     with peekInto(b):
-                        ok = _sameTree(a, b)
+                        ok = sameTree(a, b)
                 if not ok: return False
             else:
                 a.inc()
@@ -1090,7 +1088,7 @@ if comptime(__name__ == "__main__"):
         store(src, tmp)
         with var:
             m = load(tmp)
-        doAssert(_sameTokens(src, m.buf), string("token streams differ after round-trip"))
+        doAssert(sameTokens(src, m.buf), string("token streams differ after round-trip"))
         # pools must match value-for-value (so ids line up)
         doAssert(m.buf.tags.tags.len() == src.tags.tags.len())
         doAssert(m.buf.pool.strings.len() == src.pool.strings.len())
@@ -1109,7 +1107,7 @@ if comptime(__name__ == "__main__"):
         with let:
             fm = loadFromFile(ff)
         close(ff)
-        doAssert(_sameTokens(src, fm.buf), string("loadFromFile disagrees with mmap load"))
+        doAssert(sameTokens(src, fm.buf), string("loadFromFile disagrees with mmap load"))
         doAssert(syms(fm.buf.pool).len == syms(src.pool).len)
 
         # containsSym probes only the syms table (skipping header, pad, tokens, tags,
@@ -1179,7 +1177,7 @@ if comptime(__name__ == "__main__"):
             doAssert(idx[i].pos == m.index[i].pos)
             doAssert(idx[i].vis == m.index[i].vis)
 
-    def _buildModule(selfSym: string, sharedSym: string, fileName: string) -> TokenBuf:
+    def buildModule(selfSym: string, sharedSym: string, fileName: string) -> TokenBuf:
         ## A module-shaped buffer: `(stmts (sdef <selfSym> x (call <sharedSym> …)))`,
         ## with line info on several heads so the remap has filenames to move.
         result = createTokenBuf(16)
@@ -1207,7 +1205,7 @@ if comptime(__name__ == "__main__"):
 
     with block("remap_into_shared_pools"):
         with var:
-            src = _buildModule(string("foo.3.mymod"), string("shared.1.othermod"), string("some/where.nim"))
+            src = buildModule(string("foo.3.mymod"), string("shared.1.othermod"), string("some/where.nim"))
         with let:
             tmp = string("/tmp/bif_remap_selftest.bif")
         store(src, tmp, dottedSuffix=string(".mymod"))
@@ -1233,7 +1231,7 @@ if comptime(__name__ == "__main__"):
         with var:
             a = src.beginRead()
             b = m.buf.beginRead()
-        doAssert(_sameTree(a, b), string("remapped tree differs from the source"))
+        doAssert(sameTree(a, b), string("remapped tree differs from the source"))
         endRead(a)
         endRead(b)
         # The wide file layout costs one extra token per line info, so the rewrite
@@ -1259,7 +1257,7 @@ if comptime(__name__ == "__main__"):
         # A second module translated into the SAME pools must agree on the symbol
         # they share — the relation the whole translation exists for.
         with var:
-            src2 = _buildModule(string("bar.7.other"), string("shared.1.othermod"), string("else/where.nim"))
+            src2 = buildModule(string("bar.7.other"), string("shared.1.othermod"), string("else/where.nim"))
         with let:
             tmp2 = string("/tmp/bif_remap_selftest2.bif")
         store(src2, tmp2, dottedSuffix=string(".other"))
@@ -1288,7 +1286,7 @@ if comptime(__name__ == "__main__"):
         with var:
             d1 = src.beginRead()
             d2 = m2.buf.beginRead()
-        doAssert(not _sameTree(d1, d2), string("sameTree does not detect a difference"))
+        doAssert(not sameTree(d1, d2), string("sameTree does not detect a difference"))
         endRead(d1)
         endRead(d2)
 
@@ -1302,7 +1300,7 @@ if comptime(__name__ == "__main__"):
         with var:
             m = loadInto(tmp, pool, tags)
             plain = load(tmp)
-        doAssert(_sameTokens(plain.buf, m.buf), string("identity remap rewrote the stream"))
+        doAssert(sameTokens(plain.buf, m.buf), string("identity remap rewrote the stream"))
         doAssert(m.index.len == plain.index.len)
         for i in range(m.index.len):
             doAssert(m.index[i].sym == plain.index[i].sym)
@@ -1322,7 +1320,7 @@ if comptime(__name__ == "__main__"):
         with var:
             a = m.buf.beginRead()
             b = fm.buf.beginRead()
-        doAssert(_sameTree(a, b), string("loadFromFileInto disagrees with loadInto"))
+        doAssert(sameTree(a, b), string("loadFromFileInto disagrees with loadInto"))
         endRead(a)
         endRead(b)
         doAssert(fm.index[0].sym == symId(pool2, string("foo.3.mymod")))
@@ -1333,13 +1331,13 @@ if comptime(__name__ == "__main__"):
 if comptime(__name__ == "__main__"):
     importFrom("nimic.std.os", "getTempDir", "removeFile")
 
-    def _hexOf(s: string) -> string:
+    def hexOf(s: string) -> string:
         result = string("")
         for c in s:
             result.add(toHex(ord(c), 2))
         return result
 
-    def _samePools(a: TokenBuf, b: TokenBuf) -> bool:
+    def samePools(a: TokenBuf, b: TokenBuf) -> bool:
         if len(a.tags.tags) != len(b.tags.tags) or len(a.pool.strings) != len(b.pool.strings) or \
                 syms(a.pool).len != syms(b.pool).len or len(a.pool.filenames) != len(b.pool.filenames):
             return False
@@ -1353,7 +1351,7 @@ if comptime(__name__ == "__main__"):
             if a.pool.filenames[FileId(i)] != b.pool.filenames[FileId(i)]: return False
         return True
 
-    def _echoModule(label: string, m: mut @ BifModule):
+    def echoModule(label: string, m: mut @ BifModule):
         echo(label, ": tokens ", m.buf.len, " tags ", len(m.buf.tags.tags),
              " strings ", len(m.buf.pool.strings), " syms ", syms(m.buf.pool).len,
              " files ", len(m.buf.pool.filenames), " index ", m.index.len)
@@ -1364,16 +1362,16 @@ if comptime(__name__ == "__main__"):
             echo("  decl ", name, " ", visibility, " ",
                  m.buf.tags.tagName(cursorTagId(declaration)))
 
-    def _sameAs(label: string, src: mut @ TokenBuf, m: mut @ BifModule):
+    def sameAs(label: string, src: mut @ TokenBuf, m: mut @ BifModule):
         with var:
             a = src.beginRead()
             b = m.buf.beginRead()
-        echo(label, ": same tree ", _sameTree(a, b), ", same tokens ", _sameTokens(src, m.buf),
-             ", same pools ", _samePools(src, m.buf))
+        echo(label, ": same tree ", sameTree(a, b), ", same tokens ", sameTokens(src, m.buf),
+             ", same pools ", samePools(src, m.buf))
         endRead(a)
         endRead(b)
 
-    def _test():
+    def test():
         echo(UnusedNameTag, " ", DependencyTag)
         with let:
             tmpDir = getTempDir()
@@ -1384,7 +1382,7 @@ if comptime(__name__ == "__main__"):
             pShort = tmpDir + string("nimic_bif_test_short.bif")
             pCut = tmpDir + string("nimic_bif_test_cut.bif")
         with var:
-            src = _buildModule(string("foo.3.mymod"), string("shared.1.othermod"), string("some/where.nim"))
+            src = buildModule(string("foo.3.mymod"), string("shared.1.othermod"), string("some/where.nim"))
         # buildIndex: the self-module suffix decides which symbols are global
         echo("buildIndex: ", buildIndex(src).len, " ", buildIndex(src, string(".mymod")).len,
              " ", buildIndex(src, dottedSuffix=string(".3.mymod")).len)
@@ -1392,7 +1390,7 @@ if comptime(__name__ == "__main__"):
         # the three writers write the same bytes
         with let:
             bytes = storeToString(src, string(".mymod"))
-            hx = _hexOf(bytes)
+            hx = hexOf(bytes)
         echo("storeToString: ", bytes.len, " bytes")
         with var:
             i = 0
@@ -1416,18 +1414,18 @@ if comptime(__name__ == "__main__"):
         # every loader on the same file gives the same tokens and pools
         with var:
             m1 = load(p1)
-        _echoModule(string("load"), m1)
-        _sameAs(string("load"), src, m1)
+        echoModule(string("load"), m1)
+        sameAs(string("load"), src, m1)
         f = open(p1, fmRead)
         with var:
             m2 = loadFromFile(f)
         close(f)
-        _echoModule(string("loadFromFile"), m2)
-        _sameAs(string("loadFromFile"), src, m2)
+        echoModule(string("loadFromFile"), m2)
+        sameAs(string("loadFromFile"), src, m2)
         with var:
             m3 = loadInto(p1, newPool(), newTagPool())
-        _echoModule(string("loadInto (empty pools)"), m3)
-        _sameAs(string("loadInto (empty pools)"), src, m3)
+        echoModule(string("loadInto (empty pools)"), m3)
+        sameAs(string("loadInto (empty pools)"), src, m3)
         with let:
             busyPool = newPool()
             busyTags = newTagPool()
@@ -1436,14 +1434,14 @@ if comptime(__name__ == "__main__"):
         _ = getOrIncl(busyPool.strings, string("some other string"))
         with var:
             m4 = loadInto(p1, busyPool, busyTags)
-        _echoModule(string("loadInto (busy pools)"), m4)
-        _sameAs(string("loadInto (busy pools)"), src, m4)
+        echoModule(string("loadInto (busy pools)"), m4)
+        sameAs(string("loadInto (busy pools)"), src, m4)
         f = open(p1, fmRead)
         with var:
             m5 = loadFromFileInto(f, busyPool, busyTags)
         close(f)
-        _echoModule(string("loadFromFileInto (same busy pools)"), m5)
-        _sameAs(string("loadFromFileInto (same busy pools)"), src, m5)
+        echoModule(string("loadFromFileInto (same busy pools)"), m5)
+        sameAs(string("loadFromFileInto (same busy pools)"), src, m5)
         echo("busy pools shared: ", m4.buf.pool == busyPool, " ", m5.buf.tags == busyTags,
              ", same index: ", m4.index[0].sym == m5.index[0].sym, " ",
              m4.index[0].pos == m5.index[0].pos)
@@ -1495,4 +1493,4 @@ if comptime(__name__ == "__main__"):
         removeFile(pShort)
         removeFile(pCut)
 
-    _test()
+    test()

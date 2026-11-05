@@ -12,11 +12,11 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.assertions import *
-from nimic.std.hashes import *
-from nimic.std.tables import *
-from nimic.std.formatfloat import *
-from nimic.std.strutils import *
+from nimic.std import assertions
+from nimic.std import hashes
+from nimic.std.tables import Table
+from nimic.std import formatfloat
+from nimic.std import strutils
 
 
 class Mangler(Object):
@@ -242,9 +242,9 @@ def withTree(b: mut @ Mangler, kind: string, body: untyped = None):
 
 
 if comptime(__name__ == "__main__"):
-    from nimic.std.syncio import *
+    from nimic.std import syncio
 
-    def _test(b: sink @ Mangler):
+    def test(b: sink @ Mangler):
         with withTree(b, string("stmts")):
             with withTree(b, string("call")):
                 addSymbol(b, string("foo.3.mymod"))
@@ -269,9 +269,9 @@ if comptime(__name__ == "__main__"):
 
         assert extract(m) == "AarrayArangeS0S9ZAR0AR6S0S4ZAiS8"
 
-    def _main():
+    def main():
         with var:
             b = createMangler(10)
-        _test(b)
+        test(b)
 
-    _main()
+    main()

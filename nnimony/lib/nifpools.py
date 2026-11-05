@@ -39,7 +39,7 @@ from nimic.ntypes import *
 if comptime(defined("nimony")):
     pragma('feature: "assumeSync"')  # compiler-internal globals; single threaded
 
-from nimic.std.assertions import *
+from nimic.std import assertions
 from .nifcore import (
     addIdent, addStrLit, addSubtree, addSymDef,
     addSymUse, charLit, createTokenBuf, Cursor, cursorTagId,
@@ -391,7 +391,6 @@ def widenEnclosingSealed(dest: mut @ TokenBuf, pos: nint, growth: nint):
             i += 1
 
 
-@dispatch
 def cursorToPosition(base: Cursor, c: Cursor) -> nint:
     """{.inline.}"""
     ## Token distance of `c` from `base` (classic took two cursors; nifcore's
@@ -504,7 +503,6 @@ def addUnstructured(dest: mut @ TokenBuf, c: Cursor):
         skip(c)
 
 
-@dispatch
 def insert(dest: mut @ TokenBuf, src: Cursor, pos: nint):
     ## Insert the single subtree at `src` into `dest` at token position `pos`.
     with var:
@@ -532,7 +530,6 @@ def addSymDef(dest: mut @ TokenBuf, s: SymId, info: NifLineInfo):
     _emitInfo(dest, info)
 
 
-@dispatch
 def addDotToken(dest: mut @ TokenBuf, info: NifLineInfo):
     """{.nifEmits: "Dot".}"""
     dest.addDotToken()
@@ -553,35 +550,30 @@ def addIdent(dest: mut @ TokenBuf, s: string, info=NoLineInfo):
     _emitInfo(dest, info)
 
 
-@dispatch
 def addIntLit(dest: mut @ TokenBuf, v: int64, info: NifLineInfo):
     """{.nifEmits: "LIT".}"""
     dest.addIntLit(v)
     _emitInfo(dest, info)
 
 
-@dispatch
 def addUIntLit(dest: mut @ TokenBuf, v: uint64, info: NifLineInfo):
     """{.nifEmits: "LIT".}"""
     dest.addUIntLit(v)
     _emitInfo(dest, info)
 
 
-@dispatch
 def addFloatLit(dest: mut @ TokenBuf, v: float64, info: NifLineInfo):
     """{.nifEmits: "LIT".}"""
     dest.addFloatLit(v)
     _emitInfo(dest, info)
 
 
-@dispatch
 def addCharLit(dest: mut @ TokenBuf, v: char, info: NifLineInfo):
     """{.nifEmits: "LIT".}"""
     dest.addCharLit(v)
     _emitInfo(dest, info)
 
 
-@dispatch
 def add(dest: mut @ TokenBuf, src: TokenBuf):
     """{.inline.}"""
     ## Append a whole buffer (classic `dest.add someTokenBuf`).
@@ -769,22 +761,22 @@ def soperand(c: Cursor) -> int32:
 
 if comptime(__name__ == "__main__"):
     importFrom("nimic.std.os", "getTempDir", "removeFile", "getLastModificationTime")
-    from nimic.std.times import *
+    from nimic.std import times
 
-    def _showInfo(title: string, i: NifLineInfo):
+    def showInfo(title: string, i: NifLineInfo):
         if i.isValid():
             echo(title, " ", pool.filenames[i.file], ":", i.line, ":", i.col)
         else:
             echo(title, " none")
 
-    def _showPredicates(title: string, c: Cursor):
+    def showPredicates(title: string, c: Cursor):
         """Every cursor predicate at `c` (also at a scope's end)."""
         echo(title, ": tag ", isTagLit(c), " dot ", isDotToken(c), " ident ", isIdent(c),
              " sym ", isSymbol(c), " symdef ", isSymbolDef(c), " str ", isStringLit(c),
              " int ", isIntLit(c), " uint ", isUIntLit(c), " float ", isFloatLit(c),
              " char ", isCharLit(c), " unknown ", isUnknownToken(c))
 
-    def _showTokenPredicates(title: string, n: NifToken):
+    def showTokenPredicates(title: string, n: NifToken):
         """Every raw-token predicate of `n`."""
         echo(title, ": ", kind(n), " tag ", isTagLit(n), " dot ", isDotToken(n),
              " ident ", isIdent(n), " sym ", isSymbol(n), " symdef ", isSymbolDef(n),
@@ -792,12 +784,12 @@ if comptime(__name__ == "__main__"):
              " float ", isFloatLit(n), " char ", isCharLit(n), " unknown ",
              isUnknownToken(n))
 
-    def _showBuf(title: string, b: TokenBuf):
+    def showBuf(title: string, b: TokenBuf):
         echo(title, " (", len(b), " tokens):")
         echo(toString(b))
         echo(toString(b, False))
 
-    def _addedTests():
+    def addedTests():
         # ── globalTags: the master tag pool, seeded in TagEnum order
         for e in array[5, TagEnum]([TagEnum.ErrTagId, TagEnum.SufTagId, TagEnum.AtTagId, TagEnum.DotTagId,
                                     high(TagEnum)]):
@@ -848,33 +840,33 @@ if comptime(__name__ == "__main__"):
             addParLe(b, TagId(ord(TagEnum.RetTagId)))
             addIntLit(b, int64(0), i1)
             addParRi(b, i2)
-        _showBuf(string("built"), b)
+        showBuf(string("built"), b)
         with var:
             other = createTokenBuf()
         addIdent(other, string("appended"), i2)
         add(b, other)
-        _showBuf(string("with add"), b)
+        showBuf(string("with add"), b)
 
         # ── predicates, line info and raw-token accessors at every position
         with var:
             c = b.beginRead()
-        _showPredicates(string("root"), c)
-        _showInfo(string("info root"), info(c))
-        _showInfo(string("endInfo root"), endInfo(c))
+        showPredicates(string("root"), c)
+        showInfo(string("info root"), info(c))
+        showInfo(string("endInfo root"), endInfo(c))
         with into(c):
             with into(c):
                 while c.hasMore():
-                    _showPredicates(string("  "), c)
-                    _showInfo(string("  info"), info(c))
+                    showPredicates(string("  "), c)
+                    showInfo(string("  info"), info(c))
                     skip(c)
-                _showPredicates(string("at the scope's end"), c)
+                showPredicates(string("at the scope's end"), c)
                 consumeParRi(c)
             skipUntilEnd(c)
-            _showPredicates(string("after skipUntilEnd"), c)
+            showPredicates(string("after skipUntilEnd"), c)
         endRead(c)
         for i in range(len(b)):
-            _showTokenPredicates(string("token ") + string(str(i)), b[i])
-            _showInfo(string("  raw info"), info(b[i]))
+            showTokenPredicates(string("token ") + string(str(i)), b[i])
+            showInfo(string("  raw info"), info(b[i]))
         echo("tagId of token 0 ", uint32(tagId(b[0])), " ", uint32(tagId(b[0])) == uint32(ord(TagEnum.StmtsTagId)))
         with var:
             d = b.beginRead()
@@ -921,13 +913,13 @@ if comptime(__name__ == "__main__"):
         with buildTree(s, ErrT, NoLineInfo):
             addSymUse(s, sym, NoLineInfo)
             addSymDef(s, sym, NoLineInfo)
-        _showBuf(string("syms before"), s)
+        showBuf(string("syms before"), s)
         for k in inrange(1, 2):
             with var:
                 tok = s[k].copy()
             setSymId(tok, sym2)
             s[k] = tok
-        _showBuf(string("syms after setSymId"), s)
+        showBuf(string("syms after setSymId"), s)
 
         # ── insert a subtree, then widen the enclosing sealed scopes
         with var:
@@ -941,7 +933,7 @@ if comptime(__name__ == "__main__"):
         insert(w, sc, 2)
         endRead(sc)
         widenEnclosingSealed(w, 2, growth)
-        _showBuf(string("inserted into b"), w)
+        showBuf(string("inserted into b"), w)
         with var:
             w2 = parseFromBuffer(string("(a (b 1) 2)"), string("w"))
         with var:
@@ -950,7 +942,7 @@ if comptime(__name__ == "__main__"):
         endRead(sc2)
         widenEnclosingSealed(w2, 3, growth)
         widenEnclosingSealed(w2, 3, 0)
-        _showBuf(string("inserted after b"), w2)
+        showBuf(string("inserted after b"), w2)
         with var:
             w3 = parseFromBuffer(string("(a (b 1) 2)"), string("w"))
         w3.add(int28Token(int32(0), NoLineInfo))
@@ -1023,7 +1015,7 @@ if comptime(__name__ == "__main__"):
         with var:
             own = nifcoreparse.parseFromBuffer(string("(stmts 1)"), string("pm"))
         echo("nifcoreparse.parseFromBuffer shares it ", own.pool == pool)
-        _showBuf(string("parsed"), pb)
+        showBuf(string("parsed"), pb)
         with var:
             pc = pb.beginRead()
         echo("toString(c) ", toString(pc))
@@ -1041,7 +1033,7 @@ if comptime(__name__ == "__main__"):
         with var:
             pf = parseFromFile(path)
         echo("parseFromFile shares the global pool ", pf.pool == pool)
-        _showBuf(string("from the file"), pf)
+        showBuf(string("from the file"), pf)
         with let:
             before = getLastModificationTime(path)
         writeFile(pb, path, FileWriteMode.OnlyIfChanged)
@@ -1053,7 +1045,7 @@ if comptime(__name__ == "__main__"):
         writeFile(pb, path, FileWriteMode.AlwaysWrite)
         with var:
             pf2 = parseFromFile(path, 4)
-        _showBuf(string("from the file again"), pf2)
+        showBuf(string("from the file again"), pf2)
         removeFile(path)
 
-    _addedTests()
+    addedTests()

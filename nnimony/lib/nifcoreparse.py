@@ -22,8 +22,8 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.assertions import *
-from nimic.std.math import *
+from nimic.std import assertions
+from nimic.std.math import classify, FloatClass, Inf, NaN
 from .nifcore import (
     addSymDef, addSymUse, charLit, createTokenBuf, Cursor,
     cursorTagId, FirstEscapeId, floatVal, getOrIncl, getOrInclFromView, InlineJumpCap, into, intVal,
@@ -33,10 +33,10 @@ from .nifcore import (
 from . import nifcore
 from . import nifreader as rd
 from .nifbuilder import (
-    addCharLit, addEmpty, addFloatLit, addHeader27, addIdent, addIntLit, addRaw, addStrLit, addSymbol, addSymbolDef,
+    addCharLit, addEmpty, addFloatLit, addHeader27, addIntLit, addRaw, addSymbol, addSymbolDef,
     addSymbolDefRetIsGlobal, addTree, addUIntLit, attachComment, attachLineInfo, Builder, endTree, extract)
 from . import nifbuilder
-from .stringviews import add
+from . import stringviews  # its `add` is called as a method
 from .lineinfos import FileId, isValid  # for `==`(FileId) used by NifLineInfo's structural `==`
 
 export(nifcore)
@@ -679,28 +679,28 @@ def toModuleString(b: mut @ TokenBuf, dottedSuffix=string(""), sizeHint=0,
 
 
 if comptime(__name__ == "__main__"):
-    from nimic.std.syncio import *
-    from nimic.std.strutils import *
+    from nimic.std import syncio
+    from nimic.std import strutils
 
-    def _sameTokens(a: mut @ TokenBuf, b: mut @ TokenBuf) -> bool:
+    def sameTokens(a: mut @ TokenBuf, b: mut @ TokenBuf) -> bool:
         if len(a) != len(b): return False
         for i in range(len(a)):
             if not (a[i] == b[i]): return False
         return True
 
-    def _roundTrips(b1: mut @ TokenBuf) -> bool:
+    def roundTrips(b1: mut @ TokenBuf) -> bool:
         ## parse → toString → parse must be byte-identical (idempotent).
         with let:
             txt = toString(b1)
         with var:
             b2 = parseFromBuffer(txt, string("t"))
-        result = _sameTokens(b1, b2)
+        result = sameTokens(b1, b2)
         if not result: echo("round-trip MISMATCH:\n", txt)
         return result
 
     # In a proc, not at module level: host Nim rejects the `{.nifWrap.}` statement of `into` expanded at
     # module level ("custom pragmas are not supported for modules"), as in nifcore's self-test.
-    def _selfTest():
+    def selfTest():
         with block("samples"):
             for s in array[4, string]([
                     string("(stmts (call foo 42 \"hi\") (asgn x 3.14) (ret -7))"),
@@ -709,7 +709,7 @@ if comptime(__name__ == "__main__"):
                     string("(nested (a (b (c (d .)))))")]):
                 with var:
                     b1 = parseFromBuffer(s, string("t"))
-                doAssert(_roundTrips(b1), s)
+                doAssert(roundTrips(b1), s)
 
         with block("overflow_jump"):
             # subtree larger than the 19-bit jump → ExtendedSuffix splice, then text round-trip
@@ -720,7 +720,7 @@ if comptime(__name__ == "__main__"):
             b1.openTag(t)
             for i in range(nint(InlineJumpCap) + 5): b1.addIntLit(int64(i & 7))
             b1.closeTag()
-            doAssert(_roundTrips(b1))
+            doAssert(roundTrips(b1))
 
         with block("line_info"):
             # build a tree carrying line info, then text round-trip (file/line/col survive)
@@ -735,7 +735,7 @@ if comptime(__name__ == "__main__"):
             b1.addIntLit(99);         b1.appendLineInfo(f, i32(2), i32(5))   # same line, new col
             addStrLit(b1, string("z"));        b1.appendLineInfo(f, i32(40000), i32(9))  # wide layout
             b1.closeTag()
-            doAssert(_roundTrips(b1))
+            doAssert(roundTrips(b1))
 
         with block("escape_space"):
             # An adapter whose vocabulary outgrew the 9-bit tag field. `registerTag`
@@ -779,26 +779,26 @@ if comptime(__name__ == "__main__"):
             doAssert(txt.find(string("movzx")) >= 0 and txt.find(string("syscall")) >= 0, txt)
             with var:
                 b2 = parseFromBuffer(txt, string("t"), sharedTags=escTags())
-            doAssert(_sameTokens(b1, b2), txt)
+            doAssert(sameTokens(b1, b2), txt)
             # The escape survives the indexed (full-module) serializer too.
             with var:
                 b3 = parseFromBuffer(toModuleString(b1), string("t"), sharedTags=escTags())
-            doAssert(_sameTokens(b1, b3))
+            doAssert(sameTokens(b1, b3))
 
-    _selfTest()
+    selfTest()
 
     echo("nifcoreparse self-tests passed")
 
 if comptime(__name__ == "__main__"):
     importFrom("nimic.std.os", "getTempDir", "removeFile")
 
-    def _showTree(title: string, b: mut @ TokenBuf):
+    def showTree(title: string, b: mut @ TokenBuf):
         """`b` as text with and without line info, its token count and whether it round-trips."""
-        echo(title, ": ", len(b), " tokens, round trip ", _roundTrips(b))
+        echo(title, ": ", len(b), " tokens, round trip ", roundTrips(b))
         echo(toString(b))
         echo(toString(b, includeLineInfo=False))
 
-    def _showValues(b: mut @ TokenBuf):
+    def showValues(b: mut @ TokenBuf):
         """Every child of the top-level node, through `toString` of a cursor."""
         with var:
             c = b.beginRead()
@@ -808,7 +808,7 @@ if comptime(__name__ == "__main__"):
                 skip(c)
         echo("  after the last value: [", toString(c), "]")
 
-    def _addedTests():
+    def addedTests():
         # every atom kind, nesting, escapes, line info (absolute with an escaped filename, relative, negative,
         # base62, an empty column or line) and comments
         with var:
@@ -816,21 +816,21 @@ if comptime(__name__ == "__main__"):
                 "(stmts@1,2,a\\2Eb.nim (call@2,1 foo.1. 42 -7 +3 18446744073709551615u 0u 3.25 -0.0 \"hi\\0A\\22x\\20\" 'c' '\\0A'"
                 " ident . :def.3. x.1~5,~7 y.2@Z,a z.3@,5 w.4@3,,f.nim) (ret@3,4,other.nim -9223372036854775808#note#)"
                 " (nested (a (b (c@1,1 (d .#a\\23b#))))))"), string("t"))
-        _showTree(string("atoms"), b1)
-        _showValues(b1)
+        showTree(string("atoms"), b1)
+        showValues(b1)
 
         # split symbols: interned components, two dedup keys, a non-numeric disambiguator, short spellings
         with var:
             b2 = parseFromBuffer(string(
                 "(s abc.12.Ikey.mod foo.0.Ia.Ib.mod p.0h107 _exit.sys.m :longname.33.modname longername.4."
                 " x.1 :y.2. :q.7.Ik.)"), string("thismod"))
-        _showTree(string("symbols"), b2)
-        _showValues(b2)
+        showTree(string("symbols"), b2)
+        showValues(b2)
 
         # a bare top-level atom is a tree of its own; the second one is not read
         with var:
             b3 = parseFromBuffer(string("5 (a)"), string("t"))
-        _showTree(string("bare atom"), b3)
+        showTree(string("bare atom"), b3)
 
         # the `.unusedname` overload, positional and with keywords
         with let:
@@ -840,15 +840,15 @@ if comptime(__name__ == "__main__"):
         with var:
             b4 = parseFromBuffer(modText, string("Mod"), unused)
         echo("unusedName: ", unused)
-        _showTree(string("with unusedName"), b4)
+        showTree(string("with unusedName"), b4)
         unused = string("")
         with var:
             b5 = parseFromBuffer(modText, string("Mod"), unused, sizeHint=4, denseLineInfo=True)
         echo("unusedName (keywords): ", unused)
-        _showTree(string("with unusedName, dense"), b5)
+        showTree(string("with unusedName, dense"), b5)
         with var:
             b6 = parseFromBuffer(modText, string("Mod"), sizeHint=4)
-        _showTree(string("without unusedName"), b6)
+        showTree(string("without unusedName"), b6)
 
         # denseLineInfo off and on: children without their own line info inherit the head's
         with let:
@@ -857,8 +857,8 @@ if comptime(__name__ == "__main__"):
             sparse = parseFromBuffer(denseText, string("t"))
         with var:
             dense = parseFromBuffer(denseText, string("t"), denseLineInfo=True)
-        _showTree(string("sparse"), sparse)
-        _showTree(string("dense"), dense)
+        showTree(string("sparse"), sparse)
+        showTree(string("dense"), dense)
 
         # shared pools: the second buffer reuses the first one's strings, filenames and tags
         with var:
@@ -872,15 +872,15 @@ if comptime(__name__ == "__main__"):
         writeFile(path, modText)
         with var:
             f1 = parseFromFile(path)
-        _showTree(string("file"), f1)
+        showTree(string("file"), f1)
         unused = string("")
         with var:
             f2 = parseFromFile(path, unused)
         echo("file unusedName: ", unused)
-        _showTree(string("file with unusedName"), f2)
+        showTree(string("file with unusedName"), f2)
         with var:
             f3 = parseFromFile(path, sizeHint=2, denseLineInfo=True)
-        _showTree(string("file, dense"), f3)
+        showTree(string("file, dense"), f3)
         removeFile(path)
 
         # peekRootInfo does not consume the token, and seeds `parse` for a jump into the module
@@ -896,7 +896,7 @@ if comptime(__name__ == "__main__"):
              " offset unchanged ", rd.offset(r) == before)
         rd.jumpTo(r, modText.find(string("(b y)")))
         parse(r, pr, parentSeed=root)
-        _showTree(string("seeded"), pr)
+        showTree(string("seeded"), pr)
         with var:
             noFile = rd.openFromBuffer(string("(x@1,1 y)"), string("t"))
         with let:
@@ -911,7 +911,7 @@ if comptime(__name__ == "__main__"):
         with var:
             sr = rd.openFromBuffer(string("(x@2,3 y@1,1 (z w@~1,~2))"), string("t"))
         parse(sr, seeded, parentSeed=NifLineInfo(file=sf, line=i32(10), col=i32(20)))
-        _showTree(string("seed with a file"), seeded)
+        showTree(string("seed with a file"), seeded)
 
         # floats through toString: the non-finite ones are compounds that carry the line info on their tag
         with var:
@@ -934,7 +934,7 @@ if comptime(__name__ == "__main__"):
         with var:
             fl2 = parseFromBuffer(flText, string("t"))
         echo("floats parsed back: ", toString(fl2))
-        _showValues(fl)
+        showValues(fl)
 
         # appendTo a builder of our own
         with var:
@@ -970,8 +970,8 @@ if comptime(__name__ == "__main__"):
             back2 = parseFromBuffer(ms2, string("m"))
         with var:
             back3 = parseFromBuffer(ms3, string("m"))
-        echo("module parsed back: ", _sameTokens(mb, back1), " ", _sameTokens(mb, back2),
-             " ", _sameTokens(mb, back3))
+        echo("module parsed back: ", sameTokens(mb, back1), " ", sameTokens(mb, back2),
+             " ", sameTokens(mb, back3))
         # the indexed form: each entry of the index gives a declaration's offset (delta-encoded) and the line
         # info its `parse` is seeded with, as an index lookup does
         with var:
@@ -1009,4 +1009,4 @@ if comptime(__name__ == "__main__"):
                      toString(decl, includeLineInfo=False))
                 echo(toString(decl))
 
-    _addedTests()
+    addedTests()

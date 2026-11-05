@@ -4124,7 +4124,8 @@ class TestNTypes(unittest.TestCase):
         routine (ownset), a name read but bound to nothing (unbound), a type of two imports (ambiguous), a qualified
         `m.f` reaching one of the procs `m` exports (qualified), a core star import rebinding an imported name
         (importorder). Accepted: a leaked proc (no overload in Nim), a hidden one (exportExcept), a name imported
-        only for method syntax, a @dispatch extending the import, `overloads(...)`."""
+        only for method syntax, a @dispatch extending the import, `overloads(...)`, also one a @dispatch extends
+        (the check runs after the import section, the sets that follow the last import included)."""
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         header = "# /// nimic\n#\n# ///\nfrom nimic.ntypes import *\n"
         main = "def use(b):\n    return addThing(b, nint(1))\necho('ran')\n"
@@ -4151,6 +4152,11 @@ class TestNTypes(unittest.TestCase):
             "nx_overloads.py": header + "import nx_core, nx_builder\n"
                                         "addThing = overloads(nx_core.addThing, nx_builder.addThing)\n"
                                         "echo(addThing(nx_core.Buf(), nint(1)), addThing(nx_builder.Bld(), nint(1)))\n",
+            # a set after the last import, extended by the module's @dispatch (nifreader's open / close): the
+            # check runs once the import section, its sets included, has run
+            "nx_setext.py": header + "import nx_core, nx_builder\n"
+                                     "addThing = overloads(nx_core.addThing, nx_builder.addThing)\n@dispatch\n"
+                                     "def addThing(b: string, v: nint) -> nint:\n    return nint(3)\n" + main,
             "nx_export.py": header + "from nx_parse_export import Bld\nfrom nx_core import addThing\n" + main,
             "nx_name.py": header + "import nx_parse_name\nfrom nx_core import addThing\n" + main,
             "nx_notexported.py": header + "from nx_parse import addThing\n" + main,
@@ -4210,7 +4216,8 @@ class TestNTypes(unittest.TestCase):
                               ("nx_corelocal.py", "ran\n"), ("nx_plainunread.py", "ran\n"),
                               ("nx_whendeclared.py", "ran\n"),
                               ("nx_shadowqualified.py", "ran\n"),
-                              ("nx_dispatch.py", "ran\n"), ("nx_overloads.py", "12\n")):
+                              ("nx_dispatch.py", "ran\n"), ("nx_overloads.py", "12\n"),
+                              ("nx_setext.py", "ran\n")):
                 passed = run(name)
                 self.assertEqual((passed.returncode, passed.stdout), (0, out), f"{name}: {passed.stderr}")
             for name, message in (
@@ -6294,6 +6301,20 @@ class TestNTypes(unittest.TestCase):
         self.assertIn("import ncode/std/os as nos", out)
         self.assertIn("import msgs", out.splitlines())
         self.assertNotIn("import std\n", out)
+        # in a `when` branch it is always written: another branch may import the same module (bitabs: an empty
+        # `when defined(nimPreviewSlimSystem):` doesn't compile)
+        out = unparse(ast.parse("from nimic.ntypes import *\n"
+                                "if comptime(defined('nimony')):\n    from nimic.std import assertions\n"
+                                "else:\n    if comptime(defined('nimPreviewSlimSystem')):\n"
+                                "        from nimic.std import assertions\n"))[0]
+        self.assertEqual(out.count("import std/assertions"), 2, out)
+        # within one block once (`from nimic.std.syncio import *` and `from nimic.std import syncio`)
+        out = unparse(ast.parse("from nimic.ntypes import *\n"
+                                "if comptime(defined('nimony')):\n    from nimic.std.syncio import *\n"
+                                "    from nimic.std import syncio\n    from . import a, b\n    from . import b\n"))[0]
+        self.assertEqual(out.count("import std/syncio"), 1, out)
+        self.assertEqual([l.strip() for l in out.splitlines() if l.strip().startswith("import") and "b" in l],
+                         ["import a, b"], out)
 
     def test_import_module_of_relative_package(self):
         """`from ..models import leng_tags, tags` binds module names of a sibling directory (nifcdecl's
@@ -6365,8 +6386,10 @@ class TestNTypes(unittest.TestCase):
         """nnimony/tools/explicit_imports.py rewrites a module's star imports of nimic modules into name imports: the
         names the module uses (code, annotations, the names its overload sets extend) that each import binds, from
         the module defining or re-exporting them; a name another star import only leaks comes from its defining
-        module; an import no name is used from stays a module import (Nim's import); core imports stay. It reports
-        the names two imports bind to different routines (Nim overloads them)."""
+        module; an import no name is used from stays a module import (Nim's import). A star import of nimic's std
+        modules is rewritten the same way (`from nimic.std.os import getTempDir`, `from nimic.std import os` when no
+        name is used); only the prelude `nimic.ntypes` stays a star import. It reports the names two imports bind to
+        different routines (Nim overloads them)."""
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         header = "# /// nimic\n#\n# ///\nfrom __future__ import annotations\nfrom nimic.ntypes import *\n"
         files = {
@@ -6379,6 +6402,7 @@ class TestNTypes(unittest.TestCase):
                               "def use(a: A, b: B) -> nint:\n    return fa(a) + fb(b) + shared(b)\n",
             "ed.py": header + "from .eb import *\ndef use(b: B) -> nint:\n    return fa(b)\n",
             "ee.py": header + "from .ea import *\nfrom nimic.std.os import *\ndef f() -> nint:\n    return nint(0)\n",
+            "ef.py": header + "from nimic.std.os import *\ndef f() -> string:\n    return getTempDir()\n",
         }
         with tempfile.TemporaryDirectory() as tmp:
             os.mkdir(os.path.join(tmp, "eipkg"))
@@ -6390,7 +6414,7 @@ class TestNTypes(unittest.TestCase):
                       "for m in sys.argv[1:]:\n    path, new, report = plan(m)\n"
                       "    print('==', m)\n    print(new.split('from nimic.ntypes import *\\n', 1)[1].split('\\ndef')[0])\n"
                       "    print('\\n'.join(report))\n")
-            run = subprocess.run([sys.executable, "-c", script, "eipkg.ec", "eipkg.ed", "eipkg.ee"],
+            run = subprocess.run([sys.executable, "-c", script, "eipkg.ec", "eipkg.ed", "eipkg.ee", "eipkg.ef"],
                                  capture_output=True, text=True, cwd=tmp, env=env)
             self.assertEqual(run.returncode, 0, run.stderr)
             out = run.stdout
@@ -6398,7 +6422,8 @@ class TestNTypes(unittest.TestCase):
             self.assertIn("  ! shared: routines of eipkg.ea, eipkg.eb (Nim overloads them; Python binds eipkg.eb's)", out)
             self.assertIn("== eipkg.ed\nfrom .eb import B\nfrom .ea import fa\n", out)
             self.assertIn("  + fa: leaked by eipkg.eb; imported from eipkg.ea (an added Nim import)", out)
-            self.assertIn("== eipkg.ee\nfrom . import ea\nfrom nimic.std.os import *\n", out)
+            self.assertIn("== eipkg.ee\nfrom . import ea\nfrom nimic.std import os\n", out)
+            self.assertIn("== eipkg.ef\nfrom nimic.std.os import getTempDir\n", out)
 
     def test_upstream_tool(self):
         """nnimony/tools/upstream.py (the re-pin tool) reports, per converted module, what changed in its original

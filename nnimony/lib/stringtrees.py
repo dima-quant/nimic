@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.assertions import *
+from nimic.std import assertions
 
 # We split the set of strings into 2 sets of roughly the same size.
 # The condition used for splitting is a (position, char) tuple.
@@ -139,7 +139,7 @@ def createSearchTree(a: openArray[Key]) -> seq[SearchNode]:
 
 
 if comptime(__name__ == "__main__"):
-    def _dumpTree(tree: seq[SearchNode]):
+    def dumpTree(tree: seq[SearchNode]):
         echo("nodes=", tree.len)
         for i in range(tree.len):
             match tree[i].kind:
@@ -158,7 +158,7 @@ if comptime(__name__ == "__main__"):
     with let:
         t1 = createSearchTree(seq[Key]([(string("only"), string("kOnly"))]))
     doAssert(t1.len == 1)
-    _dumpTree(t1)
+    dumpTree(t1)
 
     # 2. Keys sharing prefixes
     with let:
@@ -171,7 +171,7 @@ if comptime(__name__ == "__main__"):
             (string("nimsem"), string("kNimsem")),
         ]))
     doAssert(t2.len > 1)
-    _dumpTree(t2)
+    dumpTree(t2)
 
     # 3. Keys differing only at the end
     with let:
@@ -183,7 +183,7 @@ if comptime(__name__ == "__main__"):
             (string("item5"), string("k5")),
         ]))
     doAssert(t3.len > 1)
-    _dumpTree(t3)
+    dumpTree(t3)
 
     # 4. Unsplittable keys (> 2 equal strings)
     with let:
@@ -193,4 +193,4 @@ if comptime(__name__ == "__main__"):
             (string("same"), string("kC")),
         ]))
     doAssert(t4.len == 1)
-    _dumpTree(t4)
+    dumpTree(t4)

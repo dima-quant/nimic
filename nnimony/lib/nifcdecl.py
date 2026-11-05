@@ -27,7 +27,7 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-from nimic.std.assertions import *
+from nimic.std import assertions
 from .nifcore import (
     addSymDef, addSymUse, createTokenBuf, Cursor, cursorTagId,
     endRead, into, kind, loopInto, newPool, newTagPool, NifKind, registerTag, skip, symName,
@@ -429,10 +429,10 @@ def loopInto(c: mut @ Cursor, expected: LengTagKind, body: untyped):
 
 
 if comptime(__name__ == "__main__"):
-    def _tid(e: TagEnum) -> TagId:
+    def tid(e: TagEnum) -> TagId:
         return TagId(uint32(ord(e)))
 
-    def _runTests():
+    def runTests():
         with var:
             tags = createLengTagPool()
             pool = newPool()
@@ -443,21 +443,21 @@ if comptime(__name__ == "__main__"):
         echo(tags.tagName(TagId(uint32(ord(TagEnum.ProcTagId)))))
 
         # Root (stmts ...)
-        b.openTag(_tid(TagEnum.StmtsTagId))
+        b.openTag(tid(TagEnum.StmtsTagId))
 
         # 1. (type :MyType.0.m (pragmas (packed)) (object . (fld :x.0.m . (i +32))))
-        b.openTag(_tid(TagEnum.TypeTagId))
+        b.openTag(tid(TagEnum.TypeTagId))
         addSymDef(b, string("MyType.0.m"))
-        b.openTag(_tid(TagEnum.PragmasTagId))
-        b.openTag(_tid(TagEnum.PackedTagId))
+        b.openTag(tid(TagEnum.PragmasTagId))
+        b.openTag(tid(TagEnum.PackedTagId))
         b.closeTag()
         b.closeTag()
-        b.openTag(_tid(TagEnum.ObjectTagId))
+        b.openTag(tid(TagEnum.ObjectTagId))
         b.addDotToken()
-        b.openTag(_tid(TagEnum.FldTagId))
+        b.openTag(tid(TagEnum.FldTagId))
         addSymDef(b, string("x.0.m"))
         b.addDotToken()
-        b.openTag(_tid(TagEnum.ITagId))
+        b.openTag(tid(TagEnum.ITagId))
         b.addIntLit(i64(32))
         b.closeTag()
         b.closeTag()
@@ -465,85 +465,85 @@ if comptime(__name__ == "__main__"):
         b.closeTag()
 
         # 2. Union branches: (of (ranges +1) (object .)) and (else .)
-        b.openTag(_tid(TagEnum.OfTagId))
-        b.openTag(_tid(TagEnum.RangesTagId))
+        b.openTag(tid(TagEnum.OfTagId))
+        b.openTag(tid(TagEnum.RangesTagId))
         b.addIntLit(i64(1))
         b.closeTag()
-        b.openTag(_tid(TagEnum.ObjectTagId))
+        b.openTag(tid(TagEnum.ObjectTagId))
         b.addDotToken()
         b.closeTag()
         b.closeTag()
 
-        b.openTag(_tid(TagEnum.ElseTagId))
+        b.openTag(tid(TagEnum.ElseTagId))
         b.addDotToken()
         b.closeTag()
 
         # 3. (proc :fn.0.m (params (param :a.0.m . (ptr (i +32)))) . (pragmas (inline) (cdecl)) (stmts (ret .)))
-        b.openTag(_tid(TagEnum.ProcTagId))
+        b.openTag(tid(TagEnum.ProcTagId))
         addSymDef(b, string("fn.0.m"))
-        b.openTag(_tid(TagEnum.ParamsTagId))
-        b.openTag(_tid(TagEnum.ParamTagId))
+        b.openTag(tid(TagEnum.ParamsTagId))
+        b.openTag(tid(TagEnum.ParamTagId))
         addSymDef(b, string("a.0.m"))
         b.addDotToken()
-        b.openTag(_tid(TagEnum.PtrTagId))
-        b.openTag(_tid(TagEnum.ITagId))
+        b.openTag(tid(TagEnum.PtrTagId))
+        b.openTag(tid(TagEnum.ITagId))
         b.addIntLit(i64(32))
         b.closeTag()
         b.closeTag()
         b.closeTag()
         b.closeTag()
         b.addDotToken()
-        b.openTag(_tid(TagEnum.PragmasTagId))
-        b.openTag(_tid(TagEnum.InlineTagId))
+        b.openTag(tid(TagEnum.PragmasTagId))
+        b.openTag(tid(TagEnum.InlineTagId))
         b.closeTag()
-        b.openTag(_tid(TagEnum.CdeclTagId))
+        b.openTag(tid(TagEnum.CdeclTagId))
         b.closeTag()
         b.closeTag()
-        b.openTag(_tid(TagEnum.StmtsTagId))
-        b.openTag(_tid(TagEnum.RetTagId))
+        b.openTag(tid(TagEnum.StmtsTagId))
+        b.openTag(tid(TagEnum.RetTagId))
         b.addDotToken()
         b.closeTag()
         b.closeTag()
         b.closeTag()
 
         # 4. (proctype . (params) (u +64) (pragmas (fastcall)) .)
-        b.openTag(_tid(TagEnum.ProctypeTagId))
+        b.openTag(tid(TagEnum.ProctypeTagId))
         b.addDotToken()
-        b.openTag(_tid(TagEnum.ParamsTagId))
+        b.openTag(tid(TagEnum.ParamsTagId))
         b.closeTag()
-        b.openTag(_tid(TagEnum.UTagId))
+        b.openTag(tid(TagEnum.UTagId))
         b.addIntLit(i64(64))
         b.closeTag()
-        b.openTag(_tid(TagEnum.PragmasTagId))
-        b.openTag(_tid(TagEnum.FastcallTagId))
+        b.openTag(tid(TagEnum.PragmasTagId))
+        b.openTag(tid(TagEnum.FastcallTagId))
         b.closeTag()
         b.closeTag()
         b.addDotToken()
         b.closeTag()
 
         # 5. (gvar :gv.0.m . (ro (i +32)) (addr g)) and (var :lv.0.m . (atomic (i +32)) (haddr g))
-        b.openTag(_tid(TagEnum.GvarTagId))
+        b.openTag(tid(TagEnum.GvarTagId))
         addSymDef(b, string("gv.0.m"))
         b.addDotToken()
-        b.openTag(_tid(TagEnum.RoTagId))
-        b.openTag(_tid(TagEnum.ITagId))
+        b.openTag(tid(TagEnum.RoTagId))
+        b.openTag(tid(TagEnum.ITagId))
         b.addIntLit(i64(32))
         b.closeTag()
         b.closeTag()
-        b.openTag(_tid(TagEnum.AddrTagId))
+        b.openTag(tid(TagEnum.AddrTagId))
         addSymUse(b, string("g.0.m"))
         b.closeTag()
         b.closeTag()
 
-        b.openTag(_tid(TagEnum.VarTagId))
+        b.openTag(tid(TagEnum.VarTagId))
         addSymDef(b, string("lv.0.m"))
         b.addDotToken()
-        b.openTag(_tid(TagEnum.AtomicTagId))
-        b.openTag(_tid(TagEnum.ITagId))
+        b.openTag(tid(TagEnum.AtomicTagId))
+        b.openTag(tid(TagEnum.ITagId))
         b.addIntLit(i64(32))
         b.closeTag()
         b.closeTag()
-        b.openTag(_tid(TagEnum.HaddrTagId))
+        b.openTag(tid(TagEnum.HaddrTagId))
         addSymUse(b, string("g.0.m"))
         b.closeTag()
         b.closeTag()
@@ -643,7 +643,7 @@ if comptime(__name__ == "__main__"):
             with let:
                 vd1 = takeVarDecl(c)
             with var:
-                vt1 = vd1.typ.copy()
+                vt1 = vd1.typ
                 vv1 = vd1.value.copy()
             echo("vd1=", symName(vd1.name), " qual=", typeQual(vt1),
                  " elem=", typeKind(elementType(vt1)),
@@ -654,11 +654,11 @@ if comptime(__name__ == "__main__"):
             with let:
                 vd2 = takeVarDecl(c)
             with var:
-                vt2 = vd2.typ.copy()
-                vv2 = vd2.value.copy()
+                vt2 = vd2.typ
+                vv2 = vd2.value
             echo("vd2=", symName(vd2.name), " qual=", typeQual(vt2),
                  " valKind=", exprKind(vv2), " inAddr=", exprKind(vv2) in AddrKinds)
 
         endRead(c)
 
-    _runTests()
+    runTests()

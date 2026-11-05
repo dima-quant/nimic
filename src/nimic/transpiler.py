@@ -193,8 +193,8 @@ Imports:
     and `from . import m` bind module names: import ../models/m, import m; `from . import m as x` is import m as x;
     a relative name import `from .nifcore import TokenBuf` is import nifcore (unparse()'s `package` tells the two
     apart); each path is imported once; `from . import a, b` is one line `import a, b` (the grouping is kept)
-  rule:nodoubleimport -> do not write import module if already imported (also `from nimic.std import m`, which
-    is `import std/m` for qualified use, m.proc)
+  rule:nodoubleimport -> do not write import module if the block already imports it (also `from nimic.std import m`,
+    which is `import std/m` for qualified use, m.proc); each `when` branch writes its own imports
   rule:labeledblock -> with block("name"): ... is `block name:`; breakBlock("name") is `break name`
   rule:emit -> emit("C code") transpiles as an emit pragma {.emit: <triple-quoted C code>.} (raises if run in Python)
   rule:importexcept -> importExcept("..m", "a", "%") transpiles as `import ../m except a, `%``; in Python it
@@ -1045,6 +1045,7 @@ class _Unparser(NodeVisitor):
         self._noreturn_procs = set()  # rule:tryassign: names of the module's procs that don't return
         self._operator_procs = {}  # rule:operator: Python name of an @operator proc -> its Nim operator (`+!`)
         self._import_paths = set()  # rule:import: the Nim paths imported so far
+        self._block_imports = [self._import_paths]  # rule:nodoubleimport: the paths imported in each open block
 
     def interleave(self, inter, f, seq):
         """Call f on each item in seq, calling inter() in between."""
@@ -1105,7 +1106,9 @@ class _Unparser(NodeVisitor):
         if extra:
             self.write(extra)
         self._indent += 1
+        self._block_imports.append(set())
         yield
+        self._block_imports.pop()
         self._indent -= 1
 
     @contextmanager
@@ -1405,11 +1408,10 @@ class _Unparser(NodeVisitor):
         return spec is not None and spec.submodule_search_locations is not None
 
     def _import_once(self, path: str) -> None:
-        """rule:nodoubleimport -> `import path`, unless the module already imports it at its top level. In a `when`
-        branch the import is always written: another branch may import the same module."""
-        if self._indent or path not in self._import_paths:
-            if not self._indent:
-                self._import_paths.add(path)
+        """rule:nodoubleimport -> `import path`, unless the block already imports it (the module's top level, or the
+        `when` branch being written: another branch may import the same module, and must)."""
+        if path not in self._block_imports[-1]:
+            self._block_imports[-1].add(path)
             self.fill("import " + path)
 
     def _names_modules(self, node: ImportFrom) -> bool:
@@ -1431,14 +1433,13 @@ class _Unparser(NodeVisitor):
         # in Nim); Nim's selective `from m import a` is importFrom("m", "a") (rule:importfrom)
         if node.module and not node.level and self._is_nimic_package(node.module):
             # rule:import -> `from nimic.std import memfiles` (a std module used qualified: memfiles.open) is
-            # `import std/memfiles`, once
+            # `import std/memfiles`, once at the top level (rule:nodoubleimport; in a `when` branch always)
             for alias in node.names:
                 path = self._import_path(f"{node.module}.{alias.name}", 0)
                 if alias.asname:
                     self.fill(f"import {path} as {alias.asname}")  # `from nimic.std import os as nos`
-                elif path not in self._import_paths:
-                    self._import_paths.add(path)
-                    self.fill("import " + path)
+                else:
+                    self._import_once(path)
             return
         if node.level and node.names[0].name != "*":
             # rule:import -> `from ..models import leng_tags` and `from . import m` bind module names:
@@ -1461,9 +1462,8 @@ class _Unparser(NodeVisitor):
                         self.fill(f"import {self._import_path(name, node.level)} as {alias.asname}")
                     continue
                 path = self._import_path(f"{node.module}.{alias.name}" if node.module else alias.name, node.level)
-                if self._indent or (path not in self._import_paths and path not in group):
-                    if not self._indent:
-                        self._import_paths.add(path)
+                if path not in self._block_imports[-1] and path not in group:
+                    self._block_imports[-1].add(path)
                     group.append(path)
             return
         if node.module and not node.module in ["__future__"]:

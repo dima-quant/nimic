@@ -26,8 +26,8 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.assertions import *
-from nimic.std.hashes import *
+from nimic.std import assertions
+from nimic.std.hashes import Hash, hash
 
 with const:
     _AsideBit = 1

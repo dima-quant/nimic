@@ -27,7 +27,7 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.syncio import *  # `slurp` is a `std/syncio` proc under nimony (a system
+from nimic.std import syncio  # `slurp` is a `std/syncio` proc under nimony (a system
                                 # magic under the host Nim bootstrap compiler).
 
 with const:
@@ -64,7 +64,7 @@ with const:
 
 
 if comptime(__name__ == "__main__"):
-    from nimic.std.strutils import *
+    from nimic.std import strutils
 
     echo(Version)
     # the first field of doc/version.md (the tests run from the nimony checkout, as nimony's own do)

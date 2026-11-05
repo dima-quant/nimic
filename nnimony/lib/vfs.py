@@ -37,10 +37,10 @@ if comptime(defined("nimony")):
 ## wraps a `MDB_txn`; a sandbox adapter would wrap whatever its source
 ## blob is and refuse to provide one for paths outside the allow-list.
 
-from nimic.std.memfiles import *
+from nimic.std.memfiles import MemFile
 from nimic.std import memfiles
-from nimic.std.syncio import *
-from nimic.std.times import *
+from nimic.std.syncio import writeLine
+from nimic.std.times import getTime, toUnix
 
 # --- profiling --------------------------------------------------------
 #
@@ -63,7 +63,7 @@ if comptime(defined("vfsProfile")):
         statMtime = VfsCounter()
         statRemove = VfsCounter()
 
-    from nimic.std.strutils import *
+    from nimic.std.strutils import ffDecimal, formatFloat, parseInt
 
     def dumpVfsProfile(label: string):
         @template
@@ -95,7 +95,7 @@ class FileWriteMode(NIntEnum):
 #
 # Never truncate a .nif or .bif that a reader may have mmap'd.
 
-from nimic.std.atomics import *
+from nimic.std.atomics import Atomic
 from nimic.std.atomics import fetchAdd
 
 if comptime(defined("windows")):
@@ -155,9 +155,11 @@ else:
         sleep(nint(ms))
 
 if comptime(defined("nimony")):
-    from nimic.std.os import *
+    from nimic.std.os import (
+        createDir, dirExists, existsOrCreateDir, fileExists, getLastModificationTime, getTempDir, moveFile, pcDir,
+        removeDir, removeFile, walkDir)
     from nimic.std.dirs import *
-    from nimic.std.paths import *
+    from nimic.std.paths import path
     from nimic.std.private.oscommons import *
     # Nimony's stdlib procs are `.raises`. Wrap them so vfs.nim stays
     # non-raising (the rest of the compiler is wired that way).
@@ -224,7 +226,9 @@ if comptime(defined("nimony")):
         try: return memfiles.open(p)
         except: quit(string("vfs: open failed: ") + p)
 else:
-    from nimic.std.os import *
+    from nimic.std.os import (
+        createDir, dirExists, existsOrCreateDir, fileExists, getLastModificationTime, getTempDir, moveFile, pcDir,
+        removeDir, removeFile, walkDir)
 
     def _unixModTime(path: string) -> int64:
         with let:
@@ -493,15 +497,15 @@ else:
 
 
 if comptime(__name__ == "__main__"):
-    from nimic.std.strutils import *
+    from nimic.std.strutils import ffDecimal, formatFloat, parseInt
 
-    def _countEntries(dir: string) -> nint:
+    def countEntries(dir: string) -> nint:
         result = nint(0)
         for kind, path in walkDir(dir):
             result += 1
         return result
 
-    def _taggedRead(path: string) -> string:
+    def taggedRead(path: string) -> string:
         return string("relayed: ") + _readBytes(path)
 
     echo(FileWriteMode.AlwaysWrite, " ", ord(FileWriteMode.OnlyIfChanged))
@@ -516,9 +520,9 @@ if comptime(__name__ == "__main__"):
     # vfsWrite replaces atomically: the file is there, no `.tmp.` file is left behind
     echo(vfsExists(f))
     vfsWrite(f, string("hello vfs"))
-    echo(vfsExists(f), " ", _countEntries(dir))
+    echo(vfsExists(f), " ", countEntries(dir))
     vfsWrite(f, string("hello again"))
-    echo(vfsRead(f), " ", _countEntries(dir))
+    echo(vfsRead(f), " ", countEntries(dir))
 
     # the mmap'd blob: its data and size; closeBlob twice is a no-op
     with var:
@@ -559,7 +563,7 @@ if comptime(__name__ == "__main__"):
     # a relay swapped by a driver, then restored
     with let:
         savedRead = readBytesRelay
-    readBytesRelay = _taggedRead
+    readBytesRelay = taggedRead
     echo(vfsRead(f))
     readBytesRelay = savedRead
     echo(vfsRead(f))

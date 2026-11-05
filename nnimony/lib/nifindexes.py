@@ -13,23 +13,13 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-from nimic.std.tables import *
-from nimic.std.assertions import *
-from nimic.std.hashes import *
-from nimic.std.syncio import *
-from nimic.std.strutils import *
+from nimic.std.tables import initOrderedTable, OrderedTable, Table
+from nimic.std import assertions
+from nimic.std import hashes
+from nimic.std import syncio
+from nimic.std import strutils
 from .bitabs import getOrIncl
-from .nifreader import (
-    close,
-    decodeFilename,
-    decodeInt,
-    decodeStr,
-    ExpandedToken,
-    indexStartsAt,
-    jumpTo,
-    next,
-    offset,
-    Reader)
+from .nifreader import close, decodeFilename, decodeInt, decodeStr, ExpandedToken, indexStartsAt, next, offset, Reader
 from . import nifreader
 from .nifpools import (
     addDotToken, addIdent, addParLe, addParRi, addStrLit, addSymUse, createTokenBuf, Cursor,
@@ -39,29 +29,24 @@ from .nifpools import (
 from .nifchecksums import updateLoop
 from .symparser import changeModuleExt
 from .vfs import vfsRead, vfsWrite
-from .stringviews import add
+from . import stringviews  # its `add` is called as a method
 importFrom(".lineinfos", "PackedLineInfo")  # only for NifIndexEntry.info (frozen Nim side)
 
 if comptime(defined("nimony")):
-    from nimic.std.sha1 import *
+    from nimic.std.sha1 import finalize, newSha1State, SecureHash, Sha1State
 else:
     # See `nifchecksums.nim`: `std/sha1` is the portable choice that ships in
     # `lib/std` on every Nim 2.x (the `$nim/dist/checksums/...` path only exists in
     # a git/devel layout). Same SHA-1 fork → identical digests.
     with push("warning[Deprecated]: off"):
-        from nimic.std.sha1 import *
+        from nimic.std.sha1 import finalize, newSha1State, SecureHash, Sha1State
 from ..models.tags import TagEnum
 from ..models.nifindex_tags import NifIndexKind, rawTagIsNifIndexKind
-from nimic.std.sha1 import finalize
 from .nifpools import writeFile  # its set overloads syncio's writeFile
 
 include("compat2")
 
 importFrom(".nifcoreparse", "parse")
-from nimic.std import syncio
-from . import nifreader
-# one name of two imports, called free: Nim overloads them (rule:overloads)
-close = overloads(syncio.close, nifreader.close)
 
 
 def _entryKind(tag: TagId) -> NifIndexKind:
@@ -190,7 +175,7 @@ def createIndex(infile: string, root: NifLineInfo, buildChecksum: bool, sections
     # Mirror the doc-mode cache split: `foo.sc.nif` → `foo.sc.idx.nif`, the regular
     # `foo.s.nif` → `foo.s.idx.nif`. Keeps both populations valid in parallel.
     with let:
-        isDocMode = infile.endsWith(".sc.nif")
+        isDocMode = infile.endsWith(string(".sc.nif"))
     with let:
         idxExt = string(".sc.idx.nif") if isDocMode else string(".s.idx.nif")
     with let:
@@ -408,7 +393,7 @@ def readEmbeddedIndex(r: mut @ Reader) -> OrderedTable[string, NifIndexEntry]:
 
 
 if comptime(__name__ == "__main__"):
-    from nimic.std.os import *
+    from nimic.std.os import fileExists, getTempDir, paramStr, removeFile
     try:
         createIndex(paramStr(1), False, NoLineInfo)
     except:
@@ -416,7 +401,7 @@ if comptime(__name__ == "__main__"):
 
 
 if comptime(__name__ == "__main__"):
-    def _echoIndex(idx: NifIndex):
+    def echoIndex(idx: NifIndex):
         echo("converters: ", idx.converters.len)
         for (k, v) in idx.converters:
             echo("  ", k, " -> ", v)
@@ -426,20 +411,20 @@ if comptime(__name__ == "__main__"):
             for nm in names:
                 echo("    ", pool.strings[nm])
 
-    def _indexText(infile: string) -> string:
+    def indexText(infile: string) -> string:
         result = readFile(changeModuleExt(infile, string(".s.idx.nif")))
         return result
 
-    def _checksumOf(path: string, text: string) -> string:
+    def checksumOf(path: string, text: string) -> string:
         writeFile(path, text)
         createIndex(path, True, NoLineInfo)
-        result = _indexText(path)
+        result = indexText(path)
         return result
 
-    def _addedTests():
+    def addedTests():
         # the original's block wrote an index without a checksum
-        echo(_indexText(paramStr(1)))
-        _echoIndex(readIndex(changeModuleExt(paramStr(1), string(".s.idx.nif"))))
+        echo(indexText(paramStr(1)))
+        echoIndex(readIndex(changeModuleExt(paramStr(1), string(".s.idx.nif"))))
 
         # private helpers
         echo(_isImportant(string("a.b")), " ", _isImportant(string("a.b.c")), " ",
@@ -471,8 +456,8 @@ if comptime(__name__ == "__main__"):
         with let:
             secFile = dir + string("nimic_nifindexes_sec.s.nif")
         createIndex(secFile, NoLineInfo, False, sections)
-        echo(_indexText(secFile))
-        _echoIndex(readIndex(changeModuleExt(secFile, string(".s.idx.nif"))))
+        echo(indexText(secFile))
+        echoIndex(readIndex(changeModuleExt(secFile, string(".s.idx.nif"))))
         removeFile(changeModuleExt(secFile, string(".s.idx.nif")))
         # doc mode: `.sc.nif` -> `.sc.idx.nif`
         with let:
@@ -485,7 +470,7 @@ if comptime(__name__ == "__main__"):
         with let:
             ckFile = dir + string("nimic_nifindexes_ck.s.nif")
         with let:
-            base = _checksumOf(ckFile, string(
+            base = checksumOf(ckFile, string(
                 string("(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))") +
                 string(" (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))") +
                 string(" (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))") +
@@ -493,7 +478,7 @@ if comptime(__name__ == "__main__"):
                 string(" (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))")))
         echo(base)
         with let:
-            body = _checksumOf(ckFile, string(
+            body = checksumOf(ckFile, string(
                 string("(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret 42)))") +
                 string(" (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))") +
                 string(" (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))") +
@@ -501,7 +486,7 @@ if comptime(__name__ == "__main__"):
                 string(" (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))")))
         echo("non-inline body: ", body == base)
         with let:
-            inl = _checksumOf(ckFile, string(
+            inl = checksumOf(ckFile, string(
                 string("(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))") +
                 string(" (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 2)))") +
                 string(" (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))") +
@@ -509,7 +494,7 @@ if comptime(__name__ == "__main__"):
                 string(" (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))")))
         echo("inline body: ", inl == base)
         with let:
-            gen = _checksumOf(ckFile, string(
+            gen = checksumOf(ckFile, string(
                 string("(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))") +
                 string(" (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))") +
                 string(" (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 2)))") +
@@ -517,7 +502,7 @@ if comptime(__name__ == "__main__"):
                 string(" (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))")))
         echo("generic body: ", gen == base)
         with let:
-            tmpl = _checksumOf(ckFile, string(
+            tmpl = checksumOf(ckFile, string(
                 string("(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))") +
                 string(" (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))") +
                 string(" (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))") +
@@ -525,7 +510,7 @@ if comptime(__name__ == "__main__"):
                 string(" (var :v.0.m x . (i +32) 5) (type :T.0.m x . . (object .)))")))
         echo("template body: ", tmpl == base)
         with let:
-            vv = _checksumOf(ckFile, string(
+            vv = checksumOf(ckFile, string(
                 string("(.nif27)\n(stmts (proc :f.0.m x . . (params (param :a.0 . . (i +32))) (i +32) . . (stmts (ret a.0)))") +
                 string(" (proc :g.0.m x . . (params) . (pragmas (inline)) . (stmts (call f.0.m 1)))") +
                 string(" (proc :h.0.m x . (typevars (typevar :T.0 . . . .)) (params) . . . (stmts (ret 1)))") +
@@ -535,7 +520,7 @@ if comptime(__name__ == "__main__"):
         # the index file is kept when its content is unchanged
         writeFile(changeModuleExt(ckFile, string(".s.idx.nif")), string("by hand"))
         createIndex(ckFile, True, NoLineInfo)
-        echo("rewritten: ", _indexText(ckFile) == vv)
+        echo("rewritten: ", indexText(ckFile) == vv)
         removeFile(ckFile)
         removeFile(changeModuleExt(ckFile, string(".s.idx.nif")))
 
@@ -547,7 +532,7 @@ if comptime(__name__ == "__main__"):
                                       string("m"))
         writeFileAndIndex(outFile, content)
         echo(readFile(outFile))
-        echo(_indexText(outFile))
+        echo(indexText(outFile))
         removeFile(outFile)
         removeFile(changeModuleExt(outFile, string(".s.idx.nif")))
 
@@ -584,4 +569,4 @@ if comptime(__name__ == "__main__"):
         close(rp)
         removeFile(plainFile)
 
-    _addedTests()
+    addedTests()

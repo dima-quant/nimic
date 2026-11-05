@@ -67,8 +67,8 @@ else:
     with const:
         assertionsEnabled = compileOption("assertions")
 
-from nimic.std.assertions import *
-from nimic.std.hashes import *
+from nimic.std.assertions import failedAssertImpl
+from nimic.std.hashes import Hash, hash
 from . import bitabs, lineinfos, nifroles
 from .bitabs import BiTable, ensureIndexed, getKeyId, getOrIncl, initBiTable
 from .lineinfos import FileId, isValid, NoFile
@@ -1156,7 +1156,6 @@ class Cursor(Object):
                 result.comment = StrId(cid)
         return result
 
-    @dispatch
     def inc(c: mut @ Cursor):
         """{.inline, nifAdvance, noSideEffect.}"""
         ## Advance past the *head* of the current value (kinded token plus its
@@ -2818,7 +2817,7 @@ def withSparseLineInfo(src: mut @ TokenBuf) -> TokenBuf:
 # ── Self-test ────────────────────────────────────────────────────────────
 
 if comptime(__name__ == "__main__"):
-    from nimic.std.formatfloat import *  # nimPreviewSlimSystem: `$`/echo of float64
+    from nimic.std import formatfloat  # nimPreviewSlimSystem: `$`/echo of float64
 
     @template
     def test(a: untyped, b: untyped):
@@ -2830,7 +2829,7 @@ if comptime(__name__ == "__main__"):
 
     # In a proc, not at module level: host Nim rejects the `{.nifWrap.}` statement of `into` /
     # `peekInto` expanded at module level ("custom pragmas are not supported for modules").
-    def _selfTest():
+    def selfTest():
         with block("bit_layout"):
             with let:
                 tp = newTagPool()
@@ -3192,21 +3191,21 @@ if comptime(__name__ == "__main__"):
 
         echo("nifcore self-tests passed")
 
-    _selfTest()
+    selfTest()
 
 
 # ── Added tests ──────────────────────────────────────────────────────────
 
 if comptime(__name__ == "__main__"):
-    class _Color(NIntEnum):
+    class Color(NIntEnum):
         red = auto()
         green = auto()
         blue = auto()
 
-    def _rc(b: TokenBuf) -> nint:
+    def rc(b: TokenBuf) -> nint:
         return 0 if isNil(b._owner) else b._owner._rc
 
-    def _addedTests():  # in a proc for the same reason as _selfTest
+    def addedTests():  # in a proc for the same reason as _selfTest
         # reference counts: beginRead, a copied cursor, endRead, mutation while reading,
         # reclaiming the owner, childCursor
         with block("ownership"):
@@ -3214,25 +3213,25 @@ if comptime(__name__ == "__main__"):
                 b = createTokenBuf(4)
             b.addIntLit(10)
             b.addIntLit(20)
-            echo("built: rc ", _rc(b))
+            echo("built: rc ", rc(b))
             with var:
                 c = b.beginRead()
-            echo("after beginRead: rc ", _rc(b))
+            echo("after beginRead: rc ", rc(b))
 
             with block:  # the copy is destroyed at the end of the block
                 with var:
                     cc = c.copy()
                 cc.inc()
-                echo("with copied cursor: rc ", _rc(b), ", copy at ", intVal(cc))
-            echo("after copied cursor gone: rc ", _rc(b))
+                echo("with copied cursor: rc ", rc(b), ", copy at ", intVal(cc))
+            echo("after copied cursor gone: rc ", rc(b))
             endRead(c)
-            echo("after endRead: rc ", _rc(b))
+            echo("after endRead: rc ", rc(b))
 
             # a mutation while a cursor reads: prepareMutation copies, the old owner stays with the cursor
             with var:
                 c2 = b.beginRead()
             b.addIntLit(30)
-            echo("mutation while reading: buffer rc ", _rc(b), ", cursor rc ", c2._owner._rc,
+            echo("mutation while reading: buffer rc ", rc(b), ", cursor rc ", c2._owner._rc,
                  ", cursor still reads ", intVal(c2))
             endRead(c2)
 
@@ -3240,9 +3239,9 @@ if comptime(__name__ == "__main__"):
             with var:
                 c3 = b.beginRead()
             endRead(c3)
-            echo("before reclaim: rc ", _rc(b))
+            echo("before reclaim: rc ", rc(b))
             b.addIntLit(40)
-            echo("after reclaim: rc ", _rc(b), ", len ", len(b))
+            echo("after reclaim: rc ", rc(b), ", len ", len(b))
 
             with var:
                 b2 = createTokenBuf(4)
@@ -3255,14 +3254,14 @@ if comptime(__name__ == "__main__"):
                 tree = b2.beginRead()
             with var:
                 child = childCursor(tree)
-            echo("childCursor: rc ", _rc(b2), ", rem ", child._rem, ", first ", intVal(child))
+            echo("childCursor: rc ", rc(b2), ", rem ", child._rem, ", first ", intVal(child))
             with var:
                 second = plus_bang(child, 1)
-            echo("+!: rc ", _rc(b2), ", rem ", second._rem, ", value ", intVal(second))
+            echo("+!: rc ", rc(b2), ", rem ", second._rem, ", value ", intVal(second))
             endRead(second)
             endRead(child)
             endRead(tree)
-            echo("after all cursors ended: rc ", _rc(b2))
+            echo("after all cursors ended: rc ", rc(b2))
 
         # the ids: `$`, `==`, hash; NifLineInfo and NifSymbol: ==, hash
         with block("ids_and_hashes"):
@@ -3324,7 +3323,7 @@ if comptime(__name__ == "__main__"):
         # tag pools: createTags, hasEscapes, escaped tags
         with block("tag_pools"):
             with let:
-                tp = createTags[_Color]()
+                tp = createTags[Color]()
             echo(tp.tagName(TagId(u32(1))), " ", tp.tagName(TagId(u32(3))), " ", tp.hasEscapes())
             with let:
                 esc = newTagPool()
@@ -3396,11 +3395,11 @@ if comptime(__name__ == "__main__"):
                 ro1 = fresh.readonlyCursorAt(0)
             with var:
                 ro2 = fresh.readonlyCursorAt(1)
-            echo("readonlyCursorAt on a fresh buffer: rc ", _rc(fresh), ", ", intVal(ro1),
+            echo("readonlyCursorAt on a fresh buffer: rc ", rc(fresh), ", ", intVal(ro1),
                  " ", intVal(ro2), ", pools ", pool(ro1) == fresh.pool)
             endRead(ro1)
             endRead(ro2)
-            echo("after both ended: rc ", _rc(fresh))
+            echo("after both ended: rc ", rc(fresh))
 
         # reopenLastTree, replace, sub, peekInto, peekPastEnd, subtreeWidth
         with block("trees"):
@@ -3477,10 +3476,10 @@ if comptime(__name__ == "__main__"):
             src.addIntLit(6)
             with var:
                 adopted = adoptForeignTokens(src.rawTokenPtr(), len(src), src.pool, src.tags)
-            echo("adopted: len ", len(adopted), ", rc ", _rc(adopted), ", same block ",
+            echo("adopted: len ", len(adopted), ", rc ", rc(adopted), ", same block ",
                  adopted.rawTokenPtr() == src.rawTokenPtr())
             adopted.addIntLit(7)
-            echo("after mutation: rc ", _rc(adopted), ", same block ", adopted.rawTokenPtr() == src.rawTokenPtr(),
+            echo("after mutation: rc ", rc(adopted), ", same block ", adopted.rawTokenPtr() == src.rawTokenPtr(),
                  ", len ", len(adopted), ", src len ", len(src))
             with var:
                 g = createTokenBuf(1)
@@ -3521,4 +3520,4 @@ if comptime(__name__ == "__main__"):
             echo("withSparseLineInfo: len ", len(dense), " -> ", len(sparse))
             echo("NoNifLineInfo unchanged: ", NoNifLineInfo.line, " ", uint32(NoNifLineInfo.file))
 
-    _addedTests()
+    addedTests()

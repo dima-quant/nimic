@@ -14,8 +14,8 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.os import *
-from nimic.std.strutils import *
+from nimic.std.os import getCurrentDir, splitFile
+from nimic.std import strutils
 
 with const:
     ExternalBucket = string("_external")

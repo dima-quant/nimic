@@ -9,9 +9,13 @@ from nimic.ntypes import *
 with push("warning[UnusedImport]: off"):
 
     from .bitabs import getOrIncl
-    from .nifpools import (
-        buildTree, createTokenBuf, ErrT, globalTags, NifKind, NoLineInfo, pool, tags, toString, writeFile)
-    from .nifbuilder import addHeader, addIdent, addIntLit, addStrLit, extract, open, withTree
+    from .nifpools import buildTree, createTokenBuf, ErrT, globalTags, NifKind, NoLineInfo, pool, toString, writeFile
+    from .nifbuilder import addHeader, extract, open, withTree
+    from . import nifbuilder, nifpools
+    # one name of two imports, called free: Nim overloads them (rule:overloads)
+    addIdent = overloads(nifpools.addIdent, nifbuilder.addIdent)
+    addIntLit = overloads(nifpools.addIntLit, nifbuilder.addIntLit)
+    addStrLit = overloads(nifpools.addStrLit, nifbuilder.addStrLit)
     from . import nifroles
     export(nifroles)
     importFrom(".nifreader")   # text reader; qualified-only: its NifKind must
@@ -20,17 +24,12 @@ with push("warning[UnusedImport]: off"):
 
 if comptime(__name__ == "__main__"):
     importFrom("nimic.std.os", "getTempDir", "removeFile")
-    from . import nifbuilder, nifpools
-    # one name of two imports, called free: Nim overloads them (rule:overloads)
-    addIdent = overloads(nifpools.addIdent, nifbuilder.addIdent)
-    addIntLit = overloads(nifpools.addIntLit, nifbuilder.addIntLit)
-    addStrLit = overloads(nifpools.addStrLit, nifbuilder.addStrLit)
 
-    def _roleHelper(n: nint) -> nint:
+    def roleHelper(n: nint) -> nint:
         """{.nifBalanced.}"""
         return n + 1
 
-    def _testPrelude():
+    def testPrelude():
         # nifcore's NifKind is not shadowed by nifreader's
         echo("kind: ", NifKind.TagLit, " ", NifKind.StrLit)
 
@@ -72,6 +71,6 @@ if comptime(__name__ == "__main__"):
         removeFile(tmpPath)
 
         # nifroles pragma
-        echo("role: ", _roleHelper(10))
+        echo("role: ", roleHelper(10))
 
-    _testPrelude()
+    testPrelude()

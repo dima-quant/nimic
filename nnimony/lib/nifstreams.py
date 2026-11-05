@@ -27,7 +27,7 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-from nimic.std.tables import *
+from nimic.std.tables import Table
 from .nifpools import (
     addIntLit, buildTree, charToken, childCursor, createTokenBuf, Cursor, cursorTagId,
     dotToken, endRead, ErrT, getKeyId, getOrIncl, globalTags, identToken, info, int28Token, intVal, kind, KindBits,
@@ -330,10 +330,10 @@ def open(filename: string) -> Stream:
 
 
 if comptime(__name__ == "__main__"):
-    from nimic.std.formatfloat import *
+    from nimic.std import formatfloat
     importFrom("nimic.std.os", "getTempDir", "removeFile")
 
-    def _testStream():
+    def testStream():
         # a small .nif file under getTempDir(), read back token by token
         with var:
             src = parseFromBuffer(string("(stmts :x.0.m foo \"str lit\" 'c' . 12 -3 4u 1.5 x.0.m (inner))"),
@@ -363,7 +363,7 @@ if comptime(__name__ == "__main__"):
         s.close()
         removeFile(path)
 
-    def _testFloats():
+    def testFloats():
         with let:
             a = floats(pool).getOrIncl(1.5)
             b = floats(pool).getOrIncl(1.5)
@@ -381,7 +381,7 @@ if comptime(__name__ == "__main__"):
         echo("floatToken: ", kind(ft), " ", floatId(ft) == big, " ",
              floats(pool)[floatId(ft)])
 
-    def _testIntegers():
+    def testIntegers():
         with let:
             i = integers(pool).getOrIncl(int64(-7))
             u = uintegers(pool).getOrIncl(high(uint64))
@@ -401,7 +401,7 @@ if comptime(__name__ == "__main__"):
         echo("uintId(cursor): ", uint64(uintId(c)))
         endRead(c)
 
-    def _testInfo():
+    def testInfo():
         echo("info(token) valid: ", isValid(info(dotToken())))
         with var:
             b = parseFromBuffer(string("(stmts@3,7,a.nim x (call y))"), string("m"))
@@ -428,7 +428,7 @@ if comptime(__name__ == "__main__"):
         echo("info(cursor) without line info valid: ", isValid(info(c0)))
         endRead(c0)
 
-    def _testAddIntLit():
+    def testAddIntLit():
         with let:
             fid = getOrIncl(pool.filenames, string("b.nim"))
         with let:
@@ -440,7 +440,7 @@ if comptime(__name__ == "__main__"):
             addIntLit(b, IntId(-1), lineinfos.NoLineInfo)
         echo("addIntLit: ", toString(b, False))
 
-    def _testConstructors():
+    def testConstructors():
         with let:
             sid = getOrIncl(pool.strings, string("hello"))
             yid = syms(pool).getOrIncl(string("sym.1.m"))
@@ -459,9 +459,9 @@ if comptime(__name__ == "__main__"):
             pt = PackedToken(st)
         echo("PackedToken: ", pt == st)
 
-    _testStream()
-    _testFloats()
-    _testIntegers()
-    _testInfo()
-    _testAddIntLit()
-    _testConstructors()
+    testStream()
+    testFloats()
+    testIntegers()
+    testInfo()
+    testAddIntLit()
+    testConstructors()

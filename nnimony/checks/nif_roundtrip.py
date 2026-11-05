@@ -11,8 +11,8 @@
 ## compares stdout and every output file byte for byte.
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.os import *
-from nimic.std.syncio import *
+from nimic.std.os import extractFilename, paramCount, paramStr
+from nimic.std import syncio
 from ..lib import bif, nifcoreparse
 from ..lib.nifreader import extractModuleSuffix
 

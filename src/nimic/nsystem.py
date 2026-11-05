@@ -1293,10 +1293,12 @@ def include(*names: str) -> None:
 
 def _n_imports_end(tree: _ast.Module) -> int:
     """The first line after a module's imports: after its last top-level statement that imports (`import`,
-    `from ... import`, `include(...)`, `importFrom(...)`, `importExcept(...)`, also in a `when` branch). The main
-    block (`if comptime(__name__ == "__main__"):`, Nim's `when isMainModule:`) doesn't count: it runs only in the
-    main program and is the module's last code, its imports included (a module's tests)."""
-    importers = ("include", "importFrom", "importExcept")
+    `from ... import`, `include(...)`, `importFrom(...)`, `importExcept(...)`, also in a `when` branch) or binds an
+    overload set of imported procs (`f = overloads(a.f, b.f)`, rule:overloads: it stands where its modules are
+    imported, and the module's @dispatch may extend it). The main block (`if comptime(__name__ == "__main__"):`,
+    Nim's `when isMainModule:`) doesn't count: it runs only in the main program and is the module's last code, its
+    imports included (a module's tests)."""
+    importers = ("include", "importFrom", "importExcept", "overloads")
     end = 0
     for stmt in tree.body:
         if isinstance(stmt, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)) or _n_imports.is_main_block(stmt):

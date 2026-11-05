@@ -267,7 +267,7 @@ def cmpNames(a: string, b: string) -> nint:
 
 
 if comptime(__name__ == "__main__"):
-    from nimic.std.assertions import *
+    from nimic.std import assertions
     assert extractVersionedBasename(string("abc.12.Mod132a3bc")) == "abc.12"
     assert extractVersionedBasename(string("abc.Mod132a3bc")) == ""
 

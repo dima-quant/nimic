@@ -11,10 +11,10 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.os import *
-from nimic.std.strutils import *
-from nimic.std.syncio import *
-from nimic.std.parseopt import *
+from nimic.std.os import createDir, expandFilename, fileExists, getTempDir, isAbsolute, removeDir
+from nimic.std import strutils
+from nimic.std.syncio import lines
+from nimic.std.parseopt import CmdLineKind, getopt
 
 
 def _parseCmdArg(c: string, i: nint, a: mut @ string) -> nint:
@@ -157,7 +157,7 @@ def extractCCKey(val: string) -> string:
 
 
 if comptime(__name__ == "__main__"):
-    from nimic.std.assertions import *
+    from nimic.std import assertions
     assert extractArgsKey(string("gcc")) == "gcc"
     assert extractArgsKey(string("/usr/bin/gcc")) == "gcc"
     assert extractArgsKey(string("/usr/bin/arm-linux-gnueabihf-gcc")) == "arm-linux-gnueabihf-gcc"

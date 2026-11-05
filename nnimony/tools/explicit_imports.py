@@ -1,6 +1,8 @@
 """Rewrites the star imports of nimic modules into name imports (ncompiler/proposals/feature_module_scoped_dispatch.md
 §5.1): `from .nifcore import *` becomes `from .nifcore import Cursor, TokenBuf, beginRead`, the names the module
-uses that this import binds today. Imports of the nimic core (`nimic.ntypes`, `nimic.std.*`) stay star imports.
+uses that this import binds today. The star imports of nimic's std modules are rewritten the same way
+(`from nimic.std.strutils import *` -> `from nimic.std.strutils import split, startsWith`); only the prelude,
+`nimic.ntypes` (Nim's implicitly imported system), stays a star import.
 
     .venv/bin/python -m nnimony.tools.explicit_imports [--write] nnimony.lib.nifcore ncompiler.lexer ...
 
@@ -32,16 +34,26 @@ from nimic.imports import imports_of, included_trees, is_core, is_routine, nim_e
 from nimic.valuecheck import is_nimic_file
 
 _WIDTH = 120
+PRELUDE = "nimic.ntypes"  # the one star import left: Nim's system module
+
+
+def _is_target(name: str) -> bool:
+    """A star import to rewrite: a nimic std module, or a nimic module that is not the core."""
+    if name.startswith("nimic.std."):
+        return True
+    if is_core(name):
+        return False
+    spec = importlib.util.find_spec(name)
+    return spec is not None and is_nimic_file(spec.origin or "")  # not Python's own (math)
 
 
 def _star_targets(tree, package: str) -> list:
-    """(node, module name) of the star imports of nimic modules that are not the core, in source order."""
+    """(node, module name) of the star imports to rewrite (`_is_target`), in source order."""
     found = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.names[0].name == "*" and node.module != "__future__":
             name = importlib.util.resolve_name("." * node.level + (node.module or ""), package)
-            spec = None if is_core(name) else importlib.util.find_spec(name)
-            if spec is not None and is_nimic_file(spec.origin or ""):  # not the core, not Python's own (math)
+            if _is_target(name):
                 found.append((node, name))
     return sorted(found, key=lambda t: t[0].lineno)
 
@@ -224,8 +236,8 @@ def _plan(module_name: str) -> tuple:
             continue
         line, provider = providers[-1]  # Python binds the last star import's
         value = getattr(sys.modules[provider], u)
-        if any(is_core(m) and getattr(sys.modules[m], u, None) is value for _, m in providers):
-            continue  # the core star import binds it (a user module's star import may re-export it)
+        if any(m == PRELUDE and getattr(sys.modules[m], u, None) is value for _, m in providers):
+            continue  # the prelude's star import binds it (another star import may re-export it)
         routines = {m.__name__ for obj, m in visible(imports, u) if is_routine(obj)}  # Nim's view: name resolution, rules 8.1
         if len(routines) > 1:
             report.append(f"  ! {u}: routines of {', '.join(sorted(routines))} (Nim overloads them; "
@@ -240,9 +252,9 @@ def _plan(module_name: str) -> tuple:
         # a leak: Python binds a name Nim's imports don't bring (a star import of a star import)
         others = [m for _, m in providers if getattr(sys.modules[m], u) is not value
                   and nim_exports(sys.modules[m], u, getattr(sys.modules[m], u))]
-        core = [m for m in others if is_core(m)]
+        core = [m for m in others if m == PRELUDE]
         if core:
-            report.append(f"  ~ {u}: was {provider}'s leak, now {core[-1]}'s (the core star import; Nim's)")
+            report.append(f"  ~ {u}: was {provider}'s leak, now {core[-1]}'s (the prelude's star import; Nim's)")
         elif others and u in dispatched:
             chosen.setdefault(others[-1], []).append(u)
             report.append(f"  ~ {u}: the module's @dispatch extends {others[-1]}'s (Nim's), not {provider}'s leak")
@@ -269,7 +281,8 @@ def _plan(module_name: str) -> tuple:
             head, _, leaf = (node.module or "").rpartition(".")
             parent = "." * node.level + head  # `from .ea import *` -> `from . import ea`
             level = node.level
-            statement = f"from {parent} import {leaf}" if node.level else f"import {spec}"
+            # `from nimic.std import syncio` (rules §8: `import std/syncio`), not `import nimic.std.syncio`
+            statement = f"from {parent} import {leaf}" if node.level or head else f"import {spec}"
             if (level, parent.lstrip("."), leaf) in module_imports or (not node.level and (0, "", spec) in module_imports):
                 report.append(f"  - {spec}: no name used; the module already has `{statement}`")
             else:

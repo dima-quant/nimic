@@ -10,19 +10,17 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-from nimic.std.formatfloat import *
+from nimic.std import formatfloat
 
 from . import bitabs
 from . import nifreader
 from .nifpools import (
-    buildTree, createTokenBuf, Cursor, cursorTagId, endRead,
-    ErrT, floatVal, globalTags, into, intVal, isCharLit, isDotToken, isFloatLit, isIdent, isIntLit,
-    isStringLit, isSymbol, isSymbolDef, isTagLit, isUIntLit, NoLineInfo, parseFromBuffer, pool, registerTag, strId,
-    symId, TagId, tags, toString, uintVal, uoperand)
-from nimic.std.sha1 import finalize, update
+    buildTree, createTokenBuf, Cursor, cursorTagId, endRead, ErrT, floatVal, globalTags, into, intVal, isCharLit,
+    isDotToken, isFloatLit, isIdent, isIntLit, isStringLit, isSymbol, isSymbolDef, isTagLit, isUIntLit, NoLineInfo,
+    parseFromBuffer, pool, registerTag, strId, symId, TagId, toString, uintVal, uoperand)
 
 if comptime(defined("nimony")):
-    from nimic.std.sha1 import *
+    from nimic.std.sha1 import finalize, newSha1State, SecureHash, Sha1State, update
 else:
     # `std/sha1` is `{.deprecated.}` in favor of the `checksums` package, but it is
     # the only SHA-1 module guaranteed to ship in `lib/std` on every Nim 2.x and
@@ -30,7 +28,7 @@ else:
     # git/devel layout, so a released Nim 2 (as the docs require) failed with
     # "cannot open file". It is the same SHA-1 fork, so digests are identical.
     with push("warning[Deprecated]: off"):
-        from nimic.std.sha1 import *
+        from nimic.std.sha1 import finalize, newSha1State, SecureHash, Sha1State, update
 
 
 def _updateAtom(dest: mut @ Sha1State, n: Cursor):
@@ -101,7 +99,7 @@ def computeChecksum(s: string) -> string:
 
 
 if comptime(__name__ == "__main__"):
-    def _checksumOf(text: string) -> string:
+    def checksumOf(text: string) -> string:
         with var:
             b = parseFromBuffer(text, string("cs"))
         with var:
@@ -110,7 +108,7 @@ if comptime(__name__ == "__main__"):
         endRead(c)
         return result
 
-    def _hashedText(text: string, inlineT: TagId) -> string:
+    def hashedText(text: string, inlineT: TagId) -> string:
         # the digest of updateLoop, plus whether the inline tag was seen
         with var:
             b = parseFromBuffer(text, string("cs"))
@@ -126,7 +124,7 @@ if comptime(__name__ == "__main__"):
         endRead(c)
         return string(str(SecureHash(finalize(st))))
 
-    def _testChecksums():
+    def testChecksums():
         # every atom kind, nested tags
         with let:
             trees = [
@@ -141,11 +139,11 @@ if comptime(__name__ == "__main__"):
                 string("\"just a string\""),
             ]
         for t in trees:
-            echo(t, " -> ", _checksumOf(t))
+            echo(t, " -> ", checksumOf(t))
 
         # the same tree with and without line info hashes the same
         echo("line info ignored: ",
-             _checksumOf(string("(stmts@1,2,f.nim (call@1,1 foo 1))")) == _checksumOf(string("(stmts (call foo 1))")))
+             checksumOf(string("(stmts@1,2,f.nim (call@1,1 foo 1))")) == checksumOf(string("(stmts (call foo 1))")))
 
         # floats the parser may not spell: built with addFloatLit
         with var:
@@ -171,14 +169,14 @@ if comptime(__name__ == "__main__"):
         with let:
             inl = registerTag(string("inl"))
         echo("inline found:")
-        echo("  ", _hashedText(string("(stmts (inl 1) 2)"), inl))
+        echo("  ", hashedText(string("(stmts (inl 1) 2)"), inl))
         echo("inline not found:")
-        echo("  ", _hashedText(string("(stmts (call 1) 2)"), inl))
+        echo("  ", hashedText(string("(stmts (call 1) 2)"), inl))
         echo("inline with NoInlineTag:")
-        echo("  ", _hashedText(string("(stmts (inl 1) 2)"), _NoInlineTag))
+        echo("  ", hashedText(string("(stmts (inl 1) 2)"), _NoInlineTag))
 
         # strings
         for s in [string(""), string("abc"), string("hello world"), string("(stmts 1)")]:
             echo("\"", s, "\" -> ", computeChecksum(s))
 
-    _testChecksums()
+    testChecksums()

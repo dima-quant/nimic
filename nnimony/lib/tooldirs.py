@@ -5,8 +5,8 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.os import *
-from nimic.std.strutils import *
+from nimic.std.os import addFileExt, ExeExt, fileExists, getAppDir, splitPath
+from nimic.std import strutils
 
 
 def binDir() -> string:
@@ -32,7 +32,7 @@ def toolDir(f: string) -> string:
 def findTool(name: string) -> string:
     result = name.addFileExt(ExeExt)
     if fileExists(result):
-        _ = string("ok")
+        _ = "ok"
     elif not name.isAbsolute():
         with let:
             t = toolDir(result)

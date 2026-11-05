@@ -16,8 +16,8 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.strutils import *
-from nimic.std.syncio import *
+from nimic.std.strutils import cmpIgnoreStyle
+from nimic.std import syncio
 
 
 class TSystemOS(NIntEnum): # Also add OS in initialization section and alias

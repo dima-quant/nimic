@@ -52,7 +52,7 @@ if comptime(not defined("nimony")):
         return Path(s)
 
 if comptime(not defined("nimony")):
-    from nimic.std.tables import *
+    from nimic.std.tables import OrderedTable, Table
 
     @dispatch
     def getOrQuit[A, B](t: mut @ Table[A, B], k: A) -> mut @ B:

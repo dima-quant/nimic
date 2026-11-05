@@ -25,27 +25,24 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-from nimic.std.syncio import *
-from nimic.std.assertions import *
-from nimic.std.formatfloat import *
+from nimic.std import syncio
+from nimic.std import assertions
+from nimic.std import formatfloat
 from .nifcore import (
     charLit, Cursor, cursorTagId, endRead, floatVal, into, intVal, kind, NifKind, skip, strVal,
     symName, tags, TokenBuf, uintVal)
-from .nifbuilder import addHeader, addStrLit, close, withTree
+from .nifbuilder import addHeader, close, withTree
 from . import nifbuilder
-from nimic.std.sha1 import finalize, update
 importFrom(".vfs", "OnlyIfChanged")
-from nimic.std import syncio
-from . import nifbuilder, nifcore
+from . import nifcore
 # one name of two imports, called free: Nim overloads them (rule:overloads)
-close = overloads(syncio.close, nifbuilder.close)
 addStrLit = overloads(nifcore.addStrLit, nifbuilder.addStrLit)
 
 if comptime(defined("nimony")):
-    from nimic.std.sha1 import *
+    from nimic.std.sha1 import finalize, newSha1State, SecureHash, Sha1State, update
 else:
     with push("warning[Deprecated]: off"):
-        from nimic.std.sha1 import *
+        from nimic.std.sha1 import finalize, newSha1State, SecureHash, Sha1State, update
 
 
 def lengInterfaceFile(lengFile: string) -> string:
@@ -167,13 +164,13 @@ if comptime(__name__ == "__main__"):
     from .nifcoreparse import parseFromBuffer
     importFrom("nimic.std.os", "getTempDir", "removeFile", "fileExists", "getLastModificationTime")
 
-    def _digestOf(text: string) -> string:
+    def digestOf(text: string) -> string:
         with var:
             buf = parseFromBuffer(text, string("lt"))
         result = lengInterfaceDigest(buf)
         return result
 
-    def _addedTests():
+    def addedTests():
         # the interface file's name
         echo(lengInterfaceFile(string("M.c.nif")))
         echo(lengInterfaceFile(string("M.oc.nif")))
@@ -181,7 +178,7 @@ if comptime(__name__ == "__main__"):
 
         # the digest of small modules
         with let:
-            base = _digestOf(string(
+            base = digestOf(string(
                 string("(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 5)") +
                 string(" (proc :f.0 (params (param :a.0 . . (i +32))) (i +32) . (stmts (ret a.0)))") +
                 string(" (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 1)))") +
@@ -190,7 +187,7 @@ if comptime(__name__ == "__main__"):
         echo("base: ", base)
         # only a non-inline body changes: the same digest
         with let:
-            body = _digestOf(string(
+            body = digestOf(string(
                 string("(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 5)") +
                 string(" (proc :f.0 (params (param :a.0 . . (i +32))) (i +32) . (stmts (ret 42) (call g.0)))") +
                 string(" (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 1)))") +
@@ -199,7 +196,7 @@ if comptime(__name__ == "__main__"):
         echo("non-inline body changed: ", body, " same: ", body == base)
         # an inline body changes: a different digest
         with let:
-            inl = _digestOf(string(
+            inl = digestOf(string(
                 string("(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 5)") +
                 string(" (proc :f.0 (params (param :a.0 . . (i +32))) (i +32) . (stmts (ret a.0)))") +
                 string(" (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 2)))") +
@@ -208,7 +205,7 @@ if comptime(__name__ == "__main__"):
         echo("inline body changed: ", inl, " same: ", inl == base)
         # a signature changes: a different digest
         with let:
-            sig = _digestOf(string(
+            sig = digestOf(string(
                 string("(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 5)") +
                 string(" (proc :f.0 (params (param :a.0 . . (i +64))) (i +32) . (stmts (ret a.0)))") +
                 string(" (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 1)))") +
@@ -217,7 +214,7 @@ if comptime(__name__ == "__main__"):
         echo("signature changed: ", sig, " same: ", sig == base)
         # a global's value changes: a different digest
         with let:
-            val = _digestOf(string(
+            val = digestOf(string(
                 string("(stmts (type :T.0 . . (object)) (const :c.0 . . (i +32) 6)") +
                 string(" (proc :f.0 (params (param :a.0 . . (i +32))) (i +32) . (stmts (ret a.0)))") +
                 string(" (proc :g.0 (params) . (pragmas (inline)) (stmts (call f.0 1)))") +
@@ -225,13 +222,13 @@ if comptime(__name__ == "__main__"):
                 string(" (let :s.0 . . (string) \"str\") (let :n.0 . . (i +32) -3))")))
         echo("const value changed: ", val == base)
         # line info is not part of the digest
-        echo("line info ignored: ", _digestOf(string("(stmts@1,2,a.nim (let@3,4 :x.0 . . . 1))")) ==
-             _digestOf(string("(stmts (let :x.0 . . . 1))")))
+        echo("line info ignored: ", digestOf(string("(stmts@1,2,a.nim (let@3,4 :x.0 . . . 1))")) ==
+             digestOf(string("(stmts (let :x.0 . . . 1))")))
         # a module that is no tree, and an empty one
-        echo("atom: ", _digestOf(string("x")))
-        echo("empty stmts: ", _digestOf(string("(stmts)")))
+        echo("atom: ", digestOf(string("x")))
+        echo("empty stmts: ", digestOf(string("(stmts)")))
         # a proc with fewer than 4 sons
-        echo("short proc: ", _digestOf(string("(stmts (proc :p.0 (params)))")))
+        echo("short proc: ", digestOf(string("(stmts (proc :p.0 (params)))")))
 
         # writeLengInterface under getTempDir()
         with let:
@@ -263,4 +260,4 @@ if comptime(__name__ == "__main__"):
         echo(readFile(idxFile))
         removeFile(idxFile)
 
-    _addedTests()
+    addedTests()

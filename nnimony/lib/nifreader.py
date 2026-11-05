@@ -11,10 +11,8 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from nimic.std.memfiles import *
-from nimic.std.parseutils import *
 from nimic.std import parseutils
-from nimic.std.assertions import *
+from nimic.std import assertions
 from .stringviews import beginStore, endStore, pchar, StringView
 from .vfs import initBlob, VfsBlob, vfsOpenMmap
 from .nifcore import NifKind  # the ONE token-kind enum, shared with the binary token model
@@ -30,7 +28,6 @@ with const:
     StringLit = NifKind.StrLit
     ## The reader's traditional name for the string-literal token kind.
 if comptime(defined("nimony")):
-    from nimic.std.syncio import *
 
     pragma('feature: "lenientnils"')
 
@@ -1435,13 +1432,13 @@ def firstUnusedName(r: Reader) -> string:
 
 if comptime(__name__ == "__main__" and not defined("nimony")):
 
-    def _tokens(input: string, split: bool) -> seq[string]:
+    def tokens(input: string, split: bool) -> seq[string]:
         """Every token of `input`, rendered as "<what>:<decoded text>"."""
         result = default(seq[string])
         with var:
             r = openFromBuffer(input, string("ThisMod"))
         r.splitSymbols(split)
-        result = seq[string]()
+        result = seq[string]([])
         with var:
             tok = default(ExpandedToken)
         while True:
@@ -1478,12 +1475,12 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
         close(r)
         return result
 
-    def _numbers(input: string) -> seq[string]:
+    def numbers(input: string) -> seq[string]:
         """Every token of `input`, numbers rendered by their decoded value."""
         result = default(seq[string])
         with var:
             r = openFromBuffer(input.copy(), string("ThisMod"))
-        result = seq[string]()
+        result = seq[string]([])
         with var:
             tok = default(ExpandedToken)
         while True:
@@ -1507,17 +1504,17 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
         return result
 
     # Numbers: base prefixes and `_` digit separators.
-    assert _numbers(string("(n 0xFF 0xff 0o377 0b1111_1111 -0xFF 0xDEAD_BEEFu 1_000_000)")) == seq[string](
+    assert numbers(string("(n 0xFF 0xff 0o377 0b1111_1111 -0xFF 0xDEAD_BEEFu 1_000_000)")) == seq[string](
         [string("(n"), string("i255"), string("i255"), string("i255"), string("i255"), string("i-255"),
          string("u3735928559"), string("i1000000"), string(")")])
-    assert _numbers(string("1_234.5_6E+0_2 1234.56E+02 0x1E3 012 -0o17 0b0u")) == seq[string](
+    assert numbers(string("1_234.5_6E+0_2 1234.56E+02 0x1E3 012 -0o17 0b0u")) == seq[string](
         [string("f12345600"), string("f12345600"), string("i483"), string("i12"), string("i-15"), string("u0")])
-    assert _numbers(string("0x7FFF_FFFF_FFFF_FFFF -0x8000_0000_0000_0000 0xFFFF_FFFF_FFFF_FFFFu")) == seq[string](
+    assert numbers(string("0x7FFF_FFFF_FFFF_FFFF -0x8000_0000_0000_0000 0xFFFF_FFFF_FFFF_FFFFu")) == seq[string](
         [string("i9223372036854775807"), string("i-9223372036854775808"), string("u18446744073709551615")])
     # malformed spellings are one error token each
     for bad in [string("0x"), string("0o8"), string("0b102"), string("0x_FF"), string("1_"), string("1__2"),
                 string("1_.0"), string("1._0"), string("1E_2"), string("1E+_2"), string("1_u")]:
-        assert _numbers(bad) == seq[string]([string("UnknownToken:") + bad]), bad
+        assert numbers(bad) == seq[string]([string("UnknownToken:") + bad]), bad
     # `#` and `:` may appear literally inside a string; the comment follows the quote
     with block:
         with var:
@@ -1534,7 +1531,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
 
     # Off by default: a symbol is one token carrying the whole string, exactly
     # as every existing client expects.
-    assert _tokens(
+    assert tokens(
         string("(stmts abc.12.Ikey.mod :def.1.mod tmp.14)"), False
     ) == seq[string](
         [string("(stmts"),
@@ -1546,68 +1543,68 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
 
     # On: the reader takes the symbol apart and reports the components as
     # `ExtendedSuffix` tokens following the head.
-    assert _tokens(string("abc.12.Ikey.mod"), True) == seq[string](
+    assert tokens(string("abc.12.Ikey.mod"), True) == seq[string](
         [string("sym3:abc"),
         string("SymDisamb:12=12"),
         string("SymDedup:Ikey"),
         string("SymModule:mod")],
     )
-    assert _tokens(string("abc.12.mod"), True) == seq[string](
+    assert tokens(string("abc.12.mod"), True) == seq[string](
         [string("sym2:abc"),
         string("SymDisamb:12=12"),
         string("SymModule:mod")],
     )
     # A local symbol has no module.
-    assert _tokens(string("tmp.14"), True) == seq[string](
+    assert tokens(string("tmp.14"), True) == seq[string](
         [string("sym1:tmp"),
         string("SymDisamb:14=14")],
     )
     # A symbol definition splits the same way.
-    assert _tokens(string(":def.1.mod"), True) == seq[string](
+    assert tokens(string(":def.1.mod"), True) == seq[string](
         [string("def2:def"),
         string("SymDisamb:1=1"),
         string("SymModule:mod")],
     )
     # A trailing dot is the "my own module" shorthand: it is the last component
     # that expands, not the name.
-    assert _tokens(string("x.3."), True) == seq[string](
+    assert tokens(string("x.3."), True) == seq[string](
         [string("sym2:x"),
         string("SymDisamb:3=3"),
         string("SymModule:ThisMod")],
     )
     # Only the disambiguator's dot ends the name; the name may contain dots.
-    assert _tokens(string("a.b.c.23.mod"), True) == seq[string](
+    assert tokens(string("a.b.c.23.mod"), True) == seq[string](
         [string("sym2:a.b.c"),
         string("SymDisamb:23=23"),
         string("SymModule:mod")],
     )
     # An escaped dot is `\2E` in the raw bytes and so cannot be mistaken for a
     # separator; the escapes stay with the component that has them.
-    assert _tokens(string("a\\2Eb.5.mod"), True) == seq[string](
+    assert tokens(string("a\\2Eb.5.mod"), True) == seq[string](
         [string("sym2:a.b"),
         string("SymDisamb:5=5"),
         string("SymModule:mod")],
     )
     # An operator definition has no dot to split on and is left whole.
-    assert _tokens(string("foo.bar"), True) == seq[string](
+    assert tokens(string("foo.bar"), True) == seq[string](
         [string("sym1:foo"),
         string("SymModule:bar")],
     )
-    assert _tokens(string(":\\5B\\5D="), True) == seq[string]([string("def0:[]=")])
+    assert tokens(string(":\\5B\\5D="), True) == seq[string]([string("def0:[]=")])
     # A disambiguator the inliner minted is NOT a module, however non-numeric it
     # looks after its first character.
-    assert _tokens(string("p.0h107"), True) == seq[string](
+    assert tokens(string("p.0h107"), True) == seq[string](
         [string("sym1:p"),
         string("SymDisamb:0h107=0")],
     )
     # ...and one with no numeric part at all (arkham's legacy syproc names) still
     # yields its module; everything before it is the name.
-    assert _tokens(string("_exit.sys.sysvq0asl"), True) == seq[string](
+    assert tokens(string("_exit.sys.sysvq0asl"), True) == seq[string](
         [string("sym1:_exit.sys"),
         string("SymModule:sysvq0asl")],
     )
     # Line info and comments ride on the head, as before.
-    assert _tokens(string("abc.12.mod@3,4#hi#"), True) == seq[string](
+    assert tokens(string("abc.12.mod@3,4#hi#"), True) == seq[string](
         [string("sym2:abc"),
         string("SymDisamb:12=12"),
         string("SymModule:mod")],
@@ -1631,12 +1628,12 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
         assert tok.tk == NifKind.ExtendedSuffix and tok.part == SymbolPart.SymDisamb
         close(r)
 
-    def _lineTokens(input: string) -> seq[string]:
+    def lineTokens(input: string) -> seq[string]:
         """Like `tokens`, for the line-based syntax; string literals are quoted."""
         result = default(seq[string])
         with var:
             r = openFromBuffer(input, string("ThisMod"), lineBased=True)
-        result = seq[string]()
+        result = seq[string]([])
         with var:
             tok = default(ExpandedToken)
         while True:
@@ -1658,7 +1655,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
         return result
 
     if True:  # line-based syntax
-        assert _lineTokens(
+        assert lineTokens(
             string('copy a/b.txt dest/b.txt\nwarn 2024-08-12 "permission denied"')
         ) == seq[string](
             [string("(copy"),
@@ -1671,11 +1668,11 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             string(")")],
         )
         # the same AST as the parenthesized form
-        assert _lineTokens(string("copy a/b.txt dest/b.txt\n")) == _lineTokens(
+        assert lineTokens(string("copy a/b.txt dest/b.txt\n")) == lineTokens(
             string('(copy "a/b.txt" "dest/b.txt")')
         )
         # both forms mix; directives keep their form and are skipped as usual
-        assert _lineTokens(
+        assert lineTokens(
             string(
                 '(.nif27)\ninfo 2024-08-12T09:14:03Z "server started" (port 8080)\n'
             )
@@ -1688,7 +1685,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             string(")"),
             string(")")],
         )
-        assert _lineTokens(string("(a x) b c\n(d)")) == seq[string](
+        assert lineTokens(string("(a x) b c\n(d)")) == seq[string](
             [string("(a"),
             string("x"),
             string(")"),
@@ -1699,7 +1696,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             string(")")],
         )
         # a parenthesized argument (and a string) continues the line
-        assert _lineTokens(string('a (b\n  c) "x\ny"\n  d')) == seq[string](
+        assert lineTokens(string('a (b\n  c) "x\ny"\n  d')) == seq[string](
             [string("(a"),
             string("(b"),
             string("c"),
@@ -1710,16 +1707,16 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             string(")")],
         )
         # empty and blank lines, indentation, CRLF, a line with just a tag
-        assert _lineTokens(string("\n  \t\n  ls\r\n\r\nls x\r\n")) == seq[string](
+        assert lineTokens(string("\n  \t\n  ls\r\n\r\nls x\r\n")) == seq[string](
             [string("(ls"),
             string(")"),
             string("(ls"),
             string("x"),
             string(")")],
         )
-        assert _lineTokens(string("")) == newSeq[string]()
+        assert lineTokens(string("")) == newSeq[string]()
         # the string rule applies at every nesting level of a line-based module
-        assert _lineTokens(string("a (b x/y)\n(c x/y)")) == seq[string](
+        assert lineTokens(string("a (b x/y)\n(c x/y)")) == seq[string](
             [string("(a"),
             string("(b"),
             string('"x/y"'),
@@ -1730,7 +1727,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             string(")")],
         )
         # a number that continues with `-`, `/` or `:` extends to the whitespace
-        assert _lineTokens(
+        assert lineTokens(
             string(
                 "t 2024-08-12 2024-08-12T14:05:09.25+02:00 2024-08-12x 1/2 14:05 12:00Z"
             )
@@ -1745,7 +1742,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             string(")")],
         )
         # other numbers stay numbers
-        assert _lineTokens(string("t 42 -7 1.5 1.5E-3 x.1")) == seq[string](
+        assert lineTokens(string("t 42 -7 1.5 1.5E-3 x.1")) == seq[string](
             [string("(t"),
             string("42"),
             string("-7"),
@@ -1757,7 +1754,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
         # so do identifiers and symbols; once one continues with `-`, `/` or `:`,
         # control characters other than parentheses and suffix introducers are
         # part of the string
-        assert _lineTokens(
+        assert lineTokens(
             string(
                 'get x-y /usr/bin a/b.txt my\\20dir/a.txt dest/x. a/b:c"d#e# (p a/b)'
             )
@@ -1774,7 +1771,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             string(")"),
             string(")")],
         )
-        assert _lineTokens(
+        assert lineTokens(
             string("get https://nim-lang.org C:/tmp/x.txt key: a.b:c")
         ) == seq[string](
             [string("(get"),
@@ -1812,14 +1809,14 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             )
             close(r)
         # `-` without digits is an empty number: `--color` continues with `-`
-        assert _lineTokens(string("ls --color -3")) == seq[string](
+        assert lineTokens(string("ls --color -3")) == seq[string](
             [string("(ls"),
             string('"--color"'),
             string("-3"),
             string(")")],
         )
         # `..` alone is still two empty nodes
-        assert _lineTokens(string("up ..")) == seq[string](
+        assert lineTokens(string("up ..")) == seq[string](
             [string("(up"),
             string("."),
             string("."),
@@ -1844,7 +1841,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             assert decodeComment(tok) == "disk"
             close(r)
         # a line that does not start with an identifier is one error token
-        assert _lineTokens(string("./run.sh x\nok")) == seq[string](
+        assert lineTokens(string("./run.sh x\nok")) == seq[string](
             [string("?./run.sh x"),
             string("(ok"),
             string(")")],
@@ -1864,18 +1861,18 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             assert r.line == int32(3)
             close(r)
         # off by default: plain NIF is read exactly as before
-        assert _tokens(string("(a) b"), False) == seq[string](
+        assert tokens(string("(a) b"), False) == seq[string](
             [string("(a"),
             string(")"),
             string("Ident:b")],
         )
 
     with block:  # an escape cut short by the end of its token keeps the backslash
-        assert _tokens(string("ab\\"), False) == seq[string]([string("Ident:ab\\")])
-        assert _tokens(string("ab\\4"), False) == seq[string]([string("Ident:ab\\4")])
-        assert _tokens(string("ab\\4 x"), False) == seq[string]([string("Ident:ab\\4"), string("Ident:x")])
-        assert _tokens(string("\"ab\\"), False) == seq[string]([string("StrLit:ab\\")])
-        assert _tokens(string("\"a\\41\""), False) == seq[string]([string("StrLit:aA")])
+        assert tokens(string("ab\\"), False) == seq[string]([string("Ident:ab\\")])
+        assert tokens(string("ab\\4"), False) == seq[string]([string("Ident:ab\\4")])
+        assert tokens(string("ab\\4 x"), False) == seq[string]([string("Ident:ab\\4"), string("Ident:x")])
+        assert tokens(string("\"ab\\"), False) == seq[string]([string("StrLit:ab\\")])
+        assert tokens(string("\"a\\41\""), False) == seq[string]([string("StrLit:aA")])
         # a char literal cut short by the end of the input is no CharLit
         for bad in [string("'"), string("'\\"), string("'\\4"), string("'\\41"), string("'a")]:
             with var:
@@ -1899,7 +1896,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
 
 if comptime(__name__ == "__main__"):
 
-    def _test_nifreader_extra():
+    def test_nifreader_extra():
         # extractModuleSuffix
         assert extractModuleSuffix(string("foo/bar/baz.s.nif")) == "baz"
         assert extractModuleSuffix(string("dir\\modname.nif")) == "modname"
@@ -1984,9 +1981,9 @@ if comptime(__name__ == "__main__"):
 
     importFrom("nimic.std.os", "getTempDir", "removeFile")
     importFrom("nimic.std.syncio", "writeFile")
-    from nimic.std.formatfloat import *  # `$` of a float (nimony builds with a slim system)
+    from nimic.std import formatfloat  # `$` of a float (nimony builds with a slim system)
 
-    def _show(r: Reader, tok: ExpandedToken) -> string:
+    def show(r: Reader, tok: ExpandedToken) -> string:
         """A token as `<kind> <decoded value>`, then its suffix: `@col,line`, the filename, the comment, the flags
         that say whether it needs decoding, and for a split symbol's component its part."""
         with var:
@@ -2019,16 +2016,16 @@ if comptime(__name__ == "__main__"):
             result.add(string(" (decoded)"))
         return result
 
-    def _dump(r: mut @ Reader):
+    def dump(r: mut @ Reader):
         with var:
             tok = default(ExpandedToken)
         while True:
             r.next(tok)
-            echo(_show(r, tok))
+            echo(show(r, tok))
             if tok.tk == NifKind.EofToken:
                 break
 
-    def _test_nifreader_dump():
+    def test_nifreader_dump():
         with let:
             text = string(
                 "(.nif27)\n(.indexat 77)\n(.unusedname tmp.9.)\n"
@@ -2048,13 +2045,13 @@ if comptime(__name__ == "__main__"):
              " startsWith=", r.startsWith(string("(stmts")), " ", r.startsWith(string("(.nif")))
         with let:
             start = r.offset()
-        _dump(r)
+        dump(r)
         # back to the first node: the same tokens again
         r.jumpTo(start)
         with var:
             tok = default(ExpandedToken)
         r.next(tok)
-        echo("jumped: ", _show(r, tok), " offset=", r.offset() - start)
+        echo("jumped: ", show(r, tok), " offset=", r.offset() - start)
         close(r)
         removeFile(path)
         # from a buffer, with the symbols split
@@ -2062,8 +2059,8 @@ if comptime(__name__ == "__main__"):
             b = openFromBuffer(text, string("Buf"))
         b.splitSymbols()
         echo("split: ", b.symbolsAreSplit(), " unused=", b.firstUnusedName())
-        _dump(b)
+        dump(b)
         close(b)
 
-    _test_nifreader_extra()
-    _test_nifreader_dump()
+    test_nifreader_extra()
+    test_nifreader_dump()

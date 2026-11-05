@@ -18,10 +18,10 @@ if comptime(defined("nimony")):
     # `beginStore`. Same reason `bif` sets it.
     pragma('feature: "lenientnils"')
 
-from nimic.std.assertions import *
-from nimic.std.syncio import *
-from nimic.std.formatfloat import *
-from nimic.std.math import *
+from nimic.std import assertions
+from nimic.std import syncio
+from nimic.std import formatfloat
+from nimic.std.math import classify, FloatClass, Inf, NaN
 importFrom("nimic.std.strutils", "endsWith")
 from .vfs import FileWriteMode, vfsExists, vfsMtime, vfsRead, vfsRemove, vfsWrite
 from . import vfs
@@ -149,7 +149,7 @@ def _finish(b: mut @ Builder):
     ## anything reads `buffer` as a string (`extract`, `close`).
     b._buffer.setLen(b._offs)
     _syncBuf(b._buffer)
-    b._cap = b._offs.copy()
+    b._cap = b._offs
     b._raw = None
 
 
@@ -265,7 +265,7 @@ def _addSep(b: mut @ Builder):
     if b._offs == 0:
         pass
     elif b._raw[b._offs - 1] in Tset[char](ch('\n'), ch(' '), ch('('), ch(')')):
-        _ = string("no separator required")
+        _ = "no separator required"
     else:
         _put(b, ch(' '))
 
@@ -458,7 +458,7 @@ def _addB62Unsigned(b: mut @ Builder, n0: uint64):
         with var:
             buf: pragma("noinit") @ array[12, char] = array[12, char]()  # 62^12 > 2^64
             i = nint(0)
-            n = n0.copy()
+            n = n0
         while n > u64(0):
             buf[i] = _b62Char(nint(n % u64(62)))
             n = n // u64(62)
@@ -618,7 +618,7 @@ def addHeader27(b: mut @ Builder) -> nint:
 
 
 if comptime(__name__ == "__main__" and not defined("nimony")):
-    def _test(b: sink @ Builder):
+    def test(b: sink @ Builder):
         addHeader(b, string("tester"), string("niftest"))
         addTree(b, string("stmts"))
         attachLineInfo(b, 4, 5, string("mymodb.nim"))
@@ -639,21 +639,21 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
         else:
             echo(b.extract())
 
-    def _main():
+    def main():
         #var b = open(10)
         #test b
 
         with var:
             b2 = open(string("builder_example.nif"))
-        _test(b2)
+        test(b2)
 
-    _main()
+    main()
 
 
 if comptime(__name__ == "__main__"):
     importFrom("nimic.std.os", "getTempDir")
 
-    def _addedTests():
+    def addedTests():
         if vfsExists(string("builder_example.nif")):
             echo(vfsRead(string("builder_example.nif")))
             vfsRemove(string("builder_example.nif"))
@@ -731,4 +731,4 @@ if comptime(__name__ == "__main__"):
         echo(mtime1 == mtime2)
         vfsRemove(tmpFile)
 
-    _addedTests()
+    addedTests()

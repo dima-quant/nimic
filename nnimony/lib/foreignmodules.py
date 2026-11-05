@@ -28,15 +28,15 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-from nimic.std.tables import *
+from nimic.std.tables import initTable, Table
 from .nifcore import (
     addSubtree, createTokenBuf, Cursor, lineInfoFile, newPool, newTagPool, NifKind, Pool,
     pool, symId, symName, TagPool, TokenBuf)
 from .nifcoreparse import parse, parseFromBuffer, peekRootInfo, toModuleString, toString
-from .nifreader import close, decodeInt, decodeStr, ExpandedToken, indexStartsAt, jumpTo, next, offset, Reader
+from .nifreader import close, decodeInt, decodeStr, ExpandedToken, indexStartsAt, next, offset, Reader
 from . import nifreader
 from . import stringviews
-from .bif import getOrQuit, isBifFile, load, store
+from .bif import getOrQuit, isBifFile
 from . import bif
 
 
@@ -176,34 +176,31 @@ def openForeignModule(path: string) -> ForeignModule:
 
 
 if comptime(__name__ == "__main__"):
-    from nimic.std.os import *
-    from nimic.std.syncio import *
-    from nimic.std.algorithm import *
-    from nimic.std.strutils import *
+    from nimic.std.os import getTempDir, removeFile
+    from nimic.std.algorithm import sort
+    from nimic.std import strutils
     from nimic.std import syncio
-    # one name of two imports, called free: Nim overloads them (rule:overloads)
-    close = overloads(nifreader.close, syncio.close)
 
-    def _sortedKeys(t: Table[string, nint]) -> seq[string]:
-        result = seq[string]()
+    def sortedKeys(t: Table[string, nint]) -> seq[string]:
+        result = seq[string]([])
         for k in t.keys():
             result.add(k)
         sort(result)
         return result
 
-    def _firstInfo(c: Cursor) -> string:
+    def firstInfo(c: Cursor) -> string:
         with let:
             info = c.rawLineInfo()
         result = lineInfoFile(c) + string(":") + str(info.line) + string(",") + str(info.col)
         return result
 
-    def _showModule(label: string, m: ForeignModule):
+    def showModule(label: string, m: ForeignModule):
         echo(label, ": isBif=", m.isBif, " hasEmbeddedIndex=", m.hasEmbeddedIndex,
              " entries=", m.index.len)
-        for k in _sortedKeys(m.index):
+        for k in sortedKeys(m.index):
             echo("  ", k)
 
-    def _addedTests():
+    def addedTests():
         with let:
             dir = getTempDir()
             textFile = dir + string("nimic_foreignmodules_m.s.nif")
@@ -226,9 +223,9 @@ if comptime(__name__ == "__main__"):
             tm = openForeignModule(textFile)
         with var:
             bm = openForeignModule(bifFile)
-        _showModule(string("text"), tm)
-        _showModule(string("bif"), bm)
-        echo("same keys: ", _sortedKeys(tm.index) == _sortedKeys(bm.index))
+        showModule(string("text"), tm)
+        showModule(string("bif"), bm)
+        echo("same keys: ", sortedKeys(tm.index) == sortedKeys(bm.index))
 
         # hasDecl
         echo("hasDecl p10: ", tm.hasDecl(string("p10.0.m")), " ", bm.hasDecl(string("p10.0.m")))
@@ -240,7 +237,7 @@ if comptime(__name__ == "__main__"):
             tags = newTagPool()
         with var:
             first: seq[string] = seq[string]([])  # `= @[]`: nimony adds only to an initialized local
-        for k in _sortedKeys(tm.index):
+        for k in sortedKeys(tm.index):
             with let:
                 ts = toString(tm.getDecl(k, tags), includeLineInfo=False)
                 bs = toString(bm.getDecl(k, tags), includeLineInfo=False)
@@ -255,7 +252,7 @@ if comptime(__name__ == "__main__"):
             same = True
         with var:
             i = 0
-        for k in _sortedKeys(tm.index):
+        for k in sortedKeys(tm.index):
             if toString(tm.getDecl(k, tags), includeLineInfo=False) != first[i]: same = False
             if toString(bm.getDecl(k, tags), includeLineInfo=False) != first[i]: same = False
             i += 1
@@ -267,8 +264,8 @@ if comptime(__name__ == "__main__"):
         with var:
             infoM = openForeignModule(textFile)
         for k in [string("p10.0.m"), string("p33.0.m"), string("T.0.m"), string("c.0.m")]:
-            echo(k, " withLineInfo=false ", _firstInfo(plainM.getDecl(k, tags)),
-                 " withLineInfo=true ", _firstInfo(infoM.getDecl(k, tags, withLineInfo=True)))
+            echo(k, " withLineInfo=false ", firstInfo(plainM.getDecl(k, tags)),
+                 " withLineInfo=true ", firstInfo(infoM.getDecl(k, tags, withLineInfo=True)))
         echo("dense: ", toString(infoM.getDecl(string("p11.0.m"), tags)))
 
         # pool: nil (a fresh pool per decl) vs the caller's shared pool
@@ -308,7 +305,7 @@ if comptime(__name__ == "__main__"):
             prev = 0
         with var:
             increasing = True
-        for k in _sortedKeys(tab):
+        for k in sortedKeys(tab):
             if k.startsWith(string("p")):
                 if getOrQuit(tab, k) <= prev: increasing = False
                 prev = getOrQuit(tab, k)
@@ -325,4 +322,4 @@ if comptime(__name__ == "__main__"):
         removeFile(bifFile)
         removeFile(plainFile)
 
-    _addedTests()
+    addedTests()

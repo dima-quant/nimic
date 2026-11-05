@@ -15,13 +15,13 @@ from nimic.ntypes import *
 
 if comptime(defined("nimony")):
     pragma('feature: "untyped"')
-    from nimic.std.hashes import *
-    from nimic.std.assertions import *
+    from nimic.std.hashes import finish_hash, Hash, hash, mix_hash
+    from nimic.std import assertions
 else:
-    from nimic.std.hashes import *
+    from nimic.std.hashes import finish_hash, Hash, hash, mix_hash
 
     if comptime(defined("nimPreviewSlimSystem")):
-        from nimic.std.assertions import *
+        from nimic.std import assertions
 
 
 class BiTable[Id, T](Object):  # Id must be an int/uint or a distinct type thereof
@@ -301,7 +301,7 @@ def getOrIncl[Id](t: mut @ BiTableFloat[Id], v: float64) -> Id:
 
 if comptime(__name__ == "__main__"):
     if comptime(defined("nimony")):
-        from nimic.std.syncio import *
+        from nimic.std import syncio
     with var:
         t = initBiTable[uint32, string]()
 

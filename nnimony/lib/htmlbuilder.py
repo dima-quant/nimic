@@ -17,7 +17,7 @@
 from __future__ import annotations
 from nimic.ntypes import *
 
-from .nifbuilder import addHeader, addKeyw, addStrLit, addTree, endTree, extract, open
+from .nifbuilder import addHeader, addKeyw, addStrLit, addTree, endTree, extract
 from . import nifbuilder
 
 
@@ -166,7 +166,7 @@ def initHtmlBuilder(format: HtmlOutFormat, sizeHint=1024) -> HtmlBuilder:
 
 
 if comptime(__name__ == "__main__"):
-    def _build(format: HtmlOutFormat) -> string:
+    def build(format: HtmlOutFormat) -> string:
         with var:
             b = initHtmlBuilder(format)
         echo("format: ", b.format)
@@ -194,9 +194,9 @@ if comptime(__name__ == "__main__"):
         result = b.finalize()
         return result
 
-    def _addedTests():
-        echo(_build(HtmlOutFormat.hofHtml))
-        echo(_build(HtmlOutFormat.hofNif))
+    def addedTests():
+        echo(build(HtmlOutFormat.hofHtml))
+        echo(build(HtmlOutFormat.hofNif))
 
         # an empty builder of each format
         with var:
@@ -206,4 +206,4 @@ if comptime(__name__ == "__main__"):
             e2 = initHtmlBuilder(HtmlOutFormat.hofNif, 16)
         echo(e2.finalize())
 
-    _addedTests()
+    addedTests()
