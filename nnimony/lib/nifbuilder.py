@@ -238,12 +238,12 @@ with const:
 
 def _escape(b: mut @ Builder, c: char):
     with const:
-        _HexChars = string("0123456789ABCDEF")
+        HexChars = string("0123456789ABCDEF")
     with var:
         n = nint(c)
     _put(b, ch('\\'))
-    _put(b, _HexChars[(n >> 4) & 0xF])
-    _put(b, _HexChars[n & 0xF])
+    _put(b, HexChars[(n >> 4) & 0xF])
+    _put(b, HexChars[n & 0xF])
 
 
 @ufcs(char)
@@ -566,7 +566,7 @@ def endTree(b: mut @ Builder):
 
 
 @template
-def withTree(b: mut @ Builder, kind: string, body: untyped = None):
+def withTree(b: mut @ Builder, kind: string, body: untyped):
     ## Convenience template that wraps `body` around `addTree` and `endTree`
     ## calls.
     addTree(b, kind)

@@ -45,12 +45,12 @@ class Mangler(Object):
 
     def _escape(b: mut @ Mangler, c: char):
         with const:
-            _HexChars = string("0123456789abcdef")
+            HexChars = string("0123456789abcdef")
         with var:
             n = nint(c)
         b._put(ch('X'))
-        b._put(_HexChars[(n >> 4) & 0xF])
-        b._put(_HexChars[n & 0xF])
+        b._put(HexChars[(n >> 4) & 0xF])
+        b._put(HexChars[n & 0xF])
 
     def addRaw(b: mut @ Mangler, s: string):
         b._put(s)
@@ -233,7 +233,7 @@ def addTree(b: mut @ Mangler, kind: string):
 
 
 @template
-def withTree(b: mut @ Mangler, kind: string, body: untyped = None):
+def withTree(b: mut @ Mangler, kind: string, body: untyped):
     ## Convenience template that wraps `body` around `addTree` and `endTree`
     ## calls.
     addTree(b, kind)

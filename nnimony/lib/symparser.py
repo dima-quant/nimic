@@ -189,7 +189,7 @@ def splitLocalSymName(s: string, basename: mut @ string,
         dot -= 1
     if dot <= 0 or dot == s.len - 1 or s[dot] != ch('.'):
         return False
-    for i in range(0, dot):
+    for i in range(dot):
         if s[i] == ch('.'):
             return False
     with var:

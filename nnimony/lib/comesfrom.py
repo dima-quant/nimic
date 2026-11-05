@@ -57,7 +57,7 @@ def isCrucialFile(fname: string) -> bool:
     ## prefix is checked first, and a real path never has one.
     if fname.len <= CrucialPrefix.len: return False
     if fname[CrucialPrefix.len - 1] != ch('\0'): return False
-    for i in range(0, CrucialPrefix.len):
+    for i in range(CrucialPrefix.len):
         if fname[i] != CrucialPrefix[i]: return False
     result = True
     return result
@@ -101,7 +101,7 @@ def realFile(fname: string) -> string:
     if not isCrucialFile(fname): return fname.copy()
     with var:
         last = -1
-    for i in range(0, fname.len):
+    for i in range(fname.len):
         if fname[i] == ch('\0'): last = i
     return fname if last < 0 else fname.substr(last + 1)
 
@@ -115,7 +115,7 @@ def _parseCrucialOrigin(entry: string) -> CrucialOrigin:
     with var:
         first = -1
         second = -1
-    for i in range(0, entry.len):
+    for i in range(entry.len):
         if entry[i] == CrucialFieldSep:
             if first < 0: first = i
             elif second < 0: second = i

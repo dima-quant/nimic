@@ -179,6 +179,7 @@ def addOrdered[Id, T](t: mut @ BiTable[Id, T], v: sink @ T) -> Id:
     return result
 
 
+@ufcs(BiTable)
 @dispatch
 def getKeyId[Id, T](t: BiTable[Id, T], v: T) -> Id:
     assert t.isIndexed(), "getKeyId on a table filled by addOrdered: call ensureIndexed first"
@@ -229,6 +230,7 @@ def _getOrInclImpl():
         h = origH & _maxHash(t)
 
 
+@ufcs(BiTable)
 @dispatch
 @template_expand
 def getOrIncl[Id, T](t: mut @ BiTable[Id, T], v: T) -> Id:
@@ -293,6 +295,7 @@ class BiTableFloat[Id](BiTable[Id, uint64]):
         return cast[float64](BiTable[Id, uint64](t)[strId])
 
 
+@ufcs(BiTableFloat)
 @dispatch
 def getOrIncl[Id](t: mut @ BiTableFloat[Id], v: float64) -> Id:
     """{.inline.}"""

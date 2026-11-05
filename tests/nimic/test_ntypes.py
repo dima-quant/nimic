@@ -6316,6 +6316,33 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual([l.strip() for l in out.splitlines() if l.strip().startswith("import") and "b" in l],
                          ["import a, b"], out)
 
+    def test_import_std_modules_one_statement(self):
+        """`from nimic.std import memfiles, syncio` is one Nim statement, as `from . import a, b` is: one Python
+        statement is one Nim statement, so nimicgen's round trip gives the line back. A module imported before is
+        dropped from the statement; `as x` stands alone."""
+        out = unparse(ast.parse("from nimic.ntypes import *\n"
+                                "from nimic.std import memfiles, syncio\n"))[0]
+        self.assertIn("import std/memfiles, std/syncio", out.splitlines())
+        out = unparse(ast.parse("from nimic.ntypes import *\n"
+                                "from nimic.std import syncio\n"
+                                "from nimic.std import memfiles, syncio, os as nos, strutils\n"))[0]
+        lines = [l for l in out.splitlines() if l.startswith("import std/") or l.startswith("import ncode/std")]
+        self.assertEqual(lines, ["import std/syncio", "import std/memfiles", "import ncode/std/os as nos",
+                                 "import std/strutils"], out)
+
+    def test_iterator_keeps_nosideeffect(self):
+        """A generator with `{.noSideEffect.}` is an iterator with the pragma (comesfrom's `crucialOrigins`); only a
+        proc becomes a `func`."""
+        out = unparse(ast.parse("from nimic.ntypes import *\n"
+                                "def origins(s: string) -> nint:\n"
+                                "    \"\"\"{.noSideEffect.}\"\"\"\n"
+                                "    yield 1\n"
+                                "def first(s: string) -> nint:\n"
+                                "    \"\"\"{.noSideEffect, inline.}\"\"\"\n"
+                                "    return 1\n"))[0]
+        self.assertIn("iterator origins*(s: string): int {.noSideEffect.} =", out)
+        self.assertIn("func first*(s: string): int {.inline.} =", out)
+
     def test_import_module_of_relative_package(self):
         """`from ..models import leng_tags, tags` binds module names of a sibling directory (nifcdecl's
         `export leng_tags`): `import ../models/tags`, nothing for a module a star import already imports,

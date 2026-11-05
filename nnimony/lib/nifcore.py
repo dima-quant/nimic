@@ -820,7 +820,7 @@ def _splitSpelling(s: string) -> _Spelling:
                        _dedupStart=0, _dedupLen=0, _moduleStart=0, _moduleLen=0)
     with var:
         lastDot = -1
-    for k in range(0, s.len):
+    for k in range(s.len):
         if s[k] == ch("."):
             lastDot = k
     with var:
@@ -944,7 +944,6 @@ class SymPool(Object):
         """{.inline, noSideEffect.}"""
         return s._pool.symString(id)
 
-    @property
     def len(s: SymPool) -> nint:
         """{.inline, noSideEffect.}"""
         return s._pool.symbols.len()
@@ -1453,7 +1452,7 @@ def _readInlineStr(payload: uint32) -> string:
     result = newString(length)
     with let:
         chars = payload >> StrDataShift
-    for i in range(0, length):
+    for i in range(length):
         result[i] = char((chars >> (uint32(i) * u32(8))) & u32(0xFF))
     return result
 
@@ -1966,7 +1965,7 @@ class TokenBuf(Object):
         _ = dest.growRawUninit(oldLen + n)
         for i in countdown(oldLen - 1, pos):
             dest._data[i + n] = dest._data[i]
-        for i in range(0, n):
+        for i in range(n):
             dest._data[pos + i] = src._data[i]
 
     # ── Builder API (interns, emits suffix on overflow) ──────────────────────
@@ -2320,7 +2319,7 @@ class TokenBuf(Object):
                     dest._addWithSparseLineInfo(c, last)
             dest.closeTag()
         else:
-            for i in range(0, c.valueWidth()):
+            for i in range(c.valueWidth()):
                 dest.add(c._peekAhead(i))
             if info.isValid() and info != last:
                 dest.appendLineInfo(info)
@@ -2461,7 +2460,7 @@ def replace(dest: mut @ TokenBuf, by: Cursor, pos: nint):
     with let:
         delta = byLen - actualLen
     if delta != 0:
-        for k in range(0, dest._openTags.len):
+        for k in range(dest._openTags.len):
             if dest._openTags[k] >= pos + actualLen:
                 dest._openTags[k] += delta
     if delta > 0:
@@ -2472,7 +2471,7 @@ def replace(dest: mut @ TokenBuf, by: Cursor, pos: nint):
         for i in range(pos + actualLen, oldLen):
             dest._data[i + delta] = dest._data[i]
         dest._len = oldLen + delta
-    for i in range(0, byLen):
+    for i in range(byLen):
         dest._data[pos + i] = cast[ptr[NifToken]](cast[uintp](by._p) +
                                 uint(i) * uint(sizeof(NifToken))).contents
 
@@ -2491,7 +2490,7 @@ def _encodeInlineStr(s: string) -> uint32:
     """{.inline, noSideEffect.}"""
     ## Pack up to 3 bytes of `s` into the inline-string layout.
     result = StrInlineFlag | (uint32(s.len) << StrLengthShift)
-    for i in range(0, s.len):
+    for i in range(s.len):
         result = result | (uint32(byte(s[i])) << (StrDataShift + uint32(i) * u32(8)))
     return result
 
@@ -2522,7 +2521,7 @@ def addStrLit(b: mut @ TokenBuf, s: string):
 def _encodeInlineStrView(s: openArray[char]) -> uint32:
     """{.inline, noSideEffect.}"""
     result = StrInlineFlag | (uint32(s.len) << StrLengthShift)
-    for i in range(0, s.len):
+    for i in range(s.len):
         result = result | (uint32(byte(s[i])) << (StrDataShift + uint32(i) * u32(8)))
     return result
 
@@ -2540,7 +2539,7 @@ def addStrLit(b: mut @ TokenBuf, s: openArray[char]):
     else:
         with var:
             tmp = newString(s.len)
-        for i in range(0, s.len):
+        for i in range(s.len):
             tmp[i] = s[i]
         with let:
             id = uint32(b.pool.strings.getOrIncl(tmp))
@@ -3039,7 +3038,7 @@ if comptime(__name__ == "__main__"):
             with let:
                 tT = registerTag(b.tags, string("t"))
             with b.buildTree(tT):
-                for _ in range(0, big):
+                for _ in range(big):
                     b.addDotToken()
             # After splice: 1 (TagLit) + 1 (suffix) + big body = big + 2
             test(b._len, big + 2)
@@ -3317,7 +3316,7 @@ if comptime(__name__ == "__main__"):
             with let:
                 sp = syms(p)
             echo(sp.getKeyId(string("abc.12.Ikey.mod")) == id, " ", sp.getKeyId(string("abc.12.Ikey.nomod")),
-                 " ", sp.getKeyId(string("zzz.1")), " ", sp[id], " ", sp.len,
+                 " ", sp.getKeyId(string("zzz.1")), " ", sp[id], " ", sp.len(),
                  " ", sp.getOrIncl(string("abc.12.Ikey.mod")) == id, " ", p.poolSym(local))
 
         # tag pools: createTags, hasEscapes, escaped tags

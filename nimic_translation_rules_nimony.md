@@ -644,11 +644,14 @@ Nim can't tell some nimic spellings apart: they transpile to the same Nim, so a 
 | where a re-exported name is imported from (§8) | the module that defines it, when the module imports that module as well (`nifcoreparse`: `FileId`, `isValid` from `lineinfos`, which `nifcore` re-exports) | the re-exporting module |
 | nimic's std modules (§8) | imported by name where the original imports them, nothing more: a module the original imports only in a `when` (`std/sha1` in `nifchecksums`, `lengiface`, `nifindexes`) is imported in each branch, no top-level line beside it | a star import; an import line the original doesn't have |
 | the order of import statements and sets (§8) | free, where Python's bindings don't change (a set comes after the imports of its name; with std modules imported by name only `ntypes`' star import is left, first); a set stands at the top level where its modules are imported. The round trip compares a run of import statements and sets sorted | — |
+| a half-open range from 0 (`rule:range`) | `range(n)` (`for i in range(s.len):`, Nim `0 ..< s.len`) | `range(0, n)` |
+| a custom operator's letter name (`rule:operator`) | each character named, joined by `_`, with `_` when the original isn't exported: `+` plus, `-` minus, `*` star, `/` slash, `\` backslash, `<` lt, `>` gt, `!` bang, `?` question, `^` caret, `.` dot, `\|` bar, `=` eq, `%` percent, `&` amp, `$` dollar, `@` at, `~` tilde, `:` colon (`+!` `plus_bang`, nifreader's private `^` `_caret`). std/hashes' named operators keep their names (`!&` `mix_hash`, §7) | a name for the meaning (`_deref`) |
 | the hooks' Python names (`rule:hook`) | `<hook><Type>`, `_` when the original isn't exported (`_copyMangler`, `destroyCursor`) | `_copy`, `copy`, `destroy` |
 
 Forms the transpiler keeps apart, so each original spelling has its own nimic form: `from . import a, b`
 (one `import a, b` line) vs one `from . import` per module (Nim's `import bitabs, lineinfos, nifroles` is
-`from . import bitabs, lineinfos, nifroles`; an import already written is left out); `a if c else b` (§7) vs an `if` statement whose
+`from . import bitabs, lineinfos, nifroles`; an import already written is left out), and likewise
+`from nimic.std import memfiles, syncio` (one `import std/memfiles, std/syncio` line) vs one line per module; `a if c else b` (§7) vs an `if` statement whose
 branches return; `x.f()` vs `f(x)` (§4: the call syntax follows the definition, `@ufcs`).
 
 ## 14. Nim 3 constructs

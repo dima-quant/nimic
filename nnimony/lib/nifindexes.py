@@ -25,7 +25,7 @@ from .nifpools import (
     addDotToken, addIdent, addParLe, addParRi, addStrLit, addSymUse, createTokenBuf, Cursor,
     cursorTagId, info, into, isDotToken, isIdent, isStringLit, isSymbol, isTagLit, isValid, loopInto,
     NifKind, NifLineInfo, NoLineInfo, NoNifLineInfo, parseFromBuffer, pool, skip, StrId, strId, SymId, symId,
-    TagId, TokenBuf, toString)
+    TagId, TokenBuf, toString, writeFile)  # writeFile: its set overloads syncio's
 from .nifchecksums import updateLoop
 from .symparser import changeModuleExt
 from .vfs import vfsRead, vfsWrite
@@ -42,7 +42,6 @@ else:
         from nimic.std.sha1 import finalize, newSha1State, SecureHash, Sha1State
 from ..models.tags import TagEnum
 from ..models.nifindex_tags import NifIndexKind, rawTagIsNifIndexKind
-from .nifpools import writeFile  # its set overloads syncio's writeFile
 
 include("compat2")
 

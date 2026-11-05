@@ -196,7 +196,7 @@ def _minus_bang(a: pchar, b: pchar) -> nint:
 
 @operator("^")
 @template
-def _deref(p: pchar) -> char:
+def _caret(p: pchar) -> char:
     return p[0]
 
 
@@ -213,7 +213,7 @@ if comptime(not defined("nimony")):
         ## Nim strings are always heap-backed, so the data pointer is already stable
         ## across moves — no SSO promotion needed; this is just `readRawData`."""
         if len(s) == 0:
-            return nil
+            return None
         else:
             return cast[ptr[UncheckedArray[char]]](addr(s[start]))
 
@@ -246,14 +246,14 @@ def _useCpuRegisters(body: untyped):
 def _skipWhitespace(r: mut @ Reader):
     with _useCpuRegisters():
         while p < eof:
-            match _deref(p):
+            match _caret(p):
                 case _ if (
-                    _deref(p) == ch(" ")
-                    or _deref(p) == ch("\t")
-                    or _deref(p) == ch("\r")
+                    _caret(p) == ch(" ")
+                    or _caret(p) == ch("\t")
+                    or _caret(p) == ch("\r")
                 ):
                     _inc(p)
-                case _ if _deref(p) == ch("\n"):
+                case _ if _caret(p) == ch("\n"):
                     _inc(p)
                     r.line += 1
                 case _:
@@ -271,15 +271,15 @@ def _captureComment(r: mut @ Reader, result: mut @ ExpandedToken):
         with let:
             start = p
         while p < eof:
-            if _deref(p) == ch("#"):
+            if _caret(p) == ch("#"):
                 result.comment.len = cast[intp](p) - cast[intp](start)
                 _inc(p)
                 break
-            elif _deref(p) == ch("\n"):
+            elif _caret(p) == ch("\n"):
                 _inc(p)
                 r.line += 1
             else:
-                if _deref(p) == ch("\\"):
+                if _caret(p) == ch("\\"):
                     result._flags.incl(_TokenFlag.CommentHasEscapes)
                 _inc(p)
 
@@ -321,20 +321,20 @@ def _decodeEscape(p: mut @ pchar, sentinel: pchar) -> char:
     ## stays put, so the remaining byte, if any, decodes as an ordinary one."""
     result = default(char)
     if p >= sentinel: return ch("\\")
-    match _deref(p):
-        case _ if _deref(p) == ch("n"):
+    match _caret(p):
+        case _ if _caret(p) == ch("n"):
             result = ch("\x0a")
             _inc(p)
-        case _ if _deref(p) == ch("t"):
+        case _ if _caret(p) == ch("t"):
             result = ch("\x09")
             _inc(p)
-        case _ if _deref(p) == ch("r"):
+        case _ if _caret(p) == ch("r"):
             result = ch("\x0d")
             _inc(p)
-        case _ if _deref(p) == ch("|"):
+        case _ if _caret(p) == ch("|"):
             result = ch("\x5c")
             _inc(p)
-        case _ if _deref(p) == ch("^"):
+        case _ if _caret(p) == ch("^"):
             result = ch("\x22")
             _inc(p)
         case _:
@@ -350,7 +350,7 @@ def _decodeEscape(p: mut @ pchar, sentinel: pchar) -> char:
 def decodeChar(t: ExpandedToken) -> char:
     result = default(char)
     assert t.tk == NifKind.CharLit
-    result = _deref(t.data.p)
+    result = _caret(t.data.p)
     if result == ch("\\"):
         with var:
             p = t.data.p
@@ -371,11 +371,11 @@ def decodeStr(r: Reader, t: ExpandedToken) -> string:
         with let:
             sentinel = _plus_bang(p, t.data.len)
         while p < sentinel:
-            if _deref(p) == ch("\\"):
+            if _caret(p) == ch("\\"):
                 _inc(p)
                 result.add(_decodeEscape(p, sentinel))
             else:
-                result.add(_deref(p))
+                result.add(_caret(p))
                 _inc(p)
         # Handle module suffix expansion after decoding escapes
         if _TokenFlag.TokenHasModuleSuffixExpansion in t._flags:
@@ -433,11 +433,11 @@ def decodeComment(t: ExpandedToken) -> string:
     with let:
         sentinel = _plus_bang(p, t.comment.len)
     while p < sentinel:
-        if _deref(p) == ch("\\"):
+        if _caret(p) == ch("\\"):
             _inc(p)
             result.add(_decodeEscape(p, sentinel))
         else:
-            result.add(_deref(p))
+            result.add(_caret(p))
             _inc(p)
     return result
 
@@ -452,11 +452,11 @@ def decodeFilename(t: ExpandedToken) -> string:
         with let:
             sentinel = _plus_bang(p, t.filename.len)
         while p < sentinel:
-            if _deref(p) == ch("\\"):
+            if _caret(p) == ch("\\"):
                 _inc(p)
                 result.add(_decodeEscape(p, sentinel))
             else:
-                result.add(_deref(p))
+                result.add(_caret(p))
                 _inc(p)
     else:
         result = newString(t.filename.len)
@@ -581,15 +581,15 @@ def _digitsWithSeparators(p: mut @ pchar, eof: pointer, len: mut @ nint,
     """{.inline.}
     ## Consumes `D ('_'? D)*`; false if there is no leading digit or a `_` is
     ## not followed by a digit."""
-    result = p < eof and _deref(p) in digitSet
+    result = p < eof and _caret(p) in digitSet
     while result and p < eof:
-        if _deref(p) in digitSet:
+        if _caret(p) in digitSet:
             _inc(p)
             len += 1
-        elif _deref(p) == ch("_"):
+        elif _caret(p) == ch("_"):
             _inc(p)
             len += 1
-            if p >= eof or _deref(p) not in digitSet:
+            if p >= eof or _caret(p) not in digitSet:
                 result = False
         else:
             break
@@ -599,7 +599,7 @@ def _digitsWithSeparators(p: mut @ pchar, eof: pointer, len: mut @ nint,
 @template
 def _malformedNumber(p: mut @ pchar, eof: pointer, result: mut @ ExpandedToken):
     # consume the rest of the malformed number so it is one error token
-    while p < eof and _deref(p) not in _ControlCharsOrWhite:
+    while p < eof and _caret(p) not in _ControlCharsOrWhite:
         _inc(p)
         result.data.len += 1
     result.tk = NifKind.UnknownToken
@@ -607,7 +607,7 @@ def _malformedNumber(p: mut @ pchar, eof: pointer, result: mut @ ExpandedToken):
 
 @template
 def _unsignedSuffix(p: mut @ pchar, eof: pointer, result: mut @ ExpandedToken):
-    if p < eof and _deref(p) == ch("u"):
+    if p < eof and _caret(p) == ch("u"):
         result.tk = NifKind.UIntLit
         _inc(p)
         # ignore the suffix 'u'
@@ -616,8 +616,8 @@ def _unsignedSuffix(p: mut @ pchar, eof: pointer, result: mut @ ExpandedToken):
 @template
 def _hasBasePrefix(p: pchar, eof: pointer) -> bool:
     ## `p` starts `0x`, `0o` or `0b`; see `handlePrefixedNumber`.
-    return _deref(p) == ch("0") and _plus_bang(p, 1) < eof and \
-        _deref(_plus_bang(p, 1)) in Tset[char](ch("x"), ch("o"), ch("b"))
+    return _caret(p) == ch("0") and _plus_bang(p, 1) < eof and \
+        _caret(_plus_bang(p, 1)) in Tset[char](ch("x"), ch("o"), ch("b"))
 
 
 @template_expand
@@ -626,23 +626,23 @@ def _handleNumber(r: mut @ Reader, result: mut @ ExpandedToken):
     spelling (`1_`, `1__2`, `1._0`, ...) is consumed and reported as
     `UnknownToken`. Base-prefixed integers are `handlePrefixedNumber`'s."""
     with _useCpuRegisters():
-        if p < eof and _deref(p) in _Digits:
+        if p < eof and _caret(p) in _Digits:
             result.tk = NifKind.IntLit  # overwritten if we detect a float or unsigned
             with var:
                 ok = _digitsWithSeparators(p, eof, result.data.len, _Digits)
 
-            if ok and p < eof and _deref(p) == ch("."):
+            if ok and p < eof and _caret(p) == ch("."):
                 result.tk = NifKind.FloatLit
                 _inc(p)
                 result.data.len += 1
                 ok = _digitsWithSeparators(p, eof, result.data.len, _Digits)
 
-            if ok and p < eof and _deref(p) == ch("E"):
+            if ok and p < eof and _caret(p) == ch("E"):
                 result.tk = NifKind.FloatLit
                 _inc(p)
                 result.data.len += 1
                 if p < eof:
-                    if _deref(p) == ch("-") or _deref(p) == ch("+"):
+                    if _caret(p) == ch("-") or _caret(p) == ch("+"):
                         _inc(p)
                         result.data.len += 1
                 ok = _digitsWithSeparators(p, eof, result.data.len, _Digits)
@@ -663,12 +663,12 @@ def _handlePrefixedNumber(r: mut @ Reader, result: mut @ ExpandedToken):
         result._flags.incl(_TokenFlag.NumberHasBasePrefix)
         with var:
             ok = False
-        match _deref(_plus_bang(p, 1)):
-            case _ if _deref(_plus_bang(p, 1)) == ch("x"):
+        match _caret(_plus_bang(p, 1)):
+            case _ if _caret(_plus_bang(p, 1)) == ch("x"):
                 _inc(p, 2)
                 result.data.len += 2
                 ok = _digitsWithSeparators(p, eof, result.data.len, _HexNumberDigits)
-            case _ if _deref(_plus_bang(p, 1)) == ch("o"):
+            case _ if _caret(_plus_bang(p, 1)) == ch("o"):
                 _inc(p, 2)
                 result.data.len += 2
                 ok = _digitsWithSeparators(p, eof, result.data.len, Tset[char](inrange(ch("0"), ch("7"))))
@@ -676,7 +676,7 @@ def _handlePrefixedNumber(r: mut @ Reader, result: mut @ ExpandedToken):
                 _inc(p, 2)
                 result.data.len += 2
                 ok = _digitsWithSeparators(p, eof, result.data.len, Tset[char](ch("0"), ch("1")))
-        if ok and p < eof and _deref(p) in _Digits: ok = False
+        if ok and p < eof and _caret(p) in _Digits: ok = False
 
         if not ok:
             _malformedNumber(p, eof, result)
@@ -713,12 +713,12 @@ def _handleLineInfo(r: mut @ Reader, result: mut @ ExpandedToken):
             col = 0
         with var:
             negative = False
-        if p < eof and _deref(p) == char("~"):
+        if p < eof and _caret(p) == char("~"):
             _inc(p)
             negative = True
-        while p < eof and _deref(p) in _B62Digits:
+        while p < eof and _caret(p) in _B62Digits:
             with let:
-                c = _decodeB62(_deref(p))
+                c = _decodeB62(_caret(p))
             if col >= (low(nint) + c) // 62:
                 col = col * 62 - c
             else:
@@ -733,14 +733,14 @@ def _handleLineInfo(r: mut @ Reader, result: mut @ ExpandedToken):
             line = 0
         negative = False
 
-        if p < eof and _deref(p) == char(","):
+        if p < eof and _caret(p) == char(","):
             _inc(p)
-            if p < eof and _deref(p) == char("~"):
+            if p < eof and _caret(p) == char("~"):
                 _inc(p)
                 negative = True
-            while p < eof and _deref(p) in _B62Digits:
+            while p < eof and _caret(p) in _B62Digits:
                 with let:
-                    c = _decodeB62(_deref(p))
+                    c = _decodeB62(_caret(p))
                 if line >= (low(nint) + c) // 62:
                     line = line * 62 - c
                 else:
@@ -753,12 +753,12 @@ def _handleLineInfo(r: mut @ Reader, result: mut @ ExpandedToken):
 
         result.pos = FilePos(col=int32(col), line=int32(line))
 
-        if p < eof and _deref(p) == char(","):
+        if p < eof and _caret(p) == char(","):
             _inc(p)
             result.filename.p = p
             while p < eof:
                 with let:
-                    ch = _deref(p)
+                    ch = _caret(p)
                 if ch in _ControlCharsOrWhite:
                     break
                 elif ch == char("\\"):
@@ -778,13 +778,13 @@ def _handleSuffix(r: mut @ Reader, result: mut @ ExpandedToken):
     ## nor between the line info and the comment."""
     if r._p < r._eof:
         with let:
-            ch = _deref(r._p)
+            ch = _caret(r._p)
         if ch == char("@"):
             _inc(r._p)
             _handleLineInfo(r, result)
         elif ch == char("~"):
             _handleLineInfo(r, result)
-    if r._p < r._eof and _deref(r._p) == char("#"):
+    if r._p < r._eof and _caret(r._p) == char("#"):
         _inc(r._p)  # consume the opening '#'
         _captureComment(r, result)  # consumes through the closing '#'
 
@@ -897,7 +897,7 @@ def _splitSymbol(r: mut @ Reader, result: mut @ ExpandedToken):
     r._pending = StringView(p=_plus_bang(result.data.p, start), len=origLen - start)
     with var:
         comps = int32(1)
-    for j in range(0, r._pending.len):
+    for j in range(r._pending.len):
         if r._pending[j] == ch("."):
             comps += 1
     r._pendingTotal = comps
@@ -939,7 +939,7 @@ def _nextSymbolPart(r: mut @ Reader, result: mut @ ExpandedToken):
         # component is the one that expands to it.
         if _TokenFlag.TokenHasModuleSuffixExpansion in r._pendingFlags:
             result._flags.incl(_TokenFlag.TokenHasModuleSuffixExpansion)
-        r._pending = StringView(p=nil, len=0)
+        r._pending = StringView(p=None, len=0)
     else:
         r._pending = StringView(
             p=_plus_bang(r._pending.p, n + 1), len=r._pending.len - (n + 1)
@@ -985,7 +985,7 @@ with const:
 def _continuesAsStr(r: Reader) -> bool:
     """Line mode: the number, identifier or symbol just read continues with
     `-`, `/` or `:` and so is the start of a string literal."""
-    return r._lineBased and r._p < r._eof and _deref(r._p) in _LineStrStart
+    return r._lineBased and r._p < r._eof and _caret(r._p) in _LineStrStart
 
 
 @template_expand
@@ -993,8 +993,8 @@ def _lineStr(r: mut @ Reader, result: mut @ ExpandedToken):
     """Extend the token that starts at `result.data.p` up to the next whitespace,
     parenthesis or suffix (`@`, `~`, `#`) and turn it into a string literal."""
     with _useCpuRegisters():
-        while p < eof and _deref(p) not in _LineStrEnd:
-            if _deref(p) == ch("\\"):
+        while p < eof and _caret(p) not in _LineStrEnd:
+            if _caret(p) == ch("\\"):
                 result._flags.incl(_TokenFlag.TokenHasEscapes)
             _inc(p)
         result.data.len = _minus_bang(p, result.data.p)
@@ -1009,17 +1009,17 @@ def _lineHead(r: mut @ Reader, result: mut @ ExpandedToken):
     an identifier is surfaced as one `UnknownToken` spanning the rest of it."""
     with _useCpuRegisters():
         result.data.p = p
-        if _deref(p) in _IdentStartChars:
-            while p < eof and _deref(p) in _IdentChars:
+        if _caret(p) in _IdentStartChars:
+            while p < eof and _caret(p) in _IdentChars:
                 # an escape's body may be a shortcut such as `\|`
                 with let:
-                    n = 2 if _deref(p) == ch("\\") and _plus_bang(p, 1) < eof else 1
+                    n = 2 if _caret(p) == ch("\\") and _plus_bang(p, 1) < eof else 1
                 result.data.len += n
                 _inc(p, n)
-        if result.data.len > 0 and (p >= eof or _deref(p) in _ControlCharsOrWhite):
+        if result.data.len > 0 and (p >= eof or _caret(p) in _ControlCharsOrWhite):
             result.tk = NifKind.ParLe
         else:
-            while p < eof and _deref(p) != ch("\n"):
+            while p < eof and _caret(p) != ch("\n"):
                 _inc(p)
             result.data.len = _minus_bang(p, result.data.p)
     if result.tk == NifKind.ParLe:
@@ -1036,9 +1036,9 @@ def _linePrelude(r: mut @ Reader, tok: mut @ ExpandedToken) -> bool:
     if r._inLineNode and r._depth == 0:
         # the newline is significant here
         with _useCpuRegisters():
-            while p < eof and _deref(p) in Tset[char](ch(" "), ch("\t"), ch("\r")):
+            while p < eof and _caret(p) in Tset[char](ch(" "), ch("\t"), ch("\r")):
                 _inc(p)
-        if r._p >= r._eof or _deref(r._p) == ch("\n"):
+        if r._p >= r._eof or _caret(r._p) == ch("\n"):
             # the `)` of the line node; the newline itself is skipped next time
             tok.tk = NifKind.ParRi
             tok.data = StringView(p=r._p, len=0)
@@ -1049,10 +1049,10 @@ def _linePrelude(r: mut @ Reader, tok: mut @ ExpandedToken) -> bool:
         if r._p >= r._eof:
             return False
     result = False
-    match _deref(r._p):
-        case _ if _deref(r._p) == ch("("):
+    match _caret(r._p):
+        case _ if _caret(r._p) == ch("("):
             r._depth += 1
-        case _ if _deref(r._p) == ch(")"):
+        case _ if _caret(r._p) == ch(")"):
             if r._depth > 0:
                 r._depth -= 1
         case _:
@@ -1083,30 +1083,30 @@ def next(r: mut @ Reader, result: mut @ ExpandedToken):
         result.tk = NifKind.EofToken
         return
 
-    match _deref(r._p):
-        case _ if _deref(r._p) == char("("):
+    match _caret(r._p):
+        case _ if _caret(r._p) == char("("):
             result.tk = NifKind.ParLe
             with _useCpuRegisters():
                 _inc(p)
                 result.data.p = p
                 result.data.len = 0
-                while p < eof and _deref(p) not in _ControlCharsOrWhite:
+                while p < eof and _caret(p) not in _ControlCharsOrWhite:
                     result.data.len += 1
                     _inc(p)
             _handleSuffix(r, result)
 
-        case _ if _deref(r._p) == char(")"):
+        case _ if _caret(r._p) == char(")"):
             result.tk = NifKind.ParRi
             result.data.p = r._p
             result.data.len += 1
             _inc(r._p)
-        case _ if _deref(r._p) == char("."):
+        case _ if _caret(r._p) == char("."):
             result.tk = NifKind.DotToken
             result.data.p = r._p
             result.data.len += 1
             _inc(r._p)
             _handleSuffix(r, result)
-        case _ if _deref(r._p) == char('"'):
+        case _ if _caret(r._p) == char('"'):
             with _useCpuRegisters():
                 _inc(p)
                 result.tk = StringLit
@@ -1114,7 +1114,7 @@ def next(r: mut @ Reader, result: mut @ ExpandedToken):
                 result.data.len = 0
                 while p < eof:
                     with let:
-                        ch = _deref(p)
+                        ch = _caret(p)
                     if ch == char('"'):
                         _inc(p)
                         break
@@ -1125,37 +1125,37 @@ def next(r: mut @ Reader, result: mut @ ExpandedToken):
                     result.data.len += 1
                     _inc(p)
             _handleSuffix(r, result)
-        case _ if _deref(r._p) == char("'"):
+        case _ if _caret(r._p) == char("'"):
             _inc(r._p)
             result.data.p = r._p
             if r._p >= r._eof:
                 _ = "keep it as UnknownToken"
-            elif _deref(r._p) == char("\\"):
+            elif _caret(r._p) == char("\\"):
                 result._flags.incl(_TokenFlag.TokenHasEscapes)
                 # `\\HH'` needs four more bytes
                 if _plus_bang(r._p, 3) < r._eof and r._p[1] in _HexChars and r._p[2] in _HexChars:
                     _inc(r._p, 3)
-                    if _deref(r._p) == char("'"):
+                    if _caret(r._p) == char("'"):
                         _inc(r._p)
                         result.tk = NifKind.CharLit  # now valid
                 else:
                     _inc(r._p)
-            elif _deref(r._p) in _ControlChars:
+            elif _caret(r._p) in _ControlChars:
                 _ = "keep it as UnknownToken"
             else:
                 _inc(r._p)
-                if r._p < r._eof and _deref(r._p) == char("'"):
+                if r._p < r._eof and _caret(r._p) == char("'"):
                     _inc(r._p)
                     result.tk = NifKind.CharLit  # only now valid
             if result.tk == NifKind.CharLit:
                 _handleSuffix(r, result)
 
-        case _ if _deref(r._p) == char(":"):
+        case _ if _caret(r._p) == char(":"):
             with _useCpuRegisters():
                 _inc(p)
                 result.data.p = p
-                while p < eof and _deref(p) not in _ControlCharsOrWhite:
-                    if _deref(p) == char("\\"):
+                while p < eof and _caret(p) not in _ControlCharsOrWhite:
+                    if _caret(p) == char("\\"):
                         result._flags.incl(_TokenFlag.TokenHasEscapes)
                     result.data.len += 1
                     _inc(p)
@@ -1167,7 +1167,7 @@ def next(r: mut @ Reader, result: mut @ ExpandedToken):
                     _splitSymbol(r, result)
                 _handleSuffix(r, result)
 
-        case _ if _deref(r._p) == char("-"):
+        case _ if _caret(r._p) == char("-"):
             # negative number; '+' is no longer a number prefix in NIF27.
             result.data.p = r._p
             _inc(r._p)
@@ -1179,7 +1179,7 @@ def next(r: mut @ Reader, result: mut @ ExpandedToken):
             else:
                 _handleSuffix(r, result)
 
-        case _ if _deref(r._p) == char("0"):
+        case _ if _caret(r._p) == char("0"):
             # The only digit that can start `0x`, `0o` or `0b`.
             result.data.p = r._p
             if _hasBasePrefix(r._p, r._eof): _handlePrefixedNumber(r, result)
@@ -1189,7 +1189,7 @@ def next(r: mut @ Reader, result: mut @ ExpandedToken):
             else:
                 _handleSuffix(r, result)
 
-        case _ if _deref(r._p) in inrange(char("1"), char("9")):
+        case _ if _caret(r._p) in inrange(char("1"), char("9")):
             # bare-digit number (NIF27): no sign prefix on positives.
             result.data.p = r._p
             _handleNumber(r, result)
@@ -1206,10 +1206,10 @@ def next(r: mut @ Reader, result: mut @ ExpandedToken):
             def scanWord(wordEnd: Tset[char]):
                 with _useCpuRegisters():
                     result.data.p = p
-                    while p < eof and _deref(p) not in wordEnd:
-                        if _deref(p) == char("\\"):
+                    while p < eof and _caret(p) not in wordEnd:
+                        if _caret(p) == char("\\"):
                             result._flags.incl(_TokenFlag.TokenHasEscapes)
-                        elif _deref(p) == char("."):
+                        elif _caret(p) == char("."):
                             hasDot = True
                         result.data.len += 1
                         _inc(p)
@@ -1268,7 +1268,7 @@ def startsWith(r: Reader, prefix: string) -> bool:
     while True:
         if i >= prefixLen:
             return True
-        if p >= r._eof or _deref(p) != prefix[i]:
+        if p >= r._eof or _caret(p) != prefix[i]:
             return False
         _inc(p)
         i += 1
@@ -1345,7 +1345,7 @@ def open(filename: string, lineBased=False) -> Reader:
                 writeStackTrace()
             quit(string("[Error] cannot open: ") + filename)
     result = Reader(
-        _f=f, _p=nil, thisModule=extractModuleSuffix(filename), _lineBased=lineBased
+        _f=f, _p=None, thisModule=extractModuleSuffix(filename), _lineBased=lineBased
     )
     result._p = cast[pchar](result._f.data)
     result._eof = _plus_bang(result._p, result._f.size)
@@ -1409,7 +1409,7 @@ def jumpTo(r: mut @ Reader, offset: nint):
     # `offset` is the position AFTER the whole symbol, so a jump abandons the
     # components of a split symbol that were not asked for.
     r._pendingLeft = int32(0)
-    r._pending = StringView(p=nil, len=0)
+    r._pending = StringView(p=None, len=0)
     # In the line-based syntax, a jump target is taken to be a top-level node.
     r._inLineNode = False
     r._depth = int32(0)
@@ -1436,7 +1436,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
         """Every token of `input`, rendered as "<what>:<decoded text>"."""
         result = default(seq[string])
         with var:
-            r = openFromBuffer(input, string("ThisMod"))
+            r = openFromBuffer(input.copy(), string("ThisMod"))
         r.splitSymbols(split)
         result = seq[string]([])
         with var:
@@ -1632,7 +1632,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
         """Like `tokens`, for the line-based syntax; string literals are quoted."""
         result = default(seq[string])
         with var:
-            r = openFromBuffer(input, string("ThisMod"), lineBased=True)
+            r = openFromBuffer(input.copy(), string("ThisMod"), lineBased=True)
         result = seq[string]([])
         with var:
             tok = default(ExpandedToken)
@@ -1986,8 +1986,7 @@ if comptime(__name__ == "__main__"):
     def show(r: Reader, tok: ExpandedToken) -> string:
         """A token as `<kind> <decoded value>`, then its suffix: `@col,line`, the filename, the comment, the flags
         that say whether it needs decoding, and for a split symbol's component its part."""
-        with var:
-            result = string(str(tok.tk))
+        result = string(str(tok.tk))
         match tok.tk:
             case NifKind.CharLit:
                 result.add(string(" ") + str(ord(decodeChar(tok))))

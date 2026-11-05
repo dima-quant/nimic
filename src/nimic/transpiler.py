@@ -192,7 +192,8 @@ Imports:
   rule:import -> write import from as import, drop from __future__ import ...; a relative `from ..models import m`
     and `from . import m` bind module names: import ../models/m, import m; `from . import m as x` is import m as x;
     a relative name import `from .nifcore import TokenBuf` is import nifcore (unparse()'s `package` tells the two
-    apart); each path is imported once; `from . import a, b` is one line `import a, b` (the grouping is kept)
+    apart); each path is imported once; `from . import a, b` is one line `import a, b` and `from nimic.std import
+    memfiles, syncio` one line `import std/memfiles, std/syncio` (the grouping is kept)
   rule:nodoubleimport -> do not write import module if the block already imports it (also `from nimic.std import m`,
     which is `import std/m` for qualified use, m.proc); each `when` branch writes its own imports
   rule:labeledblock -> with block("name"): ... is `block name:`; breakBlock("name") is `break name`
@@ -1414,6 +1415,25 @@ class _Unparser(NodeVisitor):
             self._block_imports[-1].add(path)
             self.fill("import " + path)
 
+    def _import_modules(self, node: ImportFrom, path_of) -> None:
+        """rule:import -> a `from p import a, b` that binds modules (`from . import a, b`, `from nimic.std import
+        memfiles, syncio`) is one Nim statement, `import a, b` / `import std/memfiles, std/syncio`: one Python
+        statement is one Nim statement, so the round trip gives the line back. rule:nodoubleimport drops a module
+        imported before; `as x` is a statement of its own (`import std/os as nos`)."""
+        group = []
+        for alias in node.names + [None]:
+            if alias is None or alias.asname:
+                if group:
+                    self.fill("import " + ", ".join(group))
+                    group = []
+                if alias is not None:
+                    self.fill(f"import {path_of(alias.name)} as {alias.asname}")
+                continue
+            path = path_of(alias.name)
+            if path not in self._block_imports[-1] and path not in group:
+                self._block_imports[-1].add(path)
+                group.append(path)
+
     def _names_modules(self, node: ImportFrom) -> bool:
         """Whether a relative `from .m import a, b` imports modules a, b of the package m (`from ..models import
         leng_tags`), not names of the module m. Without the transpiled module's package, every name is a
@@ -1433,13 +1453,9 @@ class _Unparser(NodeVisitor):
         # in Nim); Nim's selective `from m import a` is importFrom("m", "a") (rule:importfrom)
         if node.module and not node.level and self._is_nimic_package(node.module):
             # rule:import -> `from nimic.std import memfiles` (a std module used qualified: memfiles.open) is
-            # `import std/memfiles`, once at the top level (rule:nodoubleimport; in a `when` branch always)
-            for alias in node.names:
-                path = self._import_path(f"{node.module}.{alias.name}", 0)
-                if alias.asname:
-                    self.fill(f"import {path} as {alias.asname}")  # `from nimic.std import os as nos`
-                else:
-                    self._import_once(path)
+            # `import std/memfiles`, once at the top level (rule:nodoubleimport; in a `when` branch always);
+            # `from nimic.std import memfiles, syncio` is one statement `import std/memfiles, std/syncio`
+            self._import_modules(node, lambda name: self._import_path(f"{node.module}.{name}", 0))
             return
         if node.level and node.names[0].name != "*":
             # rule:import -> `from ..models import leng_tags` and `from . import m` bind module names:
@@ -1449,22 +1465,8 @@ class _Unparser(NodeVisitor):
             if node.module and not self._names_modules(node):
                 self._import_once(self._import_path(node.module, node.level))
                 return
-            # one Python statement is one Nim statement: `from . import a, b` is `import a, b` (rule:nodoubleimport
-            # drops a module imported before)
-            group = []
-            for alias in node.names + [None]:
-                if alias is None or alias.asname:
-                    if group:
-                        self.fill("import " + ", ".join(group))
-                        group = []
-                    if alias is not None:
-                        name = f"{node.module}.{alias.name}" if node.module else alias.name
-                        self.fill(f"import {self._import_path(name, node.level)} as {alias.asname}")
-                    continue
-                path = self._import_path(f"{node.module}.{alias.name}" if node.module else alias.name, node.level)
-                if path not in self._block_imports[-1] and path not in group:
-                    self._block_imports[-1].add(path)
-                    group.append(path)
+            self._import_modules(node, lambda name: self._import_path(
+                f"{node.module}.{name}" if node.module else name, node.level))
             return
         if node.module and not node.module in ["__future__"]:
             path = self._import_path(node.module, node.level or 0)
@@ -2192,6 +2194,11 @@ class _Unparser(NodeVisitor):
         # rule:funcdefbody -> a body of only `pass` (forward declaration) or only the pragma docstring
         # (`template x() {.pragma.}`, a custom pragma) is a declaration without body
         write_body = bool(body) and not isinstance(body[0], Pass)
+        # rule:funcdefyield -> decided before the pragmas: `{.noSideEffect.}` makes a proc a `func`, but stays
+        # on an iterator (`iterator crucialOrigins*(...): CrucialOrigin {.noSideEffect.}`)
+        plain_def = decl_str == "proc"  # a `def` without decorator: a proc, or an iterator by its `yield`
+        if decl_str != "iterator" and self._has_yield(body):
+            decl_str = "iterator"
         if pragma:
             parsed_pragma = pragma.replace(" ", "").split(",")
             write_body = write_body and "borrow" not in parsed_pragma
@@ -2202,7 +2209,7 @@ class _Unparser(NodeVisitor):
             if "private" in parsed_pragma:  # rule:privatepragma
                 is_private = True
                 pragma = ",".join([x for x in parsed_pragma if x != "private"])
-        if self._main_raises and decl_str == "proc" and write_body:
+        if self._main_raises and plain_def and decl_str != "func" and write_body:
             # rule:mainproc -> a proc of a main block may call `.raises` routines (`.raises` under nimony)
             pragma = ", ".join(p for p in (pragma, self._main_raises) if p)
         func_name = node.name
@@ -2219,9 +2226,6 @@ class _Unparser(NodeVisitor):
                 ann_str = ast.unparse(node.args.args[0].annotation)
                 if "FormatStr" in ann_str or "string" in ann_str:
                     func_name = "`%`"
-        # rule:funcdefyield
-        if decl_str != "iterator" and self._has_yield(body):
-           decl_str = "iterator"
         is_module_level = (self._scope_depth <= 1)
         name_str = self._adjust_name(func_name, definition=is_module_level and not is_private)  # rule:localname
         operator_name = self._operator_name(node)

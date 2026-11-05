@@ -44,7 +44,7 @@ from .nifcore import (
     addIdent, addStrLit, addSubtree, addSymDef,
     addSymUse, charLit, createTokenBuf, Cursor, cursorTagId,
     endRead, enterScope, getOrIncl, initTokenBuf, internedSymToken, into,
-    isValid, JumpShift, kind, KindBits, load, newPool, newTagPool, NifKind, NifLineInfo, NifToken, NoNifLineInfo,
+    JumpShift, kind, KindBits, load, newPool, newTagPool, NifKind, NifLineInfo, NifToken, NoNifLineInfo,
     PayloadMask, Pool, registerTag, setJump, skip, soperand, StrId,
     subtreeWidth, SymId, symId, TagId, TagMask, TagPool, tags, TagShift, TokenBuf,
     uoperand)

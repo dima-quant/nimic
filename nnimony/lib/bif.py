@@ -427,7 +427,7 @@ def storeToString(b: mut @ TokenBuf, dottedSuffix: string = string("")) -> strin
     _appendVarint(result, uint64(b.len))
     _appendVarint(result, uint64(b.tags.tags.len()))
     _appendVarint(result, uint64(b.pool.strings.len()))
-    _appendVarint(result, uint64(syms(b.pool).len))
+    _appendVarint(result, uint64(syms(b.pool).len()))
     _appendVarint(result, uint64(b.pool.filenames.len()))
     # Pad to NifToken alignment so the mmap loader can borrow the token block in
     # place (see `tokenPad`).
@@ -439,7 +439,7 @@ def storeToString(b: mut @ TokenBuf, dottedSuffix: string = string("")) -> strin
     # pools, each in id order (ids are 1-based, dense up to len).
     for i in inrange(1, b.tags.tags.len()):      _appendStr(result, b.tags.tags[TagId(i)])
     for i in inrange(1, b.pool.strings.len()):   _appendStr(result, b.pool.strings[StrId(i)])
-    for i in inrange(1, syms(b.pool).len):      _appendStr(result, b.pool.symString(SymId(i)))
+    for i in inrange(1, syms(b.pool).len()):      _appendStr(result, b.pool.symString(SymId(i)))
     for i in inrange(1, b.pool.filenames.len()): _appendStr(result, b.pool.filenames[FileId(i)])
     # symbol index — self-contained at the offset we now know. `pos` is a token
     # index (always >= 0) and `vis` a 0/1 enum, so plain varints suffice.
@@ -820,7 +820,7 @@ def buildRemap(src: mut @ TokenBuf, pool: Pool, tags: TagPool) -> PoolRemap:
         result.strings[i] = id
         if uint32(id) != uint32(i): result.identity = False
     with let:
-        nSyms = syms(src.pool).len
+        nSyms = syms(src.pool).len()
     result.syms = newSeq[SymId](nSyms + 1)
     for i in inrange(1, nSyms):
         with let:
@@ -1092,7 +1092,7 @@ if comptime(__name__ == "__main__"):
         # pools must match value-for-value (so ids line up)
         doAssert(m.buf.tags.tags.len() == src.tags.tags.len())
         doAssert(m.buf.pool.strings.len() == src.pool.strings.len())
-        doAssert(syms(m.buf.pool).len == syms(src.pool).len)
+        doAssert(syms(m.buf.pool).len() == syms(src.pool).len())
         doAssert(m.buf.pool.filenames.len() == src.pool.filenames.len())
         # spot-check a decoded value via a cursor
         with var:
@@ -1108,7 +1108,7 @@ if comptime(__name__ == "__main__"):
             fm = loadFromFile(ff)
         close(ff)
         doAssert(sameTokens(src, fm.buf), string("loadFromFile disagrees with mmap load"))
-        doAssert(syms(fm.buf.pool).len == syms(src.pool).len)
+        doAssert(syms(fm.buf.pool).len() == syms(src.pool).len())
 
         # containsSym probes only the syms table (skipping header, pad, tokens, tags,
         # strings); it must find a pooled name and reject an absent one.
@@ -1339,13 +1339,13 @@ if comptime(__name__ == "__main__"):
 
     def samePools(a: TokenBuf, b: TokenBuf) -> bool:
         if len(a.tags.tags) != len(b.tags.tags) or len(a.pool.strings) != len(b.pool.strings) or \
-                syms(a.pool).len != syms(b.pool).len or len(a.pool.filenames) != len(b.pool.filenames):
+                syms(a.pool).len() != syms(b.pool).len() or len(a.pool.filenames) != len(b.pool.filenames):
             return False
         for i in inrange(1, len(a.tags.tags)):
             if a.tags.tags[TagId(i)] != b.tags.tags[TagId(i)]: return False
         for i in inrange(1, len(a.pool.strings)):
             if a.pool.strings[StrId(i)] != b.pool.strings[StrId(i)]: return False
-        for i in inrange(1, syms(a.pool).len):
+        for i in inrange(1, syms(a.pool).len()):
             if a.pool.symString(SymId(i)) != b.pool.symString(SymId(i)): return False
         for i in inrange(1, len(a.pool.filenames)):
             if a.pool.filenames[FileId(i)] != b.pool.filenames[FileId(i)]: return False
@@ -1353,7 +1353,7 @@ if comptime(__name__ == "__main__"):
 
     def echoModule(label: string, m: mut @ BifModule):
         echo(label, ": tokens ", m.buf.len, " tags ", len(m.buf.tags.tags),
-             " strings ", len(m.buf.pool.strings), " syms ", syms(m.buf.pool).len,
+             " strings ", len(m.buf.pool.strings), " syms ", syms(m.buf.pool).len(),
              " files ", len(m.buf.pool.filenames), " index ", m.index.len)
         for e in m.index:
             echo("  ", m.buf.pool.symString(e.sym), " sym ", uint32(e.sym), " pos ", e.pos,

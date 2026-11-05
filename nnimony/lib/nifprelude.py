@@ -10,16 +10,17 @@ with push("warning[UnusedImport]: off"):
 
     from .bitabs import getOrIncl
     from .nifpools import buildTree, createTokenBuf, ErrT, globalTags, NifKind, NoLineInfo, pool, toString, writeFile
+    from . import nifbuilder
     from .nifbuilder import addHeader, extract, open, withTree
-    from . import nifbuilder, nifpools
-    # one name of two imports, called free: Nim overloads them (rule:overloads)
-    addIdent = overloads(nifpools.addIdent, nifbuilder.addIdent)
-    addIntLit = overloads(nifpools.addIntLit, nifbuilder.addIntLit)
-    addStrLit = overloads(nifpools.addStrLit, nifbuilder.addStrLit)
     from . import nifroles
     export(nifroles)
     importFrom(".nifreader")   # text reader; qualified-only: its NifKind must
                                # not shadow nifcore's token kinds
+    from . import nifpools
+    # one name of two imports, called free: Nim overloads them (rule:overloads)
+    addIdent = overloads(nifpools.addIdent, nifbuilder.addIdent)
+    addIntLit = overloads(nifpools.addIntLit, nifbuilder.addIntLit)
+    addStrLit = overloads(nifpools.addStrLit, nifbuilder.addStrLit)
 
 
 if comptime(__name__ == "__main__"):

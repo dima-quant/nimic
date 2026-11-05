@@ -31,7 +31,7 @@ from nimic.ntypes import *
 from nimic.std.tables import initTable, Table
 from .nifcore import (
     addSubtree, createTokenBuf, Cursor, lineInfoFile, newPool, newTagPool, NifKind, Pool,
-    pool, symId, symName, TagPool, TokenBuf)
+    symId, symName, TagPool, TokenBuf)
 from .nifcoreparse import parse, parseFromBuffer, peekRootInfo, toModuleString, toString
 from .nifreader import close, decodeInt, decodeStr, ExpandedToken, indexStartsAt, next, offset, Reader
 from . import nifreader
@@ -77,7 +77,7 @@ class ForeignModule(Object):
         ## into the same pool or their ids won't line up with the main module's).
         # `[]` is `.raises` (KeyError) under Nimony; `getOrQuit` is the non-raising
         # accessor for the keys the precondition already guarantees are present.
-        if m.decls.hasKey(name): return getOrQuit(m.decls, name)
+        if m.decls.hasKey(name): return getOrQuit(m.decls, name).copy()
         with let:
             pos = getOrQuit(m.index, name)
         with var:
@@ -106,7 +106,7 @@ class ForeignModule(Object):
         result = buf.beginRead()
         m.declBufs.add(ensureMove(buf))
         m.decls[name] = result
-        return result
+        return result.copy()  # `decls` holds it too (rules §1.1: the callee copies, callers never do)
 
 
 def readEmbeddedIndex(r: mut @ Reader) -> Table[string, nint]:
@@ -279,9 +279,9 @@ if comptime(__name__ == "__main__"):
             with var:
                 pooled = openForeignModule(path)
             with var:
-                a = fresh.getDecl(string("p12.0.m"), tags).copy()
+                a = fresh.getDecl(string("p12.0.m"), tags)
             with var:
-                b = pooled.getDecl(string("p12.0.m"), tags, shared).copy()
+                b = pooled.getDecl(string("p12.0.m"), tags, shared)
             a.inc()
             b.inc()
             echo("pool nil: ", symName(a), " matches shared ", symId(a) == symId(shared, string("p12.0.m")),
