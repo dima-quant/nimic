@@ -46,7 +46,7 @@ from .nifcore import (
     endRead, enterScope, getOrIncl, initTokenBuf, internedSymToken, into,
     JumpShift, kind, KindBits, load, newPool, newTagPool, NifKind, NifLineInfo, NifToken, NoNifLineInfo,
     PayloadMask, Pool, registerTag, setJump, skip, soperand, StrId,
-    subtreeWidth, SymId, symId, TagId, TagMask, TagPool, tags, TagShift, TokenBuf,
+    subtreeWidth, SymId, symId, TagId, TagMask, TagPool, TagShift, TokenBuf,
     uoperand)
 from . import nifcore
 from . import comesfrom

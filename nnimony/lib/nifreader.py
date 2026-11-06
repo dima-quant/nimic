@@ -17,12 +17,11 @@ from .stringviews import beginStore, endStore, pchar, StringView
 from .vfs import initBlob, VfsBlob, vfsOpenMmap
 from .nifcore import NifKind  # the ONE token-kind enum, shared with the binary token model
 from . import nifcore
+exportFrom(nifcore, "NifKind")
 from nimic.std import memfiles, syncio
 # one name of two imports, overloaded by the reader's (rule:overloads)
 open = overloads(memfiles.open, syncio.open)
 close = overloads(memfiles.close, syncio.close)
-
-exportFrom(nifcore, "NifKind")
 
 with const:
     StringLit = NifKind.StrLit

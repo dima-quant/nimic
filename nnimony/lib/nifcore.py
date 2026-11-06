@@ -503,7 +503,7 @@ class Pool(Object):
 
     def _strOrEmpty(p: Pool, s: StrId) -> string:
         """{.inline, noSideEffect.}"""
-        return string("") if s == StrId(u32(0)) else p.strings[s]
+        return string("") if s == StrId(u32(0)) else p.strings[s].copy()
 
     def symBasename(p: Pool, id: SymId) -> string:
         ## The identifier of `id`, without disambiguator, key or module suffix:
@@ -513,7 +513,7 @@ class Pool(Object):
         """{.noSideEffect.}"""
         with let:
             s = p.symbols[id]
-        return string("") if s.disamb == NoDisamb else p.strings[s.name]
+        return string("") if s.disamb == NoDisamb else p.strings[s.name].copy()
 
     def symNameId(p: Pool, id: SymId) -> StrId:
         """{.inline, noSideEffect.}"""
@@ -1469,7 +1469,7 @@ def strVal(c: Cursor, pool: Pool) -> string:
     if (payload & StrInlineFlag) != u32(0):
         return _readInlineStr(payload)
     else:
-        return pool.strings[StrId(uint32(combinedPayload(c) >> 1))]
+        return pool.strings[StrId(uint32(combinedPayload(c) >> 1))].copy()
 
 # The one-argument accessors below spell the pool lookup out rather than calling
 # `pool(c)`. `pool` returns the pool BY VALUE, and a `ref` returned by value is an
@@ -1652,7 +1652,7 @@ def lineInfoFile(c: Cursor) -> string:
     ## Empty string when there is no line info.
     with let:
         li = c.rawLineInfo()
-    return pool(c).filenames[li.file] if isValid(li.file) and pool(c) is not None else string("")
+    return pool(c).filenames[li.file].copy() if isValid(li.file) and pool(c) is not None else string("")
 
 # ── inc / skip / into ────────────────────────────────────────────────────
 
