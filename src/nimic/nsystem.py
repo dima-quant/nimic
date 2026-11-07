@@ -1,4 +1,5 @@
 from __future__ import annotations
+import atexit as _atexit
 import builtins as _builtins
 import codecs
 import ctypes
@@ -212,6 +213,17 @@ class _NewSeqHelper:
 
 newSeq = _NewSeqHelper()
 new_seq = newSeq
+
+
+class _NewSeqOfCapHelper:
+    """Nim: newSeqOfCap[T](cap) — an empty seq[T]; `cap` only reserves room in Nim (a hint)."""
+    def __getitem__(self, _ntype: type):
+        def _make(cap: int):
+            return seq[_ntype]()
+        return _make
+
+newSeqOfCap = _NewSeqOfCapHelper()
+new_seq_of_cap = newSeqOfCap
 
 
 def new_string_of_cap(cap: int):
@@ -969,14 +981,27 @@ def _n_setup_stdio() -> None:
                 pass  # stream already read from (e.g. interactive stdin): keep its encoding
 
 
+def _n_exit(code: int) -> None:
+    """Ends the process as Nim's `exit` does: the exit procs (Python's atexit handlers) run and the standard
+    streams are flushed, then the process ends without unwinding the stack (no `except`, no `finally`)."""
+    _atexit._run_exitfuncs()
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except (OSError, ValueError):
+            pass
+    os._exit(code)
+
+
 def quit(error: int | str = 0) -> None:
     """{.noreturn.} Nim: quit(errorcode: int = QuitSuccess) exits with the code; quit(errormsg: string) writes
-    the message and a newline to stderr and exits with QuitFailure."""
+    the message and a newline to stderr and exits with QuitFailure. Nim's quit is no exception: an `except:`
+    around it doesn't catch it (Python's would catch SystemExit), so the process ends here (`_n_exit`)."""
     if isinstance(error, (str, _ntypesystem.string)):
         sys.stderr.write(str(error) + "\n")
         sys.stderr.flush()
-        sys.exit(1)
-    sys.exit(int(error))
+        _n_exit(1)
+    _n_exit(int(error))
 
 
 

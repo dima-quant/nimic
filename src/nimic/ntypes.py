@@ -58,6 +58,8 @@ from nimic.nsystem import (
     fields,
     newSeq,
     new_seq,
+    newSeqOfCap,
+    new_seq_of_cap,
     new_string_of_cap,
     newStringOfCap,
     newString,

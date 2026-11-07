@@ -2099,13 +2099,32 @@ class NTypeRegistry:
             resolved._n_register_type()
         return resolved
 
+    def _n_eval_lazy_alias(self, t_name: str, alias: TypeAliasType, caller_globals: dict) -> object:
+        """A `type Node = ptr[LinkedToken]` statement (rule:classdefseq: an alias of the type section naming a
+        class written after it): its value, read as a type expression while that class is defined (registered
+        before its fields are resolved, not yet bound in the module). Once the value is a type, the module binds
+        the name to it, as the assignment form `Node = ptr[LinkedToken]` would (`seq[Node]`, `@dispatch`
+        annotations). A union (a type class, `type K = (A | B)`) stays the alias."""
+        try:
+            value = alias.__value__
+        except NameError:
+            source = annotationlib.call_evaluate_function(alias.evaluate_value, annotationlib.Format.STRING)
+            value = self.get_or_eval_type(source.strip(), caller_globals)
+        if isinstance(value, type) and not value.__dict__.get('_n_forward', False):
+            caller_globals[t_name] = value
+            return value
+        return alias
+
     def get_or_eval_type(self, t_name: str, caller_globals: dict | None = None) -> type:
         if not isinstance(t_name, str):
             return t_name
         if t_name in self.types:
             return self.types[t_name]
         if caller_globals and t_name in caller_globals:
-            return caller_globals[t_name]
+            bound = caller_globals[t_name]
+            if isinstance(bound, TypeAliasType):
+                return self._n_eval_lazy_alias(t_name, bound, caller_globals)
+            return bound
         # t_name is not in self.types, so needs to be resolved and registered.
         if "[" in t_name and t_name.endswith("]"):
             base, params = t_name[:-1].split("[", 1)
@@ -2145,6 +2164,12 @@ class NTypeRegistry:
             pass
         if t_name.isidentifier():
             placeholder = type(t_name, (Object,), {'_n_forward': True})
+            # a stand-in for a type declared later, not a type of that name: the name stays unbound for later
+            # lookups (a name that never binds a class, an alias, would otherwise resolve to the stand-in in
+            # `def f(n: Node)`)
+            for registry in (self.types, self.c_types):
+                if registry.get(t_name) is placeholder or getattr(registry.get(t_name), '_n_forward', False):
+                    del registry[t_name]
             return placeholder
         raise NameError(f"Type '{t_name}' not found")
 
@@ -2167,6 +2192,8 @@ def _n_resolve_forward_fields(cls: type) -> None:
             _n_forward_fields.setdefault((cls.__module__, field_cls.__name__), []).append((cls, key))
     for owner, key in _n_forward_fields.pop((cls.__module__, cls.__name__), ()):
         owner._n_field_types[key] = cls
+
+
 
 # Backward-compatible aliases — these point to the same dict objects
 DICT_OF_TYPES = _n_registry.types
@@ -3045,9 +3072,12 @@ class Tset(_NLen, set):
     def __init__(self, *items):
         """Nim set constructor `{a, b..c}`: `Tset[T](a, inrange(b, c))` or `Tset[T]({a, inrange(b, c)})`;
         a single iterable argument (another set, `inrange(b, c)`) gives its members. A single `char` is an
-        element (`{'x'}`), though Python can iterate it."""
+        element (`{'x'}`), though Python can iterate it, and so is a single member of the element type (an
+        enum with string values, `{tkProc}`)."""
+        elem_type = getattr(type(self), '_elem_type', None)
         if (len(items) == 1 and isinstance(items[0], collections.abc.Iterable)
-                and not isinstance(items[0], char)):
+                and not isinstance(items[0], char)
+                and not (isinstance(elem_type, type) and isinstance(items[0], elem_type))):
             items = items[0]
         members = []
         for item in items:
@@ -3858,6 +3888,21 @@ class _Object(Ntype):
                 if getattr(self._n_field_types.get(name), '_n_is_ref', False):
                     self._n_store_ref(name, value)
                     super().__setattr__(name, value)
+                    return
+                field_cls = self._n_field_types.get(name)
+                if isinstance(value, pointer) and hasattr(field_cls, '_n_on_struct'):
+                    # Nim copies the pointer: the address goes into this object's own slot, which the field reads
+                    # from then on. The value may be a view of another object's slot (`p.last = m.prev`), whose
+                    # memory goes away with that object; its target object is kept when it is the same.
+                    address = int(value._n_get_value() or 0)
+                    setattr(self._n_view, name, address)
+                    own = field_cls._n_on_struct(self._n_view, name)
+                    if int(value.__dict__.get('_n_addr') or 0) == address:
+                        own._n_contents_cache = value.__dict__.get('_n_contents_cache')
+                    for key, held in value.__dict__.items():  # what the pointer carries besides its slot (the
+                        if key not in own.__dict__:           # handle of a `cast[pointer](file)`: `_n_token_id`)
+                            own.__dict__[key] = held
+                    super().__setattr__(name, own)
                     return
                 # Store address in ctypes c_void_p field + keep Python reference
                 if isinstance(value, NilPtr) or value is None:
@@ -5123,8 +5168,8 @@ class pointer(Ntype):
             self._n_contents_cache = x
 
     def _n_get_value(self):
-        """A pointer's value is the address it holds."""
-        return self._n_view[0] if self._n_view else self._n_addr
+        """A pointer's value is the address it holds (0 for nil: a `c_void_p` slot holding 0 reads None)."""
+        return (self._n_view[0] or 0) if self._n_view else self._n_addr
 
     def _n_target_key(self) -> object:
         """What the pointer points at, for ==: its address (0: nil), or the object it refers to when it holds
@@ -5192,6 +5237,13 @@ class pointer(Ntype):
     @property
     def contents(self):
         """Lazily materialize the pointed-to object on first access."""
+        if self.__dict__.get('_n_slot_addr') is not None:
+            # a view of a field / array slot: it points where the slot points now (a store through another
+            # path, `p.last = n`, changed it)
+            live = int(self._n_view[0] or 0)
+            if live != self._n_addr:
+                self._n_addr = live
+                self._n_contents_cache = None
         ct = type(self)._n_contents_type
         if (self._n_addr != 0 and ct is not None and not hasattr(ct, '_n_ptr_cast')
                 and hasattr(ct, '_n_on_array') and _n_uncached_elem(ct)):
@@ -6678,6 +6730,11 @@ class char(str):
     def __int__(self):
         return self._n_byte
 
+    def copy(self) -> char:
+        """Nim's assignment of a char (rules §1.1, `.copy()` of a value): the char, detached from the string slot
+        it may view."""
+        return char(self._n_byte)
+
     def _n_get_value(self):
         return bytes([self._n_byte])
 
@@ -6710,6 +6767,82 @@ class char(str):
 
 
 cstring._n_item_type = char  # cstring is defined before char
+
+
+def _n_add_normalized_path(x: str, result: list[str], state: list[int]) -> None:
+    """Nim's pathnorm.addNormalizePath (POSIX: DirSep = AltSep = '/'): appends the components of `x` to
+    `result` (a one-string list), dropping `.`, resolving `..` against earlier components; `state[0]`: bit 0
+    an absolute path, the other bits the number of components."""
+    out = result[0]
+    i, n = 0, len(x)
+    not_first = (state[0] >> 1) > 0
+    if not_first:
+        while i < n and x[i] == '/':
+            i += 1
+    while i < n:
+        prev = i
+        if not not_first and x[i] == '/':
+            i += 1
+        else:
+            while i < n and x[i] != '/':
+                i += 1
+        part = x[prev:i]
+        while i < n and x[i] == '/':
+            i += 1
+        not_first = True
+        if (state[0] >> 1) == 0 and part == '/':
+            if not out or out[-1] != '/':
+                out += '/'
+            state[0] |= 1
+        elif part == '..':
+            if (state[0] >> 1) >= 1:
+                d = len(out)
+                while d - 1 > (state[0] & 1) and out[d - 1] != '/':
+                    d -= 1
+                if d > 0:
+                    out = out[:d - 1]
+                    state[0] -= 2
+            else:
+                if out and out[-1] != '/':
+                    out += '/'
+                out += part
+        elif part == '.':
+            pass
+        elif part:
+            if out and out[-1] != '/':
+                out += '/'
+            out += part
+            state[0] += 2
+    if out == '' and x != '':
+        out = '.'
+    result[0] = out
+
+
+def _n_normalize_path_end(path: str, trailing_sep: bool) -> str:
+    """Nim's os.normalizePathEnd: no trailing `/` or `/.`, or exactly one `/` with `trailing_sep`."""
+    if not path:
+        return path
+    i = len(path)
+    while i >= 1:
+        if path[i - 1] == '/' or (path[i - 1] == '.' and i >= 2 and path[i - 2] == '/'):
+            i -= 1
+        else:
+            break
+    if trailing_sep:
+        return path[:i] + '/'
+    return path[:i] if i > 0 else '/'
+
+
+def _n_join_path(head: str, tail: str) -> str:
+    """Nim's os.joinPath (`head / tail`): the normalized concatenation, keeping whether `tail` has a trailing
+    separator (or, when it is empty, whether `head` has one)."""
+    result, state = [''], [0]
+    for part in (head, tail):
+        trailing = part.endswith('/') or (part == '' and result[0].endswith('/'))
+        result[0] = _n_normalize_path_end(result[0], False)
+        _n_add_normalized_path(part, result, state)
+        result[0] = _n_normalize_path_end(result[0], trailing)
+    return result[0]
 
 
 class string(collections.UserString):
@@ -6922,8 +7055,8 @@ class string(collections.UserString):
         return len(self.data) == 0
 
     def __truediv__(self, tail) -> 'string':
-        tail_str = tail.data if hasattr(tail, 'data') else str(tail)
-        return string(f"{self.data}/{tail_str}")
+        """Nim's `/` (os.joinPath): the two paths joined and normalized."""
+        return string(_n_join_path(self.data, tail.data if hasattr(tail, 'data') else str(tail)))
 
     def splitlines(self):
         return [string(x) for x in self.data.splitlines()]

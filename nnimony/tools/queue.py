@@ -32,13 +32,21 @@ LEGACY_MODULES = {
     "lib/keymatcher": "macro machinery (`declareMatcher`), called only by its own tests; macros are legacy",
     "lib/legacy/nif26reader": "NIF26 reader, used only by the nif26 -> nif27 migration tool, which nimic doesn't "
                               "need (also not for a newer nimony)",
+    # proposed 2026-11-06 with nifler2's conversion, for the user to confirm (nnimony/nimony_check_issues.md)
+    "nifler2/deps/parsegen": "the `grammar:` plugin: nimic has no plugins, its output is expanded into nimgrammar "
+                             "(nimony-nimic's plugexpand)",
+    "nifler2/tests/tnimlexer": "doesn't build at the pin (nimony: unsynchronized global `failures`); its cases are "
+                               "nimlexer's self-test",
+    "nifler2/tests/minirt": "runtime of the parsegen plugin's test grammar (tests/mini, tmini): tests of the plugin",
+    "nifler2/tests/mini": "a test grammar of the parsegen plugin",
+    "nifler2/tests/tmini": "the parsegen plugin's test (calls the plugin on tests/mini)",
 }
 
 # components in the order of the plan; the current one is scanned module by module
 COMPONENTS = [
     ("lib", "NIF libraries: the foundation of every nimony tool", "current"),
-    ("nifler2", "the parser (Nim -> NIF), a nimony program generated from a grammar", "next"),
-    ("lengc", "the C backend (NIF -> C)", "later"),
+    ("nifler2", "the parser (Nim -> NIF), a nimony program generated from a grammar (converted by nimicgen)", "current"),
+    ("lengc", "the C backend (NIF -> C)", "next"),
     ("hexer", "lowering (shoggoth)", "later"),
     ("nimony", "semantic checking (nimsem) and the driver", "later"),
 ]

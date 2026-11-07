@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import builtins
 import contextlib
+import gc
 import ctypes
 import importlib
 import inspect
@@ -128,6 +129,33 @@ def _tGAdd[Id, T](t: mut @ _TGTab[Id, T], v: T) -> Id:
 @dispatch
 def _tGAdd[Id](t: mut @ _TGTabF[Id], v: float64) -> Id:
     return _tGAdd(_TGTab[Id, uint64](t), cast[uint64](v))
+
+
+# nifler2's linkedtok: `Node* = ptr LinkedToken` before `LinkedToken* = object` (one type section, fields of
+# type `Node`): a `type` statement, evaluated lazily (rule:classdefseq)
+type _TFwdCellPtr = ptr[_TFwdCell]
+
+
+class _TFwdCell(Object):
+    wide: uint64
+    down: _TFwdCellPtr
+    next: _TFwdCellPtr
+
+
+class _TCellList(Object):  # nifler2's `Parser`: struct-backed pointer fields (the alias is defined above)
+    first: _TFwdCellPtr
+    last: _TFwdCellPtr
+    n: nint
+
+
+@dispatch
+def _tFwdWide(n: _TFwdCellPtr) -> uint64:
+    return n.wide
+
+
+@dispatch
+def _tFwdWide(n: nint) -> uint64:
+    return uint64(n)
 
 
 # nifpools' `template buildTree*[T: enum](dest: var TokenBuf; tag: T; info; body: untyped)`: a generic block
@@ -1774,6 +1802,21 @@ class TestNTypes(unittest.TestCase):
         self.assertIsInstance(s6, S)
         self.assertEqual(s6, {TKind.a, TKind.c})
 
+    def test_tset_single_string_enum_member(self):
+        """`{tkProc}` of an enum with string values (nifler2's `TokKind`, an NStrEnum): a single member is an
+        element, not an iterable of its characters; so is a single string-valued member among several."""
+        class _TTok(NStrEnum):
+            tkInvalid = "tkInvalid"
+            tkProc = "proc"
+            tkIf = "if"
+
+        s = Tset[_TTok](_TTok.tkProc)
+        self.assertEqual(len(s), 1)
+        self.assertIn(_TTok.tkProc, s)
+        self.assertNotIn(_TTok.tkIf, s)
+        self.assertEqual(Tset[_TTok](_TTok.tkProc, _TTok.tkIf), Tset[_TTok]({_TTok.tkIf, _TTok.tkProc}))
+        self.assertEqual(Tset[_TTok](Tset[_TTok](_TTok.tkIf)), Tset[_TTok](_TTok.tkIf))  # a set: its members
+
     def test_tset_contains_and_copy(self):
         """Tset.contains() and copy() work correctly."""
         class TKind2(NIntEnum):
@@ -1858,6 +1901,86 @@ class TestNTypes(unittest.TestCase):
         x.sym = FwdSym(node=x)
         self.assertIs(x.sym.node, x)
         self.assertIs(FwdNode._n_field_types["sym"], FwdSym)
+
+    def test_lazy_type_alias_names_later_class(self):
+        """`type Node = ptr[LinkedToken]` before `class LinkedToken` whose fields are `Node`s (one Nim type
+        section): the fields are pointers in the class's memory layout (an arena of cells keeps its links), the
+        module binds the alias to the pointer type (`@dispatch`, `seq[Node]`), and the transpiler writes the
+        alias into the class's type section."""
+        self.assertEqual(sizeof(_TFwdCell), 24)  # wide + two pointers: no Python-side fields
+        self.assertIs(_TFwdCell._n_field_types["next"], ptr[_TFwdCell])
+        self.assertIs(globals()["_TFwdCellPtr"], ptr[_TFwdCell])
+        a = _TFwdCell(wide=uint64(1))
+        b = _TFwdCell(wide=uint64(2))
+        self.assertTrue(isNil(a.down) and isNil(a.next))
+        a.next = addr(b)
+        self.assertEqual(int(a.next.wide), 2)
+        self.assertEqual(int(_tFwdWide(a.next)), 2)
+        cells = cast[ptr[UncheckedArray[_TFwdCell]]](alloc0(sizeof(_TFwdCell) * 2))  # linkedtok's Arena
+        cells[0].next = addr(cells[1])
+        cells[1].wide = uint64(7)
+        self.assertEqual(int(addr(cells[0]).next.wide), 7)
+        dealloc(cells)
+        src = ("type Node = ptr[LinkedToken]\n\n\nclass LinkedToken(Object):\n    next: Node\n")
+        out = unparse(ast.parse(src))[0]
+        self.assertRegex(out, r"type\n  Node\* = ptr LinkedToken\n  LinkedToken\* = object\n    next\*: Node")
+
+    def test_assign_object_with_nil_ptr_field(self):
+        """`p <<= q` of an object with struct-backed pointer fields: a nil field (its `c_void_p` slot reads None)
+        stays nil, address 0, and a cell linked later through the other field works (nifler2's
+        `p <<= openParser(...)`, then `p.last.next = n`)."""
+        a = _TFwdCell(wide=uint64(1))
+        b = _TFwdCell(wide=uint64(2))
+        with var:
+            h = _TCellList(n=nint(1))
+        h <<= _TCellList(n=nint(2))
+        self.assertTrue(isNil(h.last))  # rules §5: a pointer is nil by `isNil` (a struct slot's nil is no None)
+        self.assertEqual(int(h.n), 2)
+        h.first = addr(a)
+        h.last = addr(a)
+        h.last.next = addr(b)
+        self.assertEqual(int(h.first.next.wide), 2)
+        with var:
+            g = _TCellList()
+        g <<= _TCellList(first=addr(b))
+        self.assertEqual(int(g.first.wide), 2)
+        self.assertTrue(isNil(g.last))
+        g.last = addr(b)
+        g.last.down = addr(a)
+        self.assertEqual(int(b.down.wide), 1)
+
+    def test_ptr_field_store_keeps_own_slot(self):
+        """`p.last = m.prev` (a pointer read from another object's field) stores the address in p's own slot: once
+        `m` is gone, p.last still reads p's memory (nifler2's parser: `Mark(prev=p.last)`, `p.last = ...`), and a
+        later store into m's field doesn't change p.last (Nim copies the pointer)."""
+        a = _TFwdCell(wide=uint64(1))
+        b = _TFwdCell(wide=uint64(2))
+        with var:
+            p = _TCellList()
+            m = _TCellList(first=addr(a))
+        p.last = m.first
+        m.first = addr(b)
+        self.assertEqual(int(p.last.wide), 1)
+        self.assertEqual(int(m.first.wide), 2)
+        del m
+        gc.collect()
+        for _ in range(50):
+            _TCellList(first=addr(b), last=addr(b))  # reuse the freed memory
+        self.assertEqual(int(p.last.wide), 1)
+        self.assertTrue(p.last == addr(a))
+        class _THandleHolder(Object):
+            token: pointer
+        with var:
+            h = _THandleHolder()
+        with tempfile.TemporaryDirectory() as tmp:
+            f = File(builtins.open(os.path.join(tmp, "t.bin"), "wb"))
+            h.token = cast[pointer](f)  # a File's handle survives the store (minimp4's write token)
+            self.assertIs(cast[File](h.token), f)
+            f.close()
+        x = p.last  # a view of p's slot (rules §1.1: a pointer read is a cell; copy(x) to keep the value)
+        p.last = addr(b)
+        self.assertEqual(int(x.wide), 2)
+        self.assertTrue(x == addr(b))
 
     def test_dispatch_none_matches_nilable_types(self):
         """None (Nim nil) dispatches only to nilable parameter types: ref, ptr, pointer, proc."""
@@ -4541,17 +4664,49 @@ class TestNTypes(unittest.TestCase):
         self.assertTrue(unlikely(True))
         self.assertFalse(likely(False))
 
+    def test_char_copy(self):
+        """`c.copy()` / `copy(c)` of a char (rules §1.1: every scalar value type has it; nifler2's filters copy a
+        `default: char` parameter): the same char, detached from the string slot it may view."""
+        with var:
+            s = string("ab")
+        c = s[0]
+        d = c.copy()
+        self.assertEqual((d, copy(c), ch('x').copy()), (ch('a'), ch('a'), ch('x')))
+        s[0] = ch('z')
+        self.assertEqual(d, ch('a'))
+        self.assertIsNone(getattr(d, "_n_owner", None))
+
     def test_quit_overloads(self):
         """Nim quit(errorcode: int) exits with the code (any nimic integer), quit(errormsg: string)
-        writes the message to stderr and exits with QuitFailure (1)."""
-        for arg, code in ((int8(3), 3), (nint(0), 0), (2, 2)):
-            with self.assertRaises(SystemExit) as cm:
-                quit(arg)
-            self.assertEqual(cm.exception.code, code)
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
-            quit(string("bye"))
-        self.assertEqual((cm.exception.code, err.getvalue()), (1, "bye\n"))
+        writes the message to stderr and exits with QuitFailure (1). (In-process: the exit is replaced.)"""
+        import nimic.nsystem as nsys
+
+        def raising_exit(code):
+            raise SystemExit(code)
+
+        saved, nsys._n_exit = nsys._n_exit, raising_exit
+        try:
+            for arg, code in ((int8(3), 3), (nint(0), 0), (2, 2)):
+                with self.assertRaises(SystemExit) as cm:
+                    quit(arg)
+                self.assertEqual(cm.exception.code, code)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
+                quit(string("bye"))
+            self.assertEqual((cm.exception.code, err.getvalue()), (1, "bye\n"))
+        finally:
+            nsys._n_exit = saved
+
+    def test_quit_is_no_exception(self):
+        """Nim's quit ends the process at once: an `except:` around it (nifler2's `try: main() except: quit "…"`,
+        a `quit` inside `main`) doesn't run, nor does a `finally`; the output so far is written, the exit
+        procs run."""
+        code = ("import atexit\natexit.register(lambda: print('exitproc'))\n"
+                "try:\n    echo('before')\n    quit(string('bye'))\nexcept:\n    echo('caught')\n"
+                "finally:\n    echo('finally')\n")
+        proc = subprocess.run([sys.executable, "-c", "from nimic.ntypes import *\n" + code], capture_output=True,
+                              text=True)
+        self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (1, "before\nexitproc\n", "bye\n"))
 
     def test_instantiation_info_skips_runtime_frames(self):
         """instantiationInfo counts the user's frames: @dispatch / @template wrappers don't shift it."""
@@ -4782,6 +4937,20 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual((p.splitFile().name, p.splitPath().tail, p.parentDir()), (string("b"), string("b.c"), string("a")))
         self.assertEqual(string("x").absolutePath(string("/r")), string("/r/x"))
         self.assertEqual(absolutePath(string("/y")), string("/y"))
+
+    def test_path_join_normalizes(self):
+        """Nim's `/` (os.joinPath, also under absolutePath and paths' `/`) normalizes as Nim's pathnorm does:
+        `.` and `..` components, repeated separators, the tail's trailing separator (joinPath's examples)."""
+        cases = [("usr", "lib", "usr/lib"), ("usr", "lib/", "usr/lib/"), ("usr", "", "usr"),
+                 ("usr/", "", "usr/"), ("", "", ""), ("", "lib", "lib"), ("", "/lib", "/lib"),
+                 ("usr/", "/lib", "usr/lib"), ("usr/lib", "../bin", "usr/bin"), ("/a/b", "../../c/./d", "/c/d"),
+                 ("a", "../../x", "../x"), ("/a//b", "c//d", "/a/b/c/d"), ("a/.", "b", "a/b"), ("/", "..", "/.."), (".", "a", "./a"), ("a", "./", "a/"),
+                 ("..", "..", "../..")]
+        for head, tail, joined in cases:
+            self.assertEqual(string(head) / string(tail), string(joined), (head, tail))
+        self.assertEqual(absolutePath(string("../x"), string("/r/s")), string("/r/x"))
+        from nimic.std.paths import Path
+        self.assertEqual(str(Path(string("a/b")) / Path(string("../c"))), "a/c")
 
     def test_str_enum_explicit_ordinals(self):
         """Nim `Cdecl = (ord(CdeclTagId), "cdecl")`: a member with an explicit ordinal and text, as the
@@ -7561,8 +7730,7 @@ def addWord(b: mut@Builder, w: string) -> None:
             ''')
         out = unparse(ast.parse(src))[0]
         self.assertIn("T(a: int32(1), b: int32(2))", out)
-        self.assertIn("type P = int32", out)
-        self.assertIn("type Q* = int32 or int64", out)
+        self.assertIn("type\n  P = int32\n  Q* = int32 or int64\n", out)  # one section with the classes after them
         self.assertIn("S* = seq[E]", out)
         self.assertIn("T = object", out)
         self.assertNotIn("T* =", out)
@@ -8452,6 +8620,16 @@ def addWord(b: mut@Builder, w: string) -> None:
         """Nim's `newSeq[T](len = 0)`: an empty seq without the length."""
         self.assertEqual(len(newSeq[string]()), 0)
         self.assertEqual(newSeq[string](), seq[string]())
+
+    def test_new_seq_of_cap(self):
+        """Nim's `newSeqOfCap[T](cap)`: an empty seq[T] (the capacity is a hint); it grows by `add`."""
+        s = newSeqOfCap[nint](16)
+        self.assertEqual(len(s), 0)
+        s.add(nint(3))
+        self.assertEqual(list(s), [3])
+        self.assertEqual(newSeqOfCap[string](0), seq[string]())
+        out = unparse(ast.parse("def f() -> seq[nint]:\n    return newSeqOfCap[nint](16)\n"))[0]
+        self.assertIn("newSeqOfCap[int](16)", out)
 
     def test_inrange_chars(self):
         """inrange of chars (Nim 'a'..'z') yields chars: membership and iteration."""

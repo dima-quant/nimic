@@ -40,7 +40,11 @@ a change that concerns it). Their transpilation and `nim check` still run.
               (the clone next to the project) and type-checked; its tests run in Python, as the compiled
               transpiled module, and appended to the original nimony module: all three outputs must match.
               A module whose `when isMainModule` block reads the command line declares its arguments in its
-              header (`# test-args: {tmp}/x.s.nif`); `{tmp}` is an empty directory of each run's own.
+              header (`# test-args: {tmp}/x.s.nif`); `{tmp}` is an empty directory of each run's own. A program's
+              entry module (`# program:` in its header, nifler2.nim) runs the program in its main block: the
+              original runs as it is. The components only nimony compiles (NIMONY_ONLY: nifler2, with plugins)
+              are checked and built with nimony (`nimony check`, `nimony c -d:release`; NIMONY_NIMIC_DIR's
+              bin/nimony, built at the pin), the others with Nim 2.
 
 Modules marked for rework or with open gaps in ncompiler/conversion_queue.md are reported as XFAIL
 (expected failure).
@@ -527,6 +531,26 @@ def _nnimony_modules() -> list[str]:
                   if not {"tools", "checks"} & set(p.relative_to(NNIMONY).parts) and p.stem != "__init__")
 
 
+# components of nimony whose originals only nimony compiles (plugins, `.raises`, `{.feature.}`): their converted modules
+# are checked with nimony (`nimony check`, `nimony c`), the others with Nim 2
+NIMONY_ONLY = {"nifler2"}
+NIMONY_BIN = Path(os.environ.get("NIMONY_NIMIC_DIR", ROOT.parent / "nimony-nimic")).resolve() / "bin" / "nimony"
+
+
+def _nimony_only(key: str) -> bool:
+    return key.split("/", 1)[0] in NIMONY_ONLY
+
+
+def _header_has(module_file: Path, key: str) -> bool:
+    """Whether the module's header (the lines before `# ///`) has the key `# <key>:`."""
+    for line in module_file.read_text().splitlines()[1:]:
+        if line.startswith("# ///"):
+            return False
+        if line.startswith(f"# {key}:"):
+            return True
+    return False
+
+
 def _without_main_blocks(source: str) -> str:
     """`source` without its top-level `when isMainModule` blocks (also `when isMainModule and ...:`)."""
     kept, skipping = [], False
@@ -585,7 +609,13 @@ def check_nimony() -> None:
             continue
         target = conv / f"{key}.nim"
         target.write_text(tr.stdout)
-        chk = run(["nim", "check", *flags, target.name], target.parent)
+        nimony_only = _nimony_only(key)
+        if nimony_only and not NIMONY_BIN.exists():
+            print(f"  SKIP  nimony module {key}  — no nimony at {NIMONY_BIN}", flush=True)
+            continue
+        chk = run([NIMONY_BIN, "check", f"--nimcache:{conv.parent / 'nimony_check_cache'}",
+                   f"--path:{ROOT / 'src/nimic'}", target.name] if nimony_only
+                  else ["nim", "check", *flags, target.name], target.parent)
         report(chk.returncode == 0, f"nimony module {key}", "" if chk.returncode == 0 else first_error(chk), key)
         if skip_slow(module, f"nimony tests {key}"):
             continue
@@ -594,6 +624,8 @@ def check_nimony() -> None:
         tmp = SCRATCH / "nimony_tmp" / key.replace("/", "_")
         py = run([PY, "-m", module, *_test_args(module_file, tmp / "py")], NIMONY_SRC.parent, [ROOT / "src", ROOT])
         original = _with_tests((NIMONY_SRC / f"{key}.nim").read_text(), tr.stdout)
+        if original is not None and _header_has(module_file, "program"):
+            original = (NIMONY_SRC / f"{key}.nim").read_text()  # a program's entry: its main block is the program
         if original is None:
             print(f"  SKIP  nimony tests {key}  — no tests", flush=True)
             continue
@@ -604,8 +636,10 @@ def check_nimony() -> None:
         for what, base in (("tests", conv), ("original", orig)):
             path = base / f"{key}.nim"
             exe = base / f"bin_{key.replace('/', '_')}"
-            build = run(["nim", "c", *flags, f"--nimcache:{base / ('cache_' + exe.name)}", f"-o:{exe}", path.name],
-                        path.parent)
+            cache = base / ("cache_" + exe.name)
+            build = run([NIMONY_BIN, "c", "-d:release", "--silentMake", f"--path:{ROOT / 'src/nimic'}",
+                         f"--nimcache:{cache}", f"--out:{exe}", path.name] if nimony_only
+                        else ["nim", "c", *flags, f"--nimcache:{cache}", f"-o:{exe}", path.name], path.parent)
             if build.returncode != 0:
                 report(False, f"nimony {what} {key}", "nim c: " + first_error(build), key)
                 continue

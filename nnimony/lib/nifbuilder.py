@@ -252,6 +252,7 @@ def _needsEscape(c: char) -> bool:
     return c < ch(' ') or c in ControlChars
 
 
+@ufcs(Builder)
 def addRaw(b: mut @ Builder, s: string):
     _put(b, s)
 
@@ -277,6 +278,7 @@ def addNumber(b: mut @ Builder, s: string):
 
 #  ------------ Atoms ------------------------
 
+@ufcs(Builder)
 def addIdent(b: mut @ Builder, s: string):
     _addSep(b)
     with let:
@@ -358,6 +360,7 @@ def addSymbolDefRetIsGlobal(b: mut @ Builder, s: string, dottedSuffix = string("
     return result
 
 
+@ufcs(Builder)
 @dispatch
 def addStrLit(b: mut @ Builder, s: string):
     _addSep(b)
@@ -370,12 +373,14 @@ def addStrLit(b: mut @ Builder, s: string):
     _put(b, ch('"'))
 
 
+@ufcs(Builder)
 def addEmpty(b: mut @ Builder, count = 1):
     _addSep(b)
     for i in inrange(1, count):
         _put(b, ch('.'))
 
 
+@ufcs(Builder)
 def addCharLit(b: mut @ Builder, c: char):
     _addSep(b)
     _put(b, ch("'"))
@@ -386,11 +391,13 @@ def addCharLit(b: mut @ Builder, c: char):
     _put(b, ch("'"))
 
 
+@ufcs(Builder)
 def addIntLit(b: mut @ Builder, i: int64):
     _addSep(b)
     _put(b, str(i))
 
 
+@ufcs(Builder)
 @dispatch
 def addUIntLit(b: mut @ Builder, u: uint64):
     _addSep(b)
@@ -398,10 +405,12 @@ def addUIntLit(b: mut @ Builder, u: uint64):
     _put(b, ch('u'))
 
 
+@ufcs(Builder)
 def attachLineInfo(b: mut @ Builder, col: int32, line: int32, file = string("")):
     pass
 
 
+@ufcs(Builder)
 def addFloatLit(b: mut @ Builder, f: float64, col: int32 = 0, line: int32 = 0, file = string("")):
     ## Emit a float literal. Special values (`inf`, `nan`, `neginf`) are emitted
     ## as compounds; for those, `(col, line, file)` if non-zero is attached as a
@@ -481,6 +490,7 @@ def _addLineDiff(b: mut @ Builder, x: int32, emitZero: bool):
         _put(b, ch('0'))
 
 
+@ufcs(Builder)
 def attachLineInfo(b: mut @ Builder, col: int32, line: int32, file = string("")):
     ## Append a NIF27 line-information suffix to the most recently emitted atom
     ## or tag name. There must be no whitespace between the atom/tag and this
@@ -540,6 +550,7 @@ def addKeyw(b: mut @ Builder, keyw: string):
     _put(b, ch(')'))
 
 
+@ufcs(Builder)
 def addTree(b: mut @ Builder, kind: string):
     ## Starts a new compound node. Must be closed with `endTree`.
     ## See also `withTree`.
@@ -556,6 +567,7 @@ def addTree(b: mut @ Builder, kind: string):
     b._nesting += 1
 
 
+@ufcs(Builder)
 def endTree(b: mut @ Builder):
     if comptime(not defined("showBroken")):
         assert b._nesting > 0, "generating ')' would produce a syntax error"
@@ -574,6 +586,7 @@ def withTree(b: mut @ Builder, kind: string, body: untyped):
     endTree(b)
 
 
+@ufcs(Builder)
 @dispatch
 def addUIntLit(b: mut @ Builder, u: uint64, suffix: string,
                col: int32 = 0, line: int32 = 0, file = string("")):
@@ -585,6 +598,7 @@ def addUIntLit(b: mut @ Builder, u: uint64, suffix: string,
     endTree(b)
 
 
+@ufcs(Builder)
 @dispatch
 def addStrLit(b: mut @ Builder, s: string, suffix: string,
               col: int32 = 0, line: int32 = 0, file = string("")):
@@ -596,6 +610,7 @@ def addStrLit(b: mut @ Builder, s: string, suffix: string,
     endTree(b)
 
 
+@ufcs(Builder)
 def addHeader(b: mut @ Builder, vendor = string(""), dialect = string("")):
     _put(b, string("(.nif27)\n"))
     if vendor.len > 0:

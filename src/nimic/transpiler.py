@@ -35,7 +35,9 @@ Scope qualifiers:
 Type system:
   rule:classdef -> interpret class definition as type (object or tuple, depending on base class)
   rule:classdefseq -> combine consecutive class definitions into one type def.
-    Move method definitions outside type definitions
+    Move method definitions outside type definitions. Type aliases (`Name = T`, `type Name = T`) next to them
+    join the section: Python evaluates a `type` statement lazily, so it may name a class written after it
+    (`type Node = ptr[LinkedToken]` before `class LinkedToken`, as in Nim)
   rule:concept -> class C(Concept): pass is `C = concept x` (Nim 2 universal); with signatures in the body
     `C = concept` + `proc ...(x: Self ...)`; a concept as base is `concept of Base`
   rule:typealias -> type alias (also register as alias for dispatch): class Time(float64) -> type Time* = float64
@@ -288,7 +290,7 @@ from _ast import *
 from collections import deque
 from contextlib import contextmanager, nullcontext
 from enum import IntEnum, _simple_enum, auto
-from nimic.imports import (exported, imports_of, included_trees, is_core, is_overloads, is_routine,
+from nimic.imports import (exported, imports_of, included_trees, is_core, is_main_block, is_overloads, is_routine,
                            module_level_routines, nim_exports, own_definitions, reaches, star_imports,
                            visible)
 from nimic.valuecheck import is_nimic_file
@@ -1206,8 +1208,8 @@ class _Unparser(NodeVisitor):
             self.write(" {." + pragma + ".}")
 
     def _is_type_def(self, item):
-        if isinstance(item, ClassDef) or self._is_type_alias(item):
-            return True
+        if isinstance(item, (ClassDef, TypeAlias)) or self._is_type_alias(item):
+            return True  # rule:classdefseq: a `type X = ...` statement joins the classes around it in one section
         if isinstance(item, (FunctionDef, AsyncFunctionDef)):
             if self._is_inline_calltype(item):
                 return False  # rule:calltypeinline: no type is declared
@@ -2428,7 +2430,9 @@ class _Unparser(NodeVisitor):
         self.write("**" + node.name)
 
     def visit_TypeAlias(self, node):
-        self.fill("type ")
+        # rule:classdefseq: `traverse` opened the `type` section (with the classes next to it: Python evaluates
+        # the statement lazily, so it may name a class written after it, as an alias of one Nim type section)
+        self.fill()
         self.write(self._adjust_name(node.name.id, definition=self._scope_depth == 0))  # rule:localname
         self._type_params_helper(node.type_params)
         self.write(" = ")
@@ -4229,6 +4233,19 @@ def _globals_read(tree) -> set:
     return names
 
 
+def _main_block_imports(tree) -> set:
+    """The names the module's main blocks import (`import`, `from ... import`, `importFrom(...)`)."""
+    names = set()
+    for block in (s for s in tree.body if is_main_block(s)):
+        for node in walk(block):
+            if isinstance(node, (Import, ImportFrom)):
+                names |= {a.asname or a.name.split(".")[0] for a in node.names}
+            elif (isinstance(node, Call) and isinstance(node.func, Name) and node.func.id == "importFrom"
+                  and node.args):
+                names |= {a.value for a in node.args[1:] if isinstance(a, Constant) and isinstance(a.value, str)}
+    return names
+
+
 def _first_global_reads(tree) -> dict:
     """name -> the first line where the module's code reads the global `name` (a local of a proc doesn't count)."""
     first, read = {}, _globals_read(tree)
@@ -4278,6 +4295,12 @@ def import_problems(tree, module) -> list:
         if isinstance(node, (FunctionDef, AsyncFunctionDef)):
             def_lines.setdefault(node.name, node.lineno)
     read = _first_global_reads(tree)
+    if module.__name__ != "__main__":
+        # an imported module's main block didn't run, nor did its imports: a name only it imports is unbound
+        # (nimgrammar's tests import pool, toString), and its reads there don't count
+        outside = _first_global_reads(Module(body=[s for s in tree.body if not is_main_block(s)], type_ignores=[]))
+        read = {name: line for name, line in read.items()
+                if name in outside or name not in _main_block_imports(tree)}
     found, named = [], {}
     for imp in imports:
         if imp.star and not is_core(imp.module.__name__) and is_nimic_file(getattr(imp.module, "__file__", None) or ""):

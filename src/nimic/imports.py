@@ -136,6 +136,8 @@ def module_level_names(tree) -> set:
     for node in _top_level(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names.add(node.name)
+        elif isinstance(node, ast.TypeAlias):
+            names.add(node.name.id)
         elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)) and not is_overloads(node):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             names |= {n.id for t in targets for n in ast.walk(t) if isinstance(n, ast.Name)}
@@ -330,6 +332,8 @@ def own_definitions(tree) -> dict:
                                          for d in decorators) else "plain")
         elif isinstance(node, ast.ClassDef):
             note(node.name, "value")
+        elif isinstance(node, ast.TypeAlias):  # `type Node = ptr[LinkedToken]`, a type of the module
+            note(node.name.id, "value")
         elif is_overloads(node):
             note(node.targets[0].id, "overloads")
         elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):

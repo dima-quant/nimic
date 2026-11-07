@@ -15,8 +15,8 @@
 | Component | Role | Lines | State |
 |---|---|---|---|
 | `src/lib` | NIF libraries: the foundation of every nimony tool | 12,295 | current |
-| `src/nifler2` | the parser (Nim -> NIF), a nimony program generated from a grammar | 7,010 | next |
-| `src/lengc` | the C backend (NIF -> C) | 24,256 | later |
+| `src/nifler2` | the parser (Nim -> NIF), a nimony program generated from a grammar (converted by nimicgen) | 7,010 | current |
+| `src/lengc` | the C backend (NIF -> C) | 24,256 | next |
 | `src/hexer` | lowering (shoggoth) | 24,622 | later |
 | `src/nimony` | semantic checking (nimsem) and the driver | 51,264 | later |
 
@@ -68,3 +68,38 @@
 | `lib/nifprelude` | 5 | 372 bytes | lib/bitabs, lib/nifbuilder, lib/nifpools, lib/nifreader, lib/nifroles |  | ✅ Converted |
 | `lib/nifstreams` | 5 | 8,456 bytes | lib/lineinfos, lib/nifpools, lib/nifreader | tables | ✅ Converted |
 | `lib/nifindexes` | 6 | 12,090 bytes | lib/bitabs, lib/compat2, lib/lineinfos, lib/nifchecksums, lib/nifcoreparse, lib/nifpools, lib/nifreader, lib/stringviews, lib/symparser, lib/vfs, models/nifindex_tags, models/tags | assertions, hashes, os, sha1, strutils, syncio, tables | ✅ Converted |
+
+## Ready to Convert (`src/nifler2`)
+
+| Module | Size | Std imports (✗ = no nimic shim yet) | Agent |
+|---|---|---|---|
+
+## All modules of `src/nifler2` (20/20 converted, 5 legacy)
+
+| Module | Tier | Size | Depends on | Std imports | Status |
+|---|---|---|---|---|---|
+| `lib/bitabs` | 0 | 10,085 bytes |  | assertions, hashes | ✅ Converted |
+| `lib/comesfrom` | 0 | 5,495 bytes |  |  | ✅ Converted |
+| `lib/lineinfos` | 0 | 5,345 bytes |  | assertions, hashes | ✅ Converted |
+| `lib/nifroles` | 0 | 3,979 bytes |  |  | ✅ Converted |
+| `lib/stringviews` | 0 | 2,238 bytes |  | hashes | ✅ Converted |
+| `lib/vfs` | 0 | 12,960 bytes |  | atomics, memfiles, os, syncio, times | ✅ Converted |
+| `models/tags` | 0 | 13,866 bytes |  |  | ✅ Converted |
+| `nifler2/deps/parsegen` | 0 | 74,222 bytes |  | plugins ✗, sets, strutils, tables | ⛔ Legacy: the `grammar:` plugin: nimic has no plugins, its output is expanded into nimgrammar (nimony-nimic's plugexpand) |
+| `nifler2/nimlexer` | 0 | 39,382 bytes |  | rex ✗ | ✅ Converted |
+| `lib/nifbuilder` | 1 | 16,576 bytes | lib/vfs | assertions, formatfloat, math, strutils, syncio | ✅ Converted |
+| `lib/nifcore` | 1 | 111,788 bytes | lib/bitabs, lib/lineinfos, lib/nifroles | assertions, formatfloat, hashes | ✅ Converted |
+| `models/nifler_tags` | 1 | 9,918 bytes | models/tags |  | ✅ Converted |
+| `nifler2/tests/tnimlexer` | 1 | 4,738 bytes | nifler2/nimlexer | assertions, syncio | ⛔ Legacy: doesn't build at the pin (nimony: unsynchronized global `failures`); its cases are nimlexer's self-test |
+| `lib/nifreader` | 2 | 46,432 bytes | lib/nifcore, lib/stringviews, lib/vfs | assertions, memfiles, parseutils | ✅ Converted |
+| `nifler2/tests/minirt` | 2 | 7,413 bytes | models/nifler_tags | strutils, syncio | ⛔ Legacy: runtime of the parsegen plugin's test grammar (tests/mini, tmini): tests of the plugin |
+| `lib/nifcoreparse` | 3 | 26,586 bytes | lib/comesfrom, lib/lineinfos, lib/nifbuilder, lib/nifcore, lib/nifreader, lib/stringviews | assertions, math, strutils, syncio | ✅ Converted |
+| `nifler2/tests/mini` | 3 | 1,408 bytes | nifler2/tests/minirt |  | ⛔ Legacy: a test grammar of the parsegen plugin |
+| `lib/nifpools` | 4 | 22,429 bytes | lib/comesfrom, lib/nifcore, lib/nifcoreparse, lib/nifreader, lib/nifroles, lib/vfs, models/tags | assertions | ✅ Converted |
+| `nifler2/tests/tmini` | 4 | 2,851 bytes | nifler2/tests/mini | strutils, syncio | ⛔ Legacy: the parsegen plugin's test (calls the plugin on tests/mini) |
+| `nifler2/linkedtok` | 5 | 7,585 bytes | lib/nifpools | assertions | ✅ Converted |
+| `nifler2/parserrt` | 6 | 47,805 bytes | lib/nifcore, lib/nifpools, models/nifler_tags, nifler2/linkedtok, nifler2/nimlexer | parseutils, syncio | ✅ Converted |
+| `nifler2/niflerout` | 7 | 12,790 bytes | lib/nifbuilder, lib/nifpools, nifler2/parserrt | assertions, syncio | ✅ Converted |
+| `nifler2/nimgrammar` | 7 | 59,856 bytes | lib/nifcore, nifler2/parserrt | strutils | ✅ Converted |
+| `nifler2/filters` | 8 | 14,786 bytes | nifler2/nimgrammar | strutils, syncio | ✅ Converted |
+| `nifler2/nifler2` | 9 | 3,278 bytes | nifler2/filters, nifler2/niflerout, nifler2/nimgrammar | assertions, os, parseopt, syncio | ✅ Converted |

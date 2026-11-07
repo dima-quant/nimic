@@ -122,12 +122,14 @@ with const:
     NoFile = FileId(u32(0))
 
 
+@ufcs(PackedLineInfo)
 @dispatch
 def isValid(x: PackedLineInfo) -> bool:
     """{.inline, noSideEffect.}"""
     return uint32(x) != uint32(NoLineInfo)
 
 
+@ufcs(FileId)
 @dispatch
 def isValid(x: FileId) -> bool:
     """{.inline, noSideEffect.}"""

@@ -170,6 +170,7 @@ with const:
     InlineJumpCap = (u32(1) << JumpBits) - u32(1)     # 524287
 
 
+@ufcs(NifToken)
 @dispatch
 def kind(n: NifToken) -> NifKind:
     """{.inline, noSideEffect.}"""
@@ -1254,6 +1255,7 @@ def pool(c: Cursor) -> Pool:
     return c._owner._pool if not isNil(c._owner) and c._owner._pool is not None else _defaultPool()
 
 
+@ufcs(Cursor)
 def tags(c: Cursor) -> TagPool:
     """{.inline.}"""
     ## Tag pool the cursor's underlying buffer was built against, or the plugin
@@ -1355,6 +1357,7 @@ def load(c: Cursor) -> NifToken:
     return c._p.contents.copy()
 
 
+@ufcs(Cursor)
 @dispatch
 def kind(c: Cursor) -> NifKind:
     """{.inline, noSideEffect.}"""
@@ -2743,6 +2746,7 @@ def _addAcrossPools(dest: mut @ TokenBuf, c: mut @ Cursor,
             assert False, "reader-level lexical kind cannot appear in a token buffer"
 
 
+@ufcs(TokenBuf)
 def addSubtree(dest: mut @ TokenBuf, c: Cursor):
     """{.nifEmits: "Any".}"""
     ## Copy the subtree rooted at `c` into `dest`. When both pools AND

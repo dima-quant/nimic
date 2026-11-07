@@ -151,10 +151,11 @@ def isAbsolute(path: string) -> bool:
 
 @ufcs(string)
 def absolutePath(path: string, root: string | None = None) -> string:
-    """Nim: os.absolutePath — `path` if it is absolute, else `root / path` (root: the current directory)."""
+    """Nim: os.absolutePath — `path` if it is absolute, else `root / path` (root: the current directory),
+    joined as Nim's `/` does (normalized: `..` and `.` resolved)."""
     if isAbsolute(path):
         return string(path)
-    return string(_os.path.join(str(root if root is not None else getCurrentDir()), str(path)))
+    return string(root if root is not None else getCurrentDir()) / string(path)
 
 class _SplitFileTuple(tuple):
     @property
