@@ -1,0 +1,1320 @@
+# /// nimic
+# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/nifler2/parserrt.nim
+# ///
+from __future__ import annotations
+from nimic.ntypes import *
+
+pragma("feature: \"lenientnils\"")
+
+#
+#
+#           Nifler2: Nim to NIF
+#        (c) Copyright 2026 Andreas Rumpf
+#
+#    See the file "license.txt", included in this
+#    distribution, for details about the copyright.
+#
+
+## The runtime the generated parsers are written against.
+##
+## Two halves, and the generator knows nothing about either beyond the names:
+##
+## * **The token stream.** `nimlexer` produces it; everything the grammar's
+##   semantic predicates ask about a token (`noSpaceBefore`, `isUnary`,
+##   `dotLikeOps`, ...) is answered here, from `p.tok`. The indentation class
+##   is the second half of the LL(1) decision domain, so `indClass`,
+##   `checkInd`, `pushInd` and `popInd` are as much a part of the interface as
+##   `expect` is.
+##
+## * **The output buffer.** A `nifcore.TokenBuf`, built *out of order*: a
+##   `mark` records a position, and `wrap` retroactively inserts the opening
+##   tag there. That is what lets the generator left-factor freely and still
+##   build the tree the unfactored grammar describes -- and it is why the
+##   output cannot be a streaming `nifbuilder`.
+##
+## `wrap` is the whole trick, so it is worth saying how it avoids duplicating
+## nifcore's jump arithmetic: a wrapped node always ends at the *current* end
+## of the buffer (marks nest, they never interleave), so after splicing the
+## head token in at the mark, `reopenLastTree` + `addParRi` is exactly the
+## situation nifcore's own `closeTag` is written for -- including the
+## `ExtendedSuffix` it splices in when a body overflows the 19-bit jump field.
+
+from nimic.std.parseutils import parseBiggestFloat
+from nimic.std import syncio
+from ..lib.nifpools import add, inc, NoLineInfo, tagId
+from .linkedtok import (
+    Arena, charToken, charVal, dotToken, FileId, flatten, floatVal, identToken, initArena, intVal, kind,
+    NifKind, NifLineInfo, NifToken, Node, Pool, strId, strLitToken, tag, TagId, tagLitToken, TagPool,
+    TokenBuf, uintVal)
+from . import linkedtok
+export(linkedtok)
+importFrom("..lib.nifcore", "createTokenBuf")
+from ..models.nifler_tags import NiflerKind
+
+from ..models import nifler_tags
+export(nifler_tags)
+from .nimlexer import (
+    ch, getPrecedence, KeywordHigh, KeywordLow, Lexer, next, openLexer, Token, TokKind, TokSpacing)
+from . import nimlexer
+export(nimlexer)
+from ..lib import nifpools
+export(nifpools)
+
+
+class IndClass(NIntEnum):
+    ## the indentation half of the LL(1) decision domain
+    icNoInd = auto()  ## not the first token on its line
+    icLt = auto()  ## first on its line, left of the current indentation
+    icEq = auto()  ## first on its line, at the current indentation
+    icGt = auto()  ## first on its line, right of the current indentation
+
+
+class PrimaryMode(NIntEnum):
+
+    ## `parser.nim`'s `PrimaryMode`, threaded by the grammar
+    pmNormal = auto()
+    pmTypeDesc = auto()
+    pmTypeDef = auto()
+    pmTrySimple = auto()
+
+    def rhsMode(mode: PrimaryMode) -> PrimaryMode:
+        """{.inline.}"""
+        ## The mode of an operator's right operand. `simpleExprAux` turns
+        ## `pmTrySimple` into `pmNormal` after the first primary, and
+        ## `parseOperators` turns `pmTypeDef` into `pmTypeDesc` -- so
+        ## `x == Handle 0` is `(infix == x (cmd Handle 0))`.
+        match mode:
+            case PrimaryMode.pmTrySimple: return PrimaryMode.pmNormal
+            case PrimaryMode.pmTypeDef: return PrimaryMode.pmTypeDesc
+            case _: return mode
+
+
+class OptSigs(Object):
+    ## How often the two optional grammar parts that a layout rewrite depends
+    ## on have been *built*. A layout compares its mark's snapshot against the
+    ## current counts: unchanged means the part did not match inside the rule,
+    ## the rewrite is the identity, and the tokens can stay exactly where the
+    ## rule wrote them -- no scratch copy, no cursor, no rewrite.
+    ##
+    ## Both are bumped where the thing is created, and both creators are in
+    ## this module, so a count can never be missed. A nested match bumps a
+    ## count the enclosing rule did not cause; that only costs the enclosing
+    ## layout its old path, which is why over-reporting is harmless and
+    ## under-reporting would not be.
+    posMarkers: nint  ## `posMarker`: the `[:` of `x.y[:T](...)`, and `do`
+    kvs: nint  ## a `kv` node: what makes a call an `oconstr` and
+               ## a curly a table constructor
+
+
+class Mark(Object):  ## where a node *would* start, if the rule turns out to build one
+    prev: Node  ## the sibling that was last when the rule began;
+                ## `nil` when nothing had been written yet
+    info: NifLineInfo  ## position of the token that was current at `mark`
+    sigs: OptSigs  ## `OptSigs` as the rule began
+
+    def discardUnused(m: Mark):
+        """{.inline.}"""
+        pass
+        ## A mark the rule turned out not to need. The generator emits one per
+        ## alternative because it cannot know, before it has seen the whole
+        ## alternative, whether a tag will claim it.
+
+
+class Parser(Object):
+    lex: Lexer
+    tok: Token
+    arena: Arena  ## every cell of the tree; freed in one go
+    first: Node  ## the chain of siblings being built
+    last: Node
+    _file: FileId
+    currInd: int32
+    _indStack: seq[int32]
+    inPragma: nint  ## `{.` ... `.}` nesting; a pragma has no indentation
+    prevKind: TokKind  ## the token before `tok`; `tkInvalid` at the start
+    filterFailed: bool  ## a source filter reported an error
+    _prevEndLine: nint  ## where that token ended
+    _prevEndCol: nint
+    inSemiStmtList: nint  ## `( stmt; stmt )` nesting, as in parser.nim
+    sigs: OptSigs  ## see `OptSigs`
+    _sections: seq[NiflerKind]  ## the tag a declaration fans out into: var/let/param/...
+    _lastSection: NiflerKind  ## the section opened most recently, popped or not
+    _infos: seq[NifLineInfo]  ## see `pushInfo`
+    _wrapFields: seq[bool]  ## whether a multi-name field is wrapped in `stmts`
+    pool: Pool  ## the literals pool the cells intern into
+    tags: TagPool  ## the tag pool a flattened buffer is built with
+    failed: bool  ## a syntax error ended the parse; see `errorAt`
+    errLine: nint  ## where, `errCol` 0-based
+    errCol: nint
+    errMsg: string  ## what
+
+    def close(p: mut @ Parser):
+        ## Releases the whole tree. One `dealloc` per arena block -- the cells have
+        ## no hooks and the chain is not walked.
+        p.arena.destroy()
+        p.first = None
+        p.last = None
+
+    def finish(p: mut @ Parser) -> TokenBuf:
+        ## The parsed tree as packed tokens, for everything that reads a `TokenBuf`.
+        result = nifcore.createTokenBuf(1024, p.pool, p.tags)
+        flatten(result, p.first, p.pool)
+        return result
+
+    def info(p: Parser) -> NifLineInfo:
+        """{.inline.}"""
+        return NifLineInfo(file=p._file, line=p.tok.line, col=p.tok.col)
+
+    def errorAt(p: mut @ Parser, line: nint, col: nint, msg: string):
+        ## The first syntax error ends the parse. Recovery would mean bailing out of
+        ## an arbitrarily deep recursion, and the generated code cannot: there are no
+        ## exceptions in this runtime and no notation for a recovery production. So
+        ## the error is recorded and the token stream ends *here*: from now on the
+        ## current token is an end of file that `getTok` never moves past. That is
+        ## what unwinds the recursion -- every repetition's continuation test fails
+        ## on it, and a mandatory item that does not match reports into an error
+        ## that is already recorded. It has to end the stream rather than merely
+        ## record the error, because `expect` does not consume the token it did not
+        ## match, so a repetition whose body fails would make no progress and spin.
+        ## A rule cut short leaves fewer trees than its layout expects, which is why
+        ## the layouts check `failed`.
+        if not p.failed:
+            p.failed = True
+            p.errLine = line
+            p.errCol = col
+            p.errMsg = msg
+            p.tok.kind = TokKind.tkEof
+            p.tok.indent = 0
+            p.tok.s = string("")
+
+    def reportFailure(p: Parser):
+        ## nifler's output for a syntax error, and its exit code. The lexer's
+        ## messages come first, which is where Nim, one token ahead as well, prints
+        ## them; the stream ended at the error, so they are the ones up to it.
+        for e in p.lex.errors: echo(e)
+        echo(p.lex.filename, "(", p.errLine, ", ", p.errCol + 1, ") Error: ", p.errMsg)
+        quit(1)
+
+    def error(p: mut @ Parser, msg: string):
+        ## `parMessage`: at the current token.
+        p.errorAt(p.tok.line, p.tok.col, msg)
+
+    def lexError(p: mut @ Parser, msg: string):
+        ## `lexMessage`: at the lexer's position, the end of the current token.
+        p.errorAt(p.lex.lineNumber, p.lex.pos - p.lex.lineStart, msg)
+
+    def paramStart(p: mut @ Parser):
+        ## `parseParamList`'s messages for a token that starts no parameter.
+        if p.tok.kind in Tset[TokKind](TokKind.tkSymbol, TokKind.tkAccent, TokKind.tkParRi): pass
+        elif p.tok.kind == TokKind.tkVar:
+            p.error(string("the syntax is 'parameter: var T', not 'var parameter: T'"))
+        elif p.tok.kind in inrange(KeywordLow, KeywordHigh):
+            p.error(string("'") + str(p.tok.kind) + string("' is a keyword and cannot be used as a parameter name"))
+        else:
+            p.error(string("expected closing ')'"))
+
+    def missingEquals(p: mut @ Parser):
+        ## A routine without a body followed by an indented line.
+        if p.indClass() == IndClass.icGt and p.tok.kind not in Tset[TokKind](TokKind.tkComment, TokKind.tkEof):
+            p.error(string("invalid indentation, maybe you forgot a '=' at ") + p.lex.filename + string("(") + str(p._prevEndLine) + string(", ") + str(p._prevEndCol + 1) + string(") ?"))
+
+    def funcType(p: mut @ Parser):
+        if p.prevKind != TokKind.tkFunc:
+            p.error(string("func keyword is not allowed in type descriptions, use proc with {.noSideEffect.} pragma instead"))
+
+    def requireExcept(p: mut @ Parser, m: Mark):
+        if p.last == m.prev: p.error(string("expected 'except'"))
+
+    def getTok(p: mut @ Parser):
+        if p.tok.kind != TokKind.tkEof:
+            p.prevKind = p.tok.kind
+            p._prevEndLine = p.lex.lineNumber
+            p._prevEndCol = p.lex.pos - p.lex.lineStart
+            next(p.lex, p.tok)
+
+    def indClass(p: Parser) -> IndClass:
+        if p.tok.indent < 0 or p.inPragma > 0: return IndClass.icNoInd
+        elif p.tok.indent < p.currInd: return IndClass.icLt
+        elif p.tok.indent == p.currInd: return IndClass.icEq
+        else: return IndClass.icGt
+
+    def pushIndAny(p: mut @ Parser):
+        ## `withInd` without the `realInd` assertion: the indentation becomes the
+        ## current token's whatever that is, including -1 for a token that is not
+        ## first on its line. `semiStmtList` is the one place `parser.nim` does
+        ## this, and it is why `(\n  when a: x\n  elif b: y)` has its `elif` at the
+        ## same indentation as its `when` rather than at the enclosing block's.
+        p._indStack.add(p.currInd)
+        p.currInd = p.tok.indent
+
+    def popInd(p: mut @ Parser):
+        if p._indStack.len > 0:
+            p.currInd = p._indStack[p._indStack.len - 1]
+            p._indStack.setLen(p._indStack.len - 1)
+
+    def noSpaceBefore(p: Parser) -> bool:
+        """{.inline.}"""
+        ## `f(x)` is a call, `f (x)` a command.
+        return TokSpacing.tsLeading not in p.tok.spacing
+
+    def isUnary(p: Parser) -> bool:
+        """{.inline.}"""
+        return p.tok.isUnary()
+
+    def isSigilLike(p: Parser) -> bool:
+        """{.inline.}"""
+        return p.tok.isSigilLike()
+
+    def dotLikeOps(p: Parser) -> bool:
+        """{.inline.}"""
+        ## `nimPreviewDotLikeOps`: `a.?b` would parse as a field access rather than
+        ## as an infix operator. nifler does not define it, so a dot-like operator
+        ## is an ordinary infix operator -- `a.?b.c` is `(infix .? a (dot b c))` --
+        ## and the answer is `false`.
+        return False
+
+    def inTypeDesc(p: Parser, mode: PrimaryMode) -> bool:
+        """{.inline.}"""
+        ## `parser.nim`'s `if mode == pmTypeDesc` in `commandParam`.
+        return mode == PrimaryMode.pmTypeDesc
+
+    def parIsTuple(p: Parser, mode: PrimaryMode) -> bool:
+        """{.inline.}"""
+        ## `parser.nim`'s `identOrLiteral` takes `'('` to the comma-separated
+        ## `exprColonEqExprList` in a type, and to `parsePar` -- which also accepts a
+        ## statement list, an assignment and a `do` block -- everywhere else. Both
+        ## productions exist in the grammar; this is the discriminator that says
+        ## which one `'('` opens.
+        return mode in Tset[PrimaryMode](PrimaryMode.pmTypeDesc, PrimaryMode.pmTypeDef)
+
+    def inOrOut(p: Parser) -> bool:
+        """{.inline.}"""
+        ## `parseGenericParam`'s `of tkIn, tkOut:` -- the variance markers of
+        ## `MyPtr[out T]`. The grammar spells the operand as `KEYW` so that the
+        ## keyword is *emitted* as the prefix operator's name, which a terminal
+        ## would not be; this narrows `KEYW` back to the two that are meant.
+        return p.tok.kind in Tset[TokKind](TokKind.tkIn, TokKind.tkOut)
+
+    def pragmaOnPrimary(p: Parser, mode: PrimaryMode) -> bool:
+        """{.inline.}"""
+        ## `simpleExprAux`'s `if p.tok.tokType == tkCurlyDotLe and (p.tok.indent < 0
+        ## or realInd(p)) and mode == pmNormal`. The indentation half is spelled in
+        ## the grammar; this is the mode half. `pmTrySimple` counts because
+        ## `simpleExprAux` rewrites it to `pmNormal` right after `primary` returns,
+        ## before it looks for the pragma.
+        return mode in Tset[PrimaryMode](PrimaryMode.pmNormal, PrimaryMode.pmTrySimple)
+
+    def isTypedefOperand(p: Parser, mode: PrimaryMode) -> bool:
+        """{.inline.}"""
+        ## `parseTypeDescKAux`'s `isTypedef`: after `ref`/`ptr`/`distinct` in a type
+        ## *definition*, an `object` or `tuple` operand brings a whole declaration
+        ## with it -- `type T = ref object` and its indented field list -- while
+        ## anything else is just a `primary`. It is a two-token decision in
+        ## `parser.nim` and a one-token one here, because by the time the operand is
+        ## dispatched the keyword is already consumed.
+        return mode == PrimaryMode.pmTypeDef and p.tok.kind in Tset[TokKind](TokKind.tkObject, TokKind.tkTuple)
+
+    def typeOperandFollows(p: Parser) -> bool:
+        """{.inline.}"""
+        ## `parseTypeDescKAux`'s `not isOperator(p.tok) and isExprStart(p)`: what
+        ## makes `ptr` in `SomeInteger | ptr | pointer` a *bare* `ptr` rather than
+        ## the prefix of `(prefix | pointer)`. The `isExprStart` half is the
+        ## alternative's FIRST set and is already in the generated condition; the
+        ## operator half is not expressible there, because an operator can also
+        ## start a prefix expression.
+        return p.tok.kind not in Tset[TokKind](TokKind.tkOpr, TokKind.tkDiv, TokKind.tkMod, TokKind.tkShl, TokKind.tkShr, TokKind.tkIn, TokKind.tkNotin, TokKind.tkIs, TokKind.tkIsnot, TokKind.tkNot, TokKind.tkOf, TokKind.tkAs, TokKind.tkFrom, TokKind.tkDotDot, TokKind.tkAnd, TokKind.tkOr, TokKind.tkXor)
+
+    def commandStart(p: Parser) -> bool:
+        """{.inline.}"""
+        ## `parser.nim`'s guard on `primarySuffix`'s command branch. The token set is
+        ## the one its `case` lists, which is narrower than FIRST(commandParam):
+        ## `not`, `if`, `addr` and friends can start an expression but not a
+        ## command, so `ref int not nil` is `(infix not (ref int) nil)` rather than
+        ## a command whose argument is `not nil`. An *infix* operator is not the
+        ## start of a command either -- `import std / os` is `(infix / std os)` --
+        ## and inside a pragma nothing is, because `{.push hints:off.}` must not
+        ## become `{.push(hints:off).}`.
+        return p.inPragma == 0 and p.tok.kind in Tset[TokKind](TokKind.tkSymbol, TokKind.tkAccent, inrange(TokKind.tkIntLit, TokKind.tkCustomLit), TokKind.tkNil, TokKind.tkCast, TokKind.tkOpr, TokKind.tkDotDot, TokKind.tkVar, TokKind.tkOut, TokKind.tkStatic, TokKind.tkType, TokKind.tkEnum, TokKind.tkTuple, TokKind.tkObject, TokKind.tkProc, TokKind.tkParLe, TokKind.tkBracketLe, TokKind.tkCurlyLe) and (p.tok.isUnary() or p.tok.kind not in Tset[TokKind](TokKind.tkOpr, TokKind.tkDotDot))
+
+    def commandAllowed(p: Parser, mode: PrimaryMode) -> bool:
+        """{.inline.}"""
+        ## `parser.nim`'s `commandExpr` returns its operand untouched when the mode
+        ## is `pmTrySimple`, so in that mode a command is not a suffix at all. That
+        ## is what leaves `echo a, b` for `exprStmt` to parse as one command with two
+        ## parameters, instead of `(cmd echo a)` followed by a stray comma.
+        return mode != PrimaryMode.pmTrySimple
+
+    def suffixStart(p: Parser) -> bool:
+        """{.inline.}"""
+        ## `parser.nim`'s `primarySuffix` loop guard, which the grammar cannot spell:
+        ## a suffix continues on the same line, and a `.` may also open a
+        ## continuation line that is indented at least as far as the line the primary
+        ## started on. That last indentation is a *parameter* of `primarySuffix`
+        ## there; here it is the enclosing block's, which differs only for a primary
+        ## that already spans lines.
+        return p.tok.indent < 0 or (p.tok.kind == TokKind.tkDot and p.tok.indent >= p.currInd)
+
+    def getPrecedence(p: Parser) -> nint:
+        """{.inline.}"""
+        ## `parseOperators` loops while `opPrec >= limit and p.tok.indent < 0 and
+        ## not isUnary(p.tok)`. The unary test lives here rather than in the
+        ## generator's `binary(...)`, because "a unary operator has no infix
+        ## precedence" is a fact about Nim's operators and not about precedence
+        ## climbing. Without it `echo $kind, "a"` parsed as `(infix $ echo kind)`
+        ## and then stalled on the comma.
+        return -10 if p.tok.isUnary() else getPrecedence(p.tok)
+
+    def isRightAssoc(p: Parser) -> bool:
+        """{.inline.}"""
+        return p.tok.isRightAssoc()
+
+    def mark(p: Parser) -> Mark:
+        """{.inline.}"""
+        return Mark(prev=p.last, info=p.info(), sigs=p.sigs)
+
+    def _since(p: Parser, m: Mark) -> Node:
+        """{.inline.}"""
+        ## The first node written since `m`, `nil` if none was.
+        return copy(p.first) if isNil(m.prev) else copy(m.prev.next)
+
+    def _setSince(p: mut @ Parser, m: Mark, n: Node):
+        """{.inline.}"""
+        if isNil(m.prev): p.first = n
+        else: m.prev.next = n
+
+    def append(p: mut @ Parser, n: Node):
+        ## Links `n` as the last sibling. A cell carries its own `next`, so it lives
+        ## in one chain only: appending unhooks it from wherever it was.
+        n.next = None
+        if isNil(p.last): p.first = n
+        else: p.last.next = n
+        p.last = n
+
+    def _cutTo(p: mut @ Parser, m: Mark):
+        ## Drops everything written since `m`. The cells stay in the arena and are
+        ## never looked at again; there is nothing to free and nothing to move.
+        p._setSince(m, None)
+        p.last = m.prev
+
+    def _newNode(p: mut @ Parser, payload: NifToken, info: NifLineInfo) -> Node:
+        """{.inline.}"""
+        return p.arena.alloc(payload, info)
+
+    def _identNode(p: mut @ Parser, s: string, info: NifLineInfo) -> Node:
+        return p._newNode(identToken(p.pool.strings.getOrIncl(s)), info)
+
+    def _emitIdent(p: mut @ Parser, s: string, info: NifLineInfo):
+        p.append(p._identNode(s, info))
+
+    def _emitStr(p: mut @ Parser, s: string, info: NifLineInfo):
+        p.append(p._newNode(strLitToken(p.pool.strings.getOrIncl(s)), info))
+
+    def _openNode(p: Parser) -> Mark:
+        """{.inline.}"""
+        ## The other spelling of `wrapAt`, for a layout that *builds* a node rather
+        ## than claiming one the rule wrote: everything appended between this and
+        ## the matching `closeNode` becomes the node's children.
+        return Mark(prev=p.last, info=NoLineInfo, sigs=p.sigs)
+
+    def insertLeafAt(p: mut @ Parser, m: Mark, text: string):
+        pass
+
+    def insertLeafAt(p: mut @ Parser, m: Mark, text: string):
+        ## `binary(...)`'s operator: `a + b` is `(infix + a b)`, so the operator has
+        ## to land *before* the left operand, which was parsed before it was read.
+        ## Two links, where a flat buffer had to move the whole operand out of the way.
+        with let:
+            node = p._identNode(text, p.info())
+        node.next = p._since(m)
+        p._setSince(m, node)
+        if isNil(node.next): p.last = node
+
+    def insertOpLeafAt(p: mut @ Parser, m: Mark):
+        ## `insertLeafAt` with the current token's text: `p.tok.s` passed directly
+        ## would alias the `var Parser`.
+        with let:
+            text = p.tok.s.copy()
+        p.insertLeafAt(m, text)
+
+    def emitEmpty(p: mut @ Parser):
+        ## `.` in the grammar: an absent child.
+        p.append(p._newNode(dotToken(), NoLineInfo))
+
+    def setExportMarker(p: mut @ Parser, m: Mark):
+        ## `exportMarker`: nifler writes `x` in the export slot, whatever the
+        ## operator was.
+        p._cutTo(m)
+        # The operator's position stays on the marker: a declaration node is
+        # positioned at its `nkPostfix`, which parser.nim creates there. The writer
+        # does not write it -- bridge.nim emits the marker with `addRaw " x"`.
+        p._emitIdent(string("x"), m.info)
+
+    def pushSection(p: mut @ Parser, tag: NiflerKind):
+        p._sections.add(tag)
+        p._lastSection = tag
+
+    def pushLastSection(p: mut @ Parser):
+        ## `using`: nifler's section is one variable that nothing restores, and
+        ## `nkUsingStmt` does not set it -- a `using` gets the tag of whatever
+        ## section was opened last in the module. Nothing downstream reads that tag,
+        ## but a byte-identical tree has to have it.
+        p._sections.add(p._lastSection)
+
+    def popSection(p: mut @ Parser):
+        p._sections.setLen(p._sections.len - 1)
+
+    def _section(p: Parser) -> NiflerKind:
+        return p._sections[back(1)] if p._sections.len > 0 else NiflerKind.VarL
+
+    def pushFieldWrap(p: mut @ Parser, wrap: bool):
+        p._wrapFields.add(wrap)
+
+    def popFieldWrap(p: mut @ Parser):
+        p._wrapFields.setLen(p._wrapFields.len - 1)
+
+    def _takeTail(p: mut @ Parser, m: Mark) -> seq[Node]:
+        ## The trees written since `m`, unhooked from the chain and listed so a
+        ## layout can index them. The cells are the ones the rule built: no copy is
+        ## made and none is needed, because a layout links each of them back exactly
+        ## once. `fanOut` and `fanOutKv` are the exceptions and say so with
+        ## `copyTree`.
+        with let:
+            head = p._since(m)
+        p._cutTo(m)
+        result = newSeqOfCap[Node](16)
+        with var:
+            n = head
+        while not isNil(n):
+            result.add(n)
+            n = n.next
+        return result
+
+    def joinIdents(p: mut @ Parser, m: Mark):
+        ## Inside backquotes `parseSymbol` glues a run of operator and bracket
+        ## tokens into one identifier: `` `[]=` `` is `(quoted []=)`, not three
+        ## children, while `` `=copy` `` is `(quoted = copy)`.
+        with let:
+            kids = p._takeTail(m)
+        if p.failed: return
+        with var:
+            text = string("")
+        for k in kids: text.add(p.pool.strings[strId(k)])
+        p._emitIdent(text, m.info)
+
+    def literalAsIdent(p: mut @ Parser, m: Mark):
+        ## Inside backquotes `parseSymbol` makes a literal token an identifier of
+        ## its text: `` `'big` `` is `(quoted ' big)`.
+        with let:
+            kids = p._takeTail(m)
+        if p.failed: return
+        with let:
+            k = kids[0]
+        match kind(k):
+            case NifKind.CharLit:
+                with var:
+                    t = string("")
+                t.add(charVal(k))
+                p._emitIdent(t, m.info)
+            case NifKind.IntLit: p._emitIdent(str(intVal(k)), m.info)
+            case NifKind.UIntLit: p._emitIdent(str(uintVal(k)), m.info)
+            case NifKind.FloatLit: p._emitIdent(str(floatVal(k)), m.info)
+            case NifKind.StrLit:
+                with let:
+                    s = p.pool.strings[strId(k)].copy()
+                p._emitIdent(s, m.info)
+            case _: p.append(k)
+
+    def posMarker(p: mut @ Parser):
+        ## A `.` that only carries the current position to a layout, which removes
+        ## it again.
+        p.sigs.posMarkers += 1
+        p.append(p._newNode(dotToken(), p.info()))
+
+    def routineBodyAllowed(p: Parser, mode: PrimaryMode) -> bool:
+        """{.inline.}"""
+        ## `parseProcExpr(p, mode != pmTypeDesc, ...)`: in a type `proc (): int = x`
+        ## has no body -- the `= x` is the declaration's default value.
+        return mode != PrimaryMode.pmTypeDesc
+
+    def pushInfo(p: mut @ Parser):
+        ## The position of the current token, for a node built after its keyword
+        ## is consumed -- `parseRoutine` creates the routine node at `proc`.
+        p._infos.add(p.info())
+
+    def popInfo(p: mut @ Parser):
+        p._infos.setLen(p._infos.len - 1)
+
+    def moveLastToMark(p: mut @ Parser, m: Mark):
+        ## `for x in it` and `let (a, b) = v`: nifler writes the iterated or
+        ## unpacked value first.
+        with let:
+            kids = p._takeTail(m)
+        if p.failed: return
+        p.append(kids[back(1)])
+        for i in range(kids.len - 1): p.append(kids[i])
+
+    def _emitInt(p: mut @ Parser, v: int64, info: NifLineInfo):
+        p.append(p.arena.allocWide(NifKind.IntLit, cast[uint64](v), info))
+
+    def _emitUInt(p: mut @ Parser, v: uint64, info: NifLineInfo):
+        p.append(p.arena.allocWide(NifKind.UIntLit, v, info))
+
+    def _emitFloat(p: mut @ Parser, v: float64, info: NifLineInfo):
+        p.append(p.arena.allocWide(NifKind.FloatLit, cast[uint64](v), info))
+
+
+def openParser(src: string, filename: string, pool: Pool, tags: TagPool) -> Parser:
+    ## `pool` and `tags` are the output's: nifler2 writes through `nifpools`'
+    ## globals, a plugin parses into its own. `tags` is not stored -- a cell
+    ## holds a `TagId` and the tag pool is only consulted when the tree is
+    ## written out.
+    result = Parser(lex=openLexer(src, filename), tok=Token(kind=TokKind.tkInvalid, s=string(""), indent=-1, spacing=Tset[TokSpacing](), line=0, col=0, base=10, suffixPos=-1, iNumber=0), arena=initArena(), first=None, last=None, _file=pool.filenames.getOrIncl(filename), currInd=0, _indStack=seq[int32]([]), inPragma=0, _sections=seq[NiflerKind]([]), _lastSection=NiflerKind.VarL, _wrapFields=seq[bool]([]), pool=pool, tags=tags, failed=False, errLine=0, errCol=0, errMsg=string(""))
+    next(result.lex, result.tok)
+    return result
+
+# --------------------------------------------------------------- diagnostics
+#
+# The messages, and where they point, are `compiler/parser.nim`'s: nifler's
+# users see them, and `tools/errsweep.sh` compares the two. Nim positions a
+# message either at the current token (`parMessage`) or at the lexer's
+# position, which is the end of that token (`lexMessage`, used by `eat`).
+
+
+with const:
+    errInvalidIndentation = string("invalid indentation")
+    _NestableStmts = Tset[TokKind](TokKind.tkIf, TokKind.tkWhile, TokKind.tkCase, TokKind.tkTry, TokKind.tkFor, TokKind.tkBlock, TokKind.tkAsm, TokKind.tkProc, TokKind.tkFunc, TokKind.tkIterator, TokKind.tkMacro, TokKind.tkType, TokKind.tkConst, TokKind.tkWhen, TokKind.tkVar)
+
+
+def prettyTok(t: Token) -> string:
+    ## `prettyTok` in `compiler/lexer.nim`.
+    match t.kind:
+        case _ if t.kind in inrange(KeywordLow, KeywordHigh): return string("keyword ") + str(t.kind)
+        case _ if t.kind in inrange(TokKind.tkIntLit, TokKind.tkInt64Lit): return str(t.iNumber)
+        case _ if t.kind in inrange(TokKind.tkUIntLit, TokKind.tkUInt64Lit):
+        # Nim's `iNumber` is a `BiggestInt` for these too
+            return str(t.iNumber)
+        case _ if t.kind in inrange(TokKind.tkParLe, TokKind.tkColon) or t.kind == TokKind.tkEof or t.kind == TokKind.tkAccent: return str(t.kind)
+        case TokKind.tkBracketLeColon: return string("")
+        case TokKind.tkColonColon | TokKind.tkEquals | TokKind.tkDot | TokKind.tkDotDot:
+            return t.s if t.s.len > 0 else str(t.kind)
+        case _: return t.s
+
+
+def _expectedTok(p: mut @ Parser, spelling: string):
+    p.lexError(string("expected: '") + spelling + string("', but got: '") + prettyTok(p.tok) + string("'"))
+
+
+def identExpected(p: mut @ Parser):
+    p.error(string("identifier expected, but got '") + prettyTok(p.tok) + string("'"))
+
+
+def exprExpected(p: mut @ Parser):
+    p.error(string("expression expected, but found '") + prettyTok(p.tok) + string("'"))
+
+
+def ruleError(p: mut @ Parser, rule: string, misplaced: bool):
+    ## Nothing in `rule` starts with the current token. parser.nim has no such
+    ## single place: the message is whichever check of the hand-written
+    ## procedure the token trips first. For a token that could start the rule
+    ## at another indentation (`misplaced`) that is usually an indentation
+    ## check, and otherwise `identOrLiteral`'s `errExprExpected`.
+    match rule:
+        case "section_variable" | "section_constant" | "section_typeDef" | "symbol" | "plainSymbol" | "identVis" | "identVisDot" | "identWithPragma" | "identWithPragmaDot" | "qualifiedIdent" | "forHead" | "symbolOrKeyword":
+            identExpected(p)
+        case "complexOrSimpleStmt":
+        # `'type' section(typeDef)` and `'type' typeof[...]` factor into one
+        # dispatch after `type`; parser.nim's `parseSection` owns that token
+            if p.prevKind == TokKind.tkType: identExpected(p)
+            else: exprExpected(p)
+        case "declColonEquals" | "identColonEquals" | "declColonEqualsDot":
+            p.error(string("':' or '=' expected, but got '") + prettyTok(p.tok) + string("'"))
+        case "castExpr":
+            _expectedTok(p, string("("))
+        case "genericParamName":
+        # a keyword other than `in`/`out` ends `parseGenericParamList`'s loop
+            _expectedTok(p, string("]"))
+        case "par":
+        # `parsePar` ends in `optPar(p); eat(p, tkParRi)`
+            if misplaced or p.indClass() == IndClass.icLt: indentError(p)
+            elif p.prevKind == TokKind.tkParLe: exprExpected(p)
+            else: _expectedTok(p, string(")"))
+        case "pragma":
+            p.error(string("expected '.}'"))
+        case "stmt":
+            if p.indClass() == IndClass.icGt:
+            # `parseStmt`'s block loop parses anything but these as a statement
+                if p.tok.kind in Tset[TokKind](TokKind.tkCurlyRi, TokKind.tkParRi, TokKind.tkCurlyDotRi, TokKind.tkBracketRi, TokKind.tkElse, TokKind.tkElif):
+                    indentError(p)
+                else:
+                    exprExpected(p)
+            elif p.tok.kind in _NestableStmts:
+                p.error(string("nestable statement requires indentation"))
+            elif p.tok.indent >= 0 and p.inSemiStmtList == 0:
+                p.error(errInvalidIndentation)
+            else:
+                exprExpected(p)
+        case _:
+            if misplaced: indentError(p)
+            else: exprExpected(p)
+
+
+def strictListEnd(p: mut @ Parser):
+    ## See `strictListEnd` in the grammar.
+    if p.indClass() == IndClass.icEq and p.tok.kind != TokKind.tkEof: identExpected(p)
+
+
+def strictListStart(p: mut @ Parser):
+    ## An indented token that cannot start the list at all.
+    if p.indClass() == IndClass.icGt and p.tok.kind != TokKind.tkEof: identExpected(p)
+
+
+def enumListEnd(p: mut @ Parser):
+    ## `parseEnum` loops on `validInd` and calls `parseSymbol` on whatever is
+    ## there.
+    if p.indClass() in Tset[IndClass](IndClass.icNoInd, IndClass.icGt) and p.tok.kind != TokKind.tkEof: identExpected(p)
+
+
+def accentEnd(p: mut @ Parser):
+    if p.tok.kind != TokKind.tkAccent: identExpected(p)
+
+
+def listEnd(p: mut @ Parser, close: TokKind):
+    ## See `listEnd` in the grammar. A pragma ends in `.}` or `}`.
+    if p.tok.kind != close and p.tok.kind != TokKind.tkEof and not (close == TokKind.tkCurlyDotRi and p.tok.kind == TokKind.tkCurlyRi):
+        exprExpected(p)
+
+
+def requireFields(p: mut @ Parser, m: Mark):
+    if p.last == m.prev: identExpected(p)  # nothing written since the mark
+
+
+def stmtListEnd(p: mut @ Parser):
+    ## `parseStmt`'s block loop ends on these; any other token at the block's
+    ## indentation is handed to `complexOrSimpleStmt`, which finds nothing.
+    if p.indClass() == IndClass.icEq and p.tok.kind not in Tset[TokKind](TokKind.tkCurlyRi, TokKind.tkParRi, TokKind.tkCurlyDotRi, TokKind.tkBracketRi, TokKind.tkElse, TokKind.tkElif, TokKind.tkEof):
+        exprExpected(p)
+
+
+def noIndHere(p: mut @ Parser):
+    if p.tok.indent >= 0: p.error(errInvalidIndentation)
+
+
+def blockNameEnd(p: mut @ Parser):
+    if p.tok.kind != TokKind.tkColon: identExpected(p)
+
+
+def tupleEnd(p: mut @ Parser):
+    if p.prevKind == TokKind.tkComma and p.tok.kind not in Tset[TokKind](TokKind.tkParRi, TokKind.tkEof): exprExpected(p)
+
+
+def indentError(p: mut @ Parser):
+    p.error(errInvalidIndentation)
+
+
+@dispatch
+def expect(p: mut @ Parser, k: TokKind):
+    if p.tok.kind == k: p.getTok()
+    else: _expectedTok(p, str(k))
+
+
+@dispatch
+def expect(p: mut @ Parser, k: TokKind, s: string):
+    ## The spelling matters for the operators the grammar names literally
+    ## (`'->'` in `paramListArrow`).
+    if p.tok.kind == k and p.tok.s == s: p.getTok()
+    else: _expectedTok(p, s)
+
+# --------------------------------------------------------------- indentation
+
+
+def emitLeaf(p: mut @ Parser):
+    pass
+
+
+@dispatch
+def expectLeaf(p: mut @ Parser, k: TokKind):
+    ## `@'not'` in the grammar: the terminal is content, not punctuation.
+    if p.tok.kind == k: emitLeaf(p)
+    else: _expectedTok(p, str(k))
+
+
+@dispatch
+def expectLeaf(p: mut @ Parser, k: TokKind, s: string):
+    if p.tok.kind == k and p.tok.s == s: emitLeaf(p)
+    else: _expectedTok(p, s)
+
+
+def checkInd(p: mut @ Parser, allowed: Tset[IndClass]):
+    if p.indClass() not in allowed:
+        p.error(errInvalidIndentation)
+
+
+def afterOperator(p: mut @ Parser):
+    ## `simpleExprAux` after it consumed a binary operator: `flexComment` and
+    ## `optPar`.
+    if p.tok.kind == TokKind.tkComment and p.indClass() in Tset[IndClass](IndClass.icNoInd, IndClass.icGt): p.getTok()
+    if p.indClass() == IndClass.icLt: indentError(p)
+
+
+def pushInd(p: mut @ Parser):
+    checkInd(p, Tset[IndClass](IndClass.icGt))
+    p._indStack.add(p.currInd)
+    p.currInd = p.tok.indent
+
+# --------------------------------------------------------------- predicates
+#
+# The grammar's `&name` and `&name(args)` items. Four of the six come straight
+# from `nimlexer` -- they are properties of a token, which is where Nim's
+# lexer computes them too -- and are lifted to the parser here only because
+# the generated code spells them `name(p)`.
+
+# --------------------------------------------------------------- the tree
+#
+# The rule builds a chain of siblings; `p.first` is its head and `p.last` its
+# tail. A `Mark` remembers the sibling that was last when the rule began, so
+# "everything since the mark" is the chain hanging off `m.prev.next` -- or off
+# `p.first` when the rule began with nothing written. Every rewrite below is
+# some re-linking of that chain: nothing is moved, copied or re-read.
+
+
+@dispatch
+def tagId(k: NiflerKind) -> TagId:
+    """{.inline.}"""
+    ## The master tag pool is seeded in `TagEnum` order, so a tag's id is its
+    ## ordinal and no string is ever hashed to find it.
+    return TagId(ord(k))
+
+
+def wrapAt(p: mut @ Parser, m: Mark, tag: NiflerKind, info: NifLineInfo):
+    ## Makes everything since `m` the children of a new `(tag ...)` node. The
+    ## chain is not touched: it becomes the new node's `down`, and the node takes
+    ## its place in the enclosing chain. Constant time, whatever it holds.
+    # Tags nifler invents for the dialect are not nodes of Nim's AST and carry
+    # no position: bridge.nim writes them with `addTree` and nothing else.
+    with let:
+        pos = NoLineInfo if tag == NiflerKind.RangesL or tag == NiflerKind.UnpackflatL or tag == NiflerKind.UnpacktupL else info
+    if tag == NiflerKind.KvL: p.sigs.kvs += 1
+    with let:
+        node = p._newNode(tagLitToken(tagId(tag)), pos)
+    node.down = p._since(m)
+    p._setSince(m, node)
+    p.last = node
+
+
+def wrap(p: mut @ Parser, m: Mark, tag: NiflerKind):
+    ## Retroactively make everything from `m` a `(tag ...)` node.
+    wrapAt(p, m, tag, m.info)
+
+
+def _closeNode(p: mut @ Parser, m: Mark, tag: NiflerKind, info: NifLineInfo):
+    """{.inline.}"""
+    wrapAt(p, m, tag, info)
+
+
+def insertTokAt(p: mut @ Parser, m: Mark, k: TokKind):
+    ## `^tag[ @'not' ... ]`: consume the operator and insert it at the anchor,
+    ## in front of the operand that is already there.
+    if p.tok.kind == k:
+        p.insertLeafAt(m, (p.tok.s if p.tok.s.len > 0 else str(p.tok.kind)))
+        p.getTok()
+    else:
+        _expectedTok(p, str(k))
+
+# --------------------------------------------------------------- layouts
+#
+# nifler's `nim-parsed` dialect is not the shape of the source: every absent
+# child is a `.`, a declaration with several names is one node per name, and
+# `for`/tuple unpacking put the iterated value in front of the variables. The
+# grammar parses in source order and writes a `.` wherever a child is absent
+# (`X?.`); these procs then rearrange what the rule just wrote. They all work
+# the same way: `takeTail` unhooks the trees written since the mark and hands
+# them over as a list, and the layout links them back in nifler's order.
+
+
+def _nameNodeInfo(name: Node, exp: Node, pragmas: Node) -> NifLineInfo:
+    ## The position of parser.nim's name node, which is what a declaration is
+    ## positioned at: `nkPragmaExpr` (created at the `{.`) if there is a pragma,
+    ## else `nkPostfix` (created at the export operator), else the name.
+    if not pragmas.isEmpty(): return pragmas.info
+    elif not exp.isEmpty(): return exp.info
+    else: return name.info
+
+
+def wrapLikeFirst(p: mut @ Parser, m: Mark, tag: NiflerKind):
+    ## A node positioned at its first child: `newTree(nkCommand, a.info, a)`.
+    with let:
+        f = p._since(m)
+    wrapAt(p, m, tag, (m.info if isNil(f) else f.info))
+
+
+def fanOut(p: mut @ Parser, m: Mark):
+    ## `name x pragmas` repeated, then `type value`: one `(section name x
+    ## pragmas type value)` per name. The count is exact because every slot is
+    ## written, `.` or not -- which is what the placeholders buy.
+    with let:
+        kids = p._takeTail(m)
+    if p.failed: return
+    with let:
+        names = (kids.len - 2) // 3
+        tag = p._section()
+        wrapped = tag == NiflerKind.FldL and names > 1 and p._wrapFields.len > 0 and p._wrapFields[back(1)]
+        outer = p._openNode()
+    for i in range(names):
+        with let:
+            one = p._openNode()
+        for j in inrange(0, 2): p.append(kids[3 * i + j])
+        # The type and the value belong to every name, and a cell can sit in one
+        # chain only, so all but the last name get a copy of them.
+        with let:
+            last = i == names - 1
+        p.append((kids[back(2)] if last else p.arena.copyTree(kids[back(2)])))
+        p.append((kids[back(1)] if last else p.arena.copyTree(kids[back(1)])))
+        _closeNode(p, one, tag, _nameNodeInfo(kids[3 * i], kids[3 * i + 1], kids[3 * i + 2]))
+    if wrapped: _closeNode(p, outer, NiflerKind.StmtsL, NoLineInfo)  # not a node of Nim's AST
+    else: outer.discardUnused()
+
+
+def fanOutKv(p: mut @ Parser, m: Mark):
+    ## A tuple field list: names, then `type value`. nifler keeps `(kv name
+    ## type)` and drops the default.
+    with let:
+        kids = p._takeTail(m)
+    if p.failed: return
+    if kids.len > 2: p.sigs.kvs = p.sigs.kvs + kids.len - 2
+    for i in range(kids.len - 2):
+        with let:
+            one = p._openNode()
+            info = kids[i].info
+        p.append(kids[i])
+        with let:
+            last = i == kids.len - 3
+        p.append((kids[back(2)] if last else p.arena.copyTree(kids[back(2)])))
+        _closeNode(p, one, NiflerKind.KvL, info)
+
+
+def inSemiStmtList(p: Parser) -> bool:
+    """{.inline.}"""
+    ## `parseStmt`'s `if p.inSemiStmtList > 0: result = simpleStmt(p)`: inside
+    ## a parenthesised statement list a one-line body is the bare statement,
+    ## not a `stmts` -- `(if a: b else: c)` is `(elif a b)`. The counter is not
+    ## reset by what nests inside, so neither is this.
+    return p.inSemiStmtList > 0
+
+
+def stmtListExprLayout(p: mut @ Parser, m: Mark):
+    ## `nkStmtListExpr`: nifler writes all statements but the last in a `stmts`
+    ## and the last one after it, `(expr (stmts a b) c)`.
+    with let:
+        kids = p._takeTail(m)
+    if p.failed: return
+    with let:
+        outer = p._openNode()
+        inner = p._openNode()
+    for i in range(kids.len - 1): p.append(kids[i])
+    _closeNode(p, inner, NiflerKind.StmtsL, m.info)
+    if kids.len > 0: p.append(kids[back(1)])
+    else: p.emitEmpty()
+    _closeNode(p, outer, NiflerKind.ExprL, m.info)
+
+
+def _addParams(p: mut @ Parser, c: Node, info: NifLineInfo):
+    pass
+
+
+def dotLayout(p: mut @ Parser, m: Mark):
+    ## `dotExpr`'s rewrite of `x.y[:z](args)` into `y[z](x, args)`: the dot
+    ## node's children are `x y (at z...) args...` when the `[:` was there.
+    ## The rule wrapped one `(dot ...)` tree, so with no `[:` there is nothing
+    ## to move and the tree stands as written.
+    if p.sigs.posMarkers == m.sigs.posMarkers: return
+    with let:
+        kids = p._takeTail(m)
+    if p.failed: return
+    with let:
+        node = kids[0]
+    with var:
+        parts: seq[Node] = newSeqOfCap[Node](8)
+        c = node.down
+    while not isNil(c):
+        parts.add(c)
+        c = c.next
+    if parts.len <= 2:
+        p.append(node)
+        return
+    # `dotExpr` builds the call with `p.parLineInfo` right after the `]` --
+    # the position `posMarker` recorded, as `parts[3]`
+    with let:
+        call = p._openNode()
+        at = p._openNode()
+    p.append(parts[1])
+    with var:
+        z = parts[2].down
+    while not isNil(z):
+        with let:
+            nxt = z.next
+        p.append(z)
+        z = nxt
+    _closeNode(p, at, NiflerKind.AtL, parts[2].info)
+    p.append(parts[0])
+    for i in range(4, parts.len): p.append(parts[i])
+    _closeNode(p, call, NiflerKind.CallL, parts[3].info)
+
+
+def curlyOrTable(p: mut @ Parser, m: Mark):
+    ## `setOrTableConstr` retags `nkCurly` as `nkTableConstr` as soon as one
+    ## element is `key: value`.
+    ## No `kv` was built inside: not a table, so the `(curly ...)` stands.
+    if p.sigs.kvs == m.sigs.kvs: return
+    with let:
+        kids = p._takeTail(m)
+    if p.failed: return
+    with let:
+        node = kids[0]
+    with var:
+        isTable = False
+        c = node.down
+    while not isNil(c):
+        if kind(c) == NifKind.TagLit and tag(c) == tagId(NiflerKind.KvL): isTable = True
+        c = c.next
+    # Only the tag changes; the children stay exactly where they are.
+    if isTable: node.payload = tagLitToken(tagId(NiflerKind.TabconstrL))
+    p.append(node)
+
+
+def callOrObjConstr(p: mut @ Parser, m: Mark):
+    ## `primarySuffix`'s `(`: a call whose first argument is `name: value` is
+    ## an object constructor, `Foo(a: 1)` is `(oconstr Foo (kv a 1))`.
+    ## No `kv` was built inside: not an object constructor, so the `(call ...)`
+    ## stands. A `kv` nested deeper than the first argument only costs the test
+    ## below, which then finds none in that slot.
+    if p.sigs.kvs == m.sigs.kvs: return
+    with let:
+        kids = p._takeTail(m)
+    if p.failed: return
+    with let:
+        node = kids[0]
+        callee = node.down
+    if not isNil(callee) and not isNil(callee.next) and kind(callee.next) == NifKind.TagLit and tag(callee.next) == tagId(NiflerKind.KvL):
+        node.payload = tagLitToken(tagId(NiflerKind.OconstrL))
+    p.append(node)
+
+
+def attachBlocks(p: mut @ Parser, m: Mark):
+    ## `postExprBlocks`: a trailing `:` or `do` block belongs *to* the
+    ## expression in front of it. `makeCall` keeps a node that is already a call
+    ## -- `foo x:` stays a `cmd` -- and wraps anything else, and every block is
+    ## appended as a child: `c.into:` is `(call (dot c into) (stmts ...))`.
+    ## The rule that calls this has parsed the operand first, so the operand is
+    ## the first tree since `m` and the blocks are the rest.
+    with let:
+        kids = p._takeTail(m)
+    if p.failed: return
+    if kids.len == 1:
+        p.append(kids[0])
+        return
+    with let:
+        op = kids[0]
+    with var:
+        isCall = False
+    if kind(op) == NifKind.TagLit:
+        with let:
+            t = tag(op)
+        isCall = t == tagId(NiflerKind.CallL) or t == tagId(NiflerKind.CmdL) or t == tagId(NiflerKind.InfixL) or t == tagId(NiflerKind.PrefixL) or t == tagId(NiflerKind.CallstrlitL)
+    if isCall:
+    # The operand already IS the call, so the blocks just join its children:
+    # `kids[1..]` are still chained to each other, so one link does it.
+        with var:
+            tail = op.down
+        if isNil(tail):
+            op.down = kids[1]
+        else:
+            while not isNil(tail.next): tail = tail.next
+            tail.next = kids[1]
+        p.append(op)
+    else:
+        with let:
+            call = p._openNode()
+            info = op.info
+        p.append(op)
+        for i in range(1, kids.len): p.append(kids[i])
+        _closeNode(p, call, NiflerKind.CallL, info)
+
+
+def doLayout(p: mut @ Parser, m: Mark, atBody: bool):
+    ## A `do` block, parsed as `params ret pragmas body`. Without a signature or
+    ## pragmas it is just its body; otherwise `(do params ret body)` -- nifler
+    ## writes the formal parameters as `(params ...)` plus the return type, and
+    ## drops the pragmas.
+    # kids: position after `do`, params, ret, pragmas, body, position after
+    # the body (both from `posMarker`)
+    with let:
+        kids = p._takeTail(m)
+    if p.failed: return
+    if kids[1].isEmpty() and kids[2].isEmpty() and kids[3].isEmpty():
+        p.append(kids[4])
+    else:
+    # `postExprBlocks` builds the first `do` with `stmtList.info`, the loop
+    # over further blocks with the position of the `do` keyword. The formal
+    # parameters are created where their list starts -- unless there is no
+    # list at all, only pragmas, in which case an empty one is made up after
+    # the body has been parsed.
+        with let:
+            info = kids[4].info if atBody else m.info
+            paramsInfo = kids[5].info if kids[1].isEmpty() and kids[2].isEmpty() else kids[0].info
+            d = p._openNode()
+        _addParams(p, kids[1], paramsInfo)
+        p.append(kids[2])
+        p.append(kids[4])
+        _closeNode(p, d, NiflerKind.DoL, info)
+
+
+def emptyDiscriminator(p: mut @ Parser):
+    ## `parseObjectCase` without a discriminator: an `nkIdentDefs` of empty
+    ## nodes. Its name is the empty node, whose position has no file, so
+    ## bridge.nim writes it absolute -- as `~1,,???`.
+    with let:
+        unknown = NifLineInfo(file=p.pool.filenames.getOrIncl(string("???")), line=0, col=-1)
+        f = p._openNode()
+    for i in inrange(0, 4): p.emitEmpty()
+    _closeNode(p, f, NiflerKind.FldL, unknown)
+
+
+def wrapNoInfo(p: mut @ Parser, m: Mark, tag: NiflerKind):
+    ## A node bridge.nim writes with `addTree` alone.
+    wrapAt(p, m, tag, NoLineInfo)
+
+
+def pragmaBlock(p: mut @ Parser, m: Mark):
+    ## `parseStmtPragma`: a pragma followed by a block is an `nkPragmaBlock`,
+    ## `(pragmax pragmas body)`, positioned at the pragma.
+    with let:
+        kids = p._takeTail(m)
+    if p.failed: return
+    if kids.len == 1:
+        p.append(kids[0])
+    else:
+        with let:
+            info = kids[0].info
+            x = p._openNode()
+        for k in kids: p.append(k)
+        _closeNode(p, x, NiflerKind.PragmaxL, info)
+
+
+def inheritLayout(p: mut @ Parser, m: Mark):
+    ## `nkOfInherit`, created at `of`: one type is written as itself, several
+    ## as `(par A B)`.
+    with let:
+        kids = p._takeTail(m)
+    if p.failed: return
+    if kids.len == 1:
+        p.append(kids[0])
+    else:
+        with let:
+            x = p._openNode()
+        for k in kids: p.append(k)
+        _closeNode(p, x, NiflerKind.ParL, m.info)
+
+
+def wrapSection(p: mut @ Parser, m: Mark):
+    ## A declaration that is already in slot form, tagged with the section: the
+    ## `let`s of a tuple unpacking, which bridge.nim writes without a position.
+    wrapAt(p, m, p._section(), NoLineInfo)
+
+
+def _addParams(p: mut @ Parser, c: Node, info: NifLineInfo):
+    ## `parseParamList` always builds an `nkFormalParams`, created at the token
+    ## where the list would start.
+    if c.isEmpty():
+        with let:
+            x = p._openNode()
+        _closeNode(p, x, NiflerKind.ParamsL, info)
+    else:
+        p.append(c)
+
+
+def procLayout(p: mut @ Parser, m: Mark, keyword: NiflerKind):
+    ## An anonymous routine, parsed as `params ret pragmas body` with `.` for
+    ## each one that is absent. With a body it is a lambda,
+    ## `(proc . . . . params ret pragmas . body)`, and `(params)` is always there.
+    ## Without one it is a type, and a type keeps what the source had: nothing
+    ## at all is `(proctype)`, no signature is a single `.` in place of params
+    ## and result.
+    with let:
+        kids = p._takeTail(m)
+    if p.failed: return
+    with let:
+        params = kids[0]
+        ret = kids[1]
+        pragmas = kids[2]
+        body = kids[3]
+    if not body.isEmpty():
+        with let:
+            x = p._openNode()
+        for i in inrange(0, 3): p.emitEmpty()
+        _addParams(p, params, m.info)
+        p.append(ret)
+        p.append(pragmas)
+        p.emitEmpty()
+        p.append(body)
+        _closeNode(p, x, keyword, m.info)
+    else:
+        with let:
+            t = NiflerKind.ItertypeL if keyword == NiflerKind.IteratorL else NiflerKind.ProctypeL
+            x = p._openNode()
+            hasSig = not params.isEmpty() or not ret.isEmpty()
+        if hasSig or not pragmas.isEmpty():
+            for i in inrange(0, 3): p.emitEmpty()
+            if hasSig:
+                _addParams(p, params, m.info)
+                p.append(ret)
+            else:
+                p.emitEmpty()
+            p.append(pragmas)
+            p.emitEmpty()
+            p.emitEmpty()
+        _closeNode(p, x, t, m.info)
+
+
+def routineLayout(p: mut @ Parser, m: Mark, keyword: NiflerKind):
+    ## A named routine, parsed as `name x pattern typevars params ret pragmas
+    ## body`: `(keyword name x pattern typevars params ret pragmas . body)`,
+    ## with the effects slot nifler reserves and `(params)` always present.
+    with let:
+        kids = p._takeTail(m)
+    if p.failed: return
+    with let:
+        info = p._infos[back(1)].copy()
+        x = p._openNode()
+    for i in inrange(0, 3): p.append(kids[i])
+    _addParams(p, kids[4], NoLineInfo)
+    p.append(kids[5])
+    p.append(kids[6])
+    p.emitEmpty()
+    p.append(kids[7])
+    _closeNode(p, x, keyword, info)
+
+
+def _hexVal(c: char) -> uint64:
+    """{.inline.}"""
+    if c <= ch('9'): return uint64(ord(c) - ord(ch('0')))
+    elif c <= ch('F'): return uint64(ord(c) - ord(ch('A')) + 10)
+    else: return uint64(ord(c) - ord(ch('a')) + 10)
+
+
+def _floatValue(tok: Token) -> float64:
+    ## Nim's lexer leaves a float literal as text, so the conversion happens
+    ## here. A base-16/8/2 literal that carries a float suffix is not a number
+    ## in that base at all -- `0x3F800000'f32` names the *bit pattern* -- which
+    ## is why the two cases do not share a parser.
+    if tok.base == 10:
+        with var:
+            f = float64(0.0)
+        _ = parseBiggestFloat(tok.s, f)
+        result = f
+    else:
+        with let:
+            shiftBy = 4 if tok.base == 16 else 3 if tok.base == 8 else 1
+        with var:
+            xi = u64(0)
+            i = nint(2)  # past `0x` / `0o` / `0c` / `0b`
+        while i < tok.s.len:
+            if tok.s[i] != ch('_'): xi = (xi << shiftBy) | _hexVal(tok.s[i])
+            i += 1
+        if tok.kind == TokKind.tkFloat32Lit:
+            result = float64(cast[float32](uint32(xi & u64(0xffffffff))))
+        else:
+            result = cast[float64](xi)
+    return result
+
+
+def emitLeaf(p: mut @ Parser):
+    ## The terminal the grammar matched, as a NIF atom. Which atom is decided by
+    ## the token kind alone, so the generator never has to say (it emits the
+    ## terminal's name as a comment only).
+    with let:
+        info = p.info()
+    match p.tok.kind:
+    # Only the unsuffixed kinds are bare atoms in nifler; every sized kind,
+    # the 64-bit ones included, is `(suf value "i64")`. `tkInt64Lit` is also
+    # what a plain literal becomes once it leaves int32's range, exactly as in
+    # compiler/lexer.nim, so a large plain literal is written with a suffix too.
+        case TokKind.tkIntLit:
+            p._emitInt(p.tok.iNumber, info)
+        case TokKind.tkInt8Lit | TokKind.tkInt16Lit | TokKind.tkInt32Lit | TokKind.tkInt64Lit:
+            with let:
+                x = p._openNode()
+            p._emitInt(p.tok.iNumber, info)
+            # N42 (filled by hand): Nim's `case` expression as the argument, bound before the call (rule:caseassign)
+            with let:
+                match p.tok.kind:
+                    case TokKind.tkInt8Lit: suffix = string("i8")
+                    case TokKind.tkInt16Lit: suffix = string("i16")
+                    case TokKind.tkInt32Lit: suffix = string("i32")
+                    case _: suffix = string("i64")
+            p._emitStr(suffix, info)
+            _closeNode(p, x, NiflerKind.SufL, info)
+        case TokKind.tkUIntLit:
+            p._emitUInt(cast[uint64](p.tok.iNumber), info)
+        case TokKind.tkUInt8Lit | TokKind.tkUInt16Lit | TokKind.tkUInt32Lit | TokKind.tkUInt64Lit:
+            with let:
+                x = p._openNode()
+            p._emitUInt(cast[uint64](p.tok.iNumber), info)
+            # N42 (filled by hand): Nim's `case` expression as the argument, bound before the call (rule:caseassign)
+            with let:
+                match p.tok.kind:
+                    case TokKind.tkUInt8Lit: suffix = string("u8")
+                    case TokKind.tkUInt16Lit: suffix = string("u16")
+                    case TokKind.tkUInt32Lit: suffix = string("u32")
+                    case _: suffix = string("u64")
+            p._emitStr(suffix, info)
+            _closeNode(p, x, NiflerKind.SufL, info)
+        case TokKind.tkFloatLit:
+            p._emitFloat(_floatValue(p.tok), info)
+        case TokKind.tkFloat32Lit | TokKind.tkFloat64Lit | TokKind.tkFloat128Lit:
+            with let:
+                x = p._openNode()
+            p._emitFloat(_floatValue(p.tok), info)
+            # N42 (filled by hand): Nim's `case` expression as the argument, bound before the call (rule:caseassign)
+            with let:
+                match p.tok.kind:
+                    case TokKind.tkFloat32Lit: suffix = string("f32")
+                    case TokKind.tkFloat64Lit: suffix = string("f64")
+                    case _: suffix = string("f128")
+            p._emitStr(suffix, info)
+            _closeNode(p, x, NiflerKind.SufL, info)
+        case TokKind.tkStrLit:
+            with let:
+                s = p.tok.s.copy()
+            p._emitStr(s, info)
+        case TokKind.tkRStrLit | TokKind.tkTripleStrLit | TokKind.tkGStrLit | TokKind.tkGTripleStrLit:
+        # a generalized string literal is raw: `parseGStrLit` makes the argument
+        # an `nkRStrLit` (or `nkTripleStrLit`)
+            with let:
+                x = p._openNode()
+                s = p.tok.s.copy()
+            p._emitStr(s, info)
+            p._emitStr((string("R") if p.tok.kind == TokKind.tkRStrLit or p.tok.kind == TokKind.tkGStrLit else string("T")), info)
+            _closeNode(p, x, NiflerKind.SufL, info)
+        case TokKind.tkCharLit:
+            p.append(p._newNode(charToken(p.tok.s[0] if p.tok.s.len > 0 else ch('\x00')), info))
+        case TokKind.tkCustomLit:
+        # `identOrLiteral` turns `-1'big` into a call of the suffix operator:
+        # `nkDotExpr(nkRStrLit("-1"), ident("'big"))`, the apostrophe included.
+            with let:
+                outer = p._openNode()
+                inner = p._openNode()
+            p._emitStr(p.tok.s.substr(0, nint(p.tok.suffixPos) - 1), info)
+            p._emitStr(string("R"), info)
+            _closeNode(p, inner, NiflerKind.SufL, info)
+            p._emitIdent(p.tok.s.substr(nint(p.tok.suffixPos)), info)
+            _closeNode(p, outer, NiflerKind.DotL, info)
+        case TokKind.tkComment:
+        # nifler attaches a comment to its node and writes none of it (unless
+        # `--docs`); a `commentStmt` is just `(comment)`. Emitting the text as a
+        # string would take a slot that belongs to something else.
+            pass
+        case _:
+        # Identifiers, operators and every keyword used as a name. `tkSymbol` is
+        # the common case; the rest reach here through `symbolOrKeyword`, `OPR`
+        # and the `quoted[...]` production.
+            p._emitIdent((p.tok.s if p.tok.s.len > 0 else str(p.tok.kind)), info)
+    p.getTok()
