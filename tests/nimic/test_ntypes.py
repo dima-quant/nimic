@@ -5063,6 +5063,37 @@ class TestNTypes(unittest.TestCase):
         self.assertIn("w = s[1..^1]", out)
         self.assertIn("v = s[0..<n]", out)
 
+    def test_element_outlives_its_container(self):
+        """An element taken from a seq or array (a view of its slot) stays valid when the container is gone or
+        has grown: it holds the memory it reads, and growth moves the elements to a new buffer instead of
+        resizing the old one in place. It reads the value it had, as Nim's copy (`let x = q[0]`) does; new
+        allocations reusing freed memory don't show through it."""
+        def churn():
+            gc.collect()
+            return [seq[nint]([nint(7)] * 40) for _ in range(40)] + [array[3, nint]([nint(9)] * 3) for _ in range(40)]
+
+        from_seq = [int(e) for e in [seq[nint]([nint(1), nint(2)])[1]]]  # converted while alive: fine before
+        elems = list(seq[nint]([nint(1), nint(2)]))
+        arr_elem = array[3, nint]([nint(4), nint(5), nint(6)])[1]
+        q = seq[nint]([nint(5)])
+        first = q[0]
+        for i in range(500):
+            q.add(nint(i))
+        q[0] = nint(99)
+
+        class _P(Object):
+            x: nint
+        objs = seq[_P]([_P(x=nint(3))])
+        obj_elem = objs[0]
+        del objs
+        junk = churn()
+        self.assertEqual(from_seq, [2])
+        self.assertEqual([int(e) for e in elems], [1, 2])
+        self.assertEqual(int(arr_elem), 5)
+        self.assertEqual((int(first), int(q[0]), int(q[500])), (5, 99, 499))
+        self.assertEqual(int(obj_elem.x), 3)
+        del junk
+
     def test_os_exe_ext(self):
         """Nim os.ExeExt: "exe" on Windows, "" elsewhere; `addFileExt` adds nothing for "" (POSIX)."""
         self.assertEqual(ExeExt, string("exe") if os.name == "nt" else string(""))

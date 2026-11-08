@@ -4459,9 +4459,9 @@ class array(_NIndexed, _NLen, Ntype):
             if class_name in DICT_OF_C_TYPES:
                 self._n_backing = DICT_OF_C_TYPES[class_name]()
                 self._n_owned_addr = BUFFER_REGISTRY.register(self._n_backing)
-                self._n_view = DICT_OF_C_TYPES[class_name].from_address(
-                    ctypes.addressof(self._n_backing)
-                )
+                # the view is the backing itself: an element taken from it (a scalar's slot, an object's
+                # struct) holds it, so the element stays valid after the array is gone (Nim: a copy)
+                self._n_view = self._n_backing
                 if it is not None:
                     if isinstance(it, dict):
                         for key, value in it.items():
@@ -4717,12 +4717,14 @@ class seq(_NIndexed, Ntype):
                 items, c_base = c_base, None
             if c_base:
                 self._n_backing = c_base
+                self._n_view = (self._n_backing._type_ * self._n_reserved).from_address(
+                    ctypes.addressof(self._n_backing)
+                )
             else:
                 self._n_backing = (DICT_OF_C_TYPES[type_name] * self._n_reserved)()
                 self._n_owned_addr = BUFFER_REGISTRY.register(self._n_backing)
-            self._n_view = (self._n_backing._type_ * self._n_reserved).from_address(
-                ctypes.addressof(self._n_backing)
-            )
+                # the view is the backing itself: an element taken from it holds it alive (_n_resize)
+                self._n_view = self._n_backing
             for item in items or ():
                 self.add(item)
         else:
@@ -4747,12 +4749,14 @@ class seq(_NIndexed, Ntype):
         return _n_collection_str("@[", (self[i] for i in range(len(self))), "]")
 
     def _n_resize(self) -> None:
-        old_addr = ctypes.addressof(self._n_backing)
-        ctypes.resize(self._n_backing, self._n_reserved * self._n_type._n_sizeof())
-        self._n_owned_addr = BUFFER_REGISTRY.update(old_addr, self._n_backing)
-        self._n_view = (self._n_view._type_ * self._n_reserved).from_address(
-            ctypes.addressof(self._n_backing)
-        )
+        """Grow to `_n_reserved` elements: a new buffer with the elements copied, as Nim's seq growth. The old
+        one isn't resized in place (ctypes.resize may move it and free the old memory under an element taken
+        before): such an element keeps the old buffer alive and reads the value it had, as Nim's copy does."""
+        old = self._n_view
+        new = (old._type_ * self._n_reserved)()
+        ctypes.memmove(new, old, min(ctypes.sizeof(old), ctypes.sizeof(new)))
+        self._n_owned_addr = BUFFER_REGISTRY.update(ctypes.addressof(old), new)
+        self._n_backing = self._n_view = new
         # rebuild the cached elements on the new memory: ctypes-backed fields are read from it, fields
         # held on the Python side (strings, refs: their pointer slots are not written) are carried over
         old_cache = self._n_cache
@@ -4934,11 +4938,11 @@ class seq(_NIndexed, Ntype):
             return
         self._n_reserved = max(new_len, 1)
         type_name = self._n_type.__name__
+        old_addr = getattr(self, "_n_owned_addr", None)
         self._n_backing = (DICT_OF_C_TYPES[type_name] * self._n_reserved)()
-        self._n_owned_addr = BUFFER_REGISTRY.register(self._n_backing)
-        self._n_view = (self._n_backing._type_ * self._n_reserved).from_address(
-            ctypes.addressof(self._n_backing)
-        )
+        self._n_owned_addr = (BUFFER_REGISTRY.register(self._n_backing) if old_addr is None
+                              else BUFFER_REGISTRY.update(old_addr, self._n_backing))
+        self._n_view = self._n_backing  # an element taken before holds the old buffer
         self._n_cache = {}
         self.len = new_len
 
@@ -5464,6 +5468,7 @@ class pointer(Ntype):
         """Array-embedded pointer: reads address from parent's ctypes array slot."""
         self = cls.__new__(cls)
         self._n_contents_cache = None
+        self._n_slot_owner = parent_elems  # keeps the slot's memory alive while the pointer is held
         self._n_slot_addr = _n_view_addr(parent_elems) + index * ctypes.sizeof(parent_elems._type_)
         c_ptr = ctypes.cast(ctypes.c_void_p(self._n_slot_addr), ctypes.POINTER(ctypes.c_void_p))
         self._n_view = c_ptr
