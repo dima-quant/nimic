@@ -1243,14 +1243,13 @@ def emitLeaf(p: mut @ Parser):
             with let:
                 x = p._openNode()
             p._emitInt(p.tok.iNumber, info)
-            # N42 (filled by hand): Nim's `case` expression as the argument, bound before the call (rule:caseassign)
             with let:
                 match p.tok.kind:
-                    case TokKind.tkInt8Lit: suffix = string("i8")
-                    case TokKind.tkInt16Lit: suffix = string("i16")
-                    case TokKind.tkInt32Lit: suffix = string("i32")
-                    case _: suffix = string("i64")
-            p._emitStr(suffix, info)
+                    case TokKind.tkInt8Lit: s2 = string("i8")
+                    case TokKind.tkInt16Lit: s2 = string("i16")
+                    case TokKind.tkInt32Lit: s2 = string("i32")
+                    case _: s2 = string("i64")
+            p._emitStr(s2, info)
             _closeNode(p, x, NiflerKind.SufL, info)
         case TokKind.tkUIntLit:
             p._emitUInt(cast[uint64](p.tok.iNumber), info)
@@ -1258,14 +1257,13 @@ def emitLeaf(p: mut @ Parser):
             with let:
                 x = p._openNode()
             p._emitUInt(cast[uint64](p.tok.iNumber), info)
-            # N42 (filled by hand): Nim's `case` expression as the argument, bound before the call (rule:caseassign)
             with let:
                 match p.tok.kind:
-                    case TokKind.tkUInt8Lit: suffix = string("u8")
-                    case TokKind.tkUInt16Lit: suffix = string("u16")
-                    case TokKind.tkUInt32Lit: suffix = string("u32")
-                    case _: suffix = string("u64")
-            p._emitStr(suffix, info)
+                    case TokKind.tkUInt8Lit: s3 = string("u8")
+                    case TokKind.tkUInt16Lit: s3 = string("u16")
+                    case TokKind.tkUInt32Lit: s3 = string("u32")
+                    case _: s3 = string("u64")
+            p._emitStr(s3, info)
             _closeNode(p, x, NiflerKind.SufL, info)
         case TokKind.tkFloatLit:
             p._emitFloat(_floatValue(p.tok), info)
@@ -1273,13 +1271,12 @@ def emitLeaf(p: mut @ Parser):
             with let:
                 x = p._openNode()
             p._emitFloat(_floatValue(p.tok), info)
-            # N42 (filled by hand): Nim's `case` expression as the argument, bound before the call (rule:caseassign)
             with let:
                 match p.tok.kind:
-                    case TokKind.tkFloat32Lit: suffix = string("f32")
-                    case TokKind.tkFloat64Lit: suffix = string("f64")
-                    case _: suffix = string("f128")
-            p._emitStr(suffix, info)
+                    case TokKind.tkFloat32Lit: s4 = string("f32")
+                    case TokKind.tkFloat64Lit: s4 = string("f64")
+                    case _: s4 = string("f128")
+            p._emitStr(s4, info)
             _closeNode(p, x, NiflerKind.SufL, info)
         case TokKind.tkStrLit:
             with let:
@@ -1297,7 +1294,7 @@ def emitLeaf(p: mut @ Parser):
         case TokKind.tkCharLit:
             p.append(p._newNode(charToken(p.tok.s[0] if p.tok.s.len > 0 else char('\x00')), info))
         case TokKind.tkCustomLit:
-        # `identOrLiteral` turns `-1'big` into a call of the suffix operator:
+        # `identOrLiteral` turns `-1'big` into a call of the s4 operator:
         # `nkDotExpr(nkRStrLit("-1"), ident("'big"))`, the apostrophe included.
             with let:
                 outer = p._openNode()
