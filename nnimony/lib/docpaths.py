@@ -28,17 +28,17 @@ def toUnixPath(s: string) -> string:
     # path crosses into a NIF token, an HTML attribute, or a CLI arg whose
     # downstream consumer might also be cross-OS.
     if comptime(defined("windows")):
-        return s.replace(ch('\\'), ch('/'))
+        return s.replace(char('\\'), char('/'))
     else:
         return s.copy()
 
 
 with const:
     _UnreservedChar = Tset[char](
-        inrange(ch('A'), ch('Z')),
-        inrange(ch('a'), ch('z')),
-        inrange(ch('0'), ch('9')),
-        ch('-'), ch('.'), ch('_'), ch('~')
+        inrange(char('A'), char('Z')),
+        inrange(char('a'), char('z')),
+        inrange(char('0'), char('9')),
+        char('-'), char('.'), char('_'), char('~')
     )
 
 
@@ -51,7 +51,7 @@ def _sanitizePart(s: string) -> string:
         if c in _UnreservedChar:
             result.add(c)
         else:
-            result.add(ch('_'))
+            result.add(char('_'))
     return result
 
 
@@ -67,7 +67,7 @@ def _startsWithPath(s: string, prefix: string) -> bool:
         return True
     with let:
         next = s[prefix.len]
-    result = next == ch('/') or next == ch('\\')
+    result = next == char('/') or next == char('\\')
     return result
 
 

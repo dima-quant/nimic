@@ -194,14 +194,14 @@ def _relevantPart(s: string, afterSlashX: nint) -> string:
     for i in range(len(s)):
         if slashes == 0:
             result.add(s[i])
-        elif s[i] == ch('/'):
+        elif s[i] == char('/'):
             slashes -= 1
     return result
 
 @template
 def _canonSlashes(x: string) -> string:
     if comptime(defined("windows")):
-        return x.replace(ch('\\'), ch('/'))
+        return x.replace(char('\\'), char('/'))
     else:
         return x
 

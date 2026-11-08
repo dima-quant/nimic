@@ -140,7 +140,7 @@ def _processForChecksum(dest: mut @ Sha1State, content: mut @ TokenBuf):
 
 class HookIndexEntry(Object):
     typ: SymId
-    hook: SymId
+    hook_: SymId
     isGeneric: bool
 
 

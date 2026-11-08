@@ -35,7 +35,7 @@ def _splitValue(a: openArray[Key], position: nint) -> tuple[char, float64]:
     for t in items(a):
         if t[0].len > position: cand._addUnique(t[0][position])
 
-    result = (ch("\0"), -1.0)
+    result = (char("\0"), -1.0)
     for disc in items(cand):
         with var:
             hits = 0
@@ -56,7 +56,7 @@ def _tryAllPositions(a: openArray[Key]) -> tuple[char, nint]:
     for t in items(a):
         m = max(m, t[0].len)
 
-    result = (ch("\0"), -1)
+    result = (char("\0"), -1)
     with var:
         best = -1.0
     for i in range(m):

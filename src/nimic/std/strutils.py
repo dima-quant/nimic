@@ -1,6 +1,6 @@
 """Nim std/strutils — string utility functions."""
 from __future__ import annotations
-from nimic.ntypes import dispatch, ufcs, string, char, ch, Tset, nint, NIntEnum, auto, float64, seq, array, openArray
+from nimic.ntypes import dispatch, ufcs, string, char, Tset, nint, NIntEnum, auto, float64, seq, array, openArray
 from nimic.ntypesystem import _n_addf
 
 # Nim strutils.Whitespace (ASCII only: nimic strings are bytes)
@@ -244,15 +244,15 @@ def split(s: string, seps: Tset[char], maxsplit: nint = -1) -> seq[string]:
 @dispatch
 def split(s: string) -> seq[string]:
     """Nim: split(s) — split(s, Whitespace)."""
-    return split(s, Tset[char]({ch(c) for c in Whitespace}))
+    return split(s, Tset[char]({char(c) for c in Whitespace}))
 
 
-IdentStartChars = Tset[char]({ch(chr(c)) for c in range(ord('a'), ord('z') + 1)} |
-                             {ch(chr(c)) for c in range(ord('A'), ord('Z') + 1)} |
-                             {ch('_')})
+IdentStartChars = Tset[char]({char(chr(c)) for c in range(ord('a'), ord('z') + 1)} |
+                             {char(chr(c)) for c in range(ord('A'), ord('Z') + 1)} |
+                             {char('_')})
 
 IdentChars = Tset[char](set(IdentStartChars) |
-                        {ch(chr(c)) for c in range(ord('0'), ord('9') + 1)})
+                        {char(chr(c)) for c in range(ord('0'), ord('9') + 1)})
 
 
 
@@ -283,7 +283,7 @@ ffScientific = FloatFormatMode.ffScientific
 
 
 def formatBiggestFloat(f: float, format: FloatFormatMode = ffDefault, precision: int = 16,
-                       decimalSep: char = ch(".")) -> string:
+                       decimalSep: char = char(".")) -> string:
     """Nim: formatBiggestFloat — C snprintf with %#.*g / %#.*f / %#.*e (precision -1: %g / %f / %e)."""
     code = "gfe"[int(format)]
     text = (f"%#.*{code}" % (int(precision), float(f))) if int(precision) >= 0 else (f"%{code}" % float(f))
@@ -291,12 +291,12 @@ def formatBiggestFloat(f: float, format: FloatFormatMode = ffDefault, precision:
 
 
 def formatFloat(f: float, format: FloatFormatMode = ffDefault, precision: int = 16,
-                decimalSep: char = ch(".")) -> string:
+                decimalSep: char = char(".")) -> string:
     """Nim: formatFloat."""
     return formatBiggestFloat(f, format, precision, decimalSep)
 
 
-def trimZeros(x: string, decimalSep: char = ch(".")) -> None:
+def trimZeros(x: string, decimalSep: char = char(".")) -> None:
     """Nim: trimZeros — trim trailing zeros from a formatted float `x` (a var string)."""
     text = str(x)
     sPos = text.find(str(decimalSep))
@@ -322,7 +322,7 @@ bpIEC = BinaryPrefixMode.bpIEC
 bpColloquial = BinaryPrefixMode.bpColloquial
 
 
-def formatSize(bytes: int, decimalSep: char = ch("."), prefix: BinaryPrefixMode = bpIEC,
+def formatSize(bytes: int, decimalSep: char = char("."), prefix: BinaryPrefixMode = bpIEC,
                includeSpace: bool = False) -> string:
     """Nim: formatSize — rounds and formats `bytes` (1024 -> 1KiB)."""
     iecPrefixes = ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi"]

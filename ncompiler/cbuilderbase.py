@@ -24,9 +24,9 @@ class Builder(Object):
         builder.buf.add(s)
 
     def addNewline(builder: mut @ Builder):
-        builder.add(ch('\n'))
+        builder.add(char('\n'))
         for i in range(builder.indents):
-            builder.add(ch('\t'))
+            builder.add(char('\t'))
 
     def addLineEnd(builder: mut @ Builder, s: string):
         builder.add(s)
@@ -38,7 +38,7 @@ class Builder(Object):
         builder.addNewline()
 
     def addDedent(builder: mut @ Builder, s: string):
-        if builder.buf.len > 0 and builder.buf[back(1)] == ch('\t'):
+        if builder.buf.len > 0 and builder.buf[back(1)] == char('\t'):
             builder.buf.setLen(builder.buf.len - 1)
         builder.add(s)
         builder.indents -= 1
@@ -223,17 +223,17 @@ if comptime(__name__ == "__main__"):
         b.addLineEndIndent(string("{"))
         b.addLineComment(string("body"))
         b.addLineEndDedent(string("}"))
-        b.add(ch('x'))
+        b.add(char('x'))
         doAssert(b.extract() == "int x;\n{\n\t// body\n}\nx", string("indent/dedent: ") + b.extract())
 
         with var:
             c = newBuilder(string(""))
         c.addIntValue(nint(-5))
-        c.add(ch(' '))
+        c.add(char(' '))
         c.addIntValue(u64(18446744073709551615))
-        c.add(ch(' '))
+        c.add(char(' '))
         c.addIntValue(parseDecimalInt128(string("-170141183460469231731687303715884105727")))
-        c.add(ch(' '))
+        c.add(char(' '))
         addFloatValue(c, 0.5)
         doAssert(c.extract() == "-5 18446744073709551615 -170141183460469231731687303715884105727 0.5",
                  string("values: ") + c.extract())
@@ -241,17 +241,17 @@ if comptime(__name__ == "__main__"):
         with var:
             lit = newBuilder(string(""))
         lit.addIntLiteral(BiggestInt(42))
-        lit.add(ch(' '))
+        lit.add(char(' '))
         lit.addIntLiteral(BiggestInt(-2147483648))
-        lit.add(ch(' '))
+        lit.add(char(' '))
         lit.addIntLiteral(BiggestInt(4294967296))
-        lit.add(ch(' '))
+        lit.add(char(' '))
         lit.addIntLiteral(low(int64))
-        lit.add(ch(' '))
+        lit.add(char(' '))
         lit.addIntLiteral(toInt128(int64(-7)))
-        lit.add(ch(' '))
+        lit.add(char(' '))
         lit.addInt64Literal(BiggestInt(3))
-        lit.add(ch(' '))
+        lit.add(char(' '))
         lit.addUint64Literal(u64(9))
         doAssert(lit.extract() == "42 (-2147483647 -1) IL64(4294967296) (IL64(-9223372036854775807) - IL64(1)) -7 IL64(3) 9ULL",
                  string("literals: ") + lit.extract())
@@ -270,15 +270,15 @@ if comptime(__name__ == "__main__"):
             e = newBuilder(string(""))
         e.addLineEnd(string("a;"))
         e.addDedent(string("}"))  # no trailing tab to remove
-        e.add(ch(' '))
+        e.add(char(' '))
         e.addIntValue(int64(-7))
-        e.add(ch(' '))
+        e.add(char(' '))
         e.addIntLiteral(BiggestInt(2147483647))
-        e.add(ch(' '))
+        e.add(char(' '))
         e.addIntLiteral(BiggestInt(-2147483647))
-        e.add(ch(' '))
+        e.add(char(' '))
         e.addIntLiteral(BiggestInt(2147483648))
-        e.add(ch(' '))
+        e.add(char(' '))
         e.addInt64Literal(low(int64))
         doAssert(e.extract() == "a;\n} -7 2147483647 -2147483647 IL64(2147483648) (IL64(-9223372036854775807) - IL64(1))",
                  string("boundaries: ") + e.extract())

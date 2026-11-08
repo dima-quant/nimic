@@ -379,7 +379,7 @@ def _addDecr(builder: mut@Builder, val: Snippet) -> None:
 @dispatch
 def _addInPlaceOp(builder: mut@Builder, binOp: _TypedBinaryOp, t: Snippet, a: Snippet, b: Snippet) -> None:
     builder.add(a)
-    builder.add(ch(" "))
+    builder.add(char(" "))
     builder.add(_typedBinaryOperators[binOp])
     builder.add(string("= "))
     builder.add(b)
@@ -389,7 +389,7 @@ def _addInPlaceOp(builder: mut@Builder, binOp: _TypedBinaryOp, t: Snippet, a: Sn
 @dispatch
 def _addInPlaceOp(builder: mut@Builder, binOp: _UntypedBinaryOp, a: Snippet, b: Snippet) -> None:
     builder.add(a)
-    builder.add(ch(" "))
+    builder.add(char(" "))
     builder.add(_untypedBinaryOperators[binOp])
     builder.add(string("= "))
     builder.add(b)
@@ -400,7 +400,7 @@ def _addInPlaceOp(builder: mut@Builder, binOp: _UntypedBinaryOp, a: Snippet, b: 
 def _cInPlaceOp(binOp: _TypedBinaryOp, t: Snippet, a: Snippet, b: Snippet) -> Snippet:
     result = string("")
     result.add(a)
-    result.add(ch(" "))
+    result.add(char(" "))
     result.add(_typedBinaryOperators[binOp])
     result.add(string("= "))
     result.add(b)
@@ -412,7 +412,7 @@ def _cInPlaceOp(binOp: _TypedBinaryOp, t: Snippet, a: Snippet, b: Snippet) -> Sn
 def _cInPlaceOp(binOp: _UntypedBinaryOp, a: Snippet, b: Snippet) -> Snippet:
     result = string("")
     result.add(a)
-    result.add(ch(" "))
+    result.add(char(" "))
     result.add(_untypedBinaryOperators[binOp])
     result.add(string("= "))
     result.add(b)

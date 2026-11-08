@@ -533,7 +533,7 @@ class Pool(Object):
             result = string("")
         else:
             result = p.strings[s.name].copy()
-            result.add(ch("."))
+            result.add(char("."))
             result.addInt(s.disamb)
         return result
 
@@ -554,10 +554,10 @@ class Pool(Object):
             return False
         with let:
             key = p.strings[d]
-        if key.len == 0 or key[0] != ch("I"):
+        if key.len == 0 or key[0] != char("I"):
             return False
         for c in key:
-            if c == ch("."):
+            if c == char("."):
                 return False
         result = True
         return result
@@ -573,10 +573,10 @@ class Pool(Object):
             s = p.symbols[id]
         result = p.strings[s.name].copy()
         if s.disamb != NoDisamb:
-            result.add(ch("."))
+            result.add(char("."))
             result.addInt(s.disamb)
         if s.dedup != StrId(u32(0)):
-            result.add(ch("."))
+            result.add(char("."))
             result.add(p.strings[s.dedup])
         return result
 
@@ -622,13 +622,13 @@ class Pool(Object):
         """{.noSideEffect.}"""
         result = p.strings[s.name].copy()
         if s.disamb != NoDisamb:
-            result.add(ch("."))
+            result.add(char("."))
             result.addInt(s.disamb)
         if s.dedup != StrId(u32(0)):
-            result.add(ch("."))
+            result.add(char("."))
             result.add(p.strings[s.dedup])
         if s.module != StrId(u32(0)):
-            result.add(ch("."))
+            result.add(char("."))
             result.add(p.strings[s.module])
         return result
 
@@ -783,13 +783,13 @@ def parseDisamb(s: string, start: nint, len: nint) -> nint:
     """{.noSideEffect.}"""
     if len == 0:
         return -1
-    if len > 1 and s[start] == ch("0"):
+    if len > 1 and s[start] == char("0"):
         return -1
     result = 0
     for i in range(start, start + len):
-        if s[i] not in Tset[char](inrange(ch("0"), ch("9"))):
+        if s[i] not in Tset[char](inrange(char("0"), char("9"))):
             return -1
-        result = result * 10 + (ord(s[i]) - ord(ch("0")))
+        result = result * 10 + (ord(s[i]) - ord(char("0")))
         if result > DisambMax:
             return -1
     return result
@@ -822,12 +822,12 @@ def _splitSpelling(s: string) -> _Spelling:
     with var:
         lastDot = -1
     for k in range(s.len):
-        if s[k] == ch("."):
+        if s[k] == char("."):
             lastDot = k
     with var:
         head = s.len
     if lastDot >= 0:
-        if lastDot + 1 < s.len and s[lastDot + 1] not in Tset[char](inrange(ch("0"), ch("9"))):
+        if lastDot + 1 < s.len and s[lastDot + 1] not in Tset[char](inrange(char("0"), char("9"))):
             result._moduleStart = lastDot + 1
             result._moduleLen = s.len - (lastDot + 1)
             head = lastDot
@@ -838,7 +838,7 @@ def _splitSpelling(s: string) -> _Spelling:
     with var:
         i = head - 2
     while i > 0:
-        if s[i] == ch(".") and s[i + 1] in Tset[char](inrange(ch("0"), ch("9"))):
+        if s[i] == char(".") and s[i + 1] in Tset[char](inrange(char("0"), char("9"))):
             break
         i -= 1
     if i <= 0:
@@ -846,11 +846,11 @@ def _splitSpelling(s: string) -> _Spelling:
 
     with var:
         d = i + 1
-    while d < head and s[d] in Tset[char](inrange(ch("0"), ch("9"))):
+    while d < head and s[d] in Tset[char](inrange(char("0"), char("9"))):
         d += 1
     with var:
         disambLen = head - (i + 1)
-    if d < head and s[d] == ch("."):
+    if d < head and s[d] == char("."):
         disambLen = d - (i + 1)
     with let:
         v = parseDisamb(s, i + 1, disambLen)
@@ -858,7 +858,7 @@ def _splitSpelling(s: string) -> _Spelling:
         return result   # `p.0h107`, `d.00`: it belongs to the name
     result._nameLen = i
     result._disamb = int32(v)
-    if d < head and s[d] == ch("."):
+    if d < head and s[d] == char("."):
         result._dedupStart = d + 1
         result._dedupLen = head - (d + 1)
     return result
@@ -869,7 +869,7 @@ def symRecord(p: Pool, s: string) -> NifSymbol:
     ## component. Every spelling round-trips: one whose disambiguator is not a
     ## NUMBER keeps it inside the name (`NoDisamb`), so the reserved forms older
     ## artifacts carry (`_exit.sys.mod`, `p.0h107`) come back out unchanged.
-    assert s.len == 0 or s[s.len - 1] != ch("."), (
+    assert s.len == 0 or s[s.len - 1] != char("."), (
         string("a symbol reaches the pool with its module suffix expanded, never as `") + s + string("`"))
     with let:
         sl = _splitSpelling(s)
@@ -3072,7 +3072,7 @@ if comptime(__name__ == "__main__"):
             # overflow layout (line beyond 14 bits → wide)
             addStrLit(b, string("y"));  b.appendLineInfo(fB, i32(200000), i32(5))
             # a head with no line info
-            b.addCharLit(ch("z"))
+            b.addCharLit(char("z"))
 
             with var:
                 c = b.beginRead()
@@ -3097,7 +3097,7 @@ if comptime(__name__ == "__main__"):
                 test(lineInfoFile(c), string("b.nim"))
                 c.inc()
             with block:
-                test(kind(c), NifKind.CharLit); test(charLit(c), ch("z"))
+                test(kind(c), NifKind.CharLit); test(charLit(c), char("z"))
                 test(c.rawLineInfo().isValid(), False)    # no line info present
                 c.inc()
 
@@ -3285,7 +3285,7 @@ if comptime(__name__ == "__main__"):
                 n = tagLitToken(TagId(u32(3)), u32(5))
             setTag(n, TagId(u32(7)))
             echo(_rawTag(n), " ", _rawJump(n), " ", kind(n))
-            echo(kind(dotToken()), " ", kind(charToken(ch("a"))), " ", uoperand(charToken(ch("a"))))
+            echo(kind(dotToken()), " ", kind(charToken(char("a"))), " ", uoperand(charToken(char("a"))))
             echo(kind(strLitToken(StrId(u32(9)))), " ", uoperand(symToken(SymId(u32(9)))),
                  " ", kind(symdefToken(SymId(u32(9)))), " ", kind(identToken(StrId(u32(9)))))
             with var:
@@ -3347,7 +3347,7 @@ if comptime(__name__ == "__main__"):
             with var:
                 b = createTokenBuf(4)
             b.addDotToken()
-            b.addCharLit(ch("k"))
+            b.addCharLit(char("k"))
             addIdent(b, string("myIdent"))
             with let:
                 sid = symId(b.pool, string("sym.0"))

@@ -242,8 +242,6 @@ def f16(x: float) -> float16: return float16(x)
 def f32(x: float) -> float32: return float32(x)
 def f64(x: float) -> float64: return float64(x)
 
-def ch(x: str) -> char: return char(x)
-
 
 def default(T: type) -> object:
     """Nim: default(T) — the zero value of type T (0, "", nil for ref/ptr, low(T) for enums,

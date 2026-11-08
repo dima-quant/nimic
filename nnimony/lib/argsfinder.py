@@ -21,10 +21,10 @@ def _parseCmdArg(c: string, i: nint, a: mut @ string) -> nint:
     # eat all delimiting whitespace
     with var:
         i = nint(i)
-    while i < c.len and c[i] in Tset[char](ch(' '), ch('\t'), ch('\n'), ch('\r')): i += 1
+    while i < c.len and c[i] in Tset[char](char(' '), char('\t'), char('\n'), char('\r')): i += 1
     if i >= c.len: return i
     match c[i]:
-        case _ if c[i] == ch("'") or c[i] == ch('"'):
+        case _ if c[i] == char("'") or c[i] == char('"'):
             with let:
                 delim = c[i]
             i += 1  # skip ' or "
@@ -33,7 +33,7 @@ def _parseCmdArg(c: string, i: nint, a: mut @ string) -> nint:
                 i += 1
             if i < c.len: i += 1
         case _:
-            while i < c.len and c[i] > ch(' '):
+            while i < c.len and c[i] > char(' '):
                 a.add(c[i])
                 i += 1
     result = i
@@ -66,8 +66,8 @@ def extractArgsKey(command: string) -> string:
         start = nint(0)
     while i < result.len:
         match result[i]:
-            case _ if result[i] == ch('/') or result[i] == ch('\\'): start = i + 1
-            case _ if result[i] == ch('.'): break
+            case _ if result[i] == char('/') or result[i] == char('\\'): start = i + 1
+            case _ if result[i] == char('.'): break
             case _: pass
         i += 1
     result = result.substr(start, i - 1)
@@ -90,11 +90,11 @@ def findArgs(baseDir: string, argsFileName: string) -> string:
         # and continue:
         with var:
             last = result.len - 1
-        while last > 0 and result[last] not in Tset[char](ch('/'), ch('\\')):
+        while last > 0 and result[last] not in Tset[char](char('/'), char('\\')):
             last -= 1
         with var:
             first = last - 1
-        while first >= 0 and result[first] not in Tset[char](ch('/'), ch('\\')):
+        while first >= 0 and result[first] not in Tset[char](char('/'), char('\\')):
             first -= 1
         if first < 0: break
         first += 1  # don't delete the '/'
@@ -150,7 +150,7 @@ def extractCCKey(val: string) -> string:
     result = extractArgsKey(val)
     with var:
         dash = result.len - 1
-    while dash >= 0 and result[dash] != ch('-'): dash -= 1
+    while dash >= 0 and result[dash] != char('-'): dash -= 1
     if dash >= 0:
         result = result.substr(dash + 1)
     return result

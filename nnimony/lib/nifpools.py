@@ -828,7 +828,7 @@ if comptime(__name__ == "__main__"):
                 b.addIntLit(int64(6))
                 addUIntLit(b, u64(7), i2)
                 addFloatLit(b, 2.5, i1)
-                addCharLit(b, ch('q'), i2)
+                addCharLit(b, char('q'), i2)
                 addSymUse(b, sym, i1)
                 addSymDef(b, sym2, i2)
                 addDotToken(b, i1)

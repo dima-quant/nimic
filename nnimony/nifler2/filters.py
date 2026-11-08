@@ -25,7 +25,7 @@ from nimic.std.strutils import cmpIgnoreStyle, repeat, spaces, startsWith
 from nimic.std import syncio
 from . import nimgrammar
 from .nimgrammar import (
-    add, ch, charLit, childCursor, Cursor, endRead, globalTags, inc, intVal, NifKind, openParser, pModule,
+    add, charLit, childCursor, Cursor, endRead, globalTags, inc, intVal, NifKind, openParser, pModule,
     pool, resolvedTagId, skip, strVal)
 from nimic.std import strutils
 replace = overloads(strutils.replace, nimgrammar.replace)
@@ -43,21 +43,21 @@ class _LineReader(Object):
         line.setLen(0)
         if r._fromFile:
             if r._rd >= r._s.len: return False
-            while r._rd < r._s.len and r._s[r._rd] != ch('\n'):
+            while r._rd < r._s.len and r._s[r._rd] != char('\n'):
                 line.add(r._s[r._rd])
                 r._rd += 1
             if r._rd < r._s.len: r._rd += 1
-            if line.len > 0 and line[line.len - 1] == ch('\r'): line.setLen(line.len - 1)
+            if line.len > 0 and line[line.len - 1] == char('\r'): line.setLen(line.len - 1)
             result = True
         else:
             while r._rd < r._s.len:
                 with let:
                     c = r._s[r._rd]
-                if c == ch('\r'):
+                if c == char('\r'):
                     r._rd += 1
-                    if r._rd < r._s.len and r._s[r._rd] == ch('\n'): r._rd += 1
+                    if r._rd < r._s.len and r._s[r._rd] == char('\n'): r._rd += 1
                     break
-                elif c == ch('\n'):
+                elif c == char('\n'):
                     r._rd += 1
                     break
                 else:
@@ -167,7 +167,7 @@ def _charArg(ctx: mut @ _FilterContext, n: Cursor, name: string, pos: nint, defa
     if not _getArg(n, name, pos, x): result = default.copy()
     elif x.kind() == NifKind.CharLit: result = charLit(x)
     else:
-        result = ch('\x00')
+        result = char('\x00')
         _invalidPragma(ctx, n)
     return result
 
@@ -200,7 +200,7 @@ def _boolArg(ctx: mut @ _FilterContext, n: Cursor, name: string, pos: nint, defa
 
 
 with const:
-    _Whitespace = Tset[char](ch(' '), ch('\t'), ch('\x0b'), ch('\r'), ch('\n'), ch('\x0c'))
+    _Whitespace = Tset[char](char(' '), char('\t'), char('\x0b'), char('\r'), char('\n'), char('\x0c'))
 
 
 def _strip(s: string, leading: bool, trailing: bool) -> string:
@@ -230,7 +230,7 @@ def _filterStrip(ctx: mut @ _FilterContext, input: mut @ _LineReader, call: Curs
             result.add(stripped)
         else:
             result.add(line)
-        result.add(ch('\n'))
+        result.add(char('\n'))
     return result
 
 
@@ -245,7 +245,7 @@ def _filterReplace(ctx: mut @ _FilterContext, input: mut @ _LineReader, call: Cu
         line = string("")
     while input._readLine(line):
         result.add((line if sub.len == 0 else replace(line, sub, by)))
-        result.add(ch('\n'))
+        result.add(char('\n'))
     return result
 
 # ------------------------------------------------------------ stdtmpl
@@ -277,19 +277,19 @@ class _TmplParser(Object):
     def _at(p: _TmplParser, i: nint) -> char:
         """{.inline.}"""
         ## Nim's `p.x[j]` one past the end reads the string's terminator.
-        return p._x[i] if i < p._x.len else ch('\x00')
+        return p._x[i] if i < p._x.len else char('\x00')
 
     def _scanPar(p: mut @ _TmplParser, d: nint):
         with var:
             i = copy(d)
         while i < p._x.len:
             match p._x[i]:
-                case _ if p._x[i] == ch('('): p._par += 1
-                case _ if p._x[i] == ch(')'): p._par -= 1
-                case _ if p._x[i] == ch('['): p._bracket += 1
-                case _ if p._x[i] == ch(']'): p._bracket -= 1
-                case _ if p._x[i] == ch('{'): p._curly += 1
-                case _ if p._x[i] == ch('}'): p._curly -= 1
+                case _ if p._x[i] == char('('): p._par += 1
+                case _ if p._x[i] == char(')'): p._par -= 1
+                case _ if p._x[i] == char('['): p._bracket += 1
+                case _ if p._x[i] == char(']'): p._bracket -= 1
+                case _ if p._x[i] == char('{'): p._curly += 1
+                case _ if p._x[i] == char('}'): p._curly -= 1
                 case _: pass
             i += 1
 
@@ -299,8 +299,8 @@ class _TmplParser(Object):
 
 
 with const:
-    _PatternChars = Tset[char](inrange(ch('a'), ch('z')), inrange(ch('A'), ch('Z')), inrange(ch('0'), ch('9')), inrange(ch('\x80'), ch('\xff')), ch('.'), ch('_'))
-    _LineContinuationOprs = Tset[char](ch('+'), ch('-'), ch('*'), ch('/'), ch('\\'), ch('<'), ch('>'), ch('^'), ch('|'), ch('%'), ch('&'), ch('$'), ch('@'), ch('~'), ch(','))
+    _PatternChars = Tset[char](inrange(char('a'), char('z')), inrange(char('A'), char('Z')), inrange(char('0'), char('9')), inrange(char('\x80'), char('\xff')), char('.'), char('_'))
+    _LineContinuationOprs = Tset[char](char('+'), char('-'), char('*'), char('/'), char('\\'), char('<'), char('>'), char('^'), char('|'), char('%'), char('&'), char('$'), char('@'), char('~'), char(','))
 
 
 def _spacesN(n: nint) -> string:
@@ -309,7 +309,7 @@ def _spacesN(n: nint) -> string:
 
 
 def _newLine(p: mut @ _TmplParser):
-    p._outp.add(repeat(ch(')'), p._emitPar))
+    p._outp.add(repeat(char(')'), p._emitPar))
     p._emitPar = 0
     if p._line > 1: p._outp.add(string("\n"))
     if p._pendingExprLine:
@@ -332,14 +332,14 @@ def _parseLine(ctx: mut @ _FilterContext, p: mut @ _TmplParser):
     with let:
         len = p._x.len
 
-    while j < len and p._x[j] == ch(' '): j += 1
+    while j < len and p._x[j] == char(' '): j += 1
 
-    if len >= 2 and p._x[0] == p._nimDirective and p._x[1] == ch('?'):
+    if len >= 2 and p._x[0] == p._nimDirective and p._x[1] == char('?'):
         _newLine(p)
     elif j < len and p._x[j] == p._nimDirective:
         _newLine(p)
         j += 1
-        while j < len and p._x[j] == ch(' '): j += 1
+        while j < len and p._x[j] == char(' '): j += 1
         with let:
             d = copy(j)
         with var:
@@ -368,7 +368,7 @@ def _parseLine(ctx: mut @ _FilterContext, p: mut @ _TmplParser):
             case "let" | "var" | "const" | "type":
                 p._outp.add(_spacesN(p._indent))
                 p._outp.add(substr(p._x, d))
-                if not (p._x.contains(ch(':')) or p._x.contains(ch('='))):
+                if not (p._x.contains(char(':')) or p._x.contains(char('='))):
                 # no inline element --> treat as block:
                     p._indent += 2
             case _:
@@ -398,17 +398,17 @@ def _parseLine(ctx: mut @ _FilterContext, p: mut @ _TmplParser):
         while j < len:
             with let:
                 c = p._x[j]
-            if c in Tset[char](inrange(ch('\x01'), ch('\x1f')), inrange(ch('\x80'), ch('\xff'))):
+            if c in Tset[char](inrange(char('\x01'), char('\x1f')), inrange(char('\x80'), char('\xff'))):
                 p._outp.add(string("\\x"))
                 p._outp.add(_hexByte(c))
                 j += 1
-            elif c == ch('\\'):
+            elif c == char('\\'):
                 p._outp.add(string("\\\\"))
                 j += 1
-            elif c == ch('\''):
+            elif c == char('\''):
                 p._outp.add(string("\\\'"))
                 j += 1
-            elif c == ch('"'):
+            elif c == char('"'):
                 p._outp.add(string("\\\""))
                 j += 1
             elif c == p._subsChar:
@@ -416,46 +416,46 @@ def _parseLine(ctx: mut @ _FilterContext, p: mut @ _TmplParser):
                 j += 1
                 with let:
                     e = p._at(j)
-                if e == ch('{'):
+                if e == char('{'):
                     p._col = j
-                    p._outp.add(ch('"'))
+                    p._outp.add(char('"'))
                     p._outp.add(p._conc)
                     p._outp.add(p._toStr)
-                    p._outp.add(ch('('))
+                    p._outp.add(char('('))
                     j += 1
                     with var:
                         curly = nint(0)
                     while j < len:
                         match p._x[j]:
-                            case _ if p._x[j] == ch('{'):
+                            case _ if p._x[j] == char('{'):
                                 j += 1
                                 curly += 1
-                                p._outp.add(ch('{'))
-                            case _ if p._x[j] == ch('}'):
+                                p._outp.add(char('{'))
+                            case _ if p._x[j] == char('}'):
                                 j += 1
                                 if curly == 0: break
                                 if curly > 0: curly -= 1
-                                p._outp.add(ch('}'))
+                                p._outp.add(char('}'))
                             case _:
                                 p._outp.add(p._x[j])
                                 j += 1
                     if curly > 0:
                         ctx._filterError(p._line, p._col, string("expected closing '}'"))
                         break
-                    p._outp.add(ch(')'))
+                    p._outp.add(char(')'))
                     p._outp.add(p._conc)
-                    p._outp.add(ch('"'))
-                elif e in Tset[char](inrange(ch('a'), ch('z')), inrange(ch('A'), ch('Z')), inrange(ch('\x80'), ch('\xff'))):
-                    p._outp.add(ch('"'))
+                    p._outp.add(char('"'))
+                elif e in Tset[char](inrange(char('a'), char('z')), inrange(char('A'), char('Z')), inrange(char('\x80'), char('\xff'))):
+                    p._outp.add(char('"'))
                     p._outp.add(p._conc)
                     p._outp.add(p._toStr)
-                    p._outp.add(ch('('))
+                    p._outp.add(char('('))
                     while j < len and p._x[j] in _PatternChars:
                         p._outp.add(p._x[j])
                         j += 1
-                    p._outp.add(ch(')'))
+                    p._outp.add(char(')'))
                     p._outp.add(p._conc)
-                    p._outp.add(ch('"'))
+                    p._outp.add(char('"'))
                 elif e == p._subsChar:
                     p._outp.add(p._subsChar)
                     j += 1
@@ -469,7 +469,7 @@ def _parseLine(ctx: mut @ _FilterContext, p: mut @ _TmplParser):
 
 def _filterTmpl(ctx: mut @ _FilterContext, input: mut @ _LineReader, call: Cursor) -> string:
     with var:
-        p = _TmplParser(_subsChar=_charArg(ctx, call, string("subschar"), 1, ch('$')), _nimDirective=_charArg(ctx, call, string("metachar"), 2, ch('#')), _emit=_strArg(ctx, call, string("emit"), 3, string("result.add")), _conc=_strArg(ctx, call, string("conc"), 4, string(" & ")), _toStr=_strArg(ctx, call, string("tostring"), 5, string("$")), _outp=string(""), _x=string(""))
+        p = _TmplParser(_subsChar=_charArg(ctx, call, string("subschar"), 1, char('$')), _nimDirective=_charArg(ctx, call, string("metachar"), 2, char('#')), _emit=_strArg(ctx, call, string("emit"), 3, string("result.add")), _conc=_strArg(ctx, call, string("conc"), 4, string(" & ")), _toStr=_strArg(ctx, call, string("tostring"), 5, string("$")), _outp=string(""), _x=string(""))
     # do not process the first line which contains the directive:
     if input._readLine(p._x):
         p._line += 1
@@ -539,11 +539,11 @@ def _evalPipe(ctx: mut @ _FilterContext, n: Cursor, input: mut @ _LineReader):
 
 
 def _containsShebang(s: string, i: nint) -> bool:
-    if i + 1 < s.len and s[i] == ch('#') and s[i + 1] == ch('!'):
+    if i + 1 < s.len and s[i] == char('#') and s[i + 1] == char('!'):
         with var:
             j = nint(i + 2)
         while j < s.len and s[j] in _Whitespace: j += 1
-        result = j < s.len and s[j] == ch('/')
+        result = j < s.len and s[j] == char('/')
     else:
         result = False
     return result
@@ -557,11 +557,11 @@ def applyFilters(src: string, filename: string, failed: mut @ bool) -> string:
         line = string("")
     _ = r._readLine(line)
     with var:
-        i = nint(3 if line.len >= 3 and line[0] == ch('\xef') and line[1] == ch('\xbb') and line[2] == ch('\xbf') else 0)
+        i = nint(3 if line.len >= 3 and line[0] == char('\xef') and line[1] == char('\xbb') and line[2] == char('\xbf') else 0)
     if _containsShebang(line, i):
         _ = r._readLine(line)
         i = 0
-    if not (i + 1 < line.len and line[i] == ch('#') and line[i + 1] == ch('?')):
+    if not (i + 1 < line.len and line[i] == char('#') and line[i + 1] == char('?')):
         return src.copy()
     i += 2
     while i < line.len and line[i] in _Whitespace: i += 1

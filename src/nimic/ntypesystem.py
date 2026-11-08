@@ -156,6 +156,51 @@ def _n_from_end(index, length: int, first: int = 0):
     return first + length - int(index) if isinstance(index, BackwardsIndex) else index
 
 
+class _NHSlice:
+    """Nim's HSlice `a .. b` with a bound counted from the end, `inrange(a, back(n))` (Nim `a .. ^n`): resolved
+    against the length of the value it indexes. Ints alone give a Python range (inrange)."""
+    __slots__ = ("a", "b")
+
+    def __init__(self, a, b):
+        self.a, self.b = a, b
+
+    def __repr__(self) -> str:
+        return f"inrange({self.a!r}, {self.b!r})"
+
+
+def _n_slice_positions(index, length: int, first: int = 0) -> range | None:
+    """The positions (offsets from the first element) a slice index selects, as Nim's `[]` of an HSlice, or None
+    when `index` is no slice. `x[a:b]` is Nim's `x[a ..< b]`, `x[a:]` `x[a .. ^1]`; `x[inrange(a, b)]` (a range,
+    or an _NHSlice) is `x[a .. b]`; a bound may be a BackwardsIndex, back(n) is `first + length - n` (`^n`). As in
+    Nim 2, an empty slice (b < a) is fine anywhere, a non-empty one outside the bounds is an IndexDefect; without
+    bound checks, and in nimony's dialect (its slices clip), it is clipped. A negative int is no position from the
+    end (Python's), it is out of bounds."""
+    if isinstance(index, slice):
+        if index.step not in (None, 1):
+            raise TypeError(f"a nimic slice has no step (Nim's a ..< b): {index}")
+        lo = first if index.start is None else _n_from_end(index.start, length, first)
+        hi = first + length if index.stop is None else _n_from_end(index.stop, length, first)
+    elif isinstance(index, range):
+        if index.step != 1:
+            raise TypeError(f"a nimic slice has no step (Nim's a .. b): {index}")
+        lo, hi = index.start, index.stop
+    elif isinstance(index, _NHSlice):
+        lo, hi = _n_from_end(index.a, length, first), _n_from_end(index.b, length, first) + 1
+    else:
+        return None
+    lo, hi = int(lo), int(hi)
+    if hi > lo and not (first <= lo and hi <= first + length):
+        if _n_check_enabled("boundchecks") and _n_check_enabled("slicebounds"):
+            raise IndexDefect(f"slice {lo} .. {hi - 1} not in {first} .. {first + length - 1}")
+        lo, hi = max(lo, first), min(hi, first + length)
+    return range(lo - first, max(hi, lo) - first)
+
+
+def _n_slice_seq(container, positions: range):
+    """Nim's `x[a .. b]` of a seq, array or openArray: a new seq[T] of the elements' copies."""
+    return seq[_n_item_type(type(container))]([_n_value_copy(container[i]) for i in positions])
+
+
 def _n_view_addr(view) -> int:
     """The address of element 0 of a container's ctypes view: a ctypes array holds its elements, a
     ctypes pointer (an `UncheckedArray`'s view) points to them."""
@@ -178,8 +223,11 @@ _N_RUNTIME_DIR = __file__.rsplit("/", 1)[0] + "/"  # nimic's runtime modules (sk
 # Dialects: the compiler a module's code is written for. A module or package declares it with
 # `__nimic_dialect__ = "nimony"` (the nearest declaration wins: the module, then its packages); without one
 # it is Nim 2's. A dialect lists the runtime checks its compiler doesn't have: nimony's signed arithmetic
-# wraps (`{.keepOverflowFlag.}` / `overflowFlag()` ask explicitly), so code written for it doesn't raise.
-_N_DIALECT_NO_CHECKS: dict[str, frozenset] = {"nim2": frozenset(), "nimony": frozenset({"overflowchecks"})}
+# wraps (`{.keepOverflowFlag.}` / `overflowFlag()` ask explicitly), so code written for it doesn't raise; its slices
+# (`s[a .. b]` of a string or seq) are clipped to the bounds instead of raising IndexDefect ("slicebounds", nimic's
+# name: Nim 2 checks slices with boundChecks).
+_N_DIALECT_NO_CHECKS: dict[str, frozenset] = {"nim2": frozenset(),
+                                              "nimony": frozenset({"overflowchecks", "slicebounds"})}
 _n_module_dialects: dict[str, str] = {}  # module name -> its dialect (cache)
 
 
@@ -2793,6 +2841,8 @@ def inrange(first, last):
         idx_a = members.index(first)
         idx_b = members.index(last)
         return members[idx_a : idx_b + 1]
+    if isinstance(first, BackwardsIndex) or isinstance(last, BackwardsIndex):
+        return _NHSlice(first, last)  # Nim `a .. ^n`, a slice resolved against the value it indexes
     if isinstance(first, str):  # char: 'a'..'z' is a range of chars
         cls = type(first)
         return tuple(cls(c) for c in range(ord(first), ord(last) + 1))
@@ -4500,6 +4550,9 @@ class array(_NIndexed, _NLen, Ntype):
             raise IndexDefect(f"index {index} not in {self._n_first} .. {self._n_first + self._n_size - 1}")
 
     def __getitem__(self, index: int) -> object:
+        positions = _n_slice_positions(index, self._n_size, self._n_first)
+        if positions is not None:
+            return _n_slice_seq(self, [self._n_first + i for i in positions])  # Nim: a seq of the elements
         index = self._n_normalize_index(_n_from_end(index, self._n_size, self._n_first))
         self._n_check_index(index)
         if self._n_view is not None:
@@ -4707,6 +4760,9 @@ class seq(_NIndexed, Ntype):
         _n_carry_held_fields(self, {i: e for i, e in old_cache.items() if i < self.len})
 
     def __getitem__(self, index: int) -> object:
+        positions = _n_slice_positions(index, len(self))
+        if positions is not None:
+            return _n_slice_seq(self, positions)
         index = int(_n_from_end(index, len(self)))
         if not 0 <= index < len(self) and _n_check_enabled("boundchecks"):
             raise IndexDefect(f"index {index} not in 0 .. {len(self) - 1}")
@@ -4967,6 +5023,9 @@ class openArray(_NIndexed, _NLen, Ntype):
             self._n_source = None
 
     def __getitem__(self, index):
+        positions = _n_slice_positions(index, len(self))
+        if positions is not None:
+            return _n_slice_seq(self, positions)
         return self._n_view[_n_from_end(index, len(self))]
 
     def __setitem__(self, index, value):
@@ -7139,8 +7198,9 @@ class string(_NIndexed, collections.UserString):
             yield self[i]
 
     def __getitem__(self, index):
-        if isinstance(index, slice):
-            return string(self.data[index])
+        positions = _n_slice_positions(index, len(self.data))
+        if positions is not None:
+            return string(self.data[positions.start:positions.stop])
         index = _n_from_end(index, len(self.data))
         if hasattr(self, '_n_view') and self._n_view is not None:
             idx = int(index)

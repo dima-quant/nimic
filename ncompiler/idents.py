@@ -54,19 +54,19 @@ def cmpIgnoreStyle(a: cstring, b: cstring, blen: nint) -> nint:
         j = 0
     result = 1
     while j < blen:
-        while a[i] == ch('_'): i += 1
-        while b[j] == ch('_'): j += 1
+        while a[i] == char('_'): i += 1
+        while b[j] == char('_'): j += 1
         with var:
             aa = a[i]
             bb = b[j]
-        if aa >= ch('A') and aa <= ch('Z'): aa = chr(ord(aa) + (ord(ch('a')) - ord(ch('A'))))
-        if bb >= ch('A') and bb <= ch('Z'): bb = chr(ord(bb) + (ord(ch('a')) - ord(ch('A'))))
+        if aa >= char('A') and aa <= char('Z'): aa = chr(ord(aa) + (ord(char('a')) - ord(char('A'))))
+        if bb >= char('A') and bb <= char('Z'): bb = chr(ord(bb) + (ord(char('a')) - ord(char('A'))))
         result = ord(aa) - ord(bb)
-        if (result != 0) or (aa == ch('\0')): break
+        if (result != 0) or (aa == char('\0')): break
         i += 1
         j += 1
     if result == 0:
-        if a[i] != ch('\0'): result = 1
+        if a[i] != char('\0'): result = 1
     return result
 
 def _cmpExact(a: cstring, b: cstring, blen: nint) -> nint:
@@ -79,11 +79,11 @@ def _cmpExact(a: cstring, b: cstring, blen: nint) -> nint:
             aa = a[i]
             bb = b[j]
         result = ord(aa) - ord(bb)
-        if (result != 0) or (aa == ch('\0')): break
+        if (result != 0) or (aa == char('\0')): break
         i += 1
         j += 1
     if result == 0:
-        if a[i] != ch('\0'): result = 1
+        if a[i] != char('\0'): result = 1
     return result
 
 @dispatch

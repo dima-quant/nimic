@@ -231,15 +231,15 @@ if comptime(__name__ == "__main__"):
         for i in range(len(s)):
             with let:
                 c = s[i]
-            if c == ch("\\"):
+            if c == char("\\"):
                 res.add(string("\\\\"))
-            elif c == ch("\""):
+            elif c == char("\""):
                 res.add(string("\\\""))
-            elif c == ch("\n"):
+            elif c == char("\n"):
                 res.add(string("\\n"))
-            elif c == ch("\r"):
+            elif c == char("\r"):
                 res.add(string("\\r"))
-            elif c == ch("\t"):
+            elif c == char("\t"):
                 res.add(string("\\t"))
             else:
                 res.add(c)

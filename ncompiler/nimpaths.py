@@ -43,7 +43,7 @@ with const:
 
 def interp(path: string, nimr: string) -> string:
     result = path % [string("nimr"), nimr]
-    doAssert(ch("$") not in result, str((path, nimr, result)))  # avoids un-interpolated variables in output
+    doAssert(char("$") not in result, str((path, nimr, result)))  # avoids un-interpolated variables in output
     return result
 
 def getDocHacksJs(nimr: string, nim: string = getCurrentCompilerExe(), forceRebuild: bool = False) -> string:

@@ -13,10 +13,17 @@ Transformation Rules
 Formatting:
   rule:doublespace -> change four spaces to double spaces for indentation
   rule:quote -> replace quotes to double quotes
-  rule:slice -> slice [a:], [a:b] -> [a..^1], [a..<b]
+  rule:slice -> slice [a:], [a:b] -> [a..^1], [a..<b]; [a:back(n)] -> [a ..< ^n] (n counted from the end);
+    [inrange(a, b)] / [inrange(a, back(n))] are Nim's inclusive [a .. b] / [a .. ^n] (rule:inrange)
   rule:discard -> assign to "_" is replaced by "discard"
   rule:pass -> replace "pass" by "discard"
   rule:nonlocal -> suppress "nonlocal" declarations (Nim closures capture by reference)
+  rule:global -> `global x` in a routine (Python: the routine assigns the module-level x) is dropped, and the
+    routine's statements after it go into an `assumeSync:` block (the prelude's template: nimony's
+    `{.cast(assumeSync).}:`, which lets a routine touch a module's mutable global; plain code in Nim 2). A
+    routine that reads one only declares it `global` too: nimony checks reads as well. The proc of a main block
+    (rule:mainproc) runs in an `assumeSync:` block: it is top-level code, which may touch globals. Neither in a
+    module that declares pragma('feature: "assumeSync"') (nimony's `{.feature: "assumeSync".}`)
   rule:ignorestyle -> the top-level prelude import (`from nimic.ntypes import *`) is followed by
     `when defined(nimony): {.feature: "ignoreStyle".}`: nimic's snake_case Nim names (unsafe_addr) match Nim's
     camelCase ones style-insensitively, as in Nim 2
@@ -139,8 +146,8 @@ Operators & renaming:
   rule:literaltypes -> write as type suffix u64(0x9e3779b97f4a7c15) -> 0x9e3779b97f4a7c15'u64; also uint64(c) / uint(c)
     with a constant above high(int64): 18446744073709551615'u64; a non-literal argument (u32(i)) raises
     SyntaxError: a conversion is written uint32(i)
-  rule:char -> chars written as ch("#") transpile as char literals '#'; so does char("#") (a one-char
-    string constant), the spelling where a local named `ch` shadows ch()
+  rule:char -> char("#") of a one-char string constant transpiles as the char literal '#'; char(x) of anything
+    else stays a conversion (nimic has no `ch`: a user's `ch` is a name like any other)
   rule:latin1literal -> str literals are byte views: chars 0x80-0xFF emit as \\xNN ("é" -> "\\xE9"),
     chars above 0xFF raise SyntaxError (use utf8()); applies to f-string literal parts too
   rule:utf8literal -> utf8("é") with a constant argument emits the raw Nim literal "é" (its UTF-8 bytes);
@@ -163,6 +170,9 @@ Operators & renaming:
     a proc declared `-> string`) or the right one is a list / tuple or a name declared as a sequence of strings
   rule:nilident -> "is None" / "is not None" transpile as == nil / != nil
   rule:keywordescape -> trailing _ stripped from Python keyword clashes (None_ -> None, type_ -> type)
+  rule:reservedescape -> trailing _ stripped from a user identifier spelled like a nimic reserved name
+    (nimic.reserved: hook_ -> hook, emit_ -> emit, x.back_ -> x.back), everywhere it occurs; the escaped name is the
+    user's, never the core's (nint_ -> nint, not int). check_reserved_names() rejects an unescaped one
   rule:percentops -> plus_percent(a, b) / a.plus_percent(b) and minus_percent(a, b) / a.minus_percent(b) transpile as a +% b and a -% b; lt_percent, le_percent,
     gt_percent, ge_percent as a <% b, a <=% b, a >% b, a >=% b (comparison precedence)
   rule:dollarparens -> str(x) as the base of an index or attribute is parenthesized: ($(x))[i], ($(x)).f
@@ -281,6 +291,7 @@ import copy
 import importlib.util
 import inspect
 import keyword as pykeyword
+import os
 import re
 import symtable
 import sys
@@ -293,6 +304,7 @@ from enum import IntEnum, _simple_enum, auto
 from nimic.imports import (exported, imports_of, included_trees, is_core, is_main_block, is_overloads, is_routine,
                            module_level_routines, nim_exports, own_definitions, reaches, star_imports,
                            visible)
+from nimic import reserved
 from nimic.valuecheck import is_nimic_file
 
 
@@ -1023,6 +1035,7 @@ class _Unparser(NodeVisitor):
         self._keywords_no_with_colon = ["block", "static"]  # rule:dropwith
         self._context_stack = []
         self._inline_calltypes = {}  # rule:calltypeinline: name -> def, set per module
+        self._module_assume_sync = False  # rule:global: the module declares {.feature: "assumeSync".}
         self._proc_vars = set()  # rule:procvar: (name, scope depth) of the defs in `with var:` / `with let:`
         self._proc_var_defs = set()  # rule:procvar: ids of the defs written directly in a declaration section
         self._match_subjects = []  # rule:matchcase: subjects of the enclosing match statements
@@ -1268,6 +1281,11 @@ class _Unparser(NodeVisitor):
         # rule:hook: a call of a hook proc by its Python name (`_destroyCursor(dest)`) is the hook's Nim name
         self._hook_procs = {fn.name: hook for fn in ast.walk(node)
                             if isinstance(fn, FunctionDef) and (hook := self._hook_name(fn)) is not None}
+        # rule:global: nimony's `{.feature: "assumeSync".}` lets every routine touch the module's globals
+        self._module_assume_sync = any(
+            isinstance(n, Call) and isinstance(n.func, Name) and n.func.id == "pragma" and len(n.args) == 1
+            and isinstance(n.args[0], Constant) and isinstance(n.args[0].value, str)
+            and n.args[0].value.replace(" ", "") == 'feature:"assumeSync"' for n in ast.walk(node))
         # rule:calltypeinline: @calltype(inline=True) proc types, written as the anonymous proc type at their uses
         self._inline_calltypes = {fn.name: fn for fn in ast.walk(node)
                                   if isinstance(fn, FunctionDef) and self._is_inline_calltype(fn)}
@@ -1726,8 +1744,26 @@ class _Unparser(NodeVisitor):
             self.traverse(node.msg)
 
     def visit_Global(self, node):
-        self.fill("global ")
-        self.interleave(lambda: self.write(", "), self.write, node.names)
+        # rule:global -> Python's scoping only: Nim's routine sees the module's variable (_assume_sync_body)
+        pass
+
+    def _assume_sync_body(self, body: list) -> list:
+        """rule:global: a routine body with a `global x` statement, its statements after the first one in an
+        `assumeSync:` block, unless the module declares nimony's `{.feature: "assumeSync".}`."""
+        first = next((i for i, stmt in enumerate(body) if isinstance(stmt, Global)), None)
+        if first is None:
+            return body
+        return body[:first + 1] + self._assume_sync_statements(
+            [stmt for stmt in body[first + 1:] if not isinstance(stmt, Global)])
+
+    def _assume_sync_statements(self, stmts: list) -> list:
+        """rule:global: `stmts` in one `assumeSync:` block (as nimony's `{.cast(assumeSync).}:`), unless the
+        module declares `{.feature: "assumeSync".}`."""
+        if not stmts or self._module_assume_sync:
+            return stmts
+        block = With(items=[withitem(context_expr=Name(id="assumeSync", ctx=Load()))], body=stmts)
+        block._n_assume_sync = True
+        return [ast.copy_location(block, stmts[0])]
 
     def visit_Nonlocal(self, node):
         # rule:nonlocal -> Nim closures capture by reference; suppress nonlocal
@@ -1835,8 +1871,12 @@ class _Unparser(NodeVisitor):
         # rule:keywordescape -> strip trailing _ from Python keyword clashes (None_ -> None)
         if len(name) > 1 and name.endswith("_") and pykeyword.iskeyword(name[:-1]):
             name = name[:-1]
+        # rule:reservedescape -> strip trailing _ from a user name spelled like a reserved one (hook_ -> hook)
+        user_name = reserved.escaped(name)
+        if user_name is not None:
+            name = user_name
         # rule:nint -> nint transpiles to Nim int (nimic does not shadow Python int), nbool to bool
-        if not definition and name in ("nint", "nbool"):
+        elif not definition and name in ("nint", "nbool"):
             return "int" if name == "nint" else "bool"
         if len(name) > 1 and name[0] == "_":
             # private names keep their Nim name, unexported; __x / _1 are no Nim identifiers without a prefix
@@ -2192,6 +2232,7 @@ class _Unparser(NodeVisitor):
                 decl_str = deco.id
         # rule:pragma
         body, pragma = self._get_body_and_pragma(node)
+        body = self._assume_sync_body(body)  # rule:global
         is_private = False
         # rule:funcdefbody -> a body of only `pass` (forward declaration) or only the pragma docstring
         # (`template x() {.pragma.}`, a custom pragma) is a declaration without body
@@ -2588,7 +2629,7 @@ class _Unparser(NodeVisitor):
                 self.fill(f"proc {name}() {{.{name}Raises.}} =")
                 with self.block(start=""):
                     self._scope_depth += 1
-                    self.traverse(rest)
+                    self.traverse(self._assume_sync_statements(rest))  # rule:global: top-level code
                     self._scope_depth -= 1
             self._main_raises = None
             self._in_main_block = False
@@ -2693,6 +2734,12 @@ class _Unparser(NodeVisitor):
                 and len(ctx.args) == 1 and isinstance(ctx.args[0], Constant) and isinstance(ctx.args[0].value, str)):
             # rule:pragmablock -> with pragma("p"): body  is  {.p.}: body
             self.fill(f"{{.{ctx.args[0].value}.}}")
+            with self.block(start=":"):
+                self.traverse(node.body)
+            return
+        if getattr(node, "_n_assume_sync", False):
+            # rule:global -> the statements after `global x`, in the prelude's assumeSync block
+            self.fill("assumeSync")
             with self.block(start=":"):
                 self.traverse(node.body)
             return
@@ -3387,7 +3434,7 @@ class _Unparser(NodeVisitor):
                 or (isinstance(arg, Constant) and type(arg.value) in (int, float, bool))
                 or (isinstance(arg, UnaryOp) and isinstance(arg.op, USub) and isinstance(arg.operand, Constant))
                 or (isinstance(arg, Call) and isinstance(arg.func, Name)
-                    and arg.func.id in ("str", "$", "ch", "utf8", *self._type_suffixes))):
+                    and arg.func.id in ("str", "$", "char", "utf8", *self._type_suffixes))):
             return arg
         return ast.copy_location(Call(func=Name(id="str", ctx=Load()), args=[arg], keywords=[]), arg)
 
@@ -3433,9 +3480,9 @@ class _Unparser(NodeVisitor):
         elif isinstance(node.func, Name) and node.func.id == "cell" and len(node.args) == 1 and not node.keywords:
             # rule:cell -> cell(x), the variable of an enum member passed as `var`, is the value x in Nim
             self.traverse(node.args[0])
-        elif isinstance(node.func, Name) and (node.func.id == "ch" or (
-                node.func.id == "char" and len(node.args) == 1 and isinstance(node.args[0], Constant)
-                and isinstance(node.args[0].value, str) and len(node.args[0].value) == 1)):
+        elif (isinstance(node.func, Name) and node.func.id == "char" and len(node.args) == 1 and not node.keywords
+              and isinstance(node.args[0], Constant) and isinstance(node.args[0].value, str)
+              and len(node.args[0].value) == 1):
             # rule:char
             val = node.args[0].value
             char_escapes = {
@@ -3698,9 +3745,13 @@ class _Unparser(NodeVisitor):
         else:
             self.write("0")
         if node.upper:
-            self.write("..<")
+            # an upper bound counted from the end, back(n), is the prefix operator ^n: `a ..< ^n` needs the
+            # spaces (Nim reads `..<^` as one operator)
+            backwards = (isinstance(node.upper, Call) and isinstance(node.upper.func, Name)
+                         and node.upper.func.id == "back")
+            self.write(" ..< " if backwards else "..<")
             self.traverse(node.upper)
-            # negative upper bound is not allowed, also not literals
+            # a negative int bound is out of bounds (IndexDefect), as in Nim: back(n) counts from the end
         else:
             self.write("..^1")
         if node.step:
@@ -4438,6 +4489,43 @@ def check_private_names(ast_obj, file: str = "") -> None:
     if collisions := private_name_collisions(ast_obj):
         raise ValueError("private names collide with their Nim names (_x transpiles to x):\n" +
                          "\n".join(f"  {_located(file, line)} [{scope}]: {msg}" for line, scope, msg in collisions))
+
+
+def reserved_name_bindings(tree) -> list:
+    """rule:reservedescape: (line, name) for each user identifier the module binds spelled like a nimic reserved
+    name (nimic.reserved): a routine, class, parameter, field, enum member, local or module-level name, an import's
+    `as` name. In Python it would shadow the core's binding for the module or the routine, and the transpiler reads
+    some of them as syntax (`cell(x)`, `u8(5)`); written with a trailing `_` (`hook_`) it is the user's."""
+    found = []
+    for n in walk(tree):
+        if isinstance(n, (FunctionDef, AsyncFunctionDef, ClassDef)):
+            names = [n.name]
+        elif isinstance(n, arg):
+            names = [n.arg]
+        elif isinstance(n, Name) and isinstance(n.ctx, Store):
+            names = [n.id]
+        elif isinstance(n, (Import, ImportFrom)):
+            names = [a.asname for a in n.names if a.asname]
+        elif isinstance(n, ExceptHandler) and n.name:
+            names = [n.name]
+        else:
+            continue
+        found += [(n.lineno, name) for name in names if name in reserved.RESERVED_NAMES]
+    return sorted(set(found))
+
+
+_NIMIC_DIR = os.path.dirname(os.path.abspath(reserved.__file__))
+
+
+def check_reserved_names(ast_obj, file: str = "") -> None:
+    """rule:reservedescape: rejects a user module that binds a nimic reserved name unescaped. Run before unparse(),
+    and when a nimic module is imported (nimic.nsystem); `file` locates the lines in the message. The core's own
+    modules (nimic.ntypes, nimic.std.*) define the reserved names and aren't checked."""
+    if file and os.path.abspath(file).startswith(_NIMIC_DIR + os.sep):
+        return
+    if bindings := reserved_name_bindings(ast_obj):
+        raise ValueError("names that nimic reserves (rule:reservedescape: write them with a trailing _):\n" +
+                         "\n".join(f"  {_located(file, line)}: {name} -> {name}_" for line, name in bindings))
 
 
 def check_imported_module(ast_obj, module, file: str = "") -> None:

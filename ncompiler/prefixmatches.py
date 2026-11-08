@@ -30,14 +30,14 @@ def prefixMatch(p: string, s: string) -> PrefixMatch:
         i = 0
     # check for prefix/contains:
     while i < len(s):
-        if s[i] == ch('_'): i += 1
+        if s[i] == char('_'): i += 1
         if i < len(s) and _eq(s[i], p[0]):
             with var:
                 ii = i + 1
                 jj = 1
             while ii < len(s) and jj < len(p):
-                if p[jj] == ch('_'): jj += 1
-                if s[ii] == ch('_'): ii += 1
+                if p[jj] == char('_'): jj += 1
+                if s[ii] == char('_'): ii += 1
                 if not _eq(s[ii], p[jj]): break
                 ii += 1
                 jj += 1
@@ -52,10 +52,10 @@ def prefixMatch(p: string, s: string) -> PrefixMatch:
         with var:
             j = 1
         while i < len(s):
-            if i < len(s) - 1 and s[i] == ch('_'):
+            if i < len(s) - 1 and s[i] == char('_'):
                 if j < len(p) and _eq(p[j], s[i + 1]): j += 1
                 else: return PrefixMatch.None_
-            if i < len(s) and s[i] >= ch('A') and s[i] <= ch('Z') and (s[i - 1] < ch('A') or s[i - 1] > ch('Z')):
+            if i < len(s) and s[i] >= char('A') and s[i] <= char('Z') and (s[i - 1] < char('A') or s[i - 1] > char('Z')):
                 if j < len(p) and _eq(p[j], s[i]): j += 1
                 else: return PrefixMatch.None_
             i += 1

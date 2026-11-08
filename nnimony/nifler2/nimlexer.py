@@ -184,7 +184,7 @@ class Token(Object):
         """{.inline.}"""
         ## Only `^`-like operators associate to the right, exactly as in
         ## `parser.nim`'s `isRightAssociative`.
-        return tok.kind == TokKind.tkOpr and tok.s.len > 0 and tok.s[0] == ch('^')
+        return tok.kind == TokKind.tkOpr and tok.s.len > 0 and tok.s[0] == char('^')
 
     def isUnary(tok: Token) -> bool:
         """{.inline.}"""
@@ -193,11 +193,11 @@ class Token(Object):
 
     def isDotLike(tok: Token) -> bool:
         """{.inline.}"""
-        return tok.kind == TokKind.tkOpr and tok.s.len > 1 and tok.s[0] == ch('.') and tok.s[1] != ch('.')
+        return tok.kind == TokKind.tkOpr and tok.s.len > 1 and tok.s[0] == char('.') and tok.s[1] != char('.')
 
     def isSigilLike(tok: Token) -> bool:
         """{.inline.}"""
-        return tok.kind == TokKind.tkOpr and tok.s.len > 0 and tok.s[0] == ch('@')
+        return tok.kind == TokKind.tkOpr and tok.s.len > 0 and tok.s[0] == char('@')
 
     def _normalizeBasePrefix(tok: mut @ Token):
         ## `getNumber` writes the base prefix into the literal in lower case
@@ -205,9 +205,9 @@ class Token(Object):
         ## spellings of it.
         if tok.base == 10: return
         with let:
-            i = 2 if tok.s.len > 0 and tok.s[0] == ch('-') else 1
-        if i < tok.s.len and tok.s[i] >= ch('A') and tok.s[i] <= ch('Z'):
-            tok.s[i] = chr(ord(tok.s[i]) - ord(ch('A')) + ord(ch('a')))
+            i = 2 if tok.s.len > 0 and tok.s[0] == char('-') else 1
+        if i < tok.s.len and tok.s[i] >= char('A') and tok.s[i] <= char('Z'):
+            tok.s[i] = chr(ord(tok.s[i]) - ord(char('A')) + ord(char('a')))
 
 
 class Lexer(Object):
@@ -230,14 +230,14 @@ class Lexer(Object):
         ## The number as `lexMessageLitNum` quotes it: everything literal-ish from
         ## `start`, which is behind a leading `-`.
         with const:
-            LiteralishChars = Tset[char](inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('0'), ch('9')), ch('_'), ch('.'), ch('\''))
+            LiteralishChars = Tset[char](inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('0'), char('9')), char('_'), char('.'), char('\''))
         result = string("")
         with var:
             pos = copy(start)
         while L.ch(pos) in LiteralishChars:
             result.add(L.ch(pos))
             pos += 1
-        if L.ch(pos) in Tset[char](ch('+'), ch('-')) and L.ch(pos - 1) in Tset[char](ch('e'), ch('E')):
+        if L.ch(pos) in Tset[char](char('+'), char('-')) and L.ch(pos - 1) in Tset[char](char('e'), char('E')):
             result.add(L.ch(pos))
             pos += 1
             while L.ch(pos) in LiteralishChars:
@@ -246,17 +246,17 @@ class Lexer(Object):
         if L.ch(pos) in LiteralishChars:
             result.add(L.ch(pos))
             pos += 1
-            while L.ch(pos) in Tset[char](inrange(ch('0'), ch('9'))):
+            while L.ch(pos) in Tset[char](inrange(char('0'), char('9'))):
                 result.add(L.ch(pos))
                 pos += 1
         return result
 
     def _handleCRLF(L: mut @ Lexer, pos: nint) -> nint:
         result = copy(pos)
-        if L.ch(result) == ch('\r'):
+        if L.ch(result) == char('\r'):
             result += 1
-            if L.ch(result) == ch('\n'): result += 1
-        elif L.ch(result) == ch('\n'):
+            if L.ch(result) == char('\n'): result += 1
+        elif L.ch(result) == char('\n'):
             result += 1
         L.lineNumber += 1
         L.lineStart = result
@@ -285,24 +285,24 @@ class Lexer(Object):
             tmp4 = copy(pos)
         while True:
             with var:
-                tmp2 = ch('\x00')
+                tmp2 = char('\x00')
             if pos < len(L.buf):
                 tmp2 = L.buf[pos]
             match tmp1:
                 case 1:
-                    if tmp2 in Tset[char](ch('F'), ch('f')):
+                    if tmp2 in Tset[char](char('F'), char('f')):
                         pos += 1
                         tmp1 = 2
-                    elif tmp2 in Tset[char](ch('D'), ch('d')):
+                    elif tmp2 in Tset[char](char('D'), char('d')):
                         pos += 1
                         tmp1 = 3
-                    elif tmp2 in Tset[char](ch('U'), ch('u')):
+                    elif tmp2 in Tset[char](char('U'), char('u')):
                         pos += 1
                         tmp1 = 9
-                    elif tmp2 in Tset[char](ch('I'), ch('i')):
+                    elif tmp2 in Tset[char](char('I'), char('i')):
                         pos += 1
                         tmp1 = 31
-                    elif tmp2 == ch('\''):
+                    elif tmp2 == char('\''):
                         pos += 1
                         tmp1 = 32
                     else:
@@ -310,16 +310,16 @@ class Lexer(Object):
                 case 2:
                     tmp3 = 1
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](ch('0'), ch('2'), ch('4'), ch('5'), inrange(ch('7'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
-                    elif tmp2 == ch('1'):
+                    elif tmp2 == char('1'):
                         pos += 1
                         tmp1 = 15
-                    elif tmp2 == ch('3'):
+                    elif tmp2 == char('3'):
                         pos += 1
                         tmp1 = 28
-                    elif tmp2 == ch('6'):
+                    elif tmp2 == char('6'):
                         pos += 1
                         tmp1 = 52
                     else:
@@ -327,7 +327,7 @@ class Lexer(Object):
                 case 3:
                     tmp3 = 2
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
                     else:
@@ -335,7 +335,7 @@ class Lexer(Object):
                 case 4:
                     tmp3 = 3
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
                     else:
@@ -343,7 +343,7 @@ class Lexer(Object):
                 case 5:
                     tmp3 = 4
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
                     else:
@@ -351,7 +351,7 @@ class Lexer(Object):
                 case 6:
                     tmp3 = 5
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
                     else:
@@ -359,7 +359,7 @@ class Lexer(Object):
                 case 7:
                     tmp3 = 6
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
                     else:
@@ -367,7 +367,7 @@ class Lexer(Object):
                 case 8:
                     tmp3 = 7
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
                     else:
@@ -375,19 +375,19 @@ class Lexer(Object):
                 case 9:
                     tmp3 = 8
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](ch('0'), ch('2'), ch('4'), ch('5'), ch('7'), ch('9'), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), char('7'), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
-                    elif tmp2 == ch('8'):
+                    elif tmp2 == char('8'):
                         pos += 1
                         tmp1 = 10
-                    elif tmp2 == ch('6'):
+                    elif tmp2 == char('6'):
                         pos += 1
                         tmp1 = 29
-                    elif tmp2 == ch('1'):
+                    elif tmp2 == char('1'):
                         pos += 1
                         tmp1 = 30
-                    elif tmp2 == ch('3'):
+                    elif tmp2 == char('3'):
                         pos += 1
                         tmp1 = 35
                     else:
@@ -395,7 +395,7 @@ class Lexer(Object):
                 case 10:
                     tmp3 = 9
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
                     else:
@@ -403,7 +403,7 @@ class Lexer(Object):
                 case 11:
                     tmp3 = 10
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
                     else:
@@ -411,7 +411,7 @@ class Lexer(Object):
                 case 12:
                     tmp3 = 11
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
                     else:
@@ -419,7 +419,7 @@ class Lexer(Object):
                 case 13:
                     tmp3 = 12
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
                     else:
@@ -427,10 +427,10 @@ class Lexer(Object):
                 case 14:
                     tmp3 = 13
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](ch('0'), ch('1'), inrange(ch('3'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
-                    elif tmp2 == ch('2'):
+                    elif tmp2 == char('2'):
                         pos += 1
                         tmp1 = 27
                     else:
@@ -438,10 +438,10 @@ class Lexer(Object):
                 case 15:
                     tmp3 = 14
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](ch('0'), ch('1'), inrange(ch('3'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
-                    elif tmp2 == ch('2'):
+                    elif tmp2 == char('2'):
                         pos += 1
                         tmp1 = 36
                     else:
@@ -449,7 +449,7 @@ class Lexer(Object):
                 case 16:
                     tmp3 = 12
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
                     else:
@@ -457,7 +457,7 @@ class Lexer(Object):
                 case 17:
                     tmp3 = 11
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
                     else:
@@ -465,7 +465,7 @@ class Lexer(Object):
                 case 18:
                     tmp3 = 10
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
                     else:
@@ -473,7 +473,7 @@ class Lexer(Object):
                 case 19:
                     tmp3 = 9
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
                     else:
@@ -481,19 +481,19 @@ class Lexer(Object):
                 case 20:
                     tmp3 = 8
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](ch('0'), ch('2'), ch('4'), ch('5'), ch('7'), ch('9'), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), char('7'), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
-                    elif tmp2 == ch('8'):
+                    elif tmp2 == char('8'):
                         pos += 1
                         tmp1 = 19
-                    elif tmp2 == ch('1'):
+                    elif tmp2 == char('1'):
                         pos += 1
                         tmp1 = 46
-                    elif tmp2 == ch('3'):
+                    elif tmp2 == char('3'):
                         pos += 1
                         tmp1 = 47
-                    elif tmp2 == ch('6'):
+                    elif tmp2 == char('6'):
                         pos += 1
                         tmp1 = 48
                     else:
@@ -501,7 +501,7 @@ class Lexer(Object):
                 case 21:
                     tmp3 = 7
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
                     else:
@@ -509,7 +509,7 @@ class Lexer(Object):
                 case 22:
                     tmp3 = 6
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
                     else:
@@ -517,7 +517,7 @@ class Lexer(Object):
                 case 23:
                     tmp3 = 5
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
                     else:
@@ -525,7 +525,7 @@ class Lexer(Object):
                 case 24:
                     tmp3 = 4
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
                     else:
@@ -533,7 +533,7 @@ class Lexer(Object):
                 case 25:
                     tmp3 = 3
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
                     else:
@@ -541,7 +541,7 @@ class Lexer(Object):
                 case 26:
                     tmp3 = 2
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
                     else:
@@ -549,7 +549,7 @@ class Lexer(Object):
                 case 27:
                     tmp3 = 1
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
                     else:
@@ -557,10 +557,10 @@ class Lexer(Object):
                 case 28:
                     tmp3 = 14
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](ch('0'), ch('1'), inrange(ch('3'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
-                    elif tmp2 == ch('2'):
+                    elif tmp2 == char('2'):
                         pos += 1
                         tmp1 = 34
                     else:
@@ -568,10 +568,10 @@ class Lexer(Object):
                 case 29:
                     tmp3 = 14
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('3')), inrange(ch('5'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
-                    elif tmp2 == ch('4'):
+                    elif tmp2 == char('4'):
                         pos += 1
                         tmp1 = 13
                     else:
@@ -579,10 +579,10 @@ class Lexer(Object):
                 case 30:
                     tmp3 = 14
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('5')), inrange(ch('7'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('5')), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
-                    elif tmp2 == ch('6'):
+                    elif tmp2 == char('6'):
                         pos += 1
                         tmp1 = 11
                     else:
@@ -590,37 +590,37 @@ class Lexer(Object):
                 case 31:
                     tmp3 = 14
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](ch('0'), ch('2'), ch('4'), ch('5'), ch('7'), ch('9'), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), char('7'), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
-                    elif tmp2 == ch('8'):
+                    elif tmp2 == char('8'):
                         pos += 1
                         tmp1 = 5
-                    elif tmp2 == ch('6'):
+                    elif tmp2 == char('6'):
                         pos += 1
                         tmp1 = 49
-                    elif tmp2 == ch('3'):
+                    elif tmp2 == char('3'):
                         pos += 1
                         tmp1 = 50
-                    elif tmp2 == ch('1'):
+                    elif tmp2 == char('1'):
                         pos += 1
                         tmp1 = 51
                     else:
                         break
                 case 32:
-                    if tmp2 in Tset[char](ch('U'), ch('u')):
+                    if tmp2 in Tset[char](char('U'), char('u')):
                         pos += 1
                         tmp1 = 20
-                    elif tmp2 in Tset[char](ch('D'), ch('d')):
+                    elif tmp2 in Tset[char](char('D'), char('d')):
                         pos += 1
                         tmp1 = 26
-                    elif tmp2 in Tset[char](ch('F'), ch('f')):
+                    elif tmp2 in Tset[char](char('F'), char('f')):
                         pos += 1
                         tmp1 = 39
-                    elif tmp2 in Tset[char](ch('I'), ch('i')):
+                    elif tmp2 in Tset[char](char('I'), char('i')):
                         pos += 1
                         tmp1 = 42
-                    elif tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('C')), ch('E'), ch('G'), ch('H'), inrange(ch('J'), ch('T')), inrange(ch('V'), ch('Z')), inrange(ch('a'), ch('c')), ch('e'), ch('g'), ch('h'), inrange(ch('j'), ch('t')), inrange(ch('v'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    elif tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('C')), char('E'), char('G'), char('H'), inrange(char('J'), char('T')), inrange(char('V'), char('Z')), inrange(char('a'), char('c')), char('e'), char('g'), char('h'), inrange(char('j'), char('t')), inrange(char('v'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
                     else:
@@ -628,7 +628,7 @@ class Lexer(Object):
                 case 33:
                     tmp3 = 14
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
                     else:
@@ -636,7 +636,7 @@ class Lexer(Object):
                 case 34:
                     tmp3 = 1
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
                     else:
@@ -644,10 +644,10 @@ class Lexer(Object):
                 case 35:
                     tmp3 = 14
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](ch('0'), ch('1'), inrange(ch('3'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
-                    elif tmp2 == ch('2'):
+                    elif tmp2 == char('2'):
                         pos += 1
                         tmp1 = 12
                     else:
@@ -655,10 +655,10 @@ class Lexer(Object):
                 case 36:
                     tmp3 = 14
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('7')), ch('9'), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('7')), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
-                    elif tmp2 == ch('8'):
+                    elif tmp2 == char('8'):
                         pos += 1
                         tmp1 = 4
                     else:
@@ -666,10 +666,10 @@ class Lexer(Object):
                 case 37:
                     tmp3 = 13
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](ch('0'), ch('1'), inrange(ch('3'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
-                    elif tmp2 == ch('2'):
+                    elif tmp2 == char('2'):
                         pos += 1
                         tmp1 = 44
                     else:
@@ -677,10 +677,10 @@ class Lexer(Object):
                 case 38:
                     tmp3 = 13
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](ch('0'), ch('1'), inrange(ch('3'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
-                    elif tmp2 == ch('2'):
+                    elif tmp2 == char('2'):
                         pos += 1
                         tmp1 = 22
                     else:
@@ -688,16 +688,16 @@ class Lexer(Object):
                 case 39:
                     tmp3 = 1
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](ch('0'), ch('2'), ch('4'), ch('5'), inrange(ch('7'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
-                    elif tmp2 == ch('3'):
+                    elif tmp2 == char('3'):
                         pos += 1
                         tmp1 = 14
-                    elif tmp2 == ch('1'):
+                    elif tmp2 == char('1'):
                         pos += 1
                         tmp1 = 37
-                    elif tmp2 == ch('6'):
+                    elif tmp2 == char('6'):
                         pos += 1
                         tmp1 = 40
                     else:
@@ -705,10 +705,10 @@ class Lexer(Object):
                 case 40:
                     tmp3 = 13
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('3')), inrange(ch('5'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
-                    elif tmp2 == ch('4'):
+                    elif tmp2 == char('4'):
                         pos += 1
                         tmp1 = 26
                     else:
@@ -716,10 +716,10 @@ class Lexer(Object):
                 case 41:
                     tmp3 = 13
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('5')), inrange(ch('7'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('5')), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
-                    elif tmp2 == ch('6'):
+                    elif tmp2 == char('6'):
                         pos += 1
                         tmp1 = 23
                     else:
@@ -727,19 +727,19 @@ class Lexer(Object):
                 case 42:
                     tmp3 = 13
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](ch('0'), ch('2'), ch('4'), ch('5'), ch('7'), ch('9'), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), char('7'), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
-                    elif tmp2 == ch('8'):
+                    elif tmp2 == char('8'):
                         pos += 1
                         tmp1 = 24
-                    elif tmp2 == ch('3'):
+                    elif tmp2 == char('3'):
                         pos += 1
                         tmp1 = 38
-                    elif tmp2 == ch('1'):
+                    elif tmp2 == char('1'):
                         pos += 1
                         tmp1 = 41
-                    elif tmp2 == ch('6'):
+                    elif tmp2 == char('6'):
                         pos += 1
                         tmp1 = 45
                     else:
@@ -747,7 +747,7 @@ class Lexer(Object):
                 case 43:
                     tmp3 = 13
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
                     else:
@@ -755,10 +755,10 @@ class Lexer(Object):
                 case 44:
                     tmp3 = 13
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('7')), ch('9'), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('7')), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
-                    elif tmp2 == ch('8'):
+                    elif tmp2 == char('8'):
                         pos += 1
                         tmp1 = 25
                     else:
@@ -766,10 +766,10 @@ class Lexer(Object):
                 case 45:
                     tmp3 = 13
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('3')), inrange(ch('5'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
-                    elif tmp2 == ch('4'):
+                    elif tmp2 == char('4'):
                         pos += 1
                         tmp1 = 21
                     else:
@@ -777,10 +777,10 @@ class Lexer(Object):
                 case 46:
                     tmp3 = 13
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('5')), inrange(ch('7'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('5')), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
-                    elif tmp2 == ch('6'):
+                    elif tmp2 == char('6'):
                         pos += 1
                         tmp1 = 18
                     else:
@@ -788,10 +788,10 @@ class Lexer(Object):
                 case 47:
                     tmp3 = 13
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](ch('0'), ch('1'), inrange(ch('3'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
-                    elif tmp2 == ch('2'):
+                    elif tmp2 == char('2'):
                         pos += 1
                         tmp1 = 17
                     else:
@@ -799,10 +799,10 @@ class Lexer(Object):
                 case 48:
                     tmp3 = 13
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('3')), inrange(ch('5'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 43
-                    elif tmp2 == ch('4'):
+                    elif tmp2 == char('4'):
                         pos += 1
                         tmp1 = 16
                     else:
@@ -810,10 +810,10 @@ class Lexer(Object):
                 case 49:
                     tmp3 = 14
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('3')), inrange(ch('5'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
-                    elif tmp2 == ch('4'):
+                    elif tmp2 == char('4'):
                         pos += 1
                         tmp1 = 8
                     else:
@@ -821,10 +821,10 @@ class Lexer(Object):
                 case 50:
                     tmp3 = 14
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](ch('0'), ch('1'), inrange(ch('3'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
-                    elif tmp2 == ch('2'):
+                    elif tmp2 == char('2'):
                         pos += 1
                         tmp1 = 7
                     else:
@@ -832,10 +832,10 @@ class Lexer(Object):
                 case 51:
                     tmp3 = 14
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('5')), inrange(ch('7'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('5')), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
-                    elif tmp2 == ch('6'):
+                    elif tmp2 == char('6'):
                         pos += 1
                         tmp1 = 6
                     else:
@@ -843,10 +843,10 @@ class Lexer(Object):
                 case 52:
                     tmp3 = 14
                     tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(ch('0'), ch('3')), inrange(ch('5'), ch('9')), inrange(ch('A'), ch('Z')), ch('_'), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                    if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                         pos += 1
                         tmp1 = 33
-                    elif tmp2 == ch('4'):
+                    elif tmp2 == char('4'):
                         pos += 1
                         tmp1 = 3
                     else:
@@ -884,7 +884,7 @@ class Lexer(Object):
             case 14:
                 L._error(numEnd, string("invalid number suffix: \'") + L.buf.substr(numEnd, pos - 1) + string("\'"))
             case _:
-                if L.ch(pos) == ch('\''):
+                if L.ch(pos) == char('\''):
                     L._error(pos + 1, string("invalid number suffix"))
         L.pos = pos
         if kind == TokKind.tkCustomLit:
@@ -898,13 +898,13 @@ class Lexer(Object):
             toStrip = nint(0)
         if isDoc:
             toStrip = pos - L.lineStart
-            while L.ch(pos) == ch(' '):
+            while L.ch(pos) == char(' '):
                 pos += 1
                 toStrip += 1
-            while L.ch(pos) == ch('\r') or L.ch(pos) == ch('\n'):
+            while L.ch(pos) == char('\r') or L.ch(pos) == char('\n'):
                 pos = L._handleCRLF(pos)
                 toStrip = 0
-                while L.ch(pos) == ch(' '):
+                while L.ch(pos) == char(' '):
                     pos += 1
                     toStrip += 1
         with var:
@@ -912,37 +912,37 @@ class Lexer(Object):
         while True:
             with let:
                 c = L.ch(pos)
-            if c == ch('#'):
+            if c == char('#'):
                 if isDoc:
-                    if L.ch(pos + 1) == ch('#') and L.ch(pos + 2) == ch('['): nesting += 1
-                    tok.s.add(ch('#'))
-                elif L.ch(pos + 1) == ch('['):
+                    if L.ch(pos + 1) == char('#') and L.ch(pos + 2) == char('['): nesting += 1
+                    tok.s.add(char('#'))
+                elif L.ch(pos + 1) == char('['):
                     nesting += 1
                 pos += 1
-            elif c == ch(']'):
+            elif c == char(']'):
                 if isDoc:
-                    if L.ch(pos + 1) == ch('#') and L.ch(pos + 2) == ch('#'):
+                    if L.ch(pos + 1) == char('#') and L.ch(pos + 2) == char('#'):
                         if nesting == 0:
                             pos += 3
                             break
                         nesting -= 1
-                    tok.s.add(ch(']'))
-                elif L.ch(pos + 1) == ch('#'):
+                    tok.s.add(char(']'))
+                elif L.ch(pos + 1) == char('#'):
                     if nesting == 0:
                         pos += 2
                         break
                     nesting -= 1
                 pos += 1
-            elif c == ch('\r') or c == ch('\n'):
+            elif c == char('\r') or c == char('\n'):
                 pos = L._handleCRLF(pos)
                 if isDoc:
-                    tok.s.add(ch('\n'))
+                    tok.s.add(char('\n'))
                     with var:
                         n = copy(toStrip)
-                    while L.ch(pos) == ch(' ') and n > 0:
+                    while L.ch(pos) == char(' ') and n > 0:
                         pos += 1
                         n -= 1
-            elif c == ch('\x00'):
+            elif c == char('\x00'):
                 L._error(pos, string("end of multiline comment expected"))
                 break
             else:
@@ -957,7 +957,7 @@ class Lexer(Object):
         with var:
             pos = copy(L.pos)
         tok.kind = TokKind.tkComment
-        if L.ch(pos + 2) == ch('['):
+        if L.ch(pos + 2) == char('['):
             L._skipMultiLineComment(tok, pos + 3, True)
             return
         pos += 2
@@ -966,41 +966,41 @@ class Lexer(Object):
             stripInit = False
         while True:
             if not stripInit:
-                while L.ch(pos) == ch(' '):
+                while L.ch(pos) == char(' '):
                     pos += 1
                     toStrip += 1
-                if L.ch(pos) == ch('\r') or L.ch(pos) == ch('\n'): toStrip = 0
+                if L.ch(pos) == char('\r') or L.ch(pos) == char('\n'): toStrip = 0
                 else: stripInit = True
-            while L.ch(pos) != ch('\r') and L.ch(pos) != ch('\n') and L.ch(pos) != ch('\x00'):
+            while L.ch(pos) != char('\r') and L.ch(pos) != char('\n') and L.ch(pos) != char('\x00'):
                 tok.s.add(L.buf[pos])
                 pos += 1
-            if L.ch(pos) == ch('\x00'): break
+            if L.ch(pos) == char('\x00'): break
             pos = L._handleCRLF(pos)
             with var:
                 indent = nint(0)
-            while L.ch(pos) == ch(' '):
+            while L.ch(pos) == char(' '):
                 pos += 1
                 indent += 1
-            if L.ch(pos) == ch('#') and L.ch(pos + 1) == ch('#'):
-                tok.s.add(ch('\n'))
+            if L.ch(pos) == char('#') and L.ch(pos + 1) == char('#'):
+                tok.s.add(char('\n'))
                 pos += 2
                 if stripInit:
                     with var:
                         n = copy(toStrip)
-                    while L.ch(pos) == ch(' ') and n > 0:
+                    while L.ch(pos) == char(' ') and n > 0:
                         pos += 1
                         n -= 1
             else:
-                if L.ch(pos) > ch(' '): L.indentAhead = int32(indent)
+                if L.ch(pos) > char(' '): L.indentAhead = int32(indent)
                 break
         L.pos = pos
 
     def _handleHexChar(L: mut @ Lexer, xi: mut @ nint, position: Trange[0, 4]):
         with let:
             c = L.ch(L.pos)
-        if c >= ch('0') and c <= ch('9'): xi <<= (xi << 4) | (ord(c) - ord(ch('0')))
-        elif c >= ch('a') and c <= ch('f'): xi <<= (xi << 4) | (ord(c) - ord(ch('a')) + 10)
-        elif c >= ch('A') and c <= ch('F'): xi <<= (xi << 4) | (ord(c) - ord(ch('A')) + 10)
+        if c >= char('0') and c <= char('9'): xi <<= (xi << 4) | (ord(c) - ord(char('0')))
+        elif c >= char('a') and c <= char('f'): xi <<= (xi << 4) | (ord(c) - ord(char('a')) + 10)
+        elif c >= char('A') and c <= char('F'): xi <<= (xi << 4) | (ord(c) - ord(char('A')) + 10)
         else:
             if position <= 1: L._error(L.pos, string("expected a hex digit"))
             return
@@ -1027,39 +1027,39 @@ class Lexer(Object):
         while True:
             with let:
                 c = L.ch(pos)
-            if c == ch(' '):
+            if c == char(' '):
                 pos += 1
                 tok.spacing.incl(TokSpacing.tsLeading)
-            elif c == ch('\t'):
+            elif c == char('\t'):
                 L._error(pos, string("tabs are not allowed, use spaces instead"))
                 pos += 1
-            elif c == ch('\r') or c == ch('\n'):
+            elif c == char('\r') or c == char('\n'):
                 pos = L._handleCRLF(pos)
                 with var:
                     indent = nint(0)
                 while True:
-                    if L.ch(pos) == ch(' '):
+                    if L.ch(pos) == char(' '):
                         pos += 1
                         indent += 1
-                    elif L.ch(pos) == ch('#') and L.ch(pos + 1) == ch('['):
+                    elif L.ch(pos) == char('#') and L.ch(pos + 1) == char('['):
                         L.pos = pos
                         L._skipMultiLineComment(tok, pos + 2, False)
                         pos = L.pos.copy()
                     else:
                         break
                 tok.spacing.excl(TokSpacing.tsLeading)
-                if L.ch(pos) > ch(' ') and (L.ch(pos) != ch('#') or L.ch(pos + 1) == ch('#')):
+                if L.ch(pos) > char(' ') and (L.ch(pos) != char('#') or L.ch(pos + 1) == char('#')):
                     tok.indent = int32(indent)
                     L.currLineIndent = int32(indent)
                     break
-            elif c == ch('#'):
-                if L.ch(pos + 1) == ch('#'): break  # a doc comment is a token
-                if L.ch(pos + 1) == ch('['):
+            elif c == char('#'):
+                if L.ch(pos + 1) == char('#'): break  # a doc comment is a token
+                if L.ch(pos + 1) == char('['):
                     L.pos = pos
                     L._skipMultiLineComment(tok, pos + 2, False)
                     pos = L.pos.copy()
                 else:
-                    while L.ch(pos) != ch('\r') and L.ch(pos) != ch('\n') and L.ch(pos) != ch('\x00'):
+                    while L.ch(pos) != char('\r') and L.ch(pos) != char('\n') and L.ch(pos) != char('\x00'):
                         pos += 1
             else:
                 break  # end of file leaves the loop too
@@ -1070,13 +1070,13 @@ with const:
     KeywordLow = TokKind.tkAddr
     KeywordHigh = TokKind.tkYield
 
-    OpChars = Tset[char](ch('+'), ch('-'), ch('*'), ch('/'), ch('\\'), ch('<'), ch('>'), ch('!'), ch('?'), ch('^'), ch('.'), ch('|'), ch('='), ch('%'), ch('&'), ch('$'), ch('@'), ch('~'), ch(':'))
-    SymChars = Tset[char](inrange(ch('a'), ch('z')), inrange(ch('A'), ch('Z')), inrange(ch('0'), ch('9')), inrange(ch('\x80'), ch('\xff')))
-    SymStartChars = Tset[char](inrange(ch('a'), ch('z')), inrange(ch('A'), ch('Z')), inrange(ch('\x80'), ch('\xff')))
-    UnicodeOperatorStartChars = Tset[char](ch('\xc2'), ch('\xc3'), ch('\xe2'))
+    OpChars = Tset[char](char('+'), char('-'), char('*'), char('/'), char('\\'), char('<'), char('>'), char('!'), char('?'), char('^'), char('.'), char('|'), char('='), char('%'), char('&'), char('$'), char('@'), char('~'), char(':'))
+    SymChars = Tset[char](inrange(char('a'), char('z')), inrange(char('A'), char('Z')), inrange(char('0'), char('9')), inrange(char('\x80'), char('\xff')))
+    SymStartChars = Tset[char](inrange(char('a'), char('z')), inrange(char('A'), char('Z')), inrange(char('\x80'), char('\xff')))
+    UnicodeOperatorStartChars = Tset[char](char('\xc2'), char('\xc3'), char('\xe2'))
     ## `∙ ∘ × ★ ☆ ⊗ ⊘ ⊙ ⊛ ⊠ ⊡ ∩ ∧ ⊓ ⟑ ⟇ ⩓ ⩔ ■ □ ± ⊕ ⊖ ⊞ ⊟ ∪ ∨ ⊔` all start
     ## with one of these three bytes.
-    _UnaryMinusWhitelist = Tset[char](ch(' '), ch('\t'), ch('\n'), ch('\r'), ch(','), ch(';'), ch('('), ch('['), ch('{'))
+    _UnaryMinusWhitelist = Tset[char](char(' '), char('\t'), char('\n'), char('\r'), char(','), char(';'), char('('), char('['), char('{'))
 
     _MulPred = 9
     _PlusPred = 8
@@ -1100,7 +1100,7 @@ def _str(c: char) -> string:
 
 def _charAt(buf: string, i: nint) -> char:
     """{.inline.}"""
-    return buf[i] if i >= 0 and i < buf.len else ch('\x00')
+    return buf[i] if i >= 0 and i < buf.len else char('\x00')
 
 
 @ufcs(Lexer)
@@ -1126,8 +1126,8 @@ def nimIdentNormalize(s: string) -> string:
     while i < s.len:
         with let:
             c = s[i]
-        if c == ch('_'): pass
-        elif c >= ch('A') and c <= ch('Z'): result.add(chr(ord(c) - ord(ch('A')) + ord(ch('a'))))
+        if c == char('_'): pass
+        elif c >= char('A') and c <= char('Z'): result.add(chr(ord(c) - ord(char('A')) + ord(char('a'))))
         else: result.add(c)
         i += 1
     return result
@@ -1150,32 +1150,32 @@ def unicodeOprLen(buf: string, pos: nint) -> tuple[nint, _UnicodeOprPred]:
     ## reason this has to be consulted while scanning a symbol.
     result = (0, _UnicodeOprPred.uopNone)
     match _charAt(buf, pos):
-        case _ if _charAt(buf, pos) == ch('\xe2'):
+        case _ if _charAt(buf, pos) == char('\xe2'):
             with let:
                 b1 = _charAt(buf, pos + 1)
                 b2 = _charAt(buf, pos + 2)
-            if b1 == ch('\x88'):
-                if b2 == ch('\x98') or b2 == ch('\x99') or b2 == ch('\xa7') or b2 == ch('\xa9'):
+            if b1 == char('\x88'):
+                if b2 == char('\x98') or b2 == char('\x99') or b2 == char('\xa7') or b2 == char('\xa9'):
                     result = (3, _UnicodeOprPred.uopMul)  # ∘ ∙ ∧ ∩
-                elif b2 == ch('\xa8') or b2 == ch('\xaa'):
+                elif b2 == char('\xa8') or b2 == char('\xaa'):
                     result = (3, _UnicodeOprPred.uopAdd)  # ∨ ∪
-            elif b1 == ch('\x8a'):
-                if b2 == ch('\x93') or b2 == ch('\x97') or b2 == ch('\x98') or b2 == ch('\x99') or b2 == ch('\x9b') or b2 == ch('\xa0') or b2 == ch('\xa1'):
+            elif b1 == char('\x8a'):
+                if b2 == char('\x93') or b2 == char('\x97') or b2 == char('\x98') or b2 == char('\x99') or b2 == char('\x9b') or b2 == char('\xa0') or b2 == char('\xa1'):
                     result = (3, _UnicodeOprPred.uopMul)  # ⊓ ⊗ ⊘ ⊙ ⊛ ⊠ ⊡
-                elif b2 == ch('\x94') or b2 == ch('\x95') or b2 == ch('\x96') or b2 == ch('\x9e') or b2 == ch('\x9f'):
+                elif b2 == char('\x94') or b2 == char('\x95') or b2 == char('\x96') or b2 == char('\x9e') or b2 == char('\x9f'):
                     result = (3, _UnicodeOprPred.uopAdd)  # ⊔ ⊕ ⊖ ⊞ ⊟
-            elif b1 == ch('\x96'):
-                if b2 == ch('\xa0') or b2 == ch('\xa1'): result = (3, _UnicodeOprPred.uopMul)  # ■ □
-            elif b1 == ch('\x98'):
-                if b2 == ch('\x85') or b2 == ch('\x86'): result = (3, _UnicodeOprPred.uopMul)  # ★ ☆
-            elif b1 == ch('\x9f'):
-                if b2 == ch('\x87') or b2 == ch('\x91'): result = (3, _UnicodeOprPred.uopMul)  # ⟇ ⟑
-            elif b1 == ch('\xa9'):
-                if b2 == ch('\x93') or b2 == ch('\x94'): result = (3, _UnicodeOprPred.uopMul)  # ⩓ ⩔
-        case _ if _charAt(buf, pos) == ch('\xc2'):
-            if _charAt(buf, pos + 1) == ch('\xb1'): result = (2, _UnicodeOprPred.uopAdd)  # ±
-        case _ if _charAt(buf, pos) == ch('\xc3'):
-            if _charAt(buf, pos + 1) == ch('\x97'): result = (2, _UnicodeOprPred.uopMul)  # ×
+            elif b1 == char('\x96'):
+                if b2 == char('\xa0') or b2 == char('\xa1'): result = (3, _UnicodeOprPred.uopMul)  # ■ □
+            elif b1 == char('\x98'):
+                if b2 == char('\x85') or b2 == char('\x86'): result = (3, _UnicodeOprPred.uopMul)  # ★ ☆
+            elif b1 == char('\x9f'):
+                if b2 == char('\x87') or b2 == char('\x91'): result = (3, _UnicodeOprPred.uopMul)  # ⟇ ⟑
+            elif b1 == char('\xa9'):
+                if b2 == char('\x93') or b2 == char('\x94'): result = (3, _UnicodeOprPred.uopMul)  # ⩓ ⩔
+        case _ if _charAt(buf, pos) == char('\xc2'):
+            if _charAt(buf, pos + 1) == char('\xb1'): result = (2, _UnicodeOprPred.uopAdd)  # ±
+        case _ if _charAt(buf, pos) == char('\xc3'):
+            if _charAt(buf, pos + 1) == char('\x97'): result = (2, _UnicodeOprPred.uopMul)  # ×
         case _: pass
     return result
 
@@ -1196,20 +1196,20 @@ def getPrecedence(tok: Token) -> nint:
             if s.len == 0: return -10
             with let:
                 last = s[s.len - 1]
-            if s.len > 1 and last == ch('>') and (s[s.len - 2] == ch('-') or s[s.len - 2] == ch('~') or s[s.len - 2] == ch('=')):
+            if s.len > 1 and last == char('>') and (s[s.len - 2] == char('-') or s[s.len - 2] == char('~') or s[s.len - 2] == char('=')):
                 return 0  # arrow-like
             with let:
-                asgn = last == ch('=')
+                asgn = last == char('=')
             match s[0]:
-                case _ if s[0] == ch('$') or s[0] == ch('^'): result = (1 if asgn else 10)
-                case _ if s[0] == ch('*') or s[0] == ch('%') or s[0] == ch('/') or s[0] == ch('\\'): result = (1 if asgn else _MulPred)
-                case _ if s[0] == ch('~'): result = 8
-                case _ if s[0] == ch('+') or s[0] == ch('-') or s[0] == ch('|'): result = (1 if asgn else _PlusPred)
-                case _ if s[0] == ch('&'): result = (1 if asgn else 7)
-                case _ if s[0] == ch('=') or s[0] == ch('<') or s[0] == ch('>') or s[0] == ch('!'): result = 5
-                case _ if s[0] == ch('.'): result = (1 if asgn else 6)
-                case _ if s[0] == ch('?'): result = 2
-                case _ if s[0] == ch('\xc2') or s[0] == ch('\xc3') or s[0] == ch('\xe2'):
+                case _ if s[0] == char('$') or s[0] == char('^'): result = (1 if asgn else 10)
+                case _ if s[0] == char('*') or s[0] == char('%') or s[0] == char('/') or s[0] == char('\\'): result = (1 if asgn else _MulPred)
+                case _ if s[0] == char('~'): result = 8
+                case _ if s[0] == char('+') or s[0] == char('-') or s[0] == char('|'): result = (1 if asgn else _PlusPred)
+                case _ if s[0] == char('&'): result = (1 if asgn else 7)
+                case _ if s[0] == char('=') or s[0] == char('<') or s[0] == char('>') or s[0] == char('!'): result = 5
+                case _ if s[0] == char('.'): result = (1 if asgn else 6)
+                case _ if s[0] == char('?'): result = 2
+                case _ if s[0] == char('\xc2') or s[0] == char('\xc3') or s[0] == char('\xe2'):
                     if asgn:
                         result = 1
                     else:
@@ -1233,9 +1233,9 @@ def getPrecedence(tok: Token) -> nint:
 
 def _hexVal(c: char) -> nint:
     """{.inline.}"""
-    if c >= ch('0') and c <= ch('9'): return ord(c) - ord(ch('0'))
-    elif c >= ch('a') and c <= ch('f'): return ord(c) - ord(ch('a')) + 10
-    elif c >= ch('A') and c <= ch('F'): return ord(c) - ord(ch('A')) + 10
+    if c >= char('0') and c <= char('9'): return ord(c) - ord(char('0'))
+    elif c >= char('a') and c <= char('f'): return ord(c) - ord(char('a')) + 10
+    elif c >= char('A') and c <= char('F'): return ord(c) - ord(char('A')) + 10
     else: return 0
 
 
@@ -1258,7 +1258,7 @@ def _numberValue(L: mut @ Lexer, tok: mut @ Token, start: nint):
     with var:
         i = nint(0)
         negative = False
-    if i < tok.s.len and tok.s[i] == ch('-'):
+    if i < tok.s.len and tok.s[i] == char('-'):
         negative = True
         i += 1
     with var:
@@ -1268,7 +1268,7 @@ def _numberValue(L: mut @ Lexer, tok: mut @ Token, start: nint):
             shiftBy = 4 if tok.base == 16 else 3 if tok.base == 8 else 1
         i += 2  # past `0x` / `0o` / `0c` / `0b`
         while i < tok.s.len:
-            if tok.s[i] != ch('_'): xi = (xi << shiftBy) | uint64(_hexVal(tok.s[i]))
+            if tok.s[i] != char('_'): xi = (xi << shiftBy) | uint64(_hexVal(tok.s[i]))
             i += 1
         match tok.kind:
             case TokKind.tkInt8Lit: tok.iNumber = _signExtend(xi, 8)
@@ -1284,9 +1284,9 @@ def _numberValue(L: mut @ Lexer, tok: mut @ Token, start: nint):
         while i < tok.s.len:
             with let:
                 c = tok.s[i]
-            if c != ch('_'):
+            if c != char('_'):
                 with let:
-                    d = uint64(ord(c) - ord(ch('0')))
+                    d = uint64(ord(c) - ord(char('0')))
                 if xi > (u64(0xffffffffffffffff) - d) // u64(10): overflow = True
                 xi = xi * u64(10) + d
             i += 1
@@ -1332,8 +1332,8 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
         isFloat = False
     with block:
         with let:
-            d = start + 1 if L.ch(start) == ch('-') else start
-        if L.ch(d) == ch('0') and L.ch(d + 1) == ch('O'):
+            d = start + 1 if L.ch(start) == char('-') else start
+        if L.ch(d) == char('0') and L.ch(d + 1) == char('O'):
             L._error(d + 1, L._litNumText(d) + string(" is an invalid int literal; For octal literals use the '0o' prefix."))
     # plugexpand: `lex L.buf, pos:` (line 446), expanded
     with var:
@@ -1342,18 +1342,18 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
         tmp9 = copy(pos)
     while True:
         with var:
-            tmp7 = ch('\x00')
+            tmp7 = char('\x00')
         if pos < len(L.buf):
             tmp7 = L.buf[pos]
         match tmp6:
             case 1:
-                if tmp7 in Tset[char](inrange(ch('1'), ch('9'))):
+                if tmp7 in Tset[char](inrange(char('1'), char('9'))):
                     pos += 1
                     tmp6 = 13
-                elif tmp7 == ch('0'):
+                elif tmp7 == char('0'):
                     pos += 1
                     tmp6 = 7
-                elif tmp7 == ch('-'):
+                elif tmp7 == char('-'):
                     pos += 1
                     tmp6 = 19
                 else:
@@ -1361,10 +1361,10 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
             case 2:
                 tmp8 = 1
                 tmp9 = copy(pos)
-                if tmp7 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('F')), inrange(ch('a'), ch('f'))):
+                if tmp7 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('F')), inrange(char('a'), char('f'))):
                     pos += 1
                     tmp6 = 2
-                elif tmp7 == ch('_'):
+                elif tmp7 == char('_'):
                     pos += 1
                     tmp6 = 18
                 else:
@@ -1372,10 +1372,10 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
             case 3:
                 tmp8 = 2
                 tmp9 = copy(pos)
-                if tmp7 in Tset[char](inrange(ch('0'), ch('7'))):
+                if tmp7 in Tset[char](inrange(char('0'), char('7'))):
                     pos += 1
                     tmp6 = 3
-                elif tmp7 == ch('_'):
+                elif tmp7 == char('_'):
                     pos += 1
                     tmp6 = 17
                 else:
@@ -1383,10 +1383,10 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
             case 4:
                 tmp8 = 3
                 tmp9 = copy(pos)
-                if tmp7 in Tset[char](ch('0'), ch('1')):
+                if tmp7 in Tset[char](char('0'), char('1')):
                     pos += 1
                     tmp6 = 4
-                elif tmp7 == ch('_'):
+                elif tmp7 == char('_'):
                     pos += 1
                     tmp6 = 16
                 else:
@@ -1394,10 +1394,10 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
             case 5:
                 tmp8 = 4
                 tmp9 = copy(pos)
-                if tmp7 in Tset[char](inrange(ch('0'), ch('9'))):
+                if tmp7 in Tset[char](inrange(char('0'), char('9'))):
                     pos += 1
                     tmp6 = 5
-                elif tmp7 == ch('_'):
+                elif tmp7 == char('_'):
                     pos += 1
                     tmp6 = 15
                 else:
@@ -1405,13 +1405,13 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
             case 6:
                 tmp8 = 5
                 tmp9 = copy(pos)
-                if tmp7 in Tset[char](inrange(ch('0'), ch('9'))):
+                if tmp7 in Tset[char](inrange(char('0'), char('9'))):
                     pos += 1
                     tmp6 = 6
-                elif tmp7 in Tset[char](ch('E'), ch('e')):
+                elif tmp7 in Tset[char](char('E'), char('e')):
                     pos += 1
                     tmp6 = 8
-                elif tmp7 == ch('_'):
+                elif tmp7 == char('_'):
                     pos += 1
                     tmp6 = 9
                 else:
@@ -1419,40 +1419,40 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
             case 7:
                 tmp8 = 6
                 tmp9 = copy(pos)
-                if tmp7 in Tset[char](ch('E'), ch('e')):
+                if tmp7 in Tset[char](char('E'), char('e')):
                     pos += 1
                     tmp6 = 8
-                elif tmp7 in Tset[char](ch('B'), ch('b')):
+                elif tmp7 in Tset[char](char('B'), char('b')):
                     pos += 1
                     tmp6 = 10
-                elif tmp7 in Tset[char](ch('C'), ch('c'), ch('o')):
+                elif tmp7 in Tset[char](char('C'), char('c'), char('o')):
                     pos += 1
                     tmp6 = 11
-                elif tmp7 in Tset[char](ch('X'), ch('x')):
+                elif tmp7 in Tset[char](char('X'), char('x')):
                     pos += 1
                     tmp6 = 12
-                elif tmp7 in Tset[char](inrange(ch('0'), ch('9'))):
+                elif tmp7 in Tset[char](inrange(char('0'), char('9'))):
                     pos += 1
                     tmp6 = 13
-                elif tmp7 == ch('.'):
+                elif tmp7 == char('.'):
                     pos += 1
                     tmp6 = 9
-                elif tmp7 == ch('_'):
+                elif tmp7 == char('_'):
                     pos += 1
                     tmp6 = 14
                 else:
                     break
             case 8:
-                if tmp7 in Tset[char](inrange(ch('0'), ch('9'))):
+                if tmp7 in Tset[char](inrange(char('0'), char('9'))):
                     pos += 1
                     tmp6 = 5
-                elif tmp7 in Tset[char](ch('+'), ch('-')):
+                elif tmp7 in Tset[char](char('+'), char('-')):
                     pos += 1
                     tmp6 = 15
                 else:
                     break
             case 9:
-                if tmp7 in Tset[char](inrange(ch('0'), ch('9'))):
+                if tmp7 in Tset[char](inrange(char('0'), char('9'))):
                     pos += 1
                     tmp6 = 6
                 else:
@@ -1460,7 +1460,7 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
             case 10:
                 tmp8 = 3
                 tmp9 = copy(pos)
-                if tmp7 in Tset[char](ch('0'), ch('1')):
+                if tmp7 in Tset[char](char('0'), char('1')):
                     pos += 1
                     tmp6 = 4
                 else:
@@ -1468,7 +1468,7 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
             case 11:
                 tmp8 = 2
                 tmp9 = copy(pos)
-                if tmp7 in Tset[char](inrange(ch('0'), ch('7'))):
+                if tmp7 in Tset[char](inrange(char('0'), char('7'))):
                     pos += 1
                     tmp6 = 3
                 else:
@@ -1476,7 +1476,7 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
             case 12:
                 tmp8 = 1
                 tmp9 = copy(pos)
-                if tmp7 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('F')), inrange(ch('a'), ch('f'))):
+                if tmp7 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('F')), inrange(char('a'), char('f'))):
                     pos += 1
                     tmp6 = 2
                 else:
@@ -1484,55 +1484,55 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
             case 13:
                 tmp8 = 6
                 tmp9 = copy(pos)
-                if tmp7 in Tset[char](ch('E'), ch('e')):
+                if tmp7 in Tset[char](char('E'), char('e')):
                     pos += 1
                     tmp6 = 8
-                elif tmp7 in Tset[char](inrange(ch('0'), ch('9'))):
+                elif tmp7 in Tset[char](inrange(char('0'), char('9'))):
                     pos += 1
                     tmp6 = 13
-                elif tmp7 == ch('.'):
+                elif tmp7 == char('.'):
                     pos += 1
                     tmp6 = 9
-                elif tmp7 == ch('_'):
+                elif tmp7 == char('_'):
                     pos += 1
                     tmp6 = 14
                 else:
                     break
             case 14:
-                if tmp7 in Tset[char](inrange(ch('0'), ch('9'))):
+                if tmp7 in Tset[char](inrange(char('0'), char('9'))):
                     pos += 1
                     tmp6 = 13
                 else:
                     break
             case 15:
-                if tmp7 in Tset[char](inrange(ch('0'), ch('9'))):
+                if tmp7 in Tset[char](inrange(char('0'), char('9'))):
                     pos += 1
                     tmp6 = 5
                 else:
                     break
             case 16:
-                if tmp7 in Tset[char](ch('0'), ch('1')):
+                if tmp7 in Tset[char](char('0'), char('1')):
                     pos += 1
                     tmp6 = 4
                 else:
                     break
             case 17:
-                if tmp7 in Tset[char](inrange(ch('0'), ch('7'))):
+                if tmp7 in Tset[char](inrange(char('0'), char('7'))):
                     pos += 1
                     tmp6 = 3
                 else:
                     break
             case 18:
-                if tmp7 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('F')), inrange(ch('a'), ch('f'))):
+                if tmp7 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('F')), inrange(char('a'), char('f'))):
                     pos += 1
                     tmp6 = 2
                 else:
                     break
             case 19:
-                if tmp7 in Tset[char](inrange(ch('1'), ch('9'))):
+                if tmp7 in Tset[char](inrange(char('1'), char('9'))):
                     pos += 1
                     tmp6 = 13
-                elif tmp7 == ch('0'):
+                elif tmp7 == char('0'):
                     pos += 1
                     tmp6 = 7
                 else:
@@ -1561,13 +1561,13 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
     L.pos = pos
     tok.base = base
     with let:
-        digits = start + 1 if L.buf[start] == ch('-') else start
+        digits = start + 1 if L.buf[start] == char('-') else start
     if base != 10 and pos - digits <= 2:
         L._error(pos, string("invalid number: '") + L._litNumText(digits) + string("'"))
     L._numberSuffix(tok, start, isFloat)
     tok._normalizeBasePrefix()
     _numberValue(L, tok, digits)
-    if L.ch(L.pos) in SymChars + Tset[char](ch('_')) and unicodeOprLen(L.buf, L.pos)[0] == 0:
+    if L.ch(L.pos) in SymChars + Tset[char](char('_')) and unicodeOprLen(L.buf, L.pos)[0] == 0:
         L._error(L.pos, string("invalid token: no whitespace between number and identifier"))
 
 
@@ -1584,12 +1584,12 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
         tmp14 = copy(pos)
     while True:
         with var:
-            tmp12 = ch('\x00')
+            tmp12 = char('\x00')
         if pos < len(s):
             tmp12 = s[pos]
         match tmp11:
             case 1:
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
                 else:
@@ -1597,10 +1597,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 2:
                 tmp13 = 1
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1608,10 +1608,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 3:
                 tmp13 = 2
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1619,13 +1619,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 4:
                 tmp13 = 3
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('l')), inrange(ch('n'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('l')), inrange(char('n'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('m'):
+                elif tmp12 == char('m'):
                     pos += 1
                     tmp11 = 5
                 else:
@@ -1633,10 +1633,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 5:
                 tmp13 = 4
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1644,10 +1644,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 6:
                 tmp13 = 5
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1655,10 +1655,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 7:
                 tmp13 = 6
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1666,10 +1666,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 8:
                 tmp13 = 7
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1677,10 +1677,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 9:
                 tmp13 = 8
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1688,10 +1688,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 10:
                 tmp13 = 9
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1699,10 +1699,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 11:
                 tmp13 = 10
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1710,10 +1710,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 12:
                 tmp13 = 11
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1721,10 +1721,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 13:
                 tmp13 = 12
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1732,10 +1732,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 14:
                 tmp13 = 13
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1743,10 +1743,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 15:
                 tmp13 = 14
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1754,10 +1754,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 16:
                 tmp13 = 15
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1765,10 +1765,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 17:
                 tmp13 = 16
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1776,10 +1776,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 18:
                 tmp13 = 17
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1787,10 +1787,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 19:
                 tmp13 = 18
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1798,10 +1798,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 20:
                 tmp13 = 19
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1809,10 +1809,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 21:
                 tmp13 = 20
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1820,10 +1820,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 22:
                 tmp13 = 21
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1831,10 +1831,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 23:
                 tmp13 = 22
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1842,10 +1842,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 24:
                 tmp13 = 23
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1853,10 +1853,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 25:
                 tmp13 = 24
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1864,10 +1864,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 26:
                 tmp13 = 25
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1875,10 +1875,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 27:
                 tmp13 = 26
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1886,10 +1886,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 28:
                 tmp13 = 27
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1897,10 +1897,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 29:
                 tmp13 = 28
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1908,10 +1908,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 30:
                 tmp13 = 29
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1919,10 +1919,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 31:
                 tmp13 = 30
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1930,16 +1930,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 32:
                 tmp13 = 31
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('a'), ch('b'), inrange(ch('d'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('a'), char('b'), inrange(char('d'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('c'):
+                elif tmp12 == char('c'):
                     pos += 1
                     tmp11 = 176
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 180
                 else:
@@ -1947,10 +1947,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 33:
                 tmp13 = 32
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1958,10 +1958,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 34:
                 tmp13 = 33
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1969,13 +1969,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 35:
                 tmp13 = 34
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('m')), inrange(ch('o'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('m')), inrange(char('o'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 152
                 else:
@@ -1983,10 +1983,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 36:
                 tmp13 = 35
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -1994,10 +1994,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 37:
                 tmp13 = 36
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2005,10 +2005,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 38:
                 tmp13 = 37
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2016,10 +2016,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 39:
                 tmp13 = 38
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2027,10 +2027,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 40:
                 tmp13 = 39
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2038,10 +2038,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 41:
                 tmp13 = 40
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2049,10 +2049,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 42:
                 tmp13 = 41
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2060,10 +2060,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 43:
                 tmp13 = 42
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2071,13 +2071,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 44:
                 tmp13 = 43
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('h')), inrange(ch('j'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('h')), inrange(char('j'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 199
                 else:
@@ -2085,10 +2085,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 45:
                 tmp13 = 44
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2096,10 +2096,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 46:
                 tmp13 = 45
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2107,10 +2107,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 47:
                 tmp13 = 46
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2118,10 +2118,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 48:
                 tmp13 = 47
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2129,10 +2129,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 49:
                 tmp13 = 48
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2140,10 +2140,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 50:
                 tmp13 = 49
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2151,10 +2151,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 51:
                 tmp13 = 50
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2162,10 +2162,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 52:
                 tmp13 = 51
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2173,10 +2173,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 53:
                 tmp13 = 52
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2184,10 +2184,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 54:
                 tmp13 = 53
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2195,10 +2195,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 55:
                 tmp13 = 54
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2206,10 +2206,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 56:
                 tmp13 = 55
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2217,10 +2217,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 57:
                 tmp13 = 56
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2228,10 +2228,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 58:
                 tmp13 = 57
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2239,10 +2239,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 59:
                 tmp13 = 58
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2250,10 +2250,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 60:
                 tmp13 = 59
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2261,10 +2261,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 61:
                 tmp13 = 60
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2272,10 +2272,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 62:
                 tmp13 = 61
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2283,10 +2283,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 63:
                 tmp13 = 62
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2294,10 +2294,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 64:
                 tmp13 = 63
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2305,10 +2305,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 65:
                 tmp13 = 64
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2316,10 +2316,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 66:
                 tmp13 = 65
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2327,10 +2327,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 67:
                 tmp13 = 66
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -2338,79 +2338,79 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 68:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('k')), inrange(ch('m'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('k')), inrange(char('m'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('l'):
+                elif tmp12 == char('l'):
                     pos += 1
                     tmp11 = 196
                 else:
                     break
             case 69:
-                if tmp12 in Tset[char](inrange(ch('A'), ch('Z')), ch('g'), ch('h'), ch('j'), ch('k'), ch('q'), ch('z'), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('A'), char('Z')), char('g'), char('h'), char('j'), char('k'), char('q'), char('z'), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 78
-                elif tmp12 == ch('d'):
+                elif tmp12 == char('d'):
                     pos += 1
                     tmp11 = 80
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 82
-                elif tmp12 == ch('a'):
+                elif tmp12 == char('a'):
                     pos += 1
                     tmp11 = 84
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 89
-                elif tmp12 == ch('f'):
+                elif tmp12 == char('f'):
                     pos += 1
                     tmp11 = 93
-                elif tmp12 == ch('m'):
+                elif tmp12 == char('m'):
                     pos += 1
                     tmp11 = 97
-                elif tmp12 == ch('l'):
+                elif tmp12 == char('l'):
                     pos += 1
                     tmp11 = 99
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 100
-                elif tmp12 == ch('c'):
+                elif tmp12 == char('c'):
                     pos += 1
                     tmp11 = 105
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 108
-                elif tmp12 == ch('v'):
+                elif tmp12 == char('v'):
                     pos += 1
                     tmp11 = 117
-                elif tmp12 == ch('x'):
+                elif tmp12 == char('x'):
                     pos += 1
                     tmp11 = 120
-                elif tmp12 == ch('p'):
+                elif tmp12 == char('p'):
                     pos += 1
                     tmp11 = 121
-                elif tmp12 == ch('s'):
+                elif tmp12 == char('s'):
                     pos += 1
                     tmp11 = 130
-                elif tmp12 == ch('w'):
+                elif tmp12 == char('w'):
                     pos += 1
                     tmp11 = 138
-                elif tmp12 == ch('b'):
+                elif tmp12 == char('b'):
                     pos += 1
                     tmp11 = 148
-                elif tmp12 == ch('y'):
+                elif tmp12 == char('y'):
                     pos += 1
                     tmp11 = 150
-                elif tmp12 == ch('u'):
+                elif tmp12 == char('u'):
                     pos += 1
                     tmp11 = 158
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 159
                 else:
@@ -2418,13 +2418,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 70:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('a'), ch('b'), inrange(ch('d'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('a'), char('b'), inrange(char('d'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('c'):
+                elif tmp12 == char('c'):
                     pos += 1
                     tmp11 = 57
                 else:
@@ -2432,16 +2432,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 71:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('c')), inrange(ch('e'), ch('t')), inrange(ch('v'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('c')), inrange(char('e'), char('t')), inrange(char('v'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('d'):
+                elif tmp12 == char('d'):
                     pos += 1
                     tmp11 = 22
-                elif tmp12 == ch('u'):
+                elif tmp12 == char('u'):
                     pos += 1
                     tmp11 = 218
                 else:
@@ -2449,13 +2449,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 72:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 65
                 else:
@@ -2463,16 +2463,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 73:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('e')), inrange(ch('g'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('e')), inrange(char('g'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('f'):
+                elif tmp12 == char('f'):
                     pos += 1
                     tmp11 = 53
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 134
                 else:
@@ -2480,13 +2480,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 74:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('f')), inrange(ch('h'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('f')), inrange(char('h'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('g'):
+                elif tmp12 == char('g'):
                     pos += 1
                     tmp11 = 62
                 else:
@@ -2494,13 +2494,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 75:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('j')), inrange(ch('l'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('j')), inrange(char('l'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('k'):
+                elif tmp12 == char('k'):
                     pos += 1
                     tmp11 = 8
                 else:
@@ -2508,13 +2508,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 76:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('k')), inrange(ch('m'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('k')), inrange(char('m'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('l'):
+                elif tmp12 == char('l'):
                     pos += 1
                     tmp11 = 43
                 else:
@@ -2522,13 +2522,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 77:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('l')), inrange(ch('n'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('l')), inrange(char('n'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('m'):
+                elif tmp12 == char('m'):
                     pos += 1
                     tmp11 = 28
                 else:
@@ -2536,25 +2536,25 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 78:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('e')), inrange(ch('g'), ch('l')), inrange(ch('o'), ch('r')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('e')), inrange(char('g'), char('l')), inrange(char('o'), char('r')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('f'):
+                elif tmp12 == char('f'):
                     pos += 1
                     tmp11 = 30
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 32
-                elif tmp12 == ch('s'):
+                elif tmp12 == char('s'):
                     pos += 1
                     tmp11 = 35
-                elif tmp12 == ch('m'):
+                elif tmp12 == char('m'):
                     pos += 1
                     tmp11 = 111
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 125
                 else:
@@ -2562,13 +2562,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 79:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('m')), inrange(ch('o'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('m')), inrange(char('o'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 64
                 else:
@@ -2576,19 +2576,19 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 80:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('h')), inrange(ch('j'), ch('n')), inrange(ch('p'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('h')), inrange(char('j'), char('n')), inrange(char('p'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 19
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 87
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 126
                 else:
@@ -2596,16 +2596,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 81:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('k')), inrange(ch('m'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('k')), inrange(char('m'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('l'):
+                elif tmp12 == char('l'):
                     pos += 1
                     tmp11 = 55
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 56
                 else:
@@ -2613,22 +2613,22 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 82:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('a'), inrange(ch('c'), ch('e')), inrange(ch('g'), ch('q')), ch('s'), ch('t'), inrange(ch('v'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('a'), inrange(char('c'), char('e')), inrange(char('g'), char('q')), char('s'), char('t'), inrange(char('v'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('f'):
+                elif tmp12 == char('f'):
                     pos += 1
                     tmp11 = 47
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 48
-                elif tmp12 == ch('u'):
+                elif tmp12 == char('u'):
                     pos += 1
                     tmp11 = 86
-                elif tmp12 == ch('b'):
+                elif tmp12 == char('b'):
                     pos += 1
                     tmp11 = 115
                 else:
@@ -2636,13 +2636,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 83:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 66
                 else:
@@ -2650,19 +2650,19 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 84:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('c')), inrange(ch('e'), ch('m')), inrange(ch('o'), ch('r')), inrange(ch('t'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('c')), inrange(char('e'), char('m')), inrange(char('o'), char('r')), inrange(char('t'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('s'):
+                elif tmp12 == char('s'):
                     pos += 1
                     tmp11 = 4
-                elif tmp12 == ch('d'):
+                elif tmp12 == char('d'):
                     pos += 1
                     tmp11 = 118
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 232
                 else:
@@ -2670,16 +2670,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 85:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 9
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 10
                 else:
@@ -2687,13 +2687,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 86:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 49
                 else:
@@ -2701,16 +2701,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 87:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('r')), ch('t'), ch('u'), inrange(ch('w'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('r')), char('t'), char('u'), inrange(char('w'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('v'):
+                elif tmp12 == char('v'):
                     pos += 1
                     tmp11 = 18
-                elif tmp12 == ch('s'):
+                elif tmp12 == char('s'):
                     pos += 1
                     tmp11 = 114
                 else:
@@ -2718,13 +2718,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 88:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('x')), ch('z'), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('x')), char('z'), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('y'):
+                elif tmp12 == char('y'):
                     pos += 1
                     tmp11 = 59
                 else:
@@ -2732,22 +2732,22 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 89:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('q')), ch('s'), ch('t'), inrange(ch('v'), ch('x')), ch('z'), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('q')), char('s'), char('t'), inrange(char('v'), char('x')), char('z'), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 88
-                elif tmp12 == ch('y'):
+                elif tmp12 == char('y'):
                     pos += 1
                     tmp11 = 163
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 172
-                elif tmp12 == ch('u'):
+                elif tmp12 == char('u'):
                     pos += 1
                     tmp11 = 174
                 else:
@@ -2755,13 +2755,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 90:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('k')), inrange(ch('m'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('k')), inrange(char('m'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('l'):
+                elif tmp12 == char('l'):
                     pos += 1
                     tmp11 = 68
                 else:
@@ -2769,13 +2769,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 91:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('b'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('b'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('a'):
+                elif tmp12 == char('a'):
                     pos += 1
                     tmp11 = 90
                 else:
@@ -2783,13 +2783,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 92:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('m')), inrange(ch('o'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('m')), inrange(char('o'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 91
                 else:
@@ -2797,22 +2797,22 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 93:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('h')), inrange(ch('j'), ch('n')), ch('p'), ch('q'), ch('s'), ch('t'), inrange(ch('v'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('h')), inrange(char('j'), char('n')), char('p'), char('q'), char('s'), char('t'), inrange(char('v'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 92
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 139
-                elif tmp12 == ch('u'):
+                elif tmp12 == char('u'):
                     pos += 1
                     tmp11 = 182
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 211
                 else:
@@ -2820,13 +2820,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 94:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 95
                 else:
@@ -2834,13 +2834,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 95:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('n')), inrange(ch('p'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('n')), inrange(char('p'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 39
                 else:
@@ -2848,13 +2848,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 96:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('a'), ch('b'), inrange(ch('d'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('a'), char('b'), inrange(char('d'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('c'):
+                elif tmp12 == char('c'):
                     pos += 1
                     tmp11 = 94
                 else:
@@ -2862,22 +2862,22 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 97:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('b'), ch('d')), inrange(ch('f'), ch('h')), inrange(ch('j'), ch('n')), inrange(ch('p'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('b'), char('d')), inrange(char('f'), char('h')), inrange(char('j'), char('n')), inrange(char('p'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('a'):
+                elif tmp12 == char('a'):
                     pos += 1
                     tmp11 = 96
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 137
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 147
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 187
                 else:
@@ -2885,13 +2885,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 98:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('a'), ch('b'), inrange(ch('d'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('a'), char('b'), inrange(char('d'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('c'):
+                elif tmp12 == char('c'):
                     pos += 1
                     tmp11 = 203
                 else:
@@ -2899,13 +2899,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 99:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 207
                 else:
@@ -2913,16 +2913,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 100:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('h')), inrange(ch('j'), ch('n')), inrange(ch('p'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('h')), inrange(char('j'), char('n')), inrange(char('p'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 76
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 204
                 else:
@@ -2930,13 +2930,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 101:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('o')), inrange(ch('q'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('o')), inrange(char('q'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('p'):
+                elif tmp12 == char('p'):
                     pos += 1
                     tmp11 = 220
                 else:
@@ -2944,13 +2944,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 102:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 212
                 else:
@@ -2958,22 +2958,22 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 103:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('a'), ch('b'), inrange(ch('d'), ch('r')), ch('u'), inrange(ch('w'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('a'), char('b'), inrange(char('d'), char('r')), char('u'), inrange(char('w'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('v'):
+                elif tmp12 == char('v'):
                     pos += 1
                     tmp11 = 129
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 168
-                elif tmp12 == ch('c'):
+                elif tmp12 == char('c'):
                     pos += 1
                     tmp11 = 223
-                elif tmp12 == ch('s'):
+                elif tmp12 == char('s'):
                     pos += 1
                     tmp11 = 225
                 else:
@@ -2981,13 +2981,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 104:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('m')), inrange(ch('o'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('m')), inrange(char('o'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 103
                 else:
@@ -2995,16 +2995,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 105:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('b'), ch('n')), inrange(ch('p'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('b'), char('n')), inrange(char('p'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 104
-                elif tmp12 == ch('a'):
+                elif tmp12 == char('a'):
                     pos += 1
                     tmp11 = 116
                 else:
@@ -3012,13 +3012,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 106:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('n')), inrange(ch('p'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('n')), inrange(char('p'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 102
                 else:
@@ -3026,16 +3026,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 107:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('a'), ch('b'), inrange(ch('d'), ch('o')), inrange(ch('q'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('a'), char('b'), inrange(char('d'), char('o')), inrange(char('q'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('c'):
+                elif tmp12 == char('c'):
                     pos += 1
                     tmp11 = 109
-                elif tmp12 == ch('p'):
+                elif tmp12 == char('p'):
                     pos += 1
                     tmp11 = 217
                 else:
@@ -3043,19 +3043,19 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 108:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('k')), ch('m'), inrange(ch('o'), ch('w')), ch('y'), ch('z'), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('k')), char('m'), inrange(char('o'), char('w')), char('y'), char('z'), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 71
-                elif tmp12 == ch('x'):
+                elif tmp12 == char('x'):
                     pos += 1
                     tmp11 = 107
-                elif tmp12 == ch('l'):
+                elif tmp12 == char('l'):
                     pos += 1
                     tmp11 = 135
                 else:
@@ -3063,13 +3063,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 109:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 101
                 else:
@@ -3077,13 +3077,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 110:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 98
                 else:
@@ -3091,13 +3091,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 111:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('o')), inrange(ch('q'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('o')), inrange(char('q'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('p'):
+                elif tmp12 == char('p'):
                     pos += 1
                     tmp11 = 106
                 else:
@@ -3105,13 +3105,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 112:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('m')), inrange(ch('o'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('m')), inrange(char('o'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 205
                 else:
@@ -3119,13 +3119,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 113:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('h')), inrange(ch('j'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('h')), inrange(char('j'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 112
                 else:
@@ -3133,16 +3133,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 114:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('a'), ch('b'), inrange(ch('d'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('a'), char('b'), inrange(char('d'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 113
-                elif tmp12 == ch('c'):
+                elif tmp12 == char('c'):
                     pos += 1
                     tmp11 = 145
                 else:
@@ -3150,13 +3150,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 115:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('i')), inrange(ch('k'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('i')), inrange(char('k'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('j'):
+                elif tmp12 == char('j'):
                     pos += 1
                     tmp11 = 110
                 else:
@@ -3164,13 +3164,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 116:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('r')), inrange(ch('t'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('r')), inrange(char('t'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('s'):
+                elif tmp12 == char('s'):
                     pos += 1
                     tmp11 = 85
                 else:
@@ -3178,13 +3178,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 117:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('b'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('b'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('a'):
+                elif tmp12 == char('a'):
                     pos += 1
                     tmp11 = 188
                 else:
@@ -3192,13 +3192,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 118:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('c')), inrange(ch('e'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('c')), inrange(char('e'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('d'):
+                elif tmp12 == char('d'):
                     pos += 1
                     tmp11 = 229
                 else:
@@ -3206,13 +3206,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 119:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 219
                 else:
@@ -3220,13 +3220,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 120:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('n')), inrange(ch('p'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('n')), inrange(char('p'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 83
                 else:
@@ -3234,16 +3234,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 121:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), ch('s'), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), char('s'), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 183
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 193
                 else:
@@ -3251,13 +3251,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 122:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 189
                 else:
@@ -3265,13 +3265,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 123:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('b'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('b'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('a'):
+                elif tmp12 == char('a'):
                     pos += 1
                     tmp11 = 122
                 else:
@@ -3279,13 +3279,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 124:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 123
                 else:
@@ -3293,13 +3293,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 125:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 124
                 else:
@@ -3307,13 +3307,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 126:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('e')), inrange(ch('g'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('e')), inrange(char('g'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('f'):
+                elif tmp12 == char('f'):
                     pos += 1
                     tmp11 = 119
                 else:
@@ -3321,13 +3321,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 127:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 228
                 else:
@@ -3335,13 +3335,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 128:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 127
                 else:
@@ -3349,13 +3349,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 129:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 128
                 else:
@@ -3363,16 +3363,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 130:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('g')), inrange(ch('i'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('g')), inrange(char('i'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('h'):
+                elif tmp12 == char('h'):
                     pos += 1
                     tmp11 = 81
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 185
                 else:
@@ -3380,16 +3380,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 131:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('h')), inrange(ch('j'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('h')), inrange(char('j'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 79
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 162
                 else:
@@ -3397,13 +3397,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 132:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('h')), inrange(ch('j'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('h')), inrange(char('j'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 206
                 else:
@@ -3411,13 +3411,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 133:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 192
                 else:
@@ -3425,13 +3425,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 134:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('t')), inrange(ch('v'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('t')), inrange(char('v'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('u'):
+                elif tmp12 == char('u'):
                     pos += 1
                     tmp11 = 133
                 else:
@@ -3439,16 +3439,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 135:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('h')), inrange(ch('j'), ch('r')), inrange(ch('t'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('h')), inrange(char('j'), char('r')), inrange(char('t'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 136
-                elif tmp12 == ch('s'):
+                elif tmp12 == char('s'):
                     pos += 1
                     tmp11 = 214
                 else:
@@ -3456,13 +3456,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 136:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('e')), inrange(ch('g'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('e')), inrange(char('g'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('f'):
+                elif tmp12 == char('f'):
                     pos += 1
                     tmp11 = 20
                 else:
@@ -3470,13 +3470,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 137:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('w')), ch('y'), ch('z'), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('w')), char('y'), char('z'), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('x'):
+                elif tmp12 == char('x'):
                     pos += 1
                     tmp11 = 132
                 else:
@@ -3484,13 +3484,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 138:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('g')), inrange(ch('i'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('g')), inrange(char('i'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('h'):
+                elif tmp12 == char('h'):
                     pos += 1
                     tmp11 = 131
                 else:
@@ -3498,13 +3498,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 139:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('n')), inrange(ch('p'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('n')), inrange(char('p'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 77
                 else:
@@ -3512,13 +3512,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 140:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('k')), inrange(ch('m'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('k')), inrange(char('m'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('l'):
+                elif tmp12 == char('l'):
                     pos += 1
                     tmp11 = 141
                 else:
@@ -3526,13 +3526,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 141:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('c')), inrange(ch('e'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('c')), inrange(char('e'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('d'):
+                elif tmp12 == char('d'):
                     pos += 1
                     tmp11 = 67
                 else:
@@ -3540,13 +3540,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 142:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('m')), inrange(ch('o'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('m')), inrange(char('o'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 226
                 else:
@@ -3554,13 +3554,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 143:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('n')), inrange(ch('p'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('n')), inrange(char('p'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 208
                 else:
@@ -3568,13 +3568,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 144:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 209
                 else:
@@ -3582,13 +3582,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 145:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('b'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('b'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('a'):
+                elif tmp12 == char('a'):
                     pos += 1
                     tmp11 = 144
                 else:
@@ -3596,13 +3596,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 146:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('g')), inrange(ch('i'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('g')), inrange(char('i'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('h'):
+                elif tmp12 == char('h'):
                     pos += 1
                     tmp11 = 143
                 else:
@@ -3610,13 +3610,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 147:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 146
                 else:
@@ -3624,19 +3624,19 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 148:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('h')), ch('j'), ch('k'), inrange(ch('m'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('h')), char('j'), char('k'), inrange(char('m'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 142
-                elif tmp12 == ch('l'):
+                elif tmp12 == char('l'):
                     pos += 1
                     tmp11 = 154
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 155
                 else:
@@ -3644,13 +3644,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 149:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 140
                 else:
@@ -3658,13 +3658,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 150:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('h')), inrange(ch('j'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('h')), inrange(char('j'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 149
                 else:
@@ -3672,13 +3672,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 151:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('b'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('b'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('a'):
+                elif tmp12 == char('a'):
                     pos += 1
                     tmp11 = 75
                 else:
@@ -3686,13 +3686,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 152:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('n')), inrange(ch('p'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('n')), inrange(char('p'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 210
                 else:
@@ -3700,13 +3700,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 153:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('a'), ch('b'), inrange(ch('d'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('a'), char('b'), inrange(char('d'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('c'):
+                elif tmp12 == char('c'):
                     pos += 1
                     tmp11 = 231
                 else:
@@ -3714,13 +3714,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 154:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('n')), inrange(ch('p'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('n')), inrange(char('p'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 153
                 else:
@@ -3728,13 +3728,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 155:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 151
                 else:
@@ -3742,13 +3742,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 156:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('m')), inrange(ch('o'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('m')), inrange(char('o'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 74
                 else:
@@ -3756,13 +3756,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 157:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('h')), inrange(ch('j'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('h')), inrange(char('j'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 156
                 else:
@@ -3770,13 +3770,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 158:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('r')), inrange(ch('t'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('r')), inrange(char('t'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('s'):
+                elif tmp12 == char('s'):
                     pos += 1
                     tmp11 = 157
                 else:
@@ -3784,16 +3784,16 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 159:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('b'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('b'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 73
-                elif tmp12 == ch('a'):
+                elif tmp12 == char('a'):
                     pos += 1
                     tmp11 = 173
                 else:
@@ -3801,13 +3801,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 160:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('a'), ch('b'), inrange(ch('d'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('a'), char('b'), inrange(char('d'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('c'):
+                elif tmp12 == char('c'):
                     pos += 1
                     tmp11 = 200
                 else:
@@ -3815,13 +3815,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 161:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('c')), inrange(ch('e'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('c')), inrange(char('e'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('d'):
+                elif tmp12 == char('d'):
                     pos += 1
                     tmp11 = 213
                 else:
@@ -3829,13 +3829,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 162:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('k')), inrange(ch('m'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('k')), inrange(char('m'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('l'):
+                elif tmp12 == char('l'):
                     pos += 1
                     tmp11 = 72
                 else:
@@ -3843,13 +3843,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 163:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('o')), inrange(ch('q'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('o')), inrange(char('q'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('p'):
+                elif tmp12 == char('p'):
                     pos += 1
                     tmp11 = 190
                 else:
@@ -3857,13 +3857,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 164:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('r')), inrange(ch('t'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('r')), inrange(char('t'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('s'):
+                elif tmp12 == char('s'):
                     pos += 1
                     tmp11 = 197
                 else:
@@ -3871,13 +3871,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 165:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 195
                 else:
@@ -3885,13 +3885,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 166:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('t')), inrange(ch('v'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('t')), inrange(char('v'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('u'):
+                elif tmp12 == char('u'):
                     pos += 1
                     tmp11 = 224
                 else:
@@ -3899,13 +3899,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 167:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('m')), inrange(ch('o'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('m')), inrange(char('o'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 166
                 else:
@@ -3913,13 +3913,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 168:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('h')), inrange(ch('j'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('h')), inrange(char('j'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 167
                 else:
@@ -3927,13 +3927,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 169:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('b'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('b'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('a'):
+                elif tmp12 == char('a'):
                     pos += 1
                     tmp11 = 165
                 else:
@@ -3941,13 +3941,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 170:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('k')), inrange(ch('m'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('k')), inrange(char('m'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('l'):
+                elif tmp12 == char('l'):
                     pos += 1
                     tmp11 = 169
                 else:
@@ -3955,13 +3955,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 171:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('o')), inrange(ch('q'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('o')), inrange(char('q'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('p'):
+                elif tmp12 == char('p'):
                     pos += 1
                     tmp11 = 170
                 else:
@@ -3969,13 +3969,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 172:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('l')), inrange(ch('n'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('l')), inrange(char('n'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('m'):
+                elif tmp12 == char('m'):
                     pos += 1
                     tmp11 = 171
                 else:
@@ -3983,13 +3983,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 173:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('h')), inrange(ch('j'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('h')), inrange(char('j'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 164
                 else:
@@ -3997,13 +3997,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 174:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('o')), inrange(ch('q'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('o')), inrange(char('q'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('p'):
+                elif tmp12 == char('p'):
                     pos += 1
                     tmp11 = 191
                 else:
@@ -4011,13 +4011,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 175:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('t')), inrange(ch('v'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('t')), inrange(char('v'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('u'):
+                elif tmp12 == char('u'):
                     pos += 1
                     tmp11 = 161
                 else:
@@ -4025,13 +4025,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 176:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('k')), inrange(ch('m'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('k')), inrange(char('m'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('l'):
+                elif tmp12 == char('l'):
                     pos += 1
                     tmp11 = 175
                 else:
@@ -4039,13 +4039,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 177:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('b'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('b'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('a'):
+                elif tmp12 == char('a'):
                     pos += 1
                     tmp11 = 160
                 else:
@@ -4053,13 +4053,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 178:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('e')), inrange(ch('g'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('e')), inrange(char('g'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('f'):
+                elif tmp12 == char('f'):
                     pos += 1
                     tmp11 = 177
                 else:
@@ -4067,13 +4067,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 179:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 178
                 else:
@@ -4081,13 +4081,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 180:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 179
                 else:
@@ -4095,13 +4095,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 181:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('h')), inrange(ch('j'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('h')), inrange(char('j'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('i'):
+                elif tmp12 == char('i'):
                     pos += 1
                     tmp11 = 70
                 else:
@@ -4109,13 +4109,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 182:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('m')), inrange(ch('o'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('m')), inrange(char('o'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 202
                 else:
@@ -4123,13 +4123,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 183:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('n')), inrange(ch('p'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('n')), inrange(char('p'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 198
                 else:
@@ -4137,13 +4137,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 184:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 181
                 else:
@@ -4151,13 +4151,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 185:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('b'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('b'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('a'):
+                elif tmp12 == char('a'):
                     pos += 1
                     tmp11 = 184
                 else:
@@ -4165,10 +4165,10 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 186:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
                 else:
@@ -4176,13 +4176,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 187:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('c')), inrange(ch('e'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('c')), inrange(char('e'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('d'):
+                elif tmp12 == char('d'):
                     pos += 1
                     tmp11 = 42
                 else:
@@ -4190,13 +4190,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 188:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 63
                 else:
@@ -4204,13 +4204,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 189:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('n')), inrange(ch('p'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('n')), inrange(char('p'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 201
                 else:
@@ -4218,13 +4218,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 190:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 61
                 else:
@@ -4232,13 +4232,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 191:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('k')), inrange(ch('m'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('k')), inrange(char('m'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('l'):
+                elif tmp12 == char('l'):
                     pos += 1
                     tmp11 = 194
                 else:
@@ -4246,13 +4246,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 192:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('m')), inrange(ch('o'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('m')), inrange(char('o'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 54
                 else:
@@ -4260,13 +4260,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 193:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 51
                 else:
@@ -4274,13 +4274,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 194:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 60
                 else:
@@ -4288,13 +4288,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 195:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 58
                 else:
@@ -4302,13 +4302,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 196:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('x')), ch('z'), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('x')), char('z'), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('y'):
+                elif tmp12 == char('y'):
                     pos += 1
                     tmp11 = 26
                 else:
@@ -4316,13 +4316,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 197:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 52
                 else:
@@ -4330,13 +4330,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 198:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('a'), ch('b'), inrange(ch('d'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('a'), char('b'), inrange(char('d'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('c'):
+                elif tmp12 == char('c'):
                     pos += 1
                     tmp11 = 50
                 else:
@@ -4344,13 +4344,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 199:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('m')), inrange(ch('o'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('m')), inrange(char('o'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 45
                 else:
@@ -4358,13 +4358,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 200:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 34
                 else:
@@ -4372,13 +4372,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 201:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 37
                 else:
@@ -4386,13 +4386,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 202:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('a'), ch('b'), inrange(ch('d'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('a'), char('b'), inrange(char('d'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('c'):
+                elif tmp12 == char('c'):
                     pos += 1
                     tmp11 = 29
                 else:
@@ -4400,13 +4400,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 203:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 46
                 else:
@@ -4414,13 +4414,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 204:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 44
                 else:
@@ -4428,13 +4428,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 205:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), ch('a'), ch('b'), inrange(ch('d'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('a'), char('b'), inrange(char('d'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('c'):
+                elif tmp12 == char('c'):
                     pos += 1
                     tmp11 = 221
                 else:
@@ -4442,13 +4442,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 206:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('m')), inrange(ch('o'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('m')), inrange(char('o'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('n'):
+                elif tmp12 == char('n'):
                     pos += 1
                     tmp11 = 41
                 else:
@@ -4456,13 +4456,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 207:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 38
                 else:
@@ -4470,13 +4470,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 208:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('c')), inrange(ch('e'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('c')), inrange(char('e'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('d'):
+                elif tmp12 == char('d'):
                     pos += 1
                     tmp11 = 40
                 else:
@@ -4484,13 +4484,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 209:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('c')), inrange(ch('e'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('c')), inrange(char('e'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('d'):
+                elif tmp12 == char('d'):
                     pos += 1
                     tmp11 = 16
                 else:
@@ -4498,13 +4498,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 210:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 36
                 else:
@@ -4512,13 +4512,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 211:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 27
                 else:
@@ -4526,13 +4526,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 212:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 31
                 else:
@@ -4540,13 +4540,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 213:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 33
                 else:
@@ -4554,13 +4554,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 214:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 21
                 else:
@@ -4568,13 +4568,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 215:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 25
                 else:
@@ -4582,13 +4582,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 216:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 215
                 else:
@@ -4596,13 +4596,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 217:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('n')), inrange(ch('p'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('n')), inrange(char('p'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('o'):
+                elif tmp12 == char('o'):
                     pos += 1
                     tmp11 = 216
                 else:
@@ -4610,13 +4610,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 218:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('l')), inrange(ch('n'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('l')), inrange(char('n'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('m'):
+                elif tmp12 == char('m'):
                     pos += 1
                     tmp11 = 23
                 else:
@@ -4624,13 +4624,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 219:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 15
                 else:
@@ -4638,13 +4638,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 220:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 24
                 else:
@@ -4652,13 +4652,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 221:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 17
                 else:
@@ -4666,13 +4666,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 222:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('o')), inrange(ch('q'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('o')), inrange(char('q'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('p'):
+                elif tmp12 == char('p'):
                     pos += 1
                     tmp11 = 230
                 else:
@@ -4680,13 +4680,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 223:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 222
                 else:
@@ -4694,13 +4694,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 224:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 13
                 else:
@@ -4708,13 +4708,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 225:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 12
                 else:
@@ -4722,13 +4722,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 226:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('c')), inrange(ch('e'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('c')), inrange(char('e'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('d'):
+                elif tmp12 == char('d'):
                     pos += 1
                     tmp11 = 6
                 else:
@@ -4736,13 +4736,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 227:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 14
                 else:
@@ -4750,13 +4750,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 228:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('d')), inrange(ch('f'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('d')), inrange(char('f'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('e'):
+                elif tmp12 == char('e'):
                     pos += 1
                     tmp11 = 227
                 else:
@@ -4764,13 +4764,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 229:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('q')), inrange(ch('s'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('q')), inrange(char('s'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('r'):
+                elif tmp12 == char('r'):
                     pos += 1
                     tmp11 = 2
                 else:
@@ -4778,13 +4778,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 230:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('s')), inrange(ch('u'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('s')), inrange(char('u'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('t'):
+                elif tmp12 == char('t'):
                     pos += 1
                     tmp11 = 11
                 else:
@@ -4792,13 +4792,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 231:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('j')), inrange(ch('l'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('j')), inrange(char('l'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('k'):
+                elif tmp12 == char('k'):
                     pos += 1
                     tmp11 = 7
                 else:
@@ -4806,13 +4806,13 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
             case 232:
                 tmp13 = 67
                 tmp14 = copy(pos)
-                if tmp12 in Tset[char](inrange(ch('0'), ch('9')), inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('c')), inrange(ch('e'), ch('z')), inrange(ch('\x80'), ch('\xff'))):
+                if tmp12 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), inrange(char('a'), char('c')), inrange(char('e'), char('z')), inrange(char('\x80'), char('\xff'))):
                     pos += 1
                     tmp11 = 186
-                elif tmp12 == ch('_'):
+                elif tmp12 == char('_'):
                     pos += 1
                     tmp11 = 1
-                elif tmp12 == ch('d'):
+                elif tmp12 == char('d'):
                     pos += 1
                     tmp11 = 3
                 else:
@@ -4994,7 +4994,7 @@ def _scanSymbol(L: mut @ Lexer, tok: mut @ Token):
         pos += 1
         L.pos = pos
         return
-    if L.ch(pos) == ch('_'):
+    if L.ch(pos) == char('_'):
         L._error(start, string("invalid token: trailing underscore"))
     L.pos = pos
     tok.s = L.buf.substr(start, pos - 1)
@@ -5033,65 +5033,65 @@ def _getEscapedChar(L: mut @ Lexer, tok: mut @ Token):
     with let:
         c = L.ch(L.pos)
     match c:
-        case _ if c == ch('n') or c == ch('N'):
-            tok.s.add(ch('\n'))
+        case _ if c == char('n') or c == char('N'):
+            tok.s.add(char('\n'))
             L.pos += 1
-        case _ if c == ch('p') or c == ch('P'):
+        case _ if c == char('p') or c == char('P'):
             if tok.kind == TokKind.tkCharLit:
                 L._error(L.pos, string("\\p not allowed in character literal"))
-            tok.s.add(ch('\n'))
+            tok.s.add(char('\n'))
             L.pos += 1
-        case _ if c == ch('r') or c == ch('R') or c == ch('c') or c == ch('C'):
-            tok.s.add(ch('\r'))
+        case _ if c == char('r') or c == char('R') or c == char('c') or c == char('C'):
+            tok.s.add(char('\r'))
             L.pos += 1
-        case _ if c == ch('l') or c == ch('L'):
-            tok.s.add(ch('\n'))
+        case _ if c == char('l') or c == char('L'):
+            tok.s.add(char('\n'))
             L.pos += 1
-        case _ if c == ch('f') or c == ch('F'):
-            tok.s.add(ch('\x0c'))
+        case _ if c == char('f') or c == char('F'):
+            tok.s.add(char('\x0c'))
             L.pos += 1
-        case _ if c == ch('e') or c == ch('E'):
-            tok.s.add(ch('\x1b'))
+        case _ if c == char('e') or c == char('E'):
+            tok.s.add(char('\x1b'))
             L.pos += 1
-        case _ if c == ch('a') or c == ch('A'):
-            tok.s.add(ch('\x07'))
+        case _ if c == char('a') or c == char('A'):
+            tok.s.add(char('\x07'))
             L.pos += 1
-        case _ if c == ch('b') or c == ch('B'):
-            tok.s.add(ch('\x08'))
+        case _ if c == char('b') or c == char('B'):
+            tok.s.add(char('\x08'))
             L.pos += 1
-        case _ if c == ch('v') or c == ch('V'):
-            tok.s.add(ch('\x0b'))
+        case _ if c == char('v') or c == char('V'):
+            tok.s.add(char('\x0b'))
             L.pos += 1
-        case _ if c == ch('t') or c == ch('T'):
-            tok.s.add(ch('\t'))
+        case _ if c == char('t') or c == char('T'):
+            tok.s.add(char('\t'))
             L.pos += 1
-        case _ if c == ch('\'') or c == ch('"'):
+        case _ if c == char('\'') or c == char('"'):
             tok.s.add(c)
             L.pos += 1
-        case _ if c == ch('\\'):
-            tok.s.add(ch('\\'))
+        case _ if c == char('\\'):
+            tok.s.add(char('\\'))
             L.pos += 1
-        case _ if c == ch('x') or c == ch('X'):
+        case _ if c == char('x') or c == char('X'):
             L.pos += 1
             with var:
                 xi = nint(0)
             L._handleHexChar(xi, 1)
             L._handleHexChar(xi, 2)
             tok.s.add(chr(xi))
-        case _ if c == ch('u') or c == ch('U'):
+        case _ if c == char('u') or c == char('U'):
             if tok.kind == TokKind.tkCharLit:
                 L._error(L.pos, string("\\u not allowed in character literal"))
             L.pos += 1
             with var:
                 xi = nint(0)
-            if L.ch(L.pos) == ch('{'):
+            if L.ch(L.pos) == char('{'):
                 L.pos += 1
                 with let:
                     start = copy(L.pos)
-                while L.ch(L.pos) != ch('}') and L.ch(L.pos) != ch('\x00'):
+                while L.ch(L.pos) != char('}') and L.ch(L.pos) != char('\x00'):
                     L._handleHexChar(xi, 0)
                 if start == L.pos: L._error(L.pos, string("Unicode codepoint cannot be empty"))
-                if L.ch(L.pos) == ch('}'): L.pos += 1
+                if L.ch(L.pos) == char('}'): L.pos += 1
                 if xi > 0x10FFFF:
                     L._error(L.pos, string("Unicode codepoint must be lower than 0x10FFFF"))
             else:
@@ -5100,11 +5100,11 @@ def _getEscapedChar(L: mut @ Lexer, tok: mut @ Token):
                 L._handleHexChar(xi, 3)
                 L._handleHexChar(xi, 4)
             _addUnicodeCodePoint(tok.s, xi)
-        case _ if c in inrange(ch('0'), ch('9')):
+        case _ if c in inrange(char('0'), char('9')):
             with var:
                 xi = 0
-            while L.ch(L.pos) >= ch('0') and L.ch(L.pos) <= ch('9'):
-                xi = xi * 10 + (ord(L.ch(L.pos)) - ord(ch('0')))
+            while L.ch(L.pos) >= char('0') and L.ch(L.pos) <= char('9'):
+                xi = xi * 10 + (ord(L.ch(L.pos)) - ord(char('0')))
                 L.pos += 1
             if xi <= 255: tok.s.add(chr(xi))
             else: L._error(L.pos, string("invalid character constant"))
@@ -5125,30 +5125,30 @@ def _getString(L: mut @ Lexer, tok: mut @ Token, mode: _StringMode):
     with let:
         line = copy(L.lineNumber)
     pos += 1  # skip the opening quote
-    if L.ch(pos) == ch('"') and L.ch(pos + 1) == ch('"'):
+    if L.ch(pos) == char('"') and L.ch(pos + 1) == char('"'):
         tok.kind = TokKind.tkTripleStrLit
         pos += 2
         # a newline directly after `"""` is not part of the string
-        if L.ch(pos) == ch(' ') or L.ch(pos) == ch('\t'):
+        if L.ch(pos) == char(' ') or L.ch(pos) == char('\t'):
             with var:
                 newpos = nint(pos + 1)
-            while L.ch(newpos) == ch(' ') or L.ch(newpos) == ch('\t'): newpos += 1
-            if L.ch(newpos) == ch('\r') or L.ch(newpos) == ch('\n'): pos = newpos
-        if L.ch(pos) == ch('\r') or L.ch(pos) == ch('\n'):
+            while L.ch(newpos) == char(' ') or L.ch(newpos) == char('\t'): newpos += 1
+            if L.ch(newpos) == char('\r') or L.ch(newpos) == char('\n'): pos = newpos
+        if L.ch(pos) == char('\r') or L.ch(pos) == char('\n'):
             pos = L._handleCRLF(pos)
         while True:
             with let:
                 c = L.ch(pos)
-            if c == ch('"'):
-                if L.ch(pos + 1) == ch('"') and L.ch(pos + 2) == ch('"') and L.ch(pos + 3) != ch('"'):
+            if c == char('"'):
+                if L.ch(pos + 1) == char('"') and L.ch(pos + 2) == char('"') and L.ch(pos + 3) != char('"'):
                     pos = pos + 3
                     break
-                tok.s.add(ch('"'))
+                tok.s.add(char('"'))
                 pos += 1
-            elif c == ch('\r') or c == ch('\n'):
+            elif c == char('\r') or c == char('\n'):
                 pos = L._handleCRLF(pos)
-                tok.s.add(ch('\n'))
-            elif c == ch('\x00'):
+                tok.s.add(char('\n'))
+            elif c == char('\x00'):
                 L._errorAt(line, 0, string("closing \"\"\" expected, but end of file reached"))
                 break
             else:
@@ -5160,18 +5160,18 @@ def _getString(L: mut @ Lexer, tok: mut @ Token, mode: _StringMode):
         while True:
             with let:
                 c = L.ch(pos)
-            if c == ch('"'):
-                if mode != _StringMode.smNormal and L.ch(pos + 1) == ch('"'):
+            if c == char('"'):
+                if mode != _StringMode.smNormal and L.ch(pos + 1) == char('"'):
                     pos += 2
-                    tok.s.add(ch('"'))
+                    tok.s.add(char('"'))
                 else:
                     pos += 1
                     break
-            elif c == ch('\r') or c == ch('\n') or c == ch('\x00'):
+            elif c == char('\r') or c == char('\n') or c == char('\x00'):
             # at `L.pos`: the opening quote, or behind the last escape sequence
                 L._error(L.pos, string("closing \" expected"))
                 break
-            elif c == ch('\\') and mode == _StringMode.smNormal:
+            elif c == char('\\') and mode == _StringMode.smNormal:
                 L.pos = pos
                 _getEscapedChar(L, tok)
                 pos = L.pos.copy()
@@ -5188,17 +5188,17 @@ def _getCharacter(L: mut @ Lexer, tok: mut @ Token):
     L.pos += 1  # skip '
     with let:
         c = L.ch(L.pos)
-    if c < ch(' ') or c == ch('\''):
+    if c < char(' ') or c == char('\''):
         L._error(L.pos, string("invalid character literal"))
         tok.s = _str(c)
-    elif c == ch('\\'):
+    elif c == char('\\'):
         _getEscapedChar(L, tok)
     else:
         tok.s = _str(c)
         L.pos += 1
-    if L.ch(L.pos) == ch('\''):
+    if L.ch(L.pos) == char('\''):
         L.pos += 1
-    elif startPos > 0 and L.ch(startPos - 1) == ch('`'):
+    elif startPos > 0 and L.ch(startPos - 1) == char('`'):
     # `'` as an operator name inside backticks
         tok.s = string("'")
         L.pos = startPos + 1
@@ -5233,12 +5233,12 @@ def _getOperator(L: mut @ Lexer, tok: mut @ Token):
     tok.spacing = tok.spacing - Tset[TokSpacing](TokSpacing.tsTrailing, TokSpacing.tsEof)
     with var:
         trailing = False
-    while L.ch(pos) == ch(' '):
+    while L.ch(pos) == char(' '):
         pos += 1
         trailing = True
     with let:
         c = L.ch(pos)
-    if c == ch('\r') or c == ch('\n') or c == ch('\x00'): tok.spacing.incl(TokSpacing.tsEof)
+    if c == char('\r') or c == char('\n') or c == char('\x00'): tok.spacing.incl(TokSpacing.tsEof)
     elif trailing: tok.spacing.incl(TokSpacing.tsTrailing)
 
 # ---------------------------------------------------------------------------
@@ -5254,7 +5254,7 @@ def openLexer(src: string, filename=string("")) -> Lexer:
     result = Lexer(buf=src, pos=0, filename=filename, lineNumber=1, lineStart=0, currLineIndent=0, indentAhead=-1, errors=seq[string]([]))
     # `nimlexbase` skips a UTF-8 BOM before the lexer ever sees the file; here
     # the whole source is one string, so it is skipped on the way in.
-    if src.len >= 3 and src[0] == ch('\xef') and src[1] == ch('\xbb') and src[2] == ch('\xbf'):
+    if src.len >= 3 and src[0] == char('\xef') and src[1] == char('\xbb') and src[2] == char('\xbf'):
         result.pos = 3
         result.lineStart = 3
     return result
@@ -5276,89 +5276,89 @@ def next(L: mut @ Lexer, tok: mut @ Token):
     tok.line = L.lineNumber
     tok.col = int32(L.pos - L.lineStart)
 
-    if c in SymStartChars - Tset[char](ch('r'), ch('R')) - UnicodeOperatorStartChars:
+    if c in SymStartChars - Tset[char](char('r'), char('R')) - UnicodeOperatorStartChars:
         _scanSymbol(L, tok)
     elif c in UnicodeOperatorStartChars:
         if unicodeOprLen(L.buf, L.pos)[0] != 0: _getOperator(L, tok)
         else: _scanSymbol(L, tok)
-    elif c == ch('#'):
+    elif c == char('#'):
         L._scanComment(tok)
-    elif c == ch('*'):
+    elif c == char('*'):
     # `*:` is two tokens in `var v*: int`, and one operator in `a *: b`
-        if L.ch(L.pos + 1) == ch(':') and L.ch(L.pos + 2) not in OpChars:
+        if L.ch(L.pos + 1) == char(':') and L.ch(L.pos + 2) not in OpChars:
             L._endOperator(tok, L.pos, L.pos)
         else:
             _getOperator(L, tok)
-    elif c == ch(','):
+    elif c == char(','):
         tok.kind = TokKind.tkComma
         L.pos += 1
-    elif c == ch('r') or c == ch('R'):
-        if L.ch(L.pos + 1) == ch('"'):
+    elif c == char('r') or c == char('R'):
+        if L.ch(L.pos + 1) == char('"'):
             L.pos += 1
             _getString(L, tok, _StringMode.smRaw)
         else:
             _scanSymbol(L, tok)
-    elif c == ch('('):
+    elif c == char('('):
         L.pos += 1
-        if L.ch(L.pos) == ch('.') and L.ch(L.pos + 1) != ch('.'):
+        if L.ch(L.pos) == char('.') and L.ch(L.pos + 1) != char('.'):
             tok.kind = TokKind.tkParDotLe
             L.pos += 1
         else:
             tok.kind = TokKind.tkParLe
-    elif c == ch(')'):
+    elif c == char(')'):
         tok.kind = TokKind.tkParRi
         L.pos += 1
-    elif c == ch('['):
+    elif c == char('['):
         L.pos += 1
-        if L.ch(L.pos) == ch('.') and L.ch(L.pos + 1) != ch('.'):
+        if L.ch(L.pos) == char('.') and L.ch(L.pos + 1) != char('.'):
             tok.kind = TokKind.tkBracketDotLe
             L.pos += 1
-        elif L.ch(L.pos) == ch(':'):
+        elif L.ch(L.pos) == char(':'):
             tok.kind = TokKind.tkBracketLeColon
             L.pos += 1
         else:
             tok.kind = TokKind.tkBracketLe
-    elif c == ch(']'):
+    elif c == char(']'):
         tok.kind = TokKind.tkBracketRi
         L.pos += 1
-    elif c == ch('.'):
-        if L.ch(L.pos + 1) == ch(']'):
+    elif c == char('.'):
+        if L.ch(L.pos + 1) == char(']'):
             tok.kind = TokKind.tkBracketDotRi
             L.pos += 2
-        elif L.ch(L.pos + 1) == ch('}'):
+        elif L.ch(L.pos + 1) == char('}'):
             tok.kind = TokKind.tkCurlyDotRi
             L.pos += 2
-        elif L.ch(L.pos + 1) == ch(')'):
+        elif L.ch(L.pos + 1) == char(')'):
             tok.kind = TokKind.tkParDotRi
             L.pos += 2
         else:
             _getOperator(L, tok)
-    elif c == ch('{'):
+    elif c == char('{'):
         L.pos += 1
-        if L.ch(L.pos) == ch('.') and L.ch(L.pos + 1) != ch('.'):
+        if L.ch(L.pos) == char('.') and L.ch(L.pos + 1) != char('.'):
             tok.kind = TokKind.tkCurlyDotLe
             L.pos += 1
         else:
             tok.kind = TokKind.tkCurlyLe
-    elif c == ch('}'):
+    elif c == char('}'):
         tok.kind = TokKind.tkCurlyRi
         L.pos += 1
-    elif c == ch(';'):
+    elif c == char(';'):
         tok.kind = TokKind.tkSemiColon
         L.pos += 1
-    elif c == ch('`'):
+    elif c == char('`'):
         tok.kind = TokKind.tkAccent
         L.pos += 1
-    elif c == ch('_'):
+    elif c == char('_'):
         L.pos += 1
-        if L.ch(L.pos) not in SymChars + Tset[char](ch('_')):
+        if L.ch(L.pos) not in SymChars + Tset[char](char('_')):
             tok.kind = TokKind.tkSymbol
             tok.s = string("_")
         else:
             tok.kind = TokKind.tkInvalid
             tok.s = string("_")
             L._error(L.pos, string("invalid token: _"))
-    elif c == ch('"'):
+    elif c == char('"'):
     # `foo"bar"` is a generalized string literal, `foo "bar"` is a command
         with let:
             mode = _StringMode.smGeneralized if L.pos > 0 and L.ch(L.pos - 1) in SymChars else _StringMode.smNormal
@@ -5366,18 +5366,18 @@ def next(L: mut @ Lexer, tok: mut @ Token):
         if mode == _StringMode.smGeneralized:
             if tok.kind == TokKind.tkRStrLit: tok.kind = TokKind.tkGStrLit
             elif tok.kind == TokKind.tkTripleStrLit: tok.kind = TokKind.tkGTripleStrLit
-    elif c == ch('\''):
+    elif c == char('\''):
         _getCharacter(L, tok)
-    elif c >= ch('0') and c <= ch('9'):
+    elif c >= char('0') and c <= char('9'):
         _scanNumber(L, tok)
-    elif c == ch('-'):
-        if L.ch(L.pos + 1) >= ch('0') and L.ch(L.pos + 1) <= ch('9') and (L.pos == 0 or L.ch(L.pos - 1) in _UnaryMinusWhitelist):
+    elif c == char('-'):
+        if L.ch(L.pos + 1) >= char('0') and L.ch(L.pos + 1) <= char('9') and (L.pos == 0 or L.ch(L.pos - 1) in _UnaryMinusWhitelist):
             _scanNumber(L, tok)
         else:
             _getOperator(L, tok)
     elif c in OpChars:
         _getOperator(L, tok)
-    elif c == ch('\x00'):
+    elif c == char('\x00'):
         tok.kind = TokKind.tkEof
         tok.indent = 0
     else:
@@ -5410,10 +5410,10 @@ if comptime(__name__ == "__main__"):
         while i < s.len:
             with let:
                 c = s[i]
-            if c == ch('\n'): result.add(string("\\n"))
-            elif c == ch('\r'): result.add(string("\\r"))
-            elif c == ch('\t'): result.add(string("\\t"))
-            elif c == ch('\\'): result.add(string("\\\\"))
+            if c == char('\n'): result.add(string("\\n"))
+            elif c == char('\r'): result.add(string("\\r"))
+            elif c == char('\t'): result.add(string("\\t"))
+            elif c == char('\\'): result.add(string("\\\\"))
             else: result.add(c)
             i += 1
         return result

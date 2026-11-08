@@ -83,38 +83,38 @@ def runtimeFormat(frmt: FormatStr, args: openArray[Rope]) -> Rope:
     with var:
         num = 0
     while i < frmt.len:
-        if frmt[i] == ch('$'):
+        if frmt[i] == char('$'):
             i += 1  # skip '$'
             match frmt[i]:
-                case _ if frmt[i] == ch('$'):
+                case _ if frmt[i] == char('$'):
                     result.add(string("$"))
                     i += 1
-                case _ if frmt[i] == ch('#'):
+                case _ if frmt[i] == char('#'):
                     i += 1
                     result.add(args[num])
                     num += 1
-                case _ if frmt[i] in inrange(ch('0'), ch('9')):
+                case _ if frmt[i] in inrange(char('0'), char('9')):
                     with var:
                         j = 0
                     while True:
-                        j = j * 10 + ord(frmt[i]) - ord(ch('0'))
+                        j = j * 10 + ord(frmt[i]) - ord(char('0'))
                         i += 1
-                        if i >= frmt.len or frmt[i] not in Tset[char](inrange(ch('0'), ch('9'))):
+                        if i >= frmt.len or frmt[i] not in Tset[char](inrange(char('0'), char('9'))):
                             break
                     num = j
                     if j > high(args) + 1:
                         raiseAssert(string("invalid format string: ") + frmt)
                     else:
                         result.add(args[j - 1])
-                case _ if frmt[i] == ch('{'):
+                case _ if frmt[i] == char('{'):
                     i += 1
                     with var:
                         j = 0
-                    while frmt[i] in Tset[char](inrange(ch('0'), ch('9'))):
-                        j = j * 10 + ord(frmt[i]) - ord(ch('0'))
+                    while frmt[i] in Tset[char](inrange(char('0'), char('9'))):
+                        j = j * 10 + ord(frmt[i]) - ord(char('0'))
                         i += 1
                     num = j
-                    if frmt[i] == ch('}'):
+                    if frmt[i] == char('}'):
                         i += 1
                     else:
                         raiseAssert(string("invalid format string: ") + frmt)
@@ -123,10 +123,10 @@ def runtimeFormat(frmt: FormatStr, args: openArray[Rope]) -> Rope:
                         raiseAssert(string("invalid format string: ") + frmt)
                     else:
                         result.add(args[j - 1])
-                case _ if frmt[i] == ch('n'):
+                case _ if frmt[i] == char('n'):
                     result.add(string("\n"))
                     i += 1
-                case _ if frmt[i] == ch('N'):
+                case _ if frmt[i] == char('N'):
                     result.add(string("\n"))
                     i += 1
                 case _:

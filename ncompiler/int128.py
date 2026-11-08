@@ -584,7 +584,7 @@ def addInt128(result: mut @ string, value: Int128):
     with let:
         initialSize = result.len
     if value == Zero:
-        result.add(ch('0'))
+        result.add(char('0'))
     elif value == low(Int128):
         result.add(string("-170141183460469231731687303715884105728"))
     else:
@@ -598,7 +598,7 @@ def addInt128(result: mut @ string, value: Int128):
             result.add(string("0123456789")[toInt64(rem)])
             value = quot
         if isNegative:
-            result.add(ch('-'))
+            result.add(char('-'))
 
         with var:
             i = initialSize
@@ -622,20 +622,20 @@ def __str__(a: Int128) -> string:
 
 def parseDecimalInt128(arg: string, pos: nint = 0) -> Int128:
     assert pos < arg.len
-    assert arg[pos] in Tset[char]({ch('-'), inrange(ch('0'), ch('9'))})
+    assert arg[pos] in Tset[char]({char('-'), inrange(char('0'), char('9'))})
 
     with var:
         isNegative = False
     with var:
         pos = nint(pos)  # a copy (a literal default has no .copy())
-    if arg[pos] == ch('-'):
+    if arg[pos] == char('-'):
         isNegative = True
         pos += 1
 
     result = Zero.copy()
-    while pos < arg.len and arg[pos] in inrange(ch('0'), ch('9')):
+    while pos < arg.len and arg[pos] in inrange(char('0'), char('9')):
         result = result * Ten
-        result.inc(uint32(arg[pos]) - uint32(ch('0')))
+        result.inc(uint32(arg[pos]) - uint32(char('0')))
         pos += 1
 
     if isNegative:

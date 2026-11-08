@@ -66,14 +66,14 @@ if comptime(defined("vfsProfile")):
 
     def dumpVfsProfile(label: string):
         @template
-        def emit(name: string, c: VfsCounter):
+        def emit_(name: string, c: VfsCounter):
             stderr.writeLine(string("[vfs] ") + label + string(" ") + name + string(" count=") + str(c.count) + string(" ms=") + formatFloat(float64(c.ns) / 1_000_000.0, ffDecimal, 3) + string(" bytes=") + str(c.bytes))
-        emit(string("openMmap"), statOpenMmap)
-        emit(string("read"), statRead)
-        emit(string("write"), statWrite)
-        emit(string("exists"), statExists)
-        emit(string("mtime"), statMtime)
-        emit(string("remove"), statRemove)
+        emit_(string("openMmap"), statOpenMmap)
+        emit_(string("read"), statRead)
+        emit_(string("write"), statWrite)
+        emit_(string("exists"), statExists)
+        emit_(string("mtime"), statMtime)
+        emit_(string("remove"), statRemove)
 else:
     @template
     def dumpVfsProfile(label: string):
@@ -514,8 +514,8 @@ if comptime(__name__ == "__main__"):
         p1 = atomicTempPath(f)
         p2 = atomicTempPath(f)
         prefix = f + string(".tmp.")
-        parts1 = p1.substr(prefix.len).split(ch('.'))
-        parts2 = p2.substr(prefix.len).split(ch('.'))
+        parts1 = p1.substr(prefix.len).split(char('.'))
+        parts2 = p2.substr(prefix.len).split(char('.'))
     echo(p1.startsWith(prefix), " ", parts1.len, " ", parts1[0] == parts2[0], " ",
          parseInt(parts1[0]) > 0, " ", parseInt(parts2[1]) == parseInt(parts1[1]) + 1)
 

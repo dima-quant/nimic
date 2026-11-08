@@ -32,33 +32,33 @@ if comptime(defined("nimony")):
 
 with const:
     _ControlChars = Tset[char](
-        ch("("),
-        ch(")"),
-        ch("["),
-        ch("]"),
-        ch("{"),
-        ch("}"),
-        ch("~"),
-        ch("#"),
-        ch("'"),
-        ch('"'),
-        ch(":"),
-        ch("@"),
+        char("("),
+        char(")"),
+        char("["),
+        char("]"),
+        char("{"),
+        char("}"),
+        char("~"),
+        char("#"),
+        char("'"),
+        char('"'),
+        char(":"),
+        char("@"),
     )
     _ControlCharsOrWhite = _ControlChars + Tset[char](
-        ch(" "), ch("\n"), ch("\t"), ch("\r")
+        char(" "), char("\n"), char("\t"), char("\r")
     )
     _HexChars = Tset[char](
-        inrange(ch("0"), ch("9")), inrange(ch("A"), ch("F"))
+        inrange(char("0"), char("9")), inrange(char("A"), char("F"))
     )  # lowercase letters are not in the NIF spec!
-    _Digits = Tset[char](inrange(ch("0"), ch("9")))
+    _Digits = Tset[char](inrange(char("0"), char("9")))
     _HexNumberDigits = Tset[char](
-        inrange(ch("0"), ch("9")), inrange(ch("A"), ch("F")), inrange(ch("a"), ch("f"))
+        inrange(char("0"), char("9")), inrange(char("A"), char("F")), inrange(char("a"), char("f"))
     )  # unlike escapes, numbers accept both cases
     _B62Digits = Tset[char](
-        inrange(ch("0"), ch("9")),
-        inrange(ch("A"), ch("Z")),
-        inrange(ch("a"), ch("z")),
+        inrange(char("0"), char("9")),
+        inrange(char("A"), char("Z")),
+        inrange(char("a"), char("z")),
     )
 
 
@@ -140,7 +140,7 @@ class ExpandedToken(Object):
         with var:
             i = 0
         while i < t.data.len and t.data[i] in _Digits:
-            result = result * 10 + (ord(t.data[i]) - ord(ch("0")))
+            result = result * 10 + (ord(t.data[i]) - ord(char("0")))
             i += 1
         return result
 
@@ -247,12 +247,12 @@ def _skipWhitespace(r: mut @ Reader):
         while p < eof:
             match _caret(p):
                 case _ if (
-                    _caret(p) == ch(" ")
-                    or _caret(p) == ch("\t")
-                    or _caret(p) == ch("\r")
+                    _caret(p) == char(" ")
+                    or _caret(p) == char("\t")
+                    or _caret(p) == char("\r")
                 ):
                     _inc(p)
-                case _ if _caret(p) == ch("\n"):
+                case _ if _caret(p) == char("\n"):
                     _inc(p)
                     r.line += 1
                 case _:
@@ -270,15 +270,15 @@ def _captureComment(r: mut @ Reader, result: mut @ ExpandedToken):
         with let:
             start = p
         while p < eof:
-            if _caret(p) == ch("#"):
+            if _caret(p) == char("#"):
                 result.comment.len = cast[intp](p) - cast[intp](start)
                 _inc(p)
                 break
-            elif _caret(p) == ch("\n"):
+            elif _caret(p) == char("\n"):
                 _inc(p)
                 r.line += 1
             else:
-                if _caret(p) == ch("\\"):
+                if _caret(p) == char("\\"):
                     result._flags.incl(_TokenFlag.CommentHasEscapes)
                 _inc(p)
 
@@ -288,17 +288,17 @@ def _handleHex(p: pchar) -> char:
     with var:
         output = 0
     match p[0]:
-        case _ if p[0] in inrange(ch("0"), ch("9")):
-            output = (output << 4) | (ord(p[0]) - ord(ch("0")))
-        case _ if p[0] in inrange(ch("A"), ch("F")):
-            output = (output << 4) | (ord(p[0]) - ord(ch("A")) + 10)
+        case _ if p[0] in inrange(char("0"), char("9")):
+            output = (output << 4) | (ord(p[0]) - ord(char("0")))
+        case _ if p[0] in inrange(char("A"), char("F")):
+            output = (output << 4) | (ord(p[0]) - ord(char("A")) + 10)
         case _:
             pass
     match p[1]:
-        case _ if p[1] in inrange(ch("0"), ch("9")):
-            output = (output << 4) | (ord(p[1]) - ord(ch("0")))
-        case _ if p[1] in inrange(ch("A"), ch("F")):
-            output = (output << 4) | (ord(p[1]) - ord(ch("A")) + 10)
+        case _ if p[1] in inrange(char("0"), char("9")):
+            output = (output << 4) | (ord(p[1]) - ord(char("0")))
+        case _ if p[1] in inrange(char("A"), char("F")):
+            output = (output << 4) | (ord(p[1]) - ord(char("A")) + 10)
         case _:
             pass
     result = char(output)
@@ -319,29 +319,29 @@ def _decodeEscape(p: mut @ pchar, sentinel: pchar) -> char:
     ## that ends in a `\\` or in `\\H` keeps the backslash literally and `p`
     ## stays put, so the remaining byte, if any, decodes as an ordinary one."""
     result = default(char)
-    if p >= sentinel: return ch("\\")
+    if p >= sentinel: return char("\\")
     match _caret(p):
-        case _ if _caret(p) == ch("n"):
-            result = ch("\x0a")
+        case _ if _caret(p) == char("n"):
+            result = char("\x0a")
             _inc(p)
-        case _ if _caret(p) == ch("t"):
-            result = ch("\x09")
+        case _ if _caret(p) == char("t"):
+            result = char("\x09")
             _inc(p)
-        case _ if _caret(p) == ch("r"):
-            result = ch("\x0d")
+        case _ if _caret(p) == char("r"):
+            result = char("\x0d")
             _inc(p)
-        case _ if _caret(p) == ch("|"):
-            result = ch("\x5c")
+        case _ if _caret(p) == char("|"):
+            result = char("\x5c")
             _inc(p)
-        case _ if _caret(p) == ch("^"):
-            result = ch("\x22")
+        case _ if _caret(p) == char("^"):
+            result = char("\x22")
             _inc(p)
         case _:
             if _plus_bang(p, 1) < sentinel:
                 result = _handleHex(p)
                 _inc(p, 2)
             else:
-                result = ch("\\")
+                result = char("\\")
     return result
 
 
@@ -350,7 +350,7 @@ def decodeChar(t: ExpandedToken) -> char:
     result = default(char)
     assert t.tk == NifKind.CharLit
     result = _caret(t.data.p)
-    if result == ch("\\"):
+    if result == char("\\"):
         with var:
             p = t.data.p
         _inc(p)
@@ -370,7 +370,7 @@ def decodeStr(r: Reader, t: ExpandedToken) -> string:
         with let:
             sentinel = _plus_bang(p, t.data.len)
         while p < sentinel:
-            if _caret(p) == ch("\\"):
+            if _caret(p) == char("\\"):
                 _inc(p)
                 result.add(_decodeEscape(p, sentinel))
             else:
@@ -432,7 +432,7 @@ def decodeComment(t: ExpandedToken) -> string:
     with let:
         sentinel = _plus_bang(p, t.comment.len)
     while p < sentinel:
-        if _caret(p) == ch("\\"):
+        if _caret(p) == char("\\"):
             _inc(p)
             result.add(_decodeEscape(p, sentinel))
         else:
@@ -451,7 +451,7 @@ def decodeFilename(t: ExpandedToken) -> string:
         with let:
             sentinel = _plus_bang(p, t.filename.len)
         while p < sentinel:
-            if _caret(p) == ch("\\"):
+            if _caret(p) == char("\\"):
                 _inc(p)
                 result.add(_decodeEscape(p, sentinel))
             else:
@@ -468,12 +468,12 @@ def _digitValue(c: char) -> nint:
     """{.inline.}"""
     result = default(nint)
     match c:
-        case _ if c in inrange(ch("0"), ch("9")):
-            result = ord(c) - ord(ch("0"))
-        case _ if c in inrange(ch("A"), ch("F")):
-            result = ord(c) - ord(ch("A")) + 10
-        case _ if c in inrange(ch("a"), ch("f")):
-            result = ord(c) - ord(ch("a")) + 10
+        case _ if c in inrange(char("0"), char("9")):
+            result = ord(c) - ord(char("0"))
+        case _ if c in inrange(char("A"), char("F")):
+            result = ord(c) - ord(char("A")) + 10
+        case _ if c in inrange(char("a"), char("f")):
+            result = ord(c) - ord(char("a")) + 10
         case _:
             result = 0
     return result
@@ -489,20 +489,20 @@ def _decodeMagnitude(t: ExpandedToken, negative: mut @ bool) -> BiggestUInt:
     with var:
         i = 0
     negative <<= False
-    if t.data[i] == ch("-"):
+    if t.data[i] == char("-"):
         negative <<= True
         i += 1
     with var:
         base = u64(10)
-    if i + 1 < t.data.len and t.data[i] == ch("0"):
+    if i + 1 < t.data.len and t.data[i] == char("0"):
         match t.data[i + 1]:
-            case _ if t.data[i + 1] == ch("x"):
+            case _ if t.data[i + 1] == char("x"):
                 base = u64(16)
                 i += 2
-            case _ if t.data[i + 1] == ch("o"):
+            case _ if t.data[i + 1] == char("o"):
                 base = u64(8)
                 i += 2
-            case _ if t.data[i + 1] == ch("b"):
+            case _ if t.data[i + 1] == char("b"):
                 base = u64(2)
                 i += 2
             case _:
@@ -510,7 +510,7 @@ def _decodeMagnitude(t: ExpandedToken, negative: mut @ bool) -> BiggestUInt:
     while i < t.data.len:
         with let:
             c = t.data[i]
-        if c != ch("_"):
+        if c != char("_"):
             with let:
                 d = BiggestUInt(_digitValue(c))
             assert result <= (high(BiggestUInt) - d) // base, "integer literal out of range"
@@ -585,7 +585,7 @@ def _digitsWithSeparators(p: mut @ pchar, eof: pointer, len: mut @ nint,
         if _caret(p) in digitSet:
             _inc(p)
             len += 1
-        elif _caret(p) == ch("_"):
+        elif _caret(p) == char("_"):
             _inc(p)
             len += 1
             if p >= eof or _caret(p) not in digitSet:
@@ -606,7 +606,7 @@ def _malformedNumber(p: mut @ pchar, eof: pointer, result: mut @ ExpandedToken):
 
 @template
 def _unsignedSuffix(p: mut @ pchar, eof: pointer, result: mut @ ExpandedToken):
-    if p < eof and _caret(p) == ch("u"):
+    if p < eof and _caret(p) == char("u"):
         result.tk = NifKind.UIntLit
         _inc(p)
         # ignore the suffix 'u'
@@ -615,8 +615,8 @@ def _unsignedSuffix(p: mut @ pchar, eof: pointer, result: mut @ ExpandedToken):
 @template
 def _hasBasePrefix(p: pchar, eof: pointer) -> bool:
     ## `p` starts `0x`, `0o` or `0b`; see `handlePrefixedNumber`.
-    return _caret(p) == ch("0") and _plus_bang(p, 1) < eof and \
-        _caret(_plus_bang(p, 1)) in Tset[char](ch("x"), ch("o"), ch("b"))
+    return _caret(p) == char("0") and _plus_bang(p, 1) < eof and \
+        _caret(_plus_bang(p, 1)) in Tset[char](char("x"), char("o"), char("b"))
 
 
 @template_expand
@@ -630,18 +630,18 @@ def _handleNumber(r: mut @ Reader, result: mut @ ExpandedToken):
             with var:
                 ok = _digitsWithSeparators(p, eof, result.data.len, _Digits)
 
-            if ok and p < eof and _caret(p) == ch("."):
+            if ok and p < eof and _caret(p) == char("."):
                 result.tk = NifKind.FloatLit
                 _inc(p)
                 result.data.len += 1
                 ok = _digitsWithSeparators(p, eof, result.data.len, _Digits)
 
-            if ok and p < eof and _caret(p) == ch("E"):
+            if ok and p < eof and _caret(p) == char("E"):
                 result.tk = NifKind.FloatLit
                 _inc(p)
                 result.data.len += 1
                 if p < eof:
-                    if _caret(p) == ch("-") or _caret(p) == ch("+"):
+                    if _caret(p) == char("-") or _caret(p) == char("+"):
                         _inc(p)
                         result.data.len += 1
                 ok = _digitsWithSeparators(p, eof, result.data.len, _Digits)
@@ -663,18 +663,18 @@ def _handlePrefixedNumber(r: mut @ Reader, result: mut @ ExpandedToken):
         with var:
             ok = False
         match _caret(_plus_bang(p, 1)):
-            case _ if _caret(_plus_bang(p, 1)) == ch("x"):
+            case _ if _caret(_plus_bang(p, 1)) == char("x"):
                 _inc(p, 2)
                 result.data.len += 2
                 ok = _digitsWithSeparators(p, eof, result.data.len, _HexNumberDigits)
-            case _ if _caret(_plus_bang(p, 1)) == ch("o"):
+            case _ if _caret(_plus_bang(p, 1)) == char("o"):
                 _inc(p, 2)
                 result.data.len += 2
-                ok = _digitsWithSeparators(p, eof, result.data.len, Tset[char](inrange(ch("0"), ch("7"))))
+                ok = _digitsWithSeparators(p, eof, result.data.len, Tset[char](inrange(char("0"), char("7"))))
             case _:
                 _inc(p, 2)
                 result.data.len += 2
-                ok = _digitsWithSeparators(p, eof, result.data.len, Tset[char](ch("0"), ch("1")))
+                ok = _digitsWithSeparators(p, eof, result.data.len, Tset[char](char("0"), char("1")))
         if ok and p < eof and _caret(p) in _Digits: ok = False
 
         if not ok:
@@ -688,12 +688,12 @@ def _decodeB62(c: char) -> nint:
     ## Decode a single base62 digit (0-9, A-Z, a-z) to its numeric value 0..61.
     ## Caller must guarantee `c` is in `B62Digits`."""
     result = default(nint)
-    if c <= ch("9"):
-        result = ord(c) - ord(ch("0"))
-    elif c <= ch("Z"):
-        result = ord(c) - ord(ch("A")) + 10
+    if c <= char("9"):
+        result = ord(c) - ord(char("0"))
+    elif c <= char("Z"):
+        result = ord(c) - ord(char("A")) + 10
     else:
-        result = ord(c) - ord(ch("a")) + 36
+        result = ord(c) - ord(char("a")) + 36
     return result
 
 
@@ -824,7 +824,7 @@ def _hasEscapes(data: StringView, first: nint, last: nint) -> bool:
     with var:
         i = copy(first)
     while i <= last:
-        if data[i] == ch("\\"):
+        if data[i] == char("\\"):
             return True
         i += 1
     result = False
@@ -849,7 +849,7 @@ def _splitSymbol(r: mut @ Reader, result: mut @ ExpandedToken):
     with var:
         k = 0
     while k < origLen:
-        if result.data[k] == ch("."):
+        if result.data[k] == char("."):
             lastDot = copy(k)
         k += 1
 
@@ -871,7 +871,7 @@ def _splitSymbol(r: mut @ Reader, result: mut @ ExpandedToken):
     with var:
         i = head - 2
     while i > 0:
-        if result.data[i] == ch(".") and result.data[i + 1] in _Digits:
+        if result.data[i] == char(".") and result.data[i + 1] in _Digits:
             break
         i -= 1
 
@@ -897,7 +897,7 @@ def _splitSymbol(r: mut @ Reader, result: mut @ ExpandedToken):
     with var:
         comps = int32(1)
     for j in range(r._pending.len):
-        if r._pending[j] == ch("."):
+        if r._pending[j] == char("."):
             comps += 1
     r._pendingTotal = comps
     r._pendingLeft = comps
@@ -925,7 +925,7 @@ def _nextSymbolPart(r: mut @ Reader, result: mut @ ExpandedToken):
         result.part = SymbolPart.SymDedup
     with var:
         n = 0
-    while n < r._pending.len and r._pending[n] != ch("."):
+    while n < r._pending.len and r._pending[n] != char("."):
         n += 1
     result.data = StringView(p=r._pending.p, len=n)
     if _TokenFlag.TokenHasEscapes in r._pendingFlags and _hasEscapes(
@@ -956,28 +956,28 @@ def _nextSymbolPart(r: mut @ Reader, result: mut @ ExpandedToken):
 
 with const:
     _IdentStartChars = Tset[char](
-        inrange(ch("a"), ch("z")),
-        inrange(ch("A"), ch("Z")),
-        ch("_"),
-        ch("\\"),
-        inrange(ch("\x80"), ch("\xff")),
+        inrange(char("a"), char("z")),
+        inrange(char("A"), char("Z")),
+        char("_"),
+        char("\\"),
+        inrange(char("\x80"), char("\xff")),
     )
     _IdentChars = _IdentStartChars + _Digits
-    _LineStrStart = Tset[char](ch("-"), ch("/"), ch(":"))
+    _LineStrStart = Tset[char](char("-"), char("/"), char(":"))
     _LineStrEnd = Tset[char](
-        ch(" "),
-        ch("\t"),
-        ch("\n"),
-        ch("\r"),
-        ch("("),
-        ch(")"),
-        ch("@"),
-        ch("~"),
-        ch("#"),
+        char(" "),
+        char("\t"),
+        char("\n"),
+        char("\r"),
+        char("("),
+        char(")"),
+        char("@"),
+        char("~"),
+        char("#"),
     )
     # where an identifier or symbol ends in line mode: `-` and `/` are no
     # control characters, but they start a string
-    _LineWordEnd = _ControlCharsOrWhite + Tset[char](ch("-"), ch("/"))
+    _LineWordEnd = _ControlCharsOrWhite + Tset[char](char("-"), char("/"))
 
 
 @template
@@ -993,7 +993,7 @@ def _lineStr(r: mut @ Reader, result: mut @ ExpandedToken):
     parenthesis or suffix (`@`, `~`, `#`) and turn it into a string literal."""
     with _useCpuRegisters():
         while p < eof and _caret(p) not in _LineStrEnd:
-            if _caret(p) == ch("\\"):
+            if _caret(p) == char("\\"):
                 result._flags.incl(_TokenFlag.TokenHasEscapes)
             _inc(p)
         result.data.len = _minus_bang(p, result.data.p)
@@ -1012,13 +1012,13 @@ def _lineHead(r: mut @ Reader, result: mut @ ExpandedToken):
             while p < eof and _caret(p) in _IdentChars:
                 # an escape's body may be a shortcut such as `\|`
                 with let:
-                    n = 2 if _caret(p) == ch("\\") and _plus_bang(p, 1) < eof else 1
+                    n = 2 if _caret(p) == char("\\") and _plus_bang(p, 1) < eof else 1
                 result.data.len += n
                 _inc(p, n)
         if result.data.len > 0 and (p >= eof or _caret(p) in _ControlCharsOrWhite):
             result.tk = NifKind.ParLe
         else:
-            while p < eof and _caret(p) != ch("\n"):
+            while p < eof and _caret(p) != char("\n"):
                 _inc(p)
             result.data.len = _minus_bang(p, result.data.p)
     if result.tk == NifKind.ParLe:
@@ -1035,9 +1035,9 @@ def _linePrelude(r: mut @ Reader, tok: mut @ ExpandedToken) -> bool:
     if r._inLineNode and r._depth == 0:
         # the newline is significant here
         with _useCpuRegisters():
-            while p < eof and _caret(p) in Tset[char](ch(" "), ch("\t"), ch("\r")):
+            while p < eof and _caret(p) in Tset[char](char(" "), char("\t"), char("\r")):
                 _inc(p)
-        if r._p >= r._eof or _caret(r._p) == ch("\n"):
+        if r._p >= r._eof or _caret(r._p) == char("\n"):
             # the `)` of the line node; the newline itself is skipped next time
             tok.tk = NifKind.ParRi
             tok.data = StringView(p=r._p, len=0)
@@ -1049,9 +1049,9 @@ def _linePrelude(r: mut @ Reader, tok: mut @ ExpandedToken) -> bool:
             return False
     result = False
     match _caret(r._p):
-        case _ if _caret(r._p) == ch("("):
+        case _ if _caret(r._p) == char("("):
             r._depth += 1
-        case _ if _caret(r._p) == ch(")"):
+        case _ if _caret(r._p) == char(")"):
             if r._depth > 0:
                 r._depth -= 1
         case _:
@@ -1316,10 +1316,10 @@ def extractModuleSuffix(filename: string) -> string:
     with var:
         skip = False
     for c in filename:
-        if c == ch("/") or c == ch("\\"):
+        if c == char("/") or c == char("\\"):
             result.setLen(0)
             skip = False
-        elif c == ch("."):
+        elif c == char("."):
             skip = True
         elif not skip:
             result.add(c)
@@ -1887,7 +1887,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             with var:
                 tok = default(ExpandedToken)
             r.next(tok)
-            assert tok.tk == NifKind.CharLit and decodeChar(tok) == ch("A")
+            assert tok.tk == NifKind.CharLit and decodeChar(tok) == char("A")
             close(r)
 
     echo("nifreader: OK")
@@ -1924,11 +1924,11 @@ if comptime(__name__ == "__main__"):
         assert tok.tk == NifKind.DotToken and str(tok) == "."
 
         r.next(tok)
-        assert tok.tk == NifKind.CharLit and decodeChar(tok) == ch("A")
+        assert tok.tk == NifKind.CharLit and decodeChar(tok) == char("A")
         assert str(tok) == "CharLit:"
 
         r.next(tok)
-        assert tok.tk == NifKind.CharLit and decodeChar(tok) == ch("A")
+        assert tok.tk == NifKind.CharLit and decodeChar(tok) == char("A")
 
         r.next(tok)
         assert tok.tk == NifKind.IntLit and decodeInt(tok) == BiggestInt(42)

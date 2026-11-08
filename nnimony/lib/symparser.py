@@ -21,8 +21,8 @@ def extractBasename(s: string, isGlobal: mut @ bool) -> string:
     with var:
         i = s.len - 2
     while i > 0:
-        if s[i] == ch('.'):
-            if s[i + 1] in Tset[char](inrange(ch('0'), ch('9'))):
+        if s[i] == char('.'):
+            if s[i + 1] in Tset[char](inrange(char('0'), char('9'))):
                 return substr(s, 0, i - 1)
             isGlobal <<= True  # we skipped one dot so it's a global name
         i -= 1
@@ -34,8 +34,8 @@ def extractBasename(s: mut @ string):
     with var:
         i = s.len - 2
     while i > 0:
-        if s[i] == ch('.'):
-            if s[i + 1] in Tset[char](inrange(ch('0'), ch('9'))):
+        if s[i] == char('.'):
+            if s[i + 1] in Tset[char](inrange(char('0'), char('9'))):
                 s.setLen(i)
                 return
         i -= 1
@@ -52,8 +52,8 @@ def extractModule(s: string) -> string:
     with var:
         i = s.len - 2
     while i > 0:
-        if s[i] == ch('.'):
-            if s[i + 1] in Tset[char](inrange(ch('0'), ch('9'))):
+        if s[i] == char('.'):
+            if s[i + 1] in Tset[char](inrange(char('0'), char('9'))):
                 return string("")
             else:
                 return substr(s, i + 1)
@@ -77,8 +77,8 @@ def splitSymName(s: string) -> SplittedSymName:
     with var:
         i = s.len - 2
     while i > 0:
-        if s[i] == ch('.'):
-            if s[i + 1] in Tset[char](inrange(ch('0'), ch('9'))):
+        if s[i] == char('.'):
+            if s[i + 1] in Tset[char](inrange(char('0'), char('9'))):
                 return SplittedSymName(name=s, module=string(""))
             else:
                 return SplittedSymName(name=substr(s, 0, i - 1), module=substr(s, i + 1))
@@ -91,11 +91,11 @@ def extractVersionedBasename(s: string) -> string:
     with var:
         i = s.len - 2
     while i > 0:
-        if s[i] == ch('.'):
-            if s[i + 1] in Tset[char](inrange(ch('0'), ch('9'))):
+        if s[i] == char('.'):
+            if s[i + 1] in Tset[char](inrange(char('0'), char('9'))):
                 with var:
                     j = i + 1
-                while j < s.len and s[j] in Tset[char](inrange(ch('0'), ch('9'))): j += 1
+                while j < s.len and s[j] in Tset[char](inrange(char('0'), char('9'))): j += 1
                 return substr(s, 0, j - 1)
         i -= 1
     return string("")
@@ -144,8 +144,8 @@ def derivedName(stem: string, tag: string) -> string:
     ## silently adopted the ORIGINAL symbol's key as its own cross-module identity.
     with var:
         i = stem.len - 1
-    while i > 0 and stem[i] in Tset[char](inrange(ch('0'), ch('9'))): i -= 1
-    if i > 0 and i < stem.len - 1 and stem[i] == ch('.'):
+    while i > 0 and stem[i] in Tset[char](inrange(char('0'), char('9'))): i -= 1
+    if i > 0 and i < stem.len - 1 and stem[i] == char('.'):
         result = substr(stem, 0, i - 1) + string("`") + tag + substr(stem, i)
     else:
         result = stem + string("`") + tag + string(".0")
@@ -158,11 +158,11 @@ def isInstantiation(s: string) -> bool:
         i = s.len - 2
         dots = 3
     while i > 0:
-        if s[i] == ch('.'):
+        if s[i] == char('.'):
             dots -= 1
-            if s[i + 1] in Tset[char](inrange(ch('0'), ch('9'))):
+            if s[i + 1] in Tset[char](inrange(char('0'), char('9'))):
                 return dots == 0
-            elif dots == 1 and s[i + 1] != ch('I'):
+            elif dots == 1 and s[i + 1] != char('I'):
                 return False
         i -= 1
     result = False
@@ -173,7 +173,7 @@ def isLocalName(s: string) -> bool:
     with var:
         dots = 0
     for c in s:
-        if c == ch('.'): dots += 1
+        if c == char('.'): dots += 1
     result = dots <= 1
     return result
 
@@ -185,18 +185,18 @@ def splitLocalSymName(s: string, basename: mut @ string,
     disamb <<= 0
     with var:
         dot = s.len - 1
-    while dot >= 0 and s[dot] in Tset[char](inrange(ch('0'), ch('9'))):
+    while dot >= 0 and s[dot] in Tset[char](inrange(char('0'), char('9'))):
         dot -= 1
-    if dot <= 0 or dot == s.len - 1 or s[dot] != ch('.'):
+    if dot <= 0 or dot == s.len - 1 or s[dot] != char('.'):
         return False
     for i in range(dot):
-        if s[i] == ch('.'):
+        if s[i] == char('.'):
             return False
     with var:
         value = 0
     for i in range(dot + 1, s.len):
         with let:
-            digit = ord(s[i]) - ord(ch('0'))
+            digit = ord(s[i]) - ord(char('0'))
         if value > (high(nint) - digit) // 10:
             return False
         value = value * 10 + digit
@@ -212,8 +212,8 @@ def removeModule(s: string) -> string:
     with var:
         i = s.len - 2
     while i > 0:
-        if s[i] == ch('.'):
-            if s[i + 1] in Tset[char](inrange(ch('0'), ch('9'))):
+        if s[i] == char('.'):
+            if s[i + 1] in Tset[char](inrange(char('0'), char('9'))):
                 return s.copy()
             else:
                 return substr(s, 0, i - 1)
@@ -238,11 +238,11 @@ def splitModulePath(s: string) -> SplittedModulePath:
     # We diverge from `splitFile` here in that we consider the `.2.nif` part the extension, not just the `.nif` part.
     with var:
         i = s.len - 2
-    while i >= 0 and s[i] not in Tset[char](ch('/'), ch('\\')):
+    while i >= 0 and s[i] not in Tset[char](char('/'), char('\\')):
         i -= 1
     with var:
         d = i + 1  # find first dot (i can be -1 here!)
-    while d < s.len and s[d] != ch('.'):
+    while d < s.len and s[d] != char('.'):
         d += 1
     result = SplittedModulePath(dir=substr(s, 0, i - 1), name=substr(s, i + 1, d - 1), ext=substr(s, d))
     return result
@@ -254,7 +254,7 @@ def changeModuleExt(s: string, ext: string) -> string:
     result = mp.dir.copy()
     if result.len > 0: result.add(string("/"))
     result.add(mp.name)
-    if ext.len > 0 and ext[0] != ch('.'):
+    if ext.len > 0 and ext[0] != char('.'):
         result.add(string(".") + ext)
     else:
         result.add(ext)

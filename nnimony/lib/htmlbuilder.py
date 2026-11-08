@@ -44,9 +44,9 @@ class HtmlBuilder(Object):
     def emitOpen(b: mut @ HtmlBuilder, tag: string):
         match b.format:
             case HtmlOutFormat.hofHtml:
-                b._buf.add(ch('<'))
+                b._buf.add(char('<'))
                 b._buf.add(tag)
-                b._buf.add(ch('>'))
+                b._buf.add(char('>'))
             case HtmlOutFormat.hofNif:
                 addTree(b._nif, tag)
 
@@ -55,7 +55,7 @@ class HtmlBuilder(Object):
             case HtmlOutFormat.hofHtml:
                 b._buf.add(string("</"))
                 b._buf.add(tag)
-                b._buf.add(ch('>'))
+                b._buf.add(char('>'))
             case HtmlOutFormat.hofNif:
                 endTree(b._nif)
 
@@ -73,9 +73,9 @@ class HtmlBuilder(Object):
             case HtmlOutFormat.hofHtml:
                 for c in s:
                     match c:
-                        case _ if c == ch('<'): b._buf.add(string("&lt;"))
-                        case _ if c == ch('>'): b._buf.add(string("&gt;"))
-                        case _ if c == ch('&'): b._buf.add(string("&amp;"))
+                        case _ if c == char('<'): b._buf.add(string("&lt;"))
+                        case _ if c == char('>'): b._buf.add(string("&gt;"))
+                        case _ if c == char('&'): b._buf.add(string("&amp;"))
                         case _: b._buf.add(c)
             case HtmlOutFormat.hofNif:
                 addStrLit(b._nif, s)
@@ -84,19 +84,19 @@ class HtmlBuilder(Object):
         ## Self-closing tag (`<br>` / `(br)`).
         match b.format:
             case HtmlOutFormat.hofHtml:
-                b._buf.add(ch('<'))
+                b._buf.add(char('<'))
                 b._buf.add(tag)
-                b._buf.add(ch('>'))
+                b._buf.add(char('>'))
             case HtmlOutFormat.hofNif:
                 addKeyw(b._nif, tag)
 
     def _emitAttrValueHtml(b: mut @ HtmlBuilder, v: string):
         for c in v:
             match c:
-                case _ if c == ch('<'): b._buf.add(string("&lt;"))
-                case _ if c == ch('>'): b._buf.add(string("&gt;"))
-                case _ if c == ch('&'): b._buf.add(string("&amp;"))
-                case _ if c == ch('"'): b._buf.add(string("&quot;"))
+                case _ if c == char('<'): b._buf.add(string("&lt;"))
+                case _ if c == char('>'): b._buf.add(string("&gt;"))
+                case _ if c == char('&'): b._buf.add(string("&amp;"))
+                case _ if c == char('"'): b._buf.add(string("&quot;"))
                 case _: b._buf.add(c)
 
     def emitOpenAttr(b: mut @ HtmlBuilder, tag: string,
@@ -106,15 +106,15 @@ class HtmlBuilder(Object):
         ## attribute name and whose only child is the value as a string literal.
         match b.format:
             case HtmlOutFormat.hofHtml:
-                b._buf.add(ch('<'))
+                b._buf.add(char('<'))
                 b._buf.add(tag)
                 for (k, v) in attrs:
-                    b._buf.add(ch(' '))
+                    b._buf.add(char(' '))
                     b._buf.add(k)
                     b._buf.add(string("=\""))
                     b._emitAttrValueHtml(v)
-                    b._buf.add(ch('"'))
-                b._buf.add(ch('>'))
+                    b._buf.add(char('"'))
+                b._buf.add(char('>'))
             case HtmlOutFormat.hofNif:
                 addTree(b._nif, tag)
                 for (k, v) in attrs:

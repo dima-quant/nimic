@@ -212,7 +212,7 @@ def _isGlobalSymbol(s: string, dottedSuffix: string) -> bool:
     with var:
         dots = 0
     for i in range(1, lim):
-        if s[i] == ch('.'): dots += 1
+        if s[i] == char('.'): dots += 1
     return dots >= 2
 
 
@@ -248,7 +248,7 @@ def buildIndex(b: mut @ TokenBuf, dottedSuffix: string = string("")) -> seq[Inde
 
 
 def _magic() -> array[_MagicLen, char]:
-    result = array[_MagicLen, char]([ch('N'), ch('I'), ch('F'), ch('B'), ch('I'), ch('N'), char(_LittleEndianTag), char(_Version)])
+    result = array[_MagicLen, char]([char('N'), char('I'), char('F'), char('B'), char('I'), char('N'), char(_LittleEndianTag), char(_Version)])
     return result
 
 # A `.bif` file is a machine-local cache; a read/write/seek error is unrecoverable
@@ -432,7 +432,7 @@ def storeToString(b: mut @ TokenBuf, dottedSuffix: string = string("")) -> strin
     # Pad to NifToken alignment so the mmap loader can borrow the token block in
     # place (see `tokenPad`).
     for _ in inrange(1, _tokenPad(result.len)):
-        result.add(ch('\0'))
+        result.add(char('\0'))
     # token stream: one contiguous block.
     if b.len > 0:
         _appendRaw(result, b.rawTokenPtr(), b.len * sizeof(NifToken))
@@ -1199,7 +1199,7 @@ if comptime(__name__ == "__main__"):
                     result.appendLineInfo(f, i32(13), i32(8))
                     result.addIntLit(42)
                     result.addFloatLit(3.14)
-                    result.addCharLit(ch('q'))
+                    result.addCharLit(char('q'))
                     result.addDotToken()
         return result
 

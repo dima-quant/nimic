@@ -158,7 +158,7 @@ if comptime(__name__ == "__main__"):
             fb.addFloatLit(1e309 - 1e309)
             fb.addIntLit(int64(-42))
             fb.addUIntLit(high(uint64))
-            fb.addCharLit(ch("z"))
+            fb.addCharLit(char("z"))
         echo("built: ", toString(fb, False))
         with var:
             fc = fb.beginRead()

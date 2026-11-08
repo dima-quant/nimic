@@ -14,19 +14,19 @@ if comptime(__name__ == "__main__"):
     def _main():
         with var:
             buf = array[maxVarIntLen, uint8]()
-            back = uint64(0)
+            back_ = uint64(0)
         for x in [uint64(0), uint64(240), uint64(241), uint64(2287), uint64(2288), uint64(67823), uint64(67824),
                   uint64(16777215), uint64(16777216), uint64(4294967295), uint64(4294967296),
                   uint64(1099511627776), uint64(72057594037927936), uint64(18446744073709551615)]:
             with let:
                 n = writeVu64(buf, x)
-                m = readVu64(buf, back)
-            echo(x, string(": "), n, string(" bytes, first "), buf[0], string(", read "), m, string(" "), back,
-                 string(" "), back == x)
+                m = readVu64(buf, back_)
+            echo(x, string(": "), n, string(" bytes, first "), buf[0], string(", read "), m, string(" "), back_,
+                 string(" "), back_ == x)
         with var:
             short = array[1, uint8]()
         short[0] = uint8(249)
-        echo(string("too short: "), readVu64(short, back))
+        echo(string("too short: "), readVu64(short, back_))
         echo(string("zigzag "), encodeZigzag(int64(0)), string(" "), encodeZigzag(int64(-1)), string(" "),
              encodeZigzag(int64(1)), string(" "), encodeZigzag(int64(-2)))
         echo(string("unzigzag "), decodeZigzag(uint64(0)), string(" "), decodeZigzag(uint64(1)), string(" "),

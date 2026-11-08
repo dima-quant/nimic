@@ -137,7 +137,7 @@ if comptime(__name__ == "__main__"):
     doAssert(bv3.extract() == string("{((NU) 7450754115369591294ULL), ((LongString*) (&TM__1_5))}"), string("v3 const"))
 
     # 4. C char literals
-    doAssert(_ssoCharLit(ch("a")) + _ssoCharLit(ch("'")) + _ssoCharLit(ch("\n")) + _ssoCharLit(ch("\x01")) ==
+    doAssert(_ssoCharLit(char("a")) + _ssoCharLit(char("'")) + _ssoCharLit(char("\n")) + _ssoCharLit(char("\x01")) ==
              string("'a''\\'''\\n''\\x01'"), string("ssoCharLit"))
     echo(string("All ccgliterals tests passed successfully!"))
 
@@ -604,14 +604,14 @@ if comptime(__name__ == "__main__"):
             dc2B.add(string("2.0"))
     with _addUnionType(dc2B):
         _addField(dc2B, name=string("u"), typ=string("NI"))
-    dc2B.add(ch('\n'))
+    dc2B.add(char('\n'))
     for kind in [_StructInitializerKind.siArray, _StructInitializerKind.siOrderedStruct]:
         with _addStructInitializer(dc2B, dc2Init, kind=kind):
             with _addField(dc2B, dc2Init, name=string("a")):
                 dc2B.add(string("1"))
             with _addField(dc2B, dc2Init, name=string("b")):
                 dc2B.add(string("2"))
-        dc2B.add(ch(' '))
+        dc2B.add(char(' '))
     with _addStructInitializer(dc2B, dc2Init, kind=_StructInitializerKind.siWrapper):
         with _addField(dc2B, dc2Init, name=string("x")):
             dc2B.add(string("x"))

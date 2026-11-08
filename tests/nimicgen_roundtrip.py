@@ -72,7 +72,7 @@ class Canon(ast.NodeTransformer):
     """What the comparison takes as equal. Comments are gone with the parse; a docstring keeps only its
     pragma part, comma-spaced. Of the rules' free choices (nimony_check_issues.md, issues 29, 46) only
     `x.copy()` / `copy(x)` are made equal, both valid spellings. The others have one canonical form (§13.5:
-    `string("x")` or a bare "x" by position, `ch('x')`, `seq[T]`, `Tset[T]`, `echo(x)`, `float64`, a set in
+    `string("x")` or a bare "x" by position, `char('x')`, `seq[T]`, `Tset[T]`, `echo(x)`, `float64`, a set in
     import order), which both sides must write: a difference is a deviation. The order of a run of import
     statements and sets is free (§13.5): `sort_imports` sorts it."""
 

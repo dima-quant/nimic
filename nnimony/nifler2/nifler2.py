@@ -25,7 +25,7 @@ from nimic.std import syncio, assertions
 from nimic.std.os import absolutePath, addFileExt, changeFileExt, getCurrentDir, relativePath
 from nimic.std.parseopt import CmdLineKind, getopt
 from . import nimgrammar, niflerout, filters
-from .nimgrammar import ch, globalTags, openParser, parseModule, Parser, pool, toString
+from .nimgrammar import globalTags, openParser, parseModule, Parser, pool, toString
 from .niflerout import writeDeps, writeNifler
 from .filters import applyFilters
 
@@ -103,7 +103,7 @@ def _main():
             if action != "deps":
             # nimony runs nifler with `--portablePaths`: the file is written relative
             # to the current directory
-                writeNifler(p.first, p.pool, p.tags, p.arena.cellCount() * 8, outp, relativePath(absolutePath(inp), getCurrentDir(), ch('/')))
+                writeNifler(p.first, p.pool, p.tags, p.arena.cellCount() * 8, outp, relativePath(absolutePath(inp), getCurrentDir(), char('/')))
             if deps or action == "deps":
                 writeDeps(p.first, p.pool, p.tags, changeFileExt(outp, string(".deps.nif")))
         case "t" | "tree":

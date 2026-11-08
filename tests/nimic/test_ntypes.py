@@ -40,8 +40,8 @@ from nimic.std.syncio import lines, read_file
 from nimic.std.tables import OrderedTable, Table, initOrderedTable, initTable
 from nimic.system.ansi_c import c_free, c_malloc, csize_t
 from nimic.transpiler import (unparse, private_name_collisions, check_private_names, free_call_overlaps,
-                              check_imported_module)
-from nimic import valuecheck
+                              check_imported_module, check_reserved_names, reserved_name_bindings)
+from nimic import ntypes as nimic_ntypes, reserved, valuecheck
 from nimic.inliner import _n_template_entries
 from nnimony.tools import upstream
 
@@ -646,9 +646,9 @@ class TestNTypes(unittest.TestCase):
         m = copy(n)
         m += 1
         self.assertEqual((n, m), (5, 6))
-        self.assertEqual(q[1], ch("b"))
+        self.assertEqual(q[1], char("b"))
         t = copy(s)
-        t.add(ch("c"))
+        t.add(char("c"))
         self.assertEqual((s, t), ("ab", "abc"))
         self.assertIsInstance(copy(NilPtr("ptr[char]")), NilPtr)  # an unset ptr field of a Python-side object
         self.assertEqual(unparse(ast.parse("p = copy(q)\nr = q.copy()\n"))[0].splitlines(), ["p = q", "r = q"])
@@ -1502,7 +1502,7 @@ class TestNTypes(unittest.TestCase):
         with var:
             p = _base.copy()  # copy pointer as mutable
         with let:
-            _BOX_trak = _fourCC(ch('t'),ch('r'),ch('a'),ch('k'))
+            _BOX_trak = _fourCC(char('t'),char('r'),char('a'),char('k'))
             x = _BOX_trak
         cast[ptr[ptr[uint8]]](_stack).contents = p  # save pointer p to _stackBase
         _stack <<= cast[ptr[ptr[uint8]]](cast[intp](_stack) + sizeof(pointer))  # update _stack pointer
@@ -1530,7 +1530,7 @@ class TestNTypes(unittest.TestCase):
         assert _arr[3] == uint8(8)  # pointer offset
         with let:
             _arr = cast[ptr[UncheckedArray[uint8]]](_atomStart)
-        assert _arr[4] == uint8(ord(ch('t')))  
+        assert _arr[4] == uint8(ord(char('t')))  
 
         c_free(_base)
 
@@ -2584,14 +2584,14 @@ class TestNTypes(unittest.TestCase):
         change the string and the other way round; reads stop at the first NUL (strlen)."""
         s = string("abcd")
         c = cstring(s)
-        c[0] = ch("x")
+        c[0] = char("x")
         self.assertEqual(s, "xbcd")
-        s[1] = ch("y")
+        s[1] = char("y")
         self.assertEqual(c[1], "y")
         self.assertEqual(str(s.cstring), "xycd")
         self.assertEqual(c[4], "\0")  # past the end: the terminator
         c2 = c  # a cstring copy is the same pointer
-        c2[3] = ch("\0")
+        c2[3] = char("\0")
         self.assertEqual(len(c), 3)
         self.assertEqual(str(c), "xyc")
         self.assertEqual(len(s), 4)  # the string keeps its length
@@ -2613,7 +2613,7 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(s, "hellolo\0")
         self.assertEqual(str(c), "hellolo")
         with self.assertRaises(IndexError):
-            c[8] = ch("!")  # no slot past the buffer
+            c[8] = char("!")  # no slot past the buffer
 
         class _Lexer(Object):
             buf: cstring
@@ -2622,8 +2622,8 @@ class TestNTypes(unittest.TestCase):
         lx = _Lexer()
         lx.bufStorage = newString(4)
         lx.buf = lx.bufStorage.cstring  # a cstring field aliases the string field too
-        lx.buf[1] = ch("x")
-        lx.bufStorage[0] = ch("a")
+        lx.buf[1] = char("x")
+        lx.bufStorage[0] = char("a")
         self.assertEqual(lx.bufStorage, "ax\0\0")
         self.assertEqual(str(lx.buf), "ax")
 
@@ -2868,17 +2868,17 @@ class TestNTypes(unittest.TestCase):
 
     def test_strutils_nim_semantics(self):
         """strutils procs follow Nim: ASCII-only whitespace/case, char args, last = -1 means 'to the end'."""
-        self.assertEqual(rfind(string("abca"), ch('a')), 3)
-        self.assertEqual(rfind(string("abca"), ch('a'), 0, 2), 0)
-        self.assertEqual(find(string("abca"), ch('a'), 1), 3)
-        self.assertEqual(find(string("abca"), ch('b'), 0, 0), -1)
-        self.assertEqual(repeat(ch('a'), 3), "aaa")
+        self.assertEqual(rfind(string("abca"), char('a')), 3)
+        self.assertEqual(rfind(string("abca"), char('a'), 0, 2), 0)
+        self.assertEqual(find(string("abca"), char('a'), 1), 3)
+        self.assertEqual(find(string("abca"), char('b'), 0, 0), -1)
+        self.assertEqual(repeat(char('a'), 3), "aaa")
         # NBSP (\xa0) is not Nim whitespace
         self.assertEqual(strip(string("\xa0 x \t\n")), "\xa0 x")
         self.assertEqual(strip(string("  x  "), leading=False), "  x")
-        self.assertEqual(strip(string("xxayx"), chars={ch('x')}), "ay")
+        self.assertEqual(strip(string("xxayx"), chars={char('x')}), "ay")
         self.assertEqual(toLowerAscii(string("\xc0B_")), "\xc0b_")
-        lc = toLowerAscii(ch('A'))
+        lc = toLowerAscii(char('A'))
         self.assertIsInstance(lc, char)
         self.assertEqual(lc, 'a')
         self.assertEqual(nimIdentNormalize(string("Foo_Bar")), "Foobar")
@@ -3504,11 +3504,11 @@ class TestNTypes(unittest.TestCase):
         c = x` is `c <<= x` in nimic (transpiled `c = x`) and writes back into the string."""
         s = string("aBc")
         alias = s
-        s[0] = ch("X")
+        s[0] = char("X")
         self.assertEqual(str(s), "XBc")
         self.assertEqual(str(alias), "XBc")
         with self.assertRaises(IndexDefect):
-            s[3] = ch("z")
+            s[3] = char("z")
         for c in mitems(s):
             if isUpperAscii(c):
                 c <<= char(uint8(ord(c)) ^ uint8(0b0010_0000))
@@ -3516,7 +3516,7 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual([str(c) for c in items(s)], ["x", "b", "c"])
         src = textwrap.dedent('''\
             for c in mitems(a):
-                c <<= ch("x")
+                c <<= char("x")
             ''')
         self.assertIn("for c in mitems(a):\n  c = 'x'", unparse(ast.parse(src))[0])
 
@@ -3569,7 +3569,7 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(str(su.formatSize(4096, includeSpace=True)), "4 KiB")
         self.assertEqual(str(su.formatSize(4096, prefix=su.bpColloquial, includeSpace=True)), "4 kB")
         self.assertEqual(str(su.formatSize(4096)), "4KiB")
-        self.assertEqual(str(su.formatSize(5_378_934, prefix=su.bpColloquial, decimalSep=ch(","))), "5,13MB")
+        self.assertEqual(str(su.formatSize(5_378_934, prefix=su.bpColloquial, decimalSep=char(","))), "5,13MB")
         self.assertEqual(str(su.formatSize(0)), "0B")
 
     def test_format_overloads_merge(self):
@@ -3710,14 +3710,14 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(s, "x-922337203685477580818446744073709551615" + "7")
         f = string("")
         f.addFloat(45.67)
-        f.add(ch(" "))
+        f.add(char(" "))
         addFloat(f, float32(0.5))
-        f.add(ch(" "))
+        f.add(char(" "))
         f.addFloat(1e20)
         self.assertEqual(f, "45.67 0.5 1e+20")
         f = string("")
         f.addFloat(1e16)  # Nim writes it fixed (dragonbox: the decimal point within -6..17), Python's repr 1e+16
-        f.add(ch(" "))
+        f.add(char(" "))
         addFloat(f, float32(0.1))  # float32's own shortest digits, not 0.10000000149011612
         self.assertEqual(f, "10000000000000000.0 0.1")
 
@@ -3780,21 +3780,21 @@ class TestNTypes(unittest.TestCase):
     def test_set_literal_with_ranges(self):
         """Nim `{'-', '0'..'9'}`: Tset[T] takes elements and inrange(...) ranges, as arguments or in a
         Python set literal; a single iterable (another set, a range) gives its members."""
-        digits = inrange(ch('0'), ch('9'))
-        for s in (Tset[char](ch('-'), digits), Tset[char]({ch('-'), digits})):
-            self.assertIn(ch('5'), s)
-            self.assertIn(ch('-'), s)
-            self.assertNotIn(ch('a'), s)
+        digits = inrange(char('0'), char('9'))
+        for s in (Tset[char](char('-'), digits), Tset[char]({char('-'), digits})):
+            self.assertIn(char('5'), s)
+            self.assertIn(char('-'), s)
+            self.assertNotIn(char('a'), s)
             self.assertEqual(len(s), 11)
         self.assertEqual(len(Tset[char](digits)), 10)
-        self.assertEqual(Tset[char](ch('x')), Tset[char]({ch('x')}))
+        self.assertEqual(Tset[char](char('x')), Tset[char]({char('x')}))
         # one char is an element, not an iterable of its text: `{'x'}` holds the char, `$` works
-        for one in (Tset[char](ch('x')), Tset(ch('x'))):
+        for one in (Tset[char](char('x')), Tset(char('x'))):
             self.assertEqual([type(e) for e in one], [char])
             self.assertEqual(str(one), "{'x'}")
         self.assertEqual(Tset[uint8](1, inrange(3, 5)), {1, 3, 4, 5})
         self.assertEqual(Tset[uint8](Tset[uint8](2, 4)), {2, 4})
-        self.assertEqual(unparse(ast.parse("x = Tset[char](ch('-'), inrange(ch('0'), ch('9')))"))[0].strip(),
+        self.assertEqual(unparse(ast.parse("x = Tset[char](char('-'), inrange(char('0'), char('9')))"))[0].strip(),
                          "x = {'-', '0' .. '9'}")
 
     def test_dispatch_overload_extends_imported_proc(self):
@@ -4748,9 +4748,9 @@ class TestNTypes(unittest.TestCase):
             s = string("ab")
         c = s[0]
         d = c.copy()
-        self.assertEqual((d, copy(c), ch('x').copy()), (ch('a'), ch('a'), ch('x')))
-        s[0] = ch('z')
-        self.assertEqual(d, ch('a'))
+        self.assertEqual((d, copy(c), char('x').copy()), (char('a'), char('a'), char('x')))
+        s[0] = char('z')
+        self.assertEqual(d, char('a'))
         self.assertIsNone(getattr(d, "_n_owner", None))
 
     def test_quit_overloads(self):
@@ -4859,8 +4859,8 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(s.substr(30), string(""))
 
     def test_transpile_char_constructor_literal(self):
-        """rule:char: `char("0")` of a one-char string constant is the char literal `'0'`, like `ch("0")`
-        (for a proc with a local named `ch`); `char(x)` of anything else stays a conversion."""
+        """rule:char: `char("0")` of a one-char string constant is the char literal `'0'` (also in a proc with a
+        local named `ch`); `char(x)` of anything else stays a conversion."""
         src = textwrap.dedent('''\
             def f(entry: string, n: nint) -> bool:
                 with let:
@@ -4869,6 +4869,199 @@ class TestNTypes(unittest.TestCase):
             ''')
         out = unparse(ast.parse(src))[0]
         self.assertIn("ch < '0' or ch > '\\0' or ch == char(n)", out)
+
+    def test_transpile_user_ch_is_a_call(self):
+        """rule:char, N78: nimic has no `ch`; a module's own `ch(L, i)` (nimlexer's current character) is a call of
+        it, free or in method syntax, and `ch` is no name nimic reserves."""
+        self.assertFalse(hasattr(nimic_ntypes, "ch"))
+        self.assertNotIn("ch", reserved.RESERVED_NAMES)
+        src = textwrap.dedent('''\
+            def ch(L: Lexer, i: nint) -> char:
+                return L.buf[i]
+            def f(L: Lexer) -> bool:
+                return ch(L, 0) == char("a") or L.ch(1) == char("b")
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("proc ch*(L: Lexer, i: int): char", out)
+        self.assertIn("ch(L, 0) == 'a' or L.ch(1) == 'b'", out)
+
+    def test_reserved_names_classify_the_core(self):
+        """rule:reservedescape: each public name of nimic.ntypes is either nimic's (reserved) or Nim's: a name
+        added to the core is classified here (adding a reserved one renames user identifiers spelled like it)."""
+        nim_names = set("""
+            AssertionDefect BackwardsIndex BiggestFloat BiggestInt BiggestUInt CatchableError Defect Endianness
+            FieldDefect File FileMode GC_ref GC_unref IndexDefect Natural NimVersion OverflowDefect Positive
+            RangeDefect RootObj SomeFloat SomeInteger SomeNumber SomeSignedInt SomeUnsignedInt UncheckedArray addInt
+            addr alloc alloc0 array ashr astToStr auto block byte cast char chr cint close cmp compileOption const
+            containsOrIncl converter copy copyMem countdown create createU cstring cuint dealloc declared default
+            defined delete discard distinct do doAssert echo ensureMove enum equalMem excl export fields float32
+            float64 fmAppend fmRead fmReadWrite fmReadWriteExisting fmWrite getMaxMem getOccupiedMem getTotalMem high
+            hostCPU hostOS incl include instantiationInfo int16 int32 int64 int8 isNil items lent let likely low
+            mitems move moveMem newException newSeq newSeqOfCap newString newStringOfCap nil open openArray ord out
+            pairs pointer pred ptr push quit raiseAssert readBuffer readFile readLine realloc realloc0 ref reset
+            resize seq setLen shallowCopy sink sizeof slurp stackTraceAvailable static staticRead stderr stdin stdout
+            string substr succ swap system template toFloat toInt toOpenArray typed typedesc typeof uint uint16
+            uint32 uint64 uint8 uncheckedAssign unlikely untyped var wasMoved write writeFile writeStackTrace
+            """.split())
+        public = {k for k in dir(nimic_ntypes) if not k.startswith("_")}
+        self.assertEqual(public - nim_names - reserved.CORE_NAMES, set(), "unclassified core names")
+        self.assertEqual(nim_names & reserved.RESERVED_NAMES, set())
+        self.assertEqual(reserved.CORE_NAMES - public, set(), "reserved names the core doesn't bind")
+        self.assertTrue(all(hasattr(builtins, n) for n in reserved.PYTHON_NAMES))
+
+    def test_transpile_reserved_escape(self):
+        """rule:reservedescape: a user identifier spelled like a reserved name has a trailing `_` everywhere (a
+        routine, field, parameter, keyword argument, attribute, local); the transpiler drops it. An escaped
+        `nint_` is the user's `nint`, not Nim's `int`; the core's own `nint` still is `int`."""
+        self.assertEqual((reserved.escaped("hook_"), reserved.escaped("hook"), reserved.escaped("ch_"),
+                          reserved.escaped("_")), ("hook", None, None, None))
+        src = textwrap.dedent('''\
+            class Entry(Object):
+                hook_: nint
+            def emit_(back_: nint, nint_: nint) -> nint:
+                return back_ + nint_
+            def f(e: Entry) -> nint:
+                with let:
+                    u8_ = emit_(e.hook_, nint_=nint(2))
+                return u8_
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("hook*: int", out)
+        self.assertIn("proc emit*(back: int, nint: int): int", out)
+        self.assertIn("return back + nint", out)
+        self.assertIn("u8 = emit(e.hook, nint = int(2))", out)
+        self.assertEqual(reserved_name_bindings(ast.parse(src)), [])
+        check_reserved_names(ast.parse(src))
+        # a Python builtin nimic's spelling uses: the user's `str` (std/parsejson) is a call of it, not `$`
+        src = textwrap.dedent('''\
+            def str_(my: JsonParser) -> string:
+                return my.a
+            def f(my: JsonParser) -> string:
+                return str_(my) + str(nint(1))
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("proc str*(my: JsonParser): string", out)
+        self.assertIn("return str(my) ", out)
+        self.assertIn(" $(int(1))", out)
+        self.assertEqual(reserved_name_bindings(ast.parse("def isinstance(x): pass")), [(1, "isinstance")])
+
+    def test_check_reserved_names(self):
+        """rule:reservedescape: a user module binding a reserved name unescaped (a routine, class, field,
+        parameter, local, enum member, an import's `as` name) is rejected, with its escaped spelling; reading the
+        core's names isn't binding them, and the core's own files aren't checked."""
+        src = textwrap.dedent('''\
+            from nimic.std import strutils as alias
+            class Object(Object):
+                hook: nint
+            def emit(u8: nint) -> nint:
+                with var:
+                    back = u8
+                return back
+            def g():
+                return cell(nint(1)), u8(5), Tset[char](char("a"))
+            ''')
+        tree = ast.parse(src)
+        self.assertEqual(reserved_name_bindings(tree),
+                         [(1, "alias"), (2, "Object"), (3, "hook"), (4, "emit"), (4, "u8"), (6, "back")])
+        with self.assertRaisesRegex(ValueError, r"m\.py:3: hook -> hook_"):
+            check_reserved_names(tree, "m.py")
+        check_reserved_names(tree, os.path.join(os.path.dirname(reserved.__file__), "std", "m.py"))
+
+    def test_transpile_global_assume_sync(self):
+        """rule:global: `global x` in a routine is dropped, its statements after it are an `assumeSync:` block (the
+        prelude's template: nimony's `{.cast(assumeSync).}`), also for a routine that only reads x; a main
+        block's proc too. Not in a module with `{.feature: "assumeSync".}`; a routine without `global` keeps
+        its body."""
+        src = textwrap.dedent('''\
+            with var:
+                runs = nint(0)
+            def step(n: nint):
+                """{.inline.}"""
+                global runs
+                runs += n
+            def peek() -> nint:
+                global runs
+                return runs
+            def twice(n: nint) -> nint:
+                return n * 2
+            if comptime(__name__ == "__main__"):
+                step(nint(1))
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("proc step*(n: int) {.inline.} =\n  assumeSync:\n    runs += n\n", out)
+        self.assertIn("proc peek*(): int =\n  assumeSync:\n    return runs\n", out)
+        self.assertIn("proc twice*(n: int): int =\n  return n * 2\n", out)
+        self.assertIn("{.nimicMain1Raises.} =\n    assumeSync:\n      step(int(1))", out)
+        self.assertNotIn("global", out)
+        out = unparse(ast.parse('pragma(\'feature: "assumeSync"\')\n' + src))[0]
+        self.assertIn("proc step*(n: int) {.inline.} =\n  runs += n\n", out)
+        self.assertNotIn("assumeSync:", out)
+
+    def test_slices_with_back(self):
+        """rule:slice, N82: a slice of a string, seq, array or openArray as Nim's `[]` of an HSlice. `x[a:b]` is
+        `x[a ..< b]`, `x[inrange(a, b)]` `x[a .. b]`; back(n) counts from the end (`^n` = len - n) in either bound.
+        A seq, array or openArray gives a new seq of copies, a string a string; an empty slice (b < a) is fine,
+        a non-empty one past the bounds is an IndexDefect (a negative int is no Python index from the end)."""
+        s = string("abcdef")
+        q = seq[nint]([nint(i) for i in range(10, 16)])
+        a = array[6, nint]([nint(i) for i in range(20, 26)])
+        o = toOpenArray(q, 0, 5)
+        self.assertEqual([str(s[1:3]), str(s[1:]), str(s[1:back(1)]), str(s[1:back(3)]), str(s[back(5):back(2)]),
+                          str(s[inrange(1, back(3))]), str(s[inrange(2, 4)]), str(s[inrange(4, 3)]), str(s[6:])],
+                         ["bc", "bcdef", "bcde", "bc", "bcd", "bcd", "cde", "", ""])
+        self.assertIsInstance(s[1:back(1)], string)
+        for x, base in ((q, 10), (a, 20), (o, 10)):
+            got = x[inrange(1, back(2))]
+            self.assertEqual((isinstance(got, seq), type(got).__name__), (True, "seq[nint]"))
+            ints = lambda v: [int(e) for e in v]  # while the slice lives: its elements are views of it
+            self.assertEqual(ints(got), [base + 1, base + 2, base + 3, base + 4])
+            self.assertEqual(ints(x[1:back(1)]), [base + 1, base + 2, base + 3, base + 4])
+            self.assertEqual(ints(x[0:2]), [base, base + 1])
+            self.assertEqual(ints(x[inrange(3, 2)]), [])
+            for bad in (slice(1, 10), slice(-1, 2), inrange(1, back(0)), inrange(0, 6)):
+                with self.assertRaises(IndexDefect):
+                    x[bad]
+        part = q[1:3]
+        part[0] = nint(99)
+        self.assertEqual((int(part[0]), int(q[1])), (99, 11))  # a copy, as Nim's
+        with self.assertRaises(IndexDefect):
+            s[1:10]
+        with self.assertRaises(TypeError):
+            s[0:4:2]
+
+    def test_slices_clip_in_nimony_dialect(self):
+        """N82: nimony's slices clip to the bounds (`substr`, `max`/`min` in its system), so code of the nimony
+        dialect gets the clipped slice where Nim 2 raises IndexDefect; an index past the bounds still raises."""
+        name = "_n82_nimony_dialect"
+        mod = types.ModuleType(name)
+        mod.__nimic_dialect__ = "nimony"
+        sys.modules[name] = mod
+        try:
+            ns = {"__name__": name}
+            exec(textwrap.dedent('''
+                from nimic.ntypes import *
+                s = string("abcdef")
+                q = seq[nint]([nint(1), nint(2), nint(3)])
+                got = (str(s[1:10]), str(s[inrange(2, 8)]), [int(e) for e in q[inrange(1, 5)]])
+                try:
+                    s[back(0)]
+                    index = "no error"
+                except IndexDefect:
+                    index = "IndexDefect"
+            '''), ns)
+            self.assertEqual(ns["got"], ("bcdef", "cdef", [2, 3]))
+            self.assertEqual(ns["index"], "IndexDefect")
+        finally:
+            del sys.modules[name]
+
+    def test_transpile_slices_with_back(self):
+        """rule:slice: `x[a:back(n)]` is `x[a ..< ^n]` (spaced: `..<^` would be one Nim operator),
+        `x[inrange(a, back(n))]` is `x[a .. ^n]`, `x[a:]` stays `x[a..^1]`."""
+        out = unparse(ast.parse("y = s[1:back(2)]\nz = s[inrange(1, back(3))]\nw = s[1:]\nv = s[0:n]\n"))[0]
+        self.assertIn("y = s[1 ..< ^2]", out)
+        self.assertIn("z = s[1 .. ^3]", out)
+        self.assertIn("w = s[1..^1]", out)
+        self.assertIn("v = s[0..<n]", out)
 
     def test_os_exe_ext(self):
         """Nim os.ExeExt: "exe" on Windows, "" elsewhere; `addFileExt` adds nothing for "" (POSIX)."""
@@ -5604,7 +5797,7 @@ class TestNTypes(unittest.TestCase):
                "        y: nint = nint()\n"
                "        buf: pragma('noinit') @ array[12, char] = array[12, char]()\n"
                "        z: pragma('noinit') @ nint = nint()\n"
-               "    buf[0] = ch('a')\n"
+               "    buf[0] = char('a')\n"
                "    return len(entry) + len(typed) + x\n"
                "with var:\n"
                "    _g: pragma('threadvar') @ nint = 0\n")
@@ -7365,7 +7558,7 @@ def addWord(b: mut@Builder, w: string) -> None:
         """Nim echo writes $a & $b & ... (no separator), bools as true/false, nil as nil."""
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            echo(string("x = "), 5, True, ch("c"), None)
+            echo(string("x = "), 5, True, char("c"), None)
         self.assertEqual(buf.getvalue(), "x = 5truecnil\n")
 
     def test_shallow_copy_assigns_in_place(self):
@@ -7482,7 +7675,7 @@ def addWord(b: mut@Builder, w: string) -> None:
         self.assertEqual(hashIgnoreStyle(string("aBr_aCa_dAB_ra")), -5600162842546114722)
         self.assertEqual(hashIgnoreStyle(string("")), 0)
         self.assertEqual(hashIgnoreStyle(string("Lexer")), 4924223376909363949)
-        h = mix_hash(Hash(0), ord(ch("x")))
+        h = mix_hash(Hash(0), ord(char("x")))
         self.assertEqual(h, 124921)
         self.assertIsInstance(h, Hash)
         self.assertEqual(finish_hash(h), 36826228197)
@@ -7490,7 +7683,7 @@ def addWord(b: mut@Builder, w: string) -> None:
         with var:
             h2: Hash = Hash(0)
         for c in "lexer":
-            h2 = mix_hash(h2, ord(ch(c)))
+            h2 = mix_hash(h2, ord(char(c)))
         self.assertEqual(finish_hash(h2), hashIgnoreStyle(string("Lexer")))
 
     def test_hash_is_an_int_alias(self):
@@ -7555,11 +7748,11 @@ def addWord(b: mut@Builder, w: string) -> None:
             s = string("abc")
             q = seq[int32]([int32(1), int32(2), int32(3)])
             a = array[3, int32]([int32(4), int32(5), int32(6)])
-        self.assertEqual(s[back(1)], ch("c"))
-        self.assertEqual(s[back(3)], ch("a"))
+        self.assertEqual(s[back(1)], char("c"))
+        self.assertEqual(s[back(3)], char("a"))
         self.assertEqual(q[back(1)], 3)
         self.assertEqual(a[back(2)], 5)
-        s[back(1)] = ch("z")
+        s[back(1)] = char("z")
         q[back(1)] = int32(9)
         a[back(1)] = int32(7)
         self.assertEqual(s, string("abz"))
@@ -7610,7 +7803,7 @@ def addWord(b: mut@Builder, w: string) -> None:
         """Nim: chr(i) is a char (RangeDefect above 255); RangeDefect is a Defect, not a ValueError (the lexer
         catches ValueError before RangeDefect); Natural / Positive and Trange[a, b] annotate range types."""
         self.assertIsInstance(chr(65), char)
-        self.assertEqual(chr(nint(97)), ch("a"))
+        self.assertEqual(chr(nint(97)), char("a"))
         with self.assertRaises(RangeDefect):
             chr(256)
         self.assertTrue(issubclass(RangeDefect, Defect))
@@ -7646,19 +7839,19 @@ def addWord(b: mut@Builder, w: string) -> None:
             c = cstring(s)
         tail = cast[cstring](addr(c[6]))
         self.assertEqual(str(tail), "world")
-        self.assertEqual(tail[0], ch("w"))
-        tail[0] = ch("W")
+        self.assertEqual(tail[0], char("w"))
+        tail[0] = char("W")
         self.assertEqual(s, string("hello World"))
         self.assertIn("cast[cstring](addr(c[6]))", unparse(ast.parse("t = cast[cstring](addr(c[6]))\n"))[0])
 
     def test_succ_pred_char(self):
         """Nim: succ/pred of a char (`'\\0'..pred(' ')` in the lexer); RangeDefect past '\\xFF' or below '\\0'."""
-        self.assertEqual(pred(ch(" ")), ch("\x1f"))
-        self.assertEqual(succ(ch("a"), 2), ch("c"))
-        self.assertIsInstance(succ(ch("a")), char)
-        self.assertTrue(ch("\x05") in inrange(ch("\0"), pred(ch(" "))))
+        self.assertEqual(pred(char(" ")), char("\x1f"))
+        self.assertEqual(succ(char("a"), 2), char("c"))
+        self.assertIsInstance(succ(char("a")), char)
+        self.assertTrue(char("\x05") in inrange(char("\0"), pred(char(" "))))
         with self.assertRaises(RangeDefect):
-            pred(ch("\0"))
+            pred(char("\0"))
 
     def test_dollar_of_containers(self):
         """Nim `$` of a set, seq and array (collectionToString): elements in order (a set by ordinal), strings
@@ -7668,12 +7861,12 @@ def addWord(b: mut@Builder, w: string) -> None:
             eb = auto()
             ec = auto()
         self.assertEqual(str(Tset[_E]({_E.ec, _E.ea})), "{ea, ec}")
-        self.assertEqual(str(Tset[char]({ch("b"), ch("a"), ch("\n"), ch("'")})), "{'\\n', '\\'', 'a', 'b'}")
+        self.assertEqual(str(Tset[char]({char("b"), char("a"), char("\n"), char("'")})), "{'\\n', '\\'', 'a', 'b'}")
         self.assertEqual(str(Tset[_E]()), "{}")
         self.assertEqual(str(seq[nint]([nint(1), nint(2), nint(3)])), "@[1, 2, 3]")
         self.assertEqual(str(seq[string]([string('a"b'), string("c")])), '@["a\\"b", "c"]')
         self.assertEqual(str(array[2, int8]([int8(1), int8(2)])), "[1, 2]")
-        self.assertEqual(str(seq[char]([ch("x"), ch("\t"), ch("\xF0")])), "@['x', '\\t', '\\xF0']")
+        self.assertEqual(str(seq[char]([char("x"), char("\t"), char("\xF0")])), "@['x', '\\t', '\\xF0']")
         self.assertEqual(str(seq[float64]([float64(1.5), float64(2.0)])), "@[1.5, 2.0]")
         self.assertEqual(str(seq[nint]()), "@[]")
 
@@ -8071,7 +8264,7 @@ def addWord(b: mut@Builder, w: string) -> None:
             return unparse(ast.parse(src))[0].strip()
         self.assertEqual(nim('def f(s: string, n: nint):\n    echo("a", s, n, r.targets, 3, -1, 1.5, True)'),
                          'proc f*(s: string, n: int) =\n  echo("a", s, $(n), $(r.targets), 3, -1, 1.5, true)')
-        self.assertEqual(nim('echo(ch("c"), str(x), u8(3), string("q"), x.y[0])'),
+        self.assertEqual(nim('echo(char("c"), str(x), u8(3), string("q"), x.y[0])'),
                          "echo('c', $(x), 3'u8, \"q\", $(x.y[0]))")
         self.assertEqual(nim("print(t)"), "echo($(t))")
         self.assertEqual(nim("echo()"), "echo()")
@@ -8102,7 +8295,8 @@ def addWord(b: mut@Builder, w: string) -> None:
         only in a try or a `.raises` routine): `.raises` under nimony and called in try / quit(1), called directly
         in Nim 2. Imports, standalone pragmas and definitions stay at the block's top level; its procs take the
         pragma alias. Each main block of a module has its own number; a main block with only definitions has no
-        proc. Nothing of a main block is exported."""
+        proc. Nothing of a main block is exported. The proc's statements are top-level code: in an `assumeSync:`
+        block (rule:global), which may touch the module's globals under nimony."""
         src = ('from nimic.ntypes import *\n'
                'if comptime(__name__ == "__main__"):\n'
                '    importFrom("nimic.std.os", "getCurrentDir")\n'
@@ -8126,9 +8320,10 @@ def addWord(b: mut@Builder, w: string) -> None:
             "  proc helper(x: int): int {.nimicMain1Raises.} =",
             "    return x + 1",
             "  proc nimicMain1() {.nimicMain1Raises.} =",
-            "    let",
-            "      cwd = getCurrentDir()",
-            "    echo($(cwd), $(helper(1)))",
+            "    assumeSync:",
+            "      let",
+            "        cwd = getCurrentDir()",
+            "      echo($(cwd), $(helper(1)))",
             "  when defined(nimony):",
             "    try:",
             "      nimicMain1()",
@@ -8157,7 +8352,7 @@ def addWord(b: mut@Builder, w: string) -> None:
         self.assertIn("  var\n    calls = 0\n", out)
         # the block exports nothing: its `_x` and `x` are the same Nim code
         self.assertEqual(out, unparse(ast.parse(src.replace("calls", "_calls").replace("stub", "_stub")))[0])
-        self.assertIn("  proc nimicMain1() {.nimicMain1Raises.} =\n    let\n      n = 2\n    stub()\n", out)
+        self.assertIn("  proc nimicMain1() {.nimicMain1Raises.} =\n    assumeSync:\n      let\n        n = 2\n      stub()\n", out)
         # only a def's free names keep a section global: a parameter of the same name doesn't (the section stays
         # after the statement before it); a `when` holding only definitions and `f = overloads(...)` stay too
         src = ('if comptime(__name__ == "__main__"):\n'
@@ -8174,7 +8369,7 @@ def addWord(b: mut@Builder, w: string) -> None:
                '    echo(count(dir))\n')
         out = unparse(ast.parse(src))[0]
         self.assertIn("  when defined(nimony):\n\n    template check(c: bool) =", out)
-        self.assertIn("  proc nimicMain1() {.nimicMain1Raises.} =\n    echo(1)\n    let\n      dir = \"x\"\n", out)
+        self.assertIn("  proc nimicMain1() {.nimicMain1Raises.} =\n    assumeSync:\n      echo(1)\n      let\n        dir = \"x\"\n", out)
 
     def test_transpile_std_bridge(self):
         """rule:stdbridge -> nimic.std.os is ncode/std/os (std/os, under nimony with the string forms of
@@ -8591,13 +8786,13 @@ def addWord(b: mut@Builder, w: string) -> None:
         def back(i: mut@nint) -> None:
             i -= 2
 
-        idx = rfind(string("a b c"), ch(" "))
+        idx = rfind(string("a b c"), char(" "))
         self.assertIsInstance(idx, nint)
         back(idx)
         self.assertEqual(int(idx), 1)
         self.assertIsInstance(find(string("abc"), string("c")), nint)
-        self.assertIsInstance(find(string("abc"), Tset[char]({ch("x")})), nint)
-        self.assertEqual(int(find(string("abc"), Tset[char]({ch("x")}))), -1)
+        self.assertIsInstance(find(string("abc"), Tset[char]({char("x")})), nint)
+        self.assertEqual(int(find(string("abc"), Tset[char]({char("x")}))), -1)
 
     def test_template_uses_caller_variables(self):
         """A statement template whose body uses names that are neither its parameters nor its own
@@ -8606,10 +8801,10 @@ def addWord(b: mut@Builder, w: string) -> None:
         (`m`, `result`, an enclosing proc's `idx`) and `return` returns from the caller."""
         self.assertEqual(int(_tStrVersion(_TCfg(gc=2))), 2)
         self.assertEqual(int(_tStrVersion(_TCfg(gc=0))), 1)
-        self.assertTrue(_tEndsWithWords(string("a b"), ch(" ")))
-        self.assertTrue(_tEndsWithWords(string("a  b"), ch(" ")))
-        self.assertIs(_tEndsWithWords(string("x b"), ch(" ")), False)  # bare `return` returns result
-        self.assertIs(_tEndsWithWords(string("a c"), ch(" ")), False)  # bare `return` returns result
+        self.assertTrue(_tEndsWithWords(string("a b"), char(" ")))
+        self.assertTrue(_tEndsWithWords(string("a  b"), char(" ")))
+        self.assertIs(_tEndsWithWords(string("x b"), char(" ")), False)  # bare `return` returns result
+        self.assertIs(_tEndsWithWords(string("a c"), char(" ")), False)  # bare `return` returns result
         out = unparse(ast.parse(textwrap.dedent(inspect.getsource(_tDetectVersion))))[0]
         self.assertIn("template tDetectVersion(field: untyped) =", out)
         self.assertNotIn("dirty", out)
@@ -8653,16 +8848,16 @@ def addWord(b: mut@Builder, w: string) -> None:
         with let:
             base = cast[uintp](addr(s[0]))
             p = cast[ptr[char]](addr(s[2]))
-        self.assertEqual(cast[ptr[char]](base + uint(1)).contents, ch("I"))
+        self.assertEqual(cast[ptr[char]](base + uint(1)).contents, char("I"))
         self.assertEqual(cast[ptr[byte]](base + uint(1)).contents, 73)
-        self.assertEqual(p.contents, ch("F"))
-        s[2] = ch("x")
-        self.assertEqual(p.contents, ch("x"))
-        p.contents = ch("y")
+        self.assertEqual(p.contents, char("F"))
+        s[2] = char("x")
+        self.assertEqual(p.contents, char("x"))
+        p.contents = char("y")
         self.assertEqual(str(s), "NIyBIN")
-        self.assertEqual(p.contents, ch("y"))
-        s[2] = ch("z")
-        self.assertEqual(p.contents, ch("z"))
+        self.assertEqual(p.contents, char("y"))
+        s[2] = char("z")
+        self.assertEqual(p.contents, char("z"))
 
     def test_template_assigns_its_parameter(self):
         """A statement template assigning its parameter (`template inc(p: pchar; diff = 1) = p = ...`) assigns
@@ -8673,8 +8868,8 @@ def addWord(b: mut@Builder, w: string) -> None:
         self.assertEqual(str(_tScanLocal(s)), "a c f")
         r = _TCur(p=cast[ptr[UncheckedArray[char]]](addr(s[0])))
         _tAdvanceField(r)
-        self.assertEqual(r.p[0], ch("d"))
-        self.assertEqual(_tViaVarParam(s), ch("c"))
+        self.assertEqual(r.p[0], char("d"))
+        self.assertEqual(_tViaVarParam(s), char("c"))
         self.assertIn("_tIncP", _n_templates)
 
     def test_block_template_uses_caller_scope(self):
@@ -8687,7 +8882,7 @@ def addWord(b: mut@Builder, w: string) -> None:
         r = _TCur(p=cast[ptr[UncheckedArray[char]]](addr(s[0])))
         r.eof = cast[ptr[UncheckedArray[char]]](cast[intp](r.p) + len(s))
         self.assertEqual(int(_tSkipWord(r)), 2)
-        self.assertEqual(r.p[0], ch(" "))
+        self.assertEqual(r.p[0], char(" "))
         self.assertEqual(int(_tSkipBlanksThenWord(r)), 2)
         self.assertEqual(r.p, r.eof)
         out = unparse(ast.parse(textwrap.dedent(inspect.getsource(_tSkipWord))))[0]
@@ -8710,19 +8905,19 @@ def addWord(b: mut@Builder, w: string) -> None:
 
     def test_inrange_chars(self):
         """inrange of chars (Nim 'a'..'z') yields chars: membership and iteration."""
-        self.assertIn(ch("b"), inrange(ch("a"), ch("z")))
-        self.assertNotIn(ch("B"), inrange(ch("a"), ch("z")))
-        self.assertEqual([str(c) for c in inrange(ch("a"), ch("c"))], ["a", "b", "c"])
-        self.assertIn(ch("\x90"), inrange(ch("\x80"), ch("\xff")))
+        self.assertIn(char("b"), inrange(char("a"), char("z")))
+        self.assertNotIn(char("B"), inrange(char("a"), char("z")))
+        self.assertEqual([str(c) for c in inrange(char("a"), char("c"))], ["a", "b", "c"])
+        self.assertIn(char("\x90"), inrange(char("\x80"), char("\xff")))
 
     def test_case_ranges_and_elif_branches(self):
         """`case _ if <subject> in inrange(a, b):` is `of a..b:`; ranges and `== v` joined with `or` are one
         `of` list; any other guard is an `elif` branch of the case (rule:matchcase)."""
         def kind(c: char, n: nint) -> nint:
             match c:
-                case _ if c in inrange(ch("0"), ch("9")):
+                case _ if c in inrange(char("0"), char("9")):
                     return nint(1)
-                case _ if c in inrange(ch("a"), ch("z")) or c in inrange(ch("A"), ch("Z")) or c == ch("_"):
+                case _ if c in inrange(char("a"), char("z")) or c in inrange(char("A"), char("Z")) or c == char("_"):
                     return nint(2)
                 case "-":
                     return nint(3)
@@ -8731,13 +8926,13 @@ def addWord(b: mut@Builder, w: string) -> None:
                 case _:
                     return nint(0)
 
-        self.assertEqual([int(kind(ch(x), nint(0))) for x in "5qZ_-+"], [1, 2, 2, 2, 3, 0])
-        self.assertEqual(int(kind(ch("+"), nint(1))), 4)
+        self.assertEqual([int(kind(char(x), nint(0))) for x in "5qZ_-+"], [1, 2, 2, 2, 3, 0])
+        self.assertEqual(int(kind(char("+"), nint(1))), 4)
         src = textwrap.dedent('''\
             match s[i]:
-                case _ if s[i] in inrange(ch("0"), ch("9")):
+                case _ if s[i] in inrange(char("0"), char("9")):
                     a = 1
-                case _ if s[i] in inrange(ch("a"), ch("z")) or s[i] in inrange(ch("A"), ch("Z")) or s[i] == ch("_"):
+                case _ if s[i] in inrange(char("a"), char("z")) or s[i] in inrange(char("A"), char("Z")) or s[i] == char("_"):
                     a = 2
                 case _ if s[i] in inrange(TMsgKind.warnMin, TMsgKind.warnMax):
                     a = 3
@@ -8993,8 +9188,8 @@ def _tEndsWithWords(x: string, sep: char) -> bool:
             return
         idx -= 1
 
-    eatWord(ch("b"))
-    eatWord(ch("a"))
+    eatWord(char("b"))
+    eatWord(char("a"))
     result = True
     return result
 
@@ -9135,7 +9330,7 @@ def _tSkipWord(r: mut @ _TCur) -> nint:
         n = nint(0)
     with _tUseRegs():
         while q < eof:
-            if q[0] == ch(" "):
+            if q[0] == char(" "):
                 break
             n += 1
             _tIncP(q)
@@ -9153,7 +9348,7 @@ def _tSkipBlanksThenWord(r: mut @ _TCur) -> nint:
             while q < eof and q[0] == c:
                 _tIncP(q)
 
-    skipWhile(ch(" "))
+    skipWhile(char(" "))
     with _tUseRegs():
         while q < eof:
             n += 1

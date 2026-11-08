@@ -106,7 +106,7 @@ with let:
 with var:
     p = base.copy()  # copy pointer as mutable
 with let:
-    BOX_trak = fourCC(ch('t'),ch('r'),ch('a'),ch('k'))
+    BOX_trak = fourCC(char('t'),char('r'),char('a'),char('k'))
     x = BOX_trak
 
 cast[ptr[ptr[uint8]]](stack).contents = p  # save pointer p to stackBase
@@ -136,7 +136,7 @@ with let:
 assert arr[3] == uint8(8)  # pointer offset
 with let:
     arr = cast[ptr[UncheckedArray[uint8]]](atomStart)
-assert arr[4] == uint8(ord(ch('t')))
+assert arr[4] == uint8(ord(char('t')))
 
 c_free(base)
 ```

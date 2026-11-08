@@ -125,7 +125,7 @@ Classes and objects use standard Python `class` definitions but employ specific 
 | `(x: 1, y: 2)` | `SomeTuple(x=1, y=2)` | NTuple constructor transpiles to Nim tuple literal (`rule:tuplelit`) |
 | `{}` | `Tset[T]()` or `Tset()` | Empty set literal (`rule:setlit`) |
 | `{a, b, c}` | `Tset[T](a, b, c)` or `Tset(a, b, c)` | Set literal with elements (`rule:setlit`) |
-| `{'-', '0'..'9'}` | `Tset[char](ch('-'), inrange(ch('0'), ch('9')))` or `Tset[char]({ch('-'), inrange(...)})` | Ranges in a set literal |
+| `{'-', '0'..'9'}` | `Tset[char](char('-'), inrange(char('0'), char('9')))` or `Tset[char]({char('-'), inrange(...)})` | Ranges in a set literal |
 | `@[a, b, c]` | `seq[T]([a, b, c])` or `seq([a, b, c])` | Sequence literal (`rule:seqlit`) |
 | `@[]` | `seq()` or `seq[T]()` | Empty sequence literal (`rule:seqlit`) |
 | `[byte 1, 5]` | `array[2, byte]([1, 5])` | Arrays |
@@ -253,11 +253,11 @@ Because the transpiler is sensitive to Python's internal logic versus Nim's syst
 | `&"var: {x}"`, `fmt"var: {x}"` | `f"var: {x}"` | String interpolation (`rule:stringjoin`: `f` is written `&`); format specs (`{x:>5}`, `{f:.3f}`) mean the same in Python and Nim's strformat. Needs `from nimic.std.strformat import *` (Nim `import std/strformat`). `fmt"..."` is a raw literal in Nim, so a backslash in it is written `\\` in the f-string. A `bool` prints `True` in Python but `true` in Nim (G23) |
 | `true`, `false`, `nil`, `Inf` |` True`, `False`, `None`, `inf` | Python's standard `inf` is `Inf` in Nim, bools transpile via `rule:lowercasebool`|
 | `0x9e37...15'u64` | `u64(0x9e37...15)` | Numeric literal types |
-| `'#'` | `ch("#")` | Char literal types |
+| `'#'` | `char("#")` | Char literal types |
 | `None` (Nim keyword) | `None_` | Trailing `_` stripped by transpiler for Python keyword clashes (`rule:keywordescape`) |
 | `"format: $1" % [arg]` | `string("format: $1") % [arg]` | String `%` operator transpiles as Nim `%` (formatting), not `mod` (`rule:strformat`): the left operand is a string literal, `string(...)`/`FormatStr(...)`, a name declared `string`/`FormatStr` (parameter, annotated or `string(...)`-assigned variable, also in an enclosing scope), or a call of a proc declared `-> string`; or the right operand is a list/tuple or a name declared as a seq/openArray/array/varargs of `string` |
 | `chr(i)` | `chr(i)` | nimic's `chr` gives a `char` (Python's builtin gives a `str`); `RangeDefect` outside 0..255 |
-| `succ(c)`, `pred(' ')` (a char) | `succ(c)`, `pred(ch(' '))` | Also for chars; `RangeDefect` past `'\xFF'` or below `'\0'` |
+| `succ(c)`, `pred(' ')` (a char) | `succ(c)`, `pred(char(' '))` | Also for chars; `RangeDefect` past `'\xFF'` or below `'\0'` |
 | `$s` of a set, seq or array | `str(s)` | Nim's text: `{a, b}` (set, in ordinal order), `@[1, 2]` (seq), `[1, 2]` (array); strings and chars quoted with Nim's escapes (`@["a\"b"]`, `{'\n'}`) |
 | `($x)[a..b]`, `($x).len` | `str(x)[a:b + 1]`, `str(x).len` | `rule:dollarparens`: a `str(...)` used as the base of an index or attribute is parenthesized in Nim |
 | `except ValueError, OverflowDefect:` | `except (ValueError, OverflowDefect):` | Several exception types (`rule:exceptseveral`) |
@@ -364,7 +364,7 @@ Runtime boundary helpers (in `ntypesystem.py`, for std shims only): `_n_from_tex
 
 | Nim | Python (Nimic) | Notes |
 | --- | --- | --- |
-| `case c`<br>`of 'a'..'z', 'A'..'Z', '_':` | `match c:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`case _ if c in inrange(ch('a'), ch('z')) or c in inrange(ch('A'), ch('Z')) or c == ch('_'):` | Ranges, values and set constants (`c in routineDefs`) of one `of` branch: a guard on the subject joined with `or`. A char value needs a guard (`c == ch('_')`) since `case "_"` is a string |
+| `case c`<br>`of 'a'..'z', 'A'..'Z', '_':` | `match c:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`case _ if c in inrange(char('a'), char('z')) or c in inrange(char('A'), char('Z')) or c == char('_'):` | Ranges, values and set constants (`c in routineDefs`) of one `of` branch: a guard on the subject joined with `or`. A char value needs a guard (`c == char('_')`) since `case "_"` is a string |
 | `of nkEmpty..pred(nkSym), succ(nkSym)..nkNilLit:` | `case _ if n.kind in inrange(TNodeKind.nkEmpty, pred(TNodeKind.nkSym)) or n.kind in inrange(succ(TNodeKind.nkSym), TNodeKind.nkNilLit):` | Enum ranges likewise |
 | `elif cond:` (branch of a `case`) | `case _ if cond:` | Any other guard is an `elif` branch |
 | `proc p(s: string): Cmd =`<br>&nbsp;&nbsp;`case s`<br>&nbsp;&nbsp;`of "sug": ideSug`<br>&nbsp;&nbsp;`else: ideNone` | `def p(s: string) -> Cmd:`<br>&nbsp;&nbsp;&nbsp;&nbsp;`match s:`<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`case "sug": return Cmd.ideSug`<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`case _: return Cmd.ideNone` | `case` expression as the proc's result (`rule:casereturn`): a body ending with a `match` whose every branch is `return <value>` |

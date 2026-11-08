@@ -87,11 +87,11 @@ class PLLStream(TLLStream):
             case TLLStreamKind.llsString:
                 while s.rd < s.s.len:
                     match s.s[s.rd]:
-                        case _ if s.s[s.rd] == ch('\r'):
+                        case _ if s.s[s.rd] == char('\r'):
                             s.rd += 1
-                            if s.s[s.rd] == ch('\n'): s.rd += 1
+                            if s.s[s.rd] == char('\n'): s.rd += 1
                             break
-                        case _ if s.s[s.rd] == ch('\n'):
+                        case _ if s.s[s.rd] == char('\n'):
                             s.rd += 1
                             break
                         case _:
@@ -191,7 +191,7 @@ def _countTriples(s: string) -> nint:
         result = 0
         i = 0
     while i + 2 < len(s):
-        if s[i] == ch('"') and s[i+1] == ch('"') and s[i+2] == ch('"'):
+        if s[i] == char('"') and s[i+1] == char('"') and s[i+2] == char('"'):
             result += 1
             i += 2
         i += 1
@@ -202,7 +202,7 @@ def endsWith(x: string, s: Tset[char]) -> bool:
     with var:
         i = len(x) - 1
         result = False
-    while i >= 0 and x[i] == ch(' '): i -= 1
+    while i >= 0 and x[i] == char(' '): i -= 1
     if i >= 0 and x[i] in s:
         result = True
     else:
@@ -210,9 +210,9 @@ def endsWith(x: string, s: Tset[char]) -> bool:
     return result
 
 with const:
-    _LineContinuationOprs = Tset[char]({ch('+'), ch('-'), ch('*'), ch('/'), ch('\\'), ch('<'), ch('>'), ch('!'), ch('?'), ch('^'),
-                            ch('|'), ch('%'), ch('&'), ch('$'), ch('@'), ch('~'), ch(',')})
-    _AdditionalLineContinuationOprs = Tset[char]({ch('#'), ch(':'), ch('=')})
+    _LineContinuationOprs = Tset[char]({char('+'), char('-'), char('*'), char('/'), char('\\'), char('<'), char('>'), char('!'), char('?'), char('^'),
+                            char('|'), char('%'), char('&'), char('$'), char('@'), char('~'), char(',')})
+    _AdditionalLineContinuationOprs = Tset[char]({char('#'), char(':'), char('=')})
     _LineContinuationTokens = array[22, string]([
         string("let"), string("var"), string("const"), string("type"),  # section
         string("object"), string("tuple"),
@@ -244,7 +244,7 @@ def _endsWithIdent(s: string, subs: string, endIdx: mut@nint) -> bool:
 @template_expand
 def _containsObjectOf(x: string) -> bool:
     with const:
-        sep = ch(' ')
+        sep = char(' ')
     with var:
         idx = rfind(x, sep)
         result = False
@@ -279,7 +279,7 @@ def _continueLine(line: string, inTripleString: bool) -> bool:
     """{.inline.}"""
     with var:
         result = inTripleString or (len(line) > 0 and (
-            line[0] == ch(' ') or
+            line[0] == char(' ') or
             endsWith(line, _LineContinuationOprs + _AdditionalLineContinuationOprs) or
             _endsWithLineContinuationToken(line)
         ))
@@ -340,7 +340,7 @@ if comptime(__name__ == "__main__"):
     assert s.kind == TLLStreamKind.llsNone
     s.llStreamWrite(string("noop"))
     s.llStreamWriteln(string("noop"))
-    s.llStreamWrite(ch("x"))
+    s.llStreamWrite(char("x"))
     with var:
         line = string("")
     assert s.llStreamReadLine(line) == True
@@ -370,7 +370,7 @@ if comptime(__name__ == "__main__"):
         s3 = llStreamOpen(string(""))
     s3.llStreamWrite(string("abc"))
     s3.llStreamWriteln(string("def"))
-    s3.llStreamWrite(ch("!"))
+    s3.llStreamWrite(char("!"))
     assert s3.s == string("abcdef\n!")
     assert s3.wr == 8
 
@@ -380,7 +380,7 @@ if comptime(__name__ == "__main__"):
         buf = array[4, char]()
         n = s4.llStreamRead(addr(buf[0]), 4)
     assert n == 4
-    assert buf[0] == ch("A") and buf[1] == ch("B") and buf[2] == ch("C") and buf[3] == ch("D")
+    assert buf[0] == char("A") and buf[1] == char("B") and buf[2] == char("C") and buf[3] == char("D")
     with var:
         rem = s4.llStreamReadAll()
     assert rem == string("EFGH")

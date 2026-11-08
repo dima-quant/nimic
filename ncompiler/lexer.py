@@ -42,13 +42,13 @@ if comptime(defined("nimPreviewSlimSystem")):
     from nimic.std.formatfloat import *
 
 with const:
-    numChars: Tset[char] = Tset[char](inrange(ch('0'), ch('9')), inrange(ch('a'), ch('z')), inrange(ch('A'), ch('Z')))
-    SymChars: Tset[char] = Tset[char](inrange(ch('a'), ch('z')), inrange(ch('A'), ch('Z')), inrange(ch('0'), ch('9')),
-                                      inrange(ch('\x80'), ch('\xFF')))
-    SymStartChars: Tset[char] = Tset[char](inrange(ch('a'), ch('z')), inrange(ch('A'), ch('Z')), inrange(ch('\x80'), ch('\xFF')))
-    OpChars: Tset[char] = Tset[char]({ch('+'), ch('-'), ch('*'), ch('/'), ch('\\'), ch('<'), ch('>'), ch('!'), ch('?'), ch('^'),
-                                      ch('.'), ch('|'), ch('='), ch('%'), ch('&'), ch('$'), ch('@'), ch('~'), ch(':')})
-    _UnaryMinusWhitelist = Tset[char]({ch(' '), ch('\t'), ch('\n'), ch('\r'), ch(','), ch(';'), ch('('), ch('['), ch('{')})
+    numChars: Tset[char] = Tset[char](inrange(char('0'), char('9')), inrange(char('a'), char('z')), inrange(char('A'), char('Z')))
+    SymChars: Tset[char] = Tset[char](inrange(char('a'), char('z')), inrange(char('A'), char('Z')), inrange(char('0'), char('9')),
+                                      inrange(char('\x80'), char('\xFF')))
+    SymStartChars: Tset[char] = Tset[char](inrange(char('a'), char('z')), inrange(char('A'), char('Z')), inrange(char('\x80'), char('\xFF')))
+    OpChars: Tset[char] = Tset[char]({char('+'), char('-'), char('*'), char('/'), char('\\'), char('<'), char('>'), char('!'), char('?'), char('^'),
+                                      char('.'), char('|'), char('='), char('%'), char('&'), char('$'), char('@'), char('~'), char(':')})
+    _UnaryMinusWhitelist = Tset[char]({char(' '), char('\t'), char('\n'), char('\r'), char(','), char(';'), char('('), char('['), char('{')})
 
 # don't forget to update the 'highlite' module if these charsets should change
 
@@ -338,16 +338,16 @@ class Lexer(TBaseLexer):
                          string("; maybe prepend with 0"))
 
         match L.buf[L.bufpos]:
-            case _ if L.buf[L.bufpos] in inrange(ch('0'), ch('9')):
-                xi <<= (xi << 4) | (ord(L.buf[L.bufpos]) - ord(ch('0')))
+            case _ if L.buf[L.bufpos] in inrange(char('0'), char('9')):
+                xi <<= (xi << 4) | (ord(L.buf[L.bufpos]) - ord(char('0')))
                 L.bufpos += 1
-            case _ if L.buf[L.bufpos] in inrange(ch('a'), ch('f')):
-                xi <<= (xi << 4) | (ord(L.buf[L.bufpos]) - ord(ch('a')) + 10)
+            case _ if L.buf[L.bufpos] in inrange(char('a'), char('f')):
+                xi <<= (xi << 4) | (ord(L.buf[L.bufpos]) - ord(char('a')) + 10)
                 L.bufpos += 1
-            case _ if L.buf[L.bufpos] in inrange(ch('A'), ch('F')):
-                xi <<= (xi << 4) | (ord(L.buf[L.bufpos]) - ord(ch('A')) + 10)
+            case _ if L.buf[L.bufpos] in inrange(char('A'), char('F')):
+                xi <<= (xi << 4) | (ord(L.buf[L.bufpos]) - ord(char('A')) + 10)
                 L.bufpos += 1
-            case _ if L.buf[L.bufpos] == ch('"') or L.buf[L.bufpos] == ch('\''):
+            case _ if L.buf[L.bufpos] == char('"') or L.buf[L.bufpos] == char('\''):
                 if position <= 1: invalid()
                 # do not progress the bufpos here.
                 if position == 0: L.bufpos += 1
@@ -357,8 +357,8 @@ class Lexer(TBaseLexer):
                 L.bufpos += 1
 
     def _handleDecChars(L: mut @ Lexer, xi: mut @ nint):
-        while L.buf[L.bufpos] in Tset[char](inrange(ch('0'), ch('9'))):
-            xi <<= (xi * 10) + (ord(L.buf[L.bufpos]) - ord(ch('0')))
+        while L.buf[L.bufpos] in Tset[char](inrange(char('0'), char('9'))):
+            xi <<= (xi * 10) + (ord(L.buf[L.bufpos]) - ord(char('0')))
             L.bufpos += 1
 
     def _handleCRLF(L: mut @ Lexer, pos: nint) -> nint:
@@ -404,7 +404,7 @@ def isNimIdentifier(s: string) -> bool:
         with var:
             i = 1
         while i < sLen:
-            if s[i] == ch('_'): i += 1
+            if s[i] == char('_'): i += 1
             if i < sLen and s[i] not in SymChars: return False
             i += 1
         result = True
@@ -491,13 +491,13 @@ def _getNumber(L: mut @ Lexer, result: mut @ Token):
                 result += 1
             else:
                 break
-            if L.buf[pos] == ch('_'):
+            if L.buf[pos] == char('_'):
                 if L.buf[pos + 1] not in chars:
                     L.lexMessage(TMsgKind.errGenerated,
                                  string("only single underscores may occur in a token and token may not ") +
                                  string("end with an underscore: e.g. '1__1' and '1_' are invalid"))
                     break
-                tok.literal.add(ch('_'))
+                tok.literal.add(char('_'))
                 pos += 1
         L.bufpos = pos
         return result
@@ -513,23 +513,23 @@ def _getNumber(L: mut @ Lexer, result: mut @ Token):
     def lexMessageLitNum(L: mut @ Lexer, msg: string, startpos: nint, msgKind: TMsgKind = TMsgKind.errGenerated):
         # Used to get slightly human friendlier err messages.
         with const:
-            literalishChars = Tset[char](inrange(ch('A'), ch('Z')), inrange(ch('a'), ch('z')), inrange(ch('0'), ch('9')),
-                                         ch('_'), ch('.'), ch('\''))
+            literalishChars = Tset[char](inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('0'), char('9')),
+                                         char('_'), char('.'), char('\''))
         with var:
             msgPos = L.bufpos.copy()
             t = Token(literal=string(""))
         L.bufpos = startpos  # Use L.bufpos as pos because of matchChars
         matchChars(L, t, literalishChars)
         # We must verify +/- specifically so that we're not past the literal
-        if L.buf[L.bufpos] in Tset[char]({ch('+'), ch('-')}) and \
-                L.buf[L.bufpos - 1] in Tset[char]({ch('e'), ch('E')}):
+        if L.buf[L.bufpos] in Tset[char]({char('+'), char('-')}) and \
+                L.buf[L.bufpos - 1] in Tset[char]({char('e'), char('E')}):
             t.literal.add(L.buf[L.bufpos])
             L.bufpos += 1
             matchChars(L, t, literalishChars)
         if L.buf[L.bufpos] in literalishChars:
             t.literal.add(L.buf[L.bufpos])
             L.bufpos += 1
-            matchChars(L, t, Tset[char](inrange(ch('0'), ch('9'))))
+            matchChars(L, t, Tset[char](inrange(char('0'), char('9'))))
         L.bufpos = msgPos
         L.lexMessage(msgKind, msg % t.literal)
 
@@ -564,9 +564,9 @@ def _getNumber(L: mut @ Lexer, result: mut @ Token):
         numDigits = 0
     with const:
         # 'c', 'C' is deprecated
-        baseCodeChars = Tset[char]({ch('X'), ch('x'), ch('o'), ch('b'), ch('B'), ch('c'), ch('C')})
-        literalishChars = baseCodeChars + Tset[char](inrange(ch('A'), ch('F')), inrange(ch('a'), ch('f')),
-                                                     inrange(ch('0'), ch('9')), ch('_'), ch('\''))
+        baseCodeChars = Tset[char]({char('X'), char('x'), char('o'), char('b'), char('B'), char('c'), char('C')})
+        literalishChars = baseCodeChars + Tset[char](inrange(char('A'), char('F')), inrange(char('a'), char('f')),
+                                                     inrange(char('0'), char('9')), char('_'), char('\''))
         floatTypes = Tset[TokType]({TokType.tkFloatLit, TokType.tkFloat32Lit, TokType.tkFloat64Lit, TokType.tkFloat128Lit})
     result.tokType = TokType.tkIntLit   # int literal until we know better
     result.literal = string("")
@@ -575,7 +575,7 @@ def _getNumber(L: mut @ Lexer, result: mut @ Token):
 
     with var:
         isPositive = True
-    if L.buf[L.bufpos] == ch('-'):
+    if L.buf[L.bufpos] == char('-'):
         L._eatChar(result)
         isPositive = False
 
@@ -588,47 +588,47 @@ def _getNumber(L: mut @ Lexer, result: mut @ Token):
 
     # First stage: find out base, make verifications, build token literal string
     # {'c', 'C'} is added for deprecation reasons to provide a clear error message
-    if L.buf[L.bufpos] == ch('0') and L.buf[L.bufpos + 1] in baseCodeChars + Tset[char]({ch('c'), ch('C'), ch('O')}):
+    if L.buf[L.bufpos] == char('0') and L.buf[L.bufpos + 1] in baseCodeChars + Tset[char]({char('c'), char('C'), char('O')}):
         isBase10 = False
-        L._eatChar(result, ch('0'))
+        L._eatChar(result, char('0'))
         match L.buf[L.bufpos]:
-            case _ if L.buf[L.bufpos] == ch('c') or L.buf[L.bufpos] == ch('C'):
+            case _ if L.buf[L.bufpos] == char('c') or L.buf[L.bufpos] == char('C'):
                 lexMessageLitNum(L,
                                  string("$1 will soon be invalid for oct literals; Use '0o' ") +
                                  string("for octals. 'c', 'C' prefix"),
                                  startpos,
                                  TMsgKind.warnDeprecated)
-                L._eatChar(result, ch('c'))
-                numDigits = matchUnderscoreChars(L, result, Tset[char](inrange(ch('0'), ch('7'))))
-            case _ if L.buf[L.bufpos] == ch('O'):
+                L._eatChar(result, char('c'))
+                numDigits = matchUnderscoreChars(L, result, Tset[char](inrange(char('0'), char('7'))))
+            case _ if L.buf[L.bufpos] == char('O'):
                 lexMessageLitNum(L, string("$1 is an invalid int literal; For octal literals ") +
                                  string("use the '0o' prefix."), startpos)
-            case _ if L.buf[L.bufpos] == ch('x') or L.buf[L.bufpos] == ch('X'):
-                L._eatChar(result, ch('x'))
-                numDigits = matchUnderscoreChars(L, result, Tset[char](inrange(ch('0'), ch('9')), inrange(ch('a'), ch('f')),
-                                                                     inrange(ch('A'), ch('F'))))
-            case _ if L.buf[L.bufpos] == ch('o'):
-                L._eatChar(result, ch('o'))
-                numDigits = matchUnderscoreChars(L, result, Tset[char](inrange(ch('0'), ch('7'))))
-            case _ if L.buf[L.bufpos] == ch('b') or L.buf[L.bufpos] == ch('B'):
-                L._eatChar(result, ch('b'))
-                numDigits = matchUnderscoreChars(L, result, Tset[char](inrange(ch('0'), ch('1'))))
+            case _ if L.buf[L.bufpos] == char('x') or L.buf[L.bufpos] == char('X'):
+                L._eatChar(result, char('x'))
+                numDigits = matchUnderscoreChars(L, result, Tset[char](inrange(char('0'), char('9')), inrange(char('a'), char('f')),
+                                                                     inrange(char('A'), char('F'))))
+            case _ if L.buf[L.bufpos] == char('o'):
+                L._eatChar(result, char('o'))
+                numDigits = matchUnderscoreChars(L, result, Tset[char](inrange(char('0'), char('7'))))
+            case _ if L.buf[L.bufpos] == char('b') or L.buf[L.bufpos] == char('B'):
+                L._eatChar(result, char('b'))
+                numDigits = matchUnderscoreChars(L, result, Tset[char](inrange(char('0'), char('1'))))
             case _:
                 internalError(L.config, L._getLineInfo(), string("getNumber"))
         if numDigits == 0:
             lexMessageLitNum(L, string("invalid number: '$1'"), startpos)
     else:
-        _ = matchUnderscoreChars(L, result, Tset[char](inrange(ch('0'), ch('9'))))
-        if (L.buf[L.bufpos] == ch('.')) and (L.buf[L.bufpos + 1] in Tset[char](inrange(ch('0'), ch('9')))):
+        _ = matchUnderscoreChars(L, result, Tset[char](inrange(char('0'), char('9'))))
+        if (L.buf[L.bufpos] == char('.')) and (L.buf[L.bufpos + 1] in Tset[char](inrange(char('0'), char('9')))):
             result.tokType = TokType.tkFloatLit
-            L._eatChar(result, ch('.'))
-            _ = matchUnderscoreChars(L, result, Tset[char](inrange(ch('0'), ch('9'))))
-        if L.buf[L.bufpos] in Tset[char]({ch('e'), ch('E')}):
+            L._eatChar(result, char('.'))
+            _ = matchUnderscoreChars(L, result, Tset[char](inrange(char('0'), char('9'))))
+        if L.buf[L.bufpos] in Tset[char]({char('e'), char('E')}):
             result.tokType = TokType.tkFloatLit
             L._eatChar(result)
-            if L.buf[L.bufpos] in Tset[char]({ch('+'), ch('-')}):
+            if L.buf[L.bufpos] in Tset[char]({char('+'), char('-')}):
                 L._eatChar(result)
-            _ = matchUnderscoreChars(L, result, Tset[char](inrange(ch('0'), ch('9'))))
+            _ = matchUnderscoreChars(L, result, Tset[char](inrange(char('0'), char('9'))))
     with let:
         endpos = L.bufpos.copy()
 
@@ -636,12 +636,12 @@ def _getNumber(L: mut @ Lexer, result: mut @ Token):
     with var:
         postPos = endpos.copy()
 
-    if L.buf[postPos] in Tset[char]({ch('\''), ch('f'), ch('F'), ch('d'), ch('D'), ch('i'), ch('I'), ch('u'), ch('U')}):
+    if L.buf[postPos] in Tset[char]({char('\''), char('f'), char('F'), char('d'), char('D'), char('i'), char('I'), char('u'), char('U')}):
         with let:
             errPos = postPos.copy()
         with var:
             customLitPossible = False
-        if L.buf[postPos] == ch('\''):
+        if L.buf[postPos] == char('\''):
             postPos += 1
             customLitPossible = True
 
@@ -651,7 +651,7 @@ def _getNumber(L: mut @ Lexer, result: mut @ Token):
             while True:
                 suffix.add(L.buf[postPos])
                 postPos += 1
-                if L.buf[postPos] not in SymChars + Tset[char]({ch('_')}): break
+                if L.buf[postPos] not in SymChars + Tset[char]({char('_')}): break
             with let:
                 suffixAsLower = toLowerAscii(suffix)
             match suffixAsLower:
@@ -671,7 +671,7 @@ def _getNumber(L: mut @ Lexer, result: mut @ Token):
                     # remember the position of the `'` so that the parser doesn't
                     # have to reparse the custom literal:
                     result.iNumber = result.literal.len
-                    result.literal.add(ch('\''))
+                    result.literal.add(char('\''))
                     result.literal.add(suffix)
                     result.tokType = TokType.tkCustomLit
                 case _:
@@ -681,7 +681,7 @@ def _getNumber(L: mut @ Lexer, result: mut @ Token):
 
     # Is there still a literalish char awaiting? Then it's an error!
     if L.buf[postPos] in literalishChars or \
-            (L.buf[postPos] == ch('.') and L.buf[postPos + 1] in Tset[char](inrange(ch('0'), ch('9')))):
+            (L.buf[postPos] == char('.') and L.buf[postPos + 1] in Tset[char](inrange(char('0'), char('9')))):
         lexMessageLitNum(L, string("invalid number: '$1'"), startpos)
 
     if result.tokType != TokType.tkCustomLit:
@@ -690,38 +690,38 @@ def _getNumber(L: mut @ Lexer, result: mut @ Token):
         with var:
             pos = startpos.copy()
         try:
-            if (L.buf[pos] == ch('0')) and (L.buf[pos + 1] in baseCodeChars):
+            if (L.buf[pos] == char('0')) and (L.buf[pos + 1] in baseCodeChars):
                 pos += 2
                 xi <<= 0                  # it is a base prefix
 
                 match L.buf[pos - 1]:
-                    case _ if L.buf[pos - 1] == ch('b') or L.buf[pos - 1] == ch('B'):
+                    case _ if L.buf[pos - 1] == char('b') or L.buf[pos - 1] == char('B'):
                         result.base = NumericalBase.base2
                         while pos < endpos:
-                            if L.buf[pos] != ch('_'):
-                                xi = (xi << 1) | (ord(L.buf[pos]) - ord(ch('0')))
+                            if L.buf[pos] != char('_'):
+                                xi = (xi << 1) | (ord(L.buf[pos]) - ord(char('0')))
                             pos += 1
                     # 'c', 'C' is deprecated (a warning is issued elsewhere)
-                    case _ if L.buf[pos - 1] == ch('o') or L.buf[pos - 1] == ch('c') or L.buf[pos - 1] == ch('C'):
+                    case _ if L.buf[pos - 1] == char('o') or L.buf[pos - 1] == char('c') or L.buf[pos - 1] == char('C'):
                         result.base = NumericalBase.base8
                         while pos < endpos:
-                            if L.buf[pos] != ch('_'):
-                                xi = (xi << 3) | (ord(L.buf[pos]) - ord(ch('0')))
+                            if L.buf[pos] != char('_'):
+                                xi = (xi << 3) | (ord(L.buf[pos]) - ord(char('0')))
                             pos += 1
-                    case _ if L.buf[pos - 1] == ch('x') or L.buf[pos - 1] == ch('X'):
+                    case _ if L.buf[pos - 1] == char('x') or L.buf[pos - 1] == char('X'):
                         result.base = NumericalBase.base16
                         while pos < endpos:
                             match L.buf[pos]:
-                                case _ if L.buf[pos] == ch('_'):
+                                case _ if L.buf[pos] == char('_'):
                                     pos += 1
-                                case _ if L.buf[pos] in inrange(ch('0'), ch('9')):
-                                    xi = (xi << 4) | (ord(L.buf[pos]) - ord(ch('0')))
+                                case _ if L.buf[pos] in inrange(char('0'), char('9')):
+                                    xi = (xi << 4) | (ord(L.buf[pos]) - ord(char('0')))
                                     pos += 1
-                                case _ if L.buf[pos] in inrange(ch('a'), ch('f')):
-                                    xi = (xi << 4) | (ord(L.buf[pos]) - ord(ch('a')) + 10)
+                                case _ if L.buf[pos] in inrange(char('a'), char('f')):
+                                    xi = (xi << 4) | (ord(L.buf[pos]) - ord(char('a')) + 10)
                                     pos += 1
-                                case _ if L.buf[pos] in inrange(ch('A'), ch('F')):
-                                    xi = (xi << 4) | (ord(L.buf[pos]) - ord(ch('A')) + 10)
+                                case _ if L.buf[pos] in inrange(char('A'), char('F')):
+                                    xi = (xi << 4) | (ord(L.buf[pos]) - ord(char('A')) + 10)
                                     pos += 1
                                 case _:
                                     break
@@ -866,63 +866,63 @@ def _addUnicodeCodePoint(s: mut @ string, i: nint):
 def _getEscapedChar(L: mut @ Lexer, tok: mut @ Token):
     L.bufpos += 1               # skip '\'
     match L.buf[L.bufpos]:
-        case _ if L.buf[L.bufpos] == ch('n') or L.buf[L.bufpos] == ch('N'):
-            tok.literal.add(ch('\n'))
+        case _ if L.buf[L.bufpos] == char('n') or L.buf[L.bufpos] == char('N'):
+            tok.literal.add(char('\n'))
             L.bufpos += 1
-        case _ if L.buf[L.bufpos] == ch('p') or L.buf[L.bufpos] == ch('P'):
+        case _ if L.buf[L.bufpos] == char('p') or L.buf[L.bufpos] == char('P'):
             if tok.tokType == TokType.tkCharLit:
                 L.lexMessage(TMsgKind.errGenerated, string("\\p not allowed in character literal"))
             tok.literal.add(L.config.target.tnl)
             L.bufpos += 1
-        case _ if L.buf[L.bufpos] == ch('r') or L.buf[L.bufpos] == ch('R') or L.buf[L.bufpos] == ch('c') or \
-                L.buf[L.bufpos] == ch('C'):
+        case _ if L.buf[L.bufpos] == char('r') or L.buf[L.bufpos] == char('R') or L.buf[L.bufpos] == char('c') or \
+                L.buf[L.bufpos] == char('C'):
             tok.literal.add(CR)
             L.bufpos += 1
-        case _ if L.buf[L.bufpos] == ch('l') or L.buf[L.bufpos] == ch('L'):
+        case _ if L.buf[L.bufpos] == char('l') or L.buf[L.bufpos] == char('L'):
             tok.literal.add(LF)
             L.bufpos += 1
-        case _ if L.buf[L.bufpos] == ch('f') or L.buf[L.bufpos] == ch('F'):
+        case _ if L.buf[L.bufpos] == char('f') or L.buf[L.bufpos] == char('F'):
             tok.literal.add(FF)
             L.bufpos += 1
-        case _ if L.buf[L.bufpos] == ch('e') or L.buf[L.bufpos] == ch('E'):
+        case _ if L.buf[L.bufpos] == char('e') or L.buf[L.bufpos] == char('E'):
             tok.literal.add(ESC)
             L.bufpos += 1
-        case _ if L.buf[L.bufpos] == ch('a') or L.buf[L.bufpos] == ch('A'):
+        case _ if L.buf[L.bufpos] == char('a') or L.buf[L.bufpos] == char('A'):
             tok.literal.add(BEL)
             L.bufpos += 1
-        case _ if L.buf[L.bufpos] == ch('b') or L.buf[L.bufpos] == ch('B'):
+        case _ if L.buf[L.bufpos] == char('b') or L.buf[L.bufpos] == char('B'):
             tok.literal.add(BACKSPACE)
             L.bufpos += 1
-        case _ if L.buf[L.bufpos] == ch('v') or L.buf[L.bufpos] == ch('V'):
+        case _ if L.buf[L.bufpos] == char('v') or L.buf[L.bufpos] == char('V'):
             tok.literal.add(VT)
             L.bufpos += 1
-        case _ if L.buf[L.bufpos] == ch('t') or L.buf[L.bufpos] == ch('T'):
-            tok.literal.add(ch('\t'))
+        case _ if L.buf[L.bufpos] == char('t') or L.buf[L.bufpos] == char('T'):
+            tok.literal.add(char('\t'))
             L.bufpos += 1
-        case _ if L.buf[L.bufpos] == ch('\'') or L.buf[L.bufpos] == ch('"'):
+        case _ if L.buf[L.bufpos] == char('\'') or L.buf[L.bufpos] == char('"'):
             tok.literal.add(L.buf[L.bufpos])
             L.bufpos += 1
-        case _ if L.buf[L.bufpos] == ch('\\'):
-            tok.literal.add(ch('\\'))
+        case _ if L.buf[L.bufpos] == char('\\'):
+            tok.literal.add(char('\\'))
             L.bufpos += 1
-        case _ if L.buf[L.bufpos] == ch('x') or L.buf[L.bufpos] == ch('X'):
+        case _ if L.buf[L.bufpos] == char('x') or L.buf[L.bufpos] == char('X'):
             L.bufpos += 1
             with var:
                 xi = nint(0)
             L._handleHexChar(xi, 1)
             L._handleHexChar(xi, 2)
             tok.literal.add(chr(xi))
-        case _ if L.buf[L.bufpos] == ch('u') or L.buf[L.bufpos] == ch('U'):
+        case _ if L.buf[L.bufpos] == char('u') or L.buf[L.bufpos] == char('U'):
             if tok.tokType == TokType.tkCharLit:
                 L.lexMessage(TMsgKind.errGenerated, string("\\u not allowed in character literal"))
             L.bufpos += 1
             with var:
                 xi = nint(0)
-            if L.buf[L.bufpos] == ch('{'):
+            if L.buf[L.bufpos] == char('{'):
                 L.bufpos += 1
                 with var:
                     start = L.bufpos.copy()
-                while L.buf[L.bufpos] != ch('}'):
+                while L.buf[L.bufpos] != char('}'):
                     L._handleHexChar(xi, 0)
                 if start == L.bufpos:
                     L.lexMessage(TMsgKind.errGenerated,
@@ -939,8 +939,8 @@ def _getEscapedChar(L: mut @ Lexer, tok: mut @ Token):
                 L._handleHexChar(xi, 3)
                 L._handleHexChar(xi, 4)
             _addUnicodeCodePoint(tok.literal, xi)
-        case _ if L.buf[L.bufpos] in inrange(ch('0'), ch('9')):
-            if L._matchTwoChars(ch('0'), Tset[char](inrange(ch('0'), ch('9')))):
+        case _ if L.buf[L.bufpos] in inrange(char('0'), char('9')):
+            if L._matchTwoChars(char('0'), Tset[char](inrange(char('0'), char('9')))):
                 L.lexMessage(TMsgKind.warnOctalEscape)
             with var:
                 xi = nint(0)
@@ -962,25 +962,25 @@ def _getString(L: mut @ Lexer, tok: mut @ Token, mode: _StringMode):
         line = L.lineNumber.copy()         # save linenumber for better error message
     _tokenBegin(tok, pos - ord(mode == _StringMode.raw))
     pos += 1  # skip "
-    if L.buf[pos] == ch('"') and L.buf[pos + 1] == ch('"'):
+    if L.buf[pos] == char('"') and L.buf[pos + 1] == char('"'):
         tok.tokType = TokType.tkTripleStrLit  # long string literal:
         pos += 2               # skip ""
         # skip leading newline:
-        if L.buf[pos] in Tset[char]({ch(' '), ch('\t')}):
+        if L.buf[pos] in Tset[char]({char(' '), char('\t')}):
             with var:
                 newpos = pos + 1
-            while L.buf[newpos] in Tset[char]({ch(' '), ch('\t')}): newpos += 1
+            while L.buf[newpos] in Tset[char]({char(' '), char('\t')}): newpos += 1
             if L.buf[newpos] in Tset[char]({CR, LF}): pos = newpos
         pos = L._handleCRLF(pos)
         while True:
             match L.buf[pos]:
-                case _ if L.buf[pos] == ch('"'):
-                    if L.buf[pos + 1] == ch('"') and L.buf[pos + 2] == ch('"') and \
-                            L.buf[pos + 3] != ch('"'):
+                case _ if L.buf[pos] == char('"'):
+                    if L.buf[pos + 1] == char('"') and L.buf[pos + 2] == char('"') and \
+                            L.buf[pos + 3] != char('"'):
                         _tokenEndIgnore(tok, pos + 2)
                         L.bufpos = pos + 3  # skip the three """
                         break
-                    tok.literal.add(ch('"'))
+                    tok.literal.add(char('"'))
                     pos += 1
                 case _ if L.buf[pos] == CR or L.buf[pos] == LF:
                     _tokenEndIgnore(tok, pos)
@@ -1005,10 +1005,10 @@ def _getString(L: mut @ Lexer, tok: mut @ Token, mode: _StringMode):
         while True:
             with let:
                 c = L.buf[pos]
-            if c == ch('"'):
-                if mode != _StringMode.normal and L.buf[pos + 1] == ch('"'):
+            if c == char('"'):
+                if mode != _StringMode.normal and L.buf[pos + 1] == char('"'):
                     pos += 2
-                    tok.literal.add(ch('"'))
+                    tok.literal.add(char('"'))
                 else:
                     _tokenEndIgnore(tok, pos)
                     pos += 1  # skip '"'
@@ -1017,7 +1017,7 @@ def _getString(L: mut @ Lexer, tok: mut @ Token, mode: _StringMode):
                 _tokenEndIgnore(tok, pos)
                 L.lexMessage(TMsgKind.errGenerated, string("closing \" expected"))
                 break
-            elif (c == ch('\\')) and mode == _StringMode.normal:
+            elif (c == char('\\')) and mode == _StringMode.normal:
                 L.bufpos = pos
                 _getEscapedChar(L, tok)
                 pos = L.bufpos.copy()
@@ -1035,18 +1035,18 @@ def _getCharacter(L: mut @ Lexer, tok: mut @ Token):
     with let:
         c = L.buf[L.bufpos]
     match c:
-        case _ if c in inrange(ch('\0'), pred(ch(' '))) or c == ch('\''):
+        case _ if c in inrange(char('\0'), pred(char(' '))) or c == char('\''):
             L.lexMessage(TMsgKind.errGenerated, string("invalid character literal"))
             tok.literal = string(str(c))
-        case _ if c == ch('\\'): _getEscapedChar(L, tok)
+        case _ if c == char('\\'): _getEscapedChar(L, tok)
         case _:
             tok.literal = string(str(c))
             L.bufpos += 1
-    if L.buf[L.bufpos] == ch('\''):
+    if L.buf[L.bufpos] == char('\''):
         _tokenEndIgnore(tok, L.bufpos)
         L.bufpos += 1               # skip '
     else:
-        if startPos > 0 and L.buf[startPos - 1] == ch('`'):
+        if startPos > 0 and L.buf[startPos - 1] == char('`'):
             tok.literal = string("'")
             L.bufpos = startPos + 1
         else:
@@ -1055,7 +1055,7 @@ def _getCharacter(L: mut @ Lexer, tok: mut @ Token):
 
 
 with const:
-    _UnicodeOperatorStartChars = Tset[char]({ch('\xe2'), ch('\xc2'), ch('\xc3')})
+    _UnicodeOperatorStartChars = Tset[char]({char('\xe2'), char('\xc2'), char('\xc3')})
     # the allowed unicode characters ("∙ ∘ × ★ ⊗ ⊘ ⊙ ⊛ ⊠ ⊡ ∩ ∧ ⊓ ± ⊕ ⊖ ⊞ ⊟ ∪ ∨ ⊔")
     # all start with one of these.
 
@@ -1075,32 +1075,32 @@ def _unicodeOprLen(buf: cstring, pos: nint) -> tuple[int8, _UnicodeOprPred]:
         return (int8(len), _UnicodeOprPred.Add)
     result = m(0)
     match buf[pos]:
-        case _ if buf[pos] == ch('\xe2'):
-            if buf[pos + 1] == ch('\x88'):
-                if buf[pos + 2] == ch('\x98'): result = m(3)  # ∘
-                elif buf[pos + 2] == ch('\x99'): result = m(3)  # ∙
-                elif buf[pos + 2] == ch('\xa7'): result = m(3)  # ∧
-                elif buf[pos + 2] == ch('\xa8'): result = a(3)  # ∨
-                elif buf[pos + 2] == ch('\xa9'): result = m(3)  # ∩
-                elif buf[pos + 2] == ch('\xaa'): result = a(3)  # ∪
-            elif buf[pos + 1] == ch('\x8a'):
-                if buf[pos + 2] == ch('\x93'): result = m(3)  # ⊓
-                elif buf[pos + 2] == ch('\x94'): result = a(3)  # ⊔
-                elif buf[pos + 2] == ch('\x95'): result = a(3)  # ⊕
-                elif buf[pos + 2] == ch('\x96'): result = a(3)  # ⊖
-                elif buf[pos + 2] == ch('\x97'): result = m(3)  # ⊗
-                elif buf[pos + 2] == ch('\x98'): result = m(3)  # ⊘
-                elif buf[pos + 2] == ch('\x99'): result = m(3)  # ⊙
-                elif buf[pos + 2] == ch('\x9b'): result = m(3)  # ⊛
-                elif buf[pos + 2] == ch('\x9e'): result = a(3)  # ⊞
-                elif buf[pos + 2] == ch('\x9f'): result = a(3)  # ⊟
-                elif buf[pos + 2] == ch('\xa0'): result = m(3)  # ⊠
-                elif buf[pos + 2] == ch('\xa1'): result = m(3)  # ⊡
-            elif buf[pos + 1] == ch('\x98') and buf[pos + 2] == ch('\x85'): result = m(3)  # ★
-        case _ if buf[pos] == ch('\xc2'):
-            if buf[pos + 1] == ch('\xb1'): result = a(2)  # ±
-        case _ if buf[pos] == ch('\xc3'):
-            if buf[pos + 1] == ch('\x97'): result = m(2)  # ×
+        case _ if buf[pos] == char('\xe2'):
+            if buf[pos + 1] == char('\x88'):
+                if buf[pos + 2] == char('\x98'): result = m(3)  # ∘
+                elif buf[pos + 2] == char('\x99'): result = m(3)  # ∙
+                elif buf[pos + 2] == char('\xa7'): result = m(3)  # ∧
+                elif buf[pos + 2] == char('\xa8'): result = a(3)  # ∨
+                elif buf[pos + 2] == char('\xa9'): result = m(3)  # ∩
+                elif buf[pos + 2] == char('\xaa'): result = a(3)  # ∪
+            elif buf[pos + 1] == char('\x8a'):
+                if buf[pos + 2] == char('\x93'): result = m(3)  # ⊓
+                elif buf[pos + 2] == char('\x94'): result = a(3)  # ⊔
+                elif buf[pos + 2] == char('\x95'): result = a(3)  # ⊕
+                elif buf[pos + 2] == char('\x96'): result = a(3)  # ⊖
+                elif buf[pos + 2] == char('\x97'): result = m(3)  # ⊗
+                elif buf[pos + 2] == char('\x98'): result = m(3)  # ⊘
+                elif buf[pos + 2] == char('\x99'): result = m(3)  # ⊙
+                elif buf[pos + 2] == char('\x9b'): result = m(3)  # ⊛
+                elif buf[pos + 2] == char('\x9e'): result = a(3)  # ⊞
+                elif buf[pos + 2] == char('\x9f'): result = a(3)  # ⊟
+                elif buf[pos + 2] == char('\xa0'): result = m(3)  # ⊠
+                elif buf[pos + 2] == char('\xa1'): result = m(3)  # ⊡
+            elif buf[pos + 1] == char('\x98') and buf[pos + 2] == char('\x85'): result = m(3)  # ★
+        case _ if buf[pos] == char('\xc2'):
+            if buf[pos + 1] == char('\xb1'): result = a(2)  # ±
+        case _ if buf[pos] == char('\xc3'):
+            if buf[pos + 1] == char('\x97'): result = m(2)  # ×
         case _:
             pass
     return result
@@ -1117,21 +1117,21 @@ def _getSymbol(L: mut @ Lexer, tok: mut @ Token):
         with var:
             c = L.buf[pos]
         match c:
-            case _ if c in inrange(ch('a'), ch('z')) or c in inrange(ch('0'), ch('9')):
+            case _ if c in inrange(char('a'), char('z')) or c in inrange(char('0'), char('9')):
                 h = mix_hash(h, ord(c))
                 pos += 1
-            case _ if c in inrange(ch('A'), ch('Z')):
-                c = chr(ord(c) + (ord(ch('a')) - ord(ch('A'))))  # toLower()
+            case _ if c in inrange(char('A'), char('Z')):
+                c = chr(ord(c) + (ord(char('a')) - ord(char('A'))))  # toLower()
                 h = mix_hash(h, ord(c))
                 pos += 1
                 suspicious = True
-            case _ if c == ch('_'):
+            case _ if c == char('_'):
                 if L.buf[pos + 1] not in SymChars:
                     L.lexMessage(TMsgKind.errGenerated, string("invalid token: trailing underscore"))
                     break
                 pos += 1
                 suspicious = True
-            case _ if c in inrange(ch('\x80'), ch('\xFF')):
+            case _ if c in inrange(char('\x80'), char('\xFF')):
                 if c in _UnicodeOperatorStartChars and _unicodeOprLen(L.buf, pos)[0] != 0:
                     break
                 else:
@@ -1180,7 +1180,7 @@ def _getOperator(L: mut @ Lexer, tok: mut @ Token):
     tok.spacing = tok.spacing - Tset[TokenSpacing]({TokenSpacing.tsTrailing, TokenSpacing.tsEof})
     with var:
         trailing = False
-    while L.buf[pos] == ch(' '):
+    while L.buf[pos] == char(' '):
         pos += 1
         trailing = True
     if L.buf[pos] in Tset[char]({CR, LF, nimlexbase.EndOfFile}):
@@ -1202,26 +1202,26 @@ def getPrecedence(tok: Token) -> nint:
                 relevantChar = tok.ident.s[0]
 
             # arrow like?
-            if tok.ident.s.len > 1 and tok.ident.s[back(1)] == ch('>') and \
-                    tok.ident.s[back(2)] in Tset[char]({ch('-'), ch('~'), ch('=')}): return 0
+            if tok.ident.s.len > 1 and tok.ident.s[back(1)] == char('>') and \
+                    tok.ident.s[back(2)] in Tset[char]({char('-'), char('~'), char('=')}): return 0
 
             @template
             def considerAsgn(value: untyped):
-                result = (1 if tok.ident.s[back(1)] == ch('=') else value)
+                result = (1 if tok.ident.s[back(1)] == char('=') else value)
 
             match relevantChar:
-                case _ if relevantChar == ch('$') or relevantChar == ch('^'): considerAsgn(10)
-                case _ if relevantChar == ch('*') or relevantChar == ch('%') or relevantChar == ch('/') or \
-                        relevantChar == ch('\\'): considerAsgn(MulPred)
-                case _ if relevantChar == ch('~'): result = 8
-                case _ if relevantChar == ch('+') or relevantChar == ch('-') or relevantChar == ch('|'): considerAsgn(PlusPred)
-                case _ if relevantChar == ch('&'): considerAsgn(7)
-                case _ if relevantChar == ch('=') or relevantChar == ch('<') or relevantChar == ch('>') or \
-                        relevantChar == ch('!'): result = 5
-                case _ if relevantChar == ch('.'): considerAsgn(6)
-                case _ if relevantChar == ch('?'): result = 2
+                case _ if relevantChar == char('$') or relevantChar == char('^'): considerAsgn(10)
+                case _ if relevantChar == char('*') or relevantChar == char('%') or relevantChar == char('/') or \
+                        relevantChar == char('\\'): considerAsgn(MulPred)
+                case _ if relevantChar == char('~'): result = 8
+                case _ if relevantChar == char('+') or relevantChar == char('-') or relevantChar == char('|'): considerAsgn(PlusPred)
+                case _ if relevantChar == char('&'): considerAsgn(7)
+                case _ if relevantChar == char('=') or relevantChar == char('<') or relevantChar == char('>') or \
+                        relevantChar == char('!'): result = 5
+                case _ if relevantChar == char('.'): considerAsgn(6)
+                case _ if relevantChar == char('?'): result = 2
                 case _ if relevantChar in _UnicodeOperatorStartChars:
-                    if tok.ident.s[back(1)] == ch('='):
+                    if tok.ident.s[back(1)] == char('='):
                         result = 1
                     else:
                         with let:
@@ -1250,37 +1250,37 @@ def _skipMultiLineComment(L: mut @ Lexer, tok: mut @ Token, start: nint,
     # detect the amount of indentation:
     if isDoc:
         toStrip = L.getColNumber(pos)
-        while L.buf[pos] == ch(' '):
+        while L.buf[pos] == char(' '):
             pos += 1
             toStrip += 1
         while L.buf[pos] in Tset[char]({CR, LF}):  # skip blank lines
             pos = L._handleCRLF(pos)
             toStrip = 0
-            while L.buf[pos] == ch(' '):
+            while L.buf[pos] == char(' '):
                 pos += 1
                 toStrip += 1
     with var:
         nesting = 0
     while True:
         match L.buf[pos]:
-            case _ if L.buf[pos] == ch('#'):
+            case _ if L.buf[pos] == char('#'):
                 if isDoc:
-                    if L.buf[pos + 1] == ch('#') and L.buf[pos + 2] == ch('['):
+                    if L.buf[pos + 1] == char('#') and L.buf[pos + 2] == char('['):
                         nesting += 1
-                    tok.literal.add(ch('#'))
-                elif L.buf[pos + 1] == ch('['):
+                    tok.literal.add(char('#'))
+                elif L.buf[pos + 1] == char('['):
                     nesting += 1
                 pos += 1
-            case _ if L.buf[pos] == ch(']'):
+            case _ if L.buf[pos] == char(']'):
                 if isDoc:
-                    if L.buf[pos + 1] == ch('#') and L.buf[pos + 2] == ch('#'):
+                    if L.buf[pos + 1] == char('#') and L.buf[pos + 2] == char('#'):
                         if nesting == 0:
                             _tokenEndIgnore(tok, pos + 2)
                             pos += 3
                             break
                         nesting -= 1
-                    tok.literal.add(ch(']'))
-                elif L.buf[pos + 1] == ch('#'):
+                    tok.literal.add(char(']'))
+                elif L.buf[pos + 1] == char('#'):
                     if nesting == 0:
                         _tokenEndIgnore(tok, pos + 1)
                         pos += 2
@@ -1296,7 +1296,7 @@ def _skipMultiLineComment(L: mut @ Lexer, tok: mut @ Token, start: nint,
                     if comptime(not defined("nimpretty")): tok.literal.add(string("\n"))
                     with var:
                         c = toStrip.copy()
-                    while L.buf[pos] == ch(' ') and c > 0:
+                    while L.buf[pos] == char(' ') and c > 0:
                         pos += 1
                         c -= 1
             case _ if L.buf[pos] == nimlexbase.EndOfFile:
@@ -1315,11 +1315,11 @@ def _scanComment(L: mut @ Lexer, tok: mut @ Token):
     with var:
         pos = L.bufpos.copy()
     tok.tokType = TokType.tkComment
-    assert L.buf[pos + 1] == ch('#')
+    assert L.buf[pos + 1] == char('#')
     if comptime(defined("nimpretty")):
         tok.commentOffsetA = L.offsetBase + pos
 
-    if L.buf[pos + 2] == ch('['):
+    if L.buf[pos + 2] == char('['):
         _skipMultiLineComment(L, tok, pos + 3, True)
         return
     _tokenBegin(tok, pos)
@@ -1331,7 +1331,7 @@ def _scanComment(L: mut @ Lexer, tok: mut @ Token):
 
     while True:
         if not stripInit:  # find baseline indentation inside comment
-            while L.buf[pos] == ch(' '):
+            while L.buf[pos] == char(' '):
                 pos += 1
                 toStrip += 1
             if L.buf[pos] in Tset[char]({CR, LF}):  # don't set toStrip in blank comment lines
@@ -1345,21 +1345,21 @@ def _scanComment(L: mut @ Lexer, tok: mut @ Token):
         pos = L._handleCRLF(pos)
         with var:
             indent = 0
-        while L.buf[pos] == ch(' '):
+        while L.buf[pos] == char(' '):
             pos += 1
             indent += 1
 
-        if L.buf[pos] == ch('#') and L.buf[pos + 1] == ch('#'):
+        if L.buf[pos] == char('#') and L.buf[pos + 1] == char('#'):
             tok.literal.add(string("\n"))
             pos += 2
             if stripInit:
                 with var:
                     c = toStrip
-                while L.buf[pos] == ch(' ') and c > 0:
+                while L.buf[pos] == char(' ') and c > 0:
                     pos += 1
                     c -= 1
         else:
-            if L.buf[pos] > ch(' '):
+            if L.buf[pos] > char(' '):
                 L.indentAhead = indent
             _tokenEndIgnore(tok, pos)
             break
@@ -1382,10 +1382,10 @@ def _skip(L: mut @ Lexer, tok: mut @ Token):
         tok.line = -1
     while True:
         match L.buf[pos]:
-            case _ if L.buf[pos] == ch(' '):
+            case _ if L.buf[pos] == char(' '):
                 pos += 1
                 tok.spacing.incl(TokenSpacing.tsLeading)
-            case _ if L.buf[pos] == ch('\t'):
+            case _ if L.buf[pos] == char('\t'):
                 L._lexMessagePos(TMsgKind.errGenerated, pos, string("tabs are not allowed, use spaces instead"))
                 pos += 1
             case _ if L.buf[pos] == CR or L.buf[pos] == LF:
@@ -1394,10 +1394,10 @@ def _skip(L: mut @ Lexer, tok: mut @ Token):
                 with var:
                     indent = 0
                 while True:
-                    if L.buf[pos] == ch(' '):
+                    if L.buf[pos] == char(' '):
                         pos += 1
                         indent += 1
-                    elif L.buf[pos] == ch('#') and L.buf[pos + 1] == ch('['):
+                    elif L.buf[pos] == char('#') and L.buf[pos + 1] == char('['):
                         if comptime(defined("nimpretty")):
                             hasComment = True
                             if tok.line < 0:
@@ -1409,20 +1409,20 @@ def _skip(L: mut @ Lexer, tok: mut @ Token):
                         break
                 tok.spacing.excl(TokenSpacing.tsLeading)
                 if comptime(defined("nimpretty")):
-                    if L.buf[pos] == ch('#') and tok.line < 0: commentIndent = indent
-                if L.buf[pos] > ch(' ') and (L.buf[pos] != ch('#') or L.buf[pos + 1] == ch('#')):
+                    if L.buf[pos] == char('#') and tok.line < 0: commentIndent = indent
+                if L.buf[pos] > char(' ') and (L.buf[pos] != char('#') or L.buf[pos + 1] == char('#')):
                     tok.indent = indent
                     L.currLineIndent = indent
                     break
-            case _ if L.buf[pos] == ch('#'):
+            case _ if L.buf[pos] == char('#'):
                 # do not skip documentation comment:
-                if L.buf[pos + 1] == ch('#'): break
+                if L.buf[pos + 1] == char('#'): break
                 if comptime(defined("nimpretty")):
                     hasComment = True
                     if tok.line < 0:
                         tok.line = L.lineNumber
 
-                if L.buf[pos + 1] == ch('['):
+                if L.buf[pos + 1] == char('['):
                     _skipMultiLineComment(L, tok, pos + 2, False)
                     pos = L.bufpos.copy()
                 else:
@@ -1474,7 +1474,7 @@ def rawGetTok(L: mut @ Lexer, tok: mut @ Token):
         c = L.buf[L.bufpos]
     tok.line = L.lineNumber
     tok.col = L.getColNumber(L.bufpos)
-    if c in SymStartChars - Tset[char]({ch('r'), ch('R')}) - _UnicodeOperatorStartChars:
+    if c in SymStartChars - Tset[char]({char('r'), char('R')}) - _UnicodeOperatorStartChars:
         _getSymbol(L, tok)
     else:
         match c:
@@ -1483,29 +1483,29 @@ def rawGetTok(L: mut @ Lexer, tok: mut @ Token):
                     _getOperator(L, tok)
                 else:
                     _getSymbol(L, tok)
-            case _ if c == ch('#'):
+            case _ if c == char('#'):
                 _scanComment(L, tok)
-            case _ if c == ch('*'):
+            case _ if c == char('*'):
                 # '*:' is unfortunately a special case, because it is two tokens in
                 # 'var v*: int'.
-                if L.buf[L.bufpos + 1] == ch(':') and L.buf[L.bufpos + 2] not in OpChars:
+                if L.buf[L.bufpos + 1] == char(':') and L.buf[L.bufpos + 2] not in OpChars:
                     with var:
-                        h = mix_hash(0, ord(ch('*')))
+                        h = mix_hash(0, ord(char('*')))
                     L._endOperator(tok, L.bufpos + 1, h)
                 else:
                     _getOperator(L, tok)
-            case _ if c == ch(','):
+            case _ if c == char(','):
                 tok.tokType = TokType.tkComma
                 L.bufpos += 1
-            case _ if c == ch('r') or c == ch('R'):
-                if L.buf[L.bufpos + 1] == ch('"'):
+            case _ if c == char('r') or c == char('R'):
+                if L.buf[L.bufpos + 1] == char('"'):
                     L.bufpos += 1
                     _getString(L, tok, _StringMode.raw)
                 else:
                     _getSymbol(L, tok)
-            case _ if c == ch('('):
+            case _ if c == char('('):
                 L.bufpos += 1
-                if L.buf[L.bufpos] == ch('.') and L.buf[L.bufpos + 1] != ch('.'):
+                if L.buf[L.bufpos] == char('.') and L.buf[L.bufpos + 1] != char('.'):
                     tok.tokType = TokType.tkParDotLe
                     L.bufpos += 1
                 else:
@@ -1514,23 +1514,23 @@ def rawGetTok(L: mut @ Lexer, tok: mut @ Token):
                         if L.fileIdx == L.config.m.trackPos.fileIndex and tok.col < L.config.m.trackPos.col and \
                                 tok.line == nint(L.config.m.trackPos.line) and L.config.ideCmd == IdeCmd.ideCon:
                             L.config.m.trackPos.col = int16(tok.col)
-            case _ if c == ch(')'):
+            case _ if c == char(')'):
                 tok.tokType = TokType.tkParRi
                 L.bufpos += 1
-            case _ if c == ch('['):
+            case _ if c == char('['):
                 L.bufpos += 1
-                if L.buf[L.bufpos] == ch('.') and L.buf[L.bufpos + 1] != ch('.'):
+                if L.buf[L.bufpos] == char('.') and L.buf[L.bufpos + 1] != char('.'):
                     tok.tokType = TokType.tkBracketDotLe
                     L.bufpos += 1
-                elif L.buf[L.bufpos] == ch(':'):
+                elif L.buf[L.bufpos] == char(':'):
                     tok.tokType = TokType.tkBracketLeColon
                     L.bufpos += 1
                 else:
                     tok.tokType = TokType.tkBracketLe
-            case _ if c == ch(']'):
+            case _ if c == char(']'):
                 tok.tokType = TokType.tkBracketRi
                 L.bufpos += 1
-            case _ if c == ch('.'):
+            case _ if c == char('.'):
                 if comptime(defined("nimsuggest")):
                     if L.fileIdx == L.config.m.trackPos.fileIndex and tok.col + 1 == L.config.m.trackPos.col and \
                             tok.line == nint(L.config.m.trackPos.line) and L.config.ideCmd == IdeCmd.ideSug:
@@ -1539,43 +1539,43 @@ def rawGetTok(L: mut @ Lexer, tok: mut @ Token):
                         L.bufpos += 1
                         atTokenEnd()
                         return
-                if L.buf[L.bufpos + 1] == ch(']'):
+                if L.buf[L.bufpos + 1] == char(']'):
                     tok.tokType = TokType.tkBracketDotRi
                     L.bufpos += 2
-                elif L.buf[L.bufpos + 1] == ch('}'):
+                elif L.buf[L.bufpos + 1] == char('}'):
                     tok.tokType = TokType.tkCurlyDotRi
                     L.bufpos += 2
-                elif L.buf[L.bufpos + 1] == ch(')'):
+                elif L.buf[L.bufpos + 1] == char(')'):
                     tok.tokType = TokType.tkParDotRi
                     L.bufpos += 2
                 else:
                     _getOperator(L, tok)
-            case _ if c == ch('{'):
+            case _ if c == char('{'):
                 L.bufpos += 1
-                if L.buf[L.bufpos] == ch('.') and L.buf[L.bufpos + 1] != ch('.'):
+                if L.buf[L.bufpos] == char('.') and L.buf[L.bufpos + 1] != char('.'):
                     tok.tokType = TokType.tkCurlyDotLe
                     L.bufpos += 1
                 else:
                     tok.tokType = TokType.tkCurlyLe
-            case _ if c == ch('}'):
+            case _ if c == char('}'):
                 tok.tokType = TokType.tkCurlyRi
                 L.bufpos += 1
-            case _ if c == ch(';'):
+            case _ if c == char(';'):
                 tok.tokType = TokType.tkSemiColon
                 L.bufpos += 1
-            case _ if c == ch('`'):
+            case _ if c == char('`'):
                 tok.tokType = TokType.tkAccent
                 L.bufpos += 1
-            case _ if c == ch('_'):
+            case _ if c == char('_'):
                 L.bufpos += 1
-                if L.buf[L.bufpos] not in SymChars + Tset[char]({ch('_')}):
+                if L.buf[L.bufpos] not in SymChars + Tset[char]({char('_')}):
                     tok.tokType = TokType.tkSymbol
                     tok.ident = getIdent(L.cache, string("_"))
                 else:
                     tok.literal = string(str(c))
                     tok.tokType = TokType.tkInvalid
-                    L.lexMessage(TMsgKind.errGenerated, string("invalid token: ") + c + string(" (\\") + str(ord(c)) + ch(')'))
-            case _ if c == ch('"'):
+                    L.lexMessage(TMsgKind.errGenerated, string("invalid token: ") + c + string(" (\\") + str(ord(c)) + char(')'))
+            case _ if c == char('"'):
                 # check for generalized raw string literal:
                 with let:
                     mode = (_StringMode.generalized if L.bufpos > 0 and L.buf[L.bufpos - 1] in SymChars else _StringMode.normal)
@@ -1584,22 +1584,22 @@ def rawGetTok(L: mut @ Lexer, tok: mut @ Token):
                     # tkRStrLit -> tkGStrLit
                     # tkTripleStrLit -> tkGTripleStrLit
                     tok.tokType = succ(tok.tokType, 2)  # Nim: inc(tok.tokType, 2)
-            case _ if c == ch('\''):
+            case _ if c == char('\''):
                 tok.tokType = TokType.tkCharLit
                 _getCharacter(L, tok)
                 tok.tokType = TokType.tkCharLit
-            case _ if c in inrange(ch('0'), ch('9')):
+            case _ if c in inrange(char('0'), char('9')):
                 _getNumber(L, tok)
                 with let:
                     c = L.buf[L.bufpos]
-                if c in SymChars + Tset[char]({ch('_')}):
+                if c in SymChars + Tset[char]({char('_')}):
                     if c in _UnicodeOperatorStartChars and \
                             _unicodeOprLen(L.buf, L.bufpos)[0] != 0:
                         pass
                     else:
                         L.lexMessage(TMsgKind.errGenerated, string("invalid token: no whitespace between number and identifier"))
-            case _ if c == ch('-'):
-                if L.buf[L.bufpos + 1] in Tset[char](inrange(ch('0'), ch('9'))) and \
+            case _ if c == char('-'):
+                if L.buf[L.bufpos + 1] in Tset[char](inrange(char('0'), char('9'))) and \
                         (L.bufpos - 1 == 0 or L.buf[L.bufpos - 1] in _UnaryMinusWhitelist):
                     # x)-23 # binary minus
                     # ,-23  # unary minus
@@ -1608,7 +1608,7 @@ def rawGetTok(L: mut @ Lexer, tok: mut @ Token):
                     _getNumber(L, tok)
                     with let:
                         c = L.buf[L.bufpos]
-                    if c in SymChars + Tset[char]({ch('_')}):
+                    if c in SymChars + Tset[char]({char('_')}):
                         if c in _UnicodeOperatorStartChars and \
                                 _unicodeOprLen(L.buf, L.bufpos)[0] != 0:
                             pass
@@ -1625,7 +1625,7 @@ def rawGetTok(L: mut @ Lexer, tok: mut @ Token):
                 else:
                     tok.literal = string(str(c))
                     tok.tokType = TokType.tkInvalid
-                    L.lexMessage(TMsgKind.errGenerated, string("invalid token: ") + c + string(" (\\") + str(ord(c)) + ch(')'))
+                    L.lexMessage(TMsgKind.errGenerated, string("invalid token: ") + c + string(" (\\") + str(ord(c)) + char(')'))
                     L.bufpos += 1
     atTokenEnd()
 

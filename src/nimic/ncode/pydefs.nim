@@ -27,6 +27,17 @@ when defined(nimony):
   # rule:echodollar): std/strutils' own, so a module that imports strutils too sees one symbol, not two
   from std/strutils import `$`
   export `$`
+  # slices (N82, rule:slice): nimony's system slices only a string and a seq. A slice of an openArray (an
+  # array passes as one) is a seq of the elements' copies, clipped to the bounds as nimony's seq slice is
+  func `[]`*[T](s: openArray[T]; x: HSlice[int, int]): seq[T] =
+    result = @[]
+    for i in max(x.a, 0) .. min(x.b, s.len - 1):
+      result.add s[i]
+  func `[]`*[T](s: openArray[T]; x: HSlice[int, BackwardsIndex]): seq[T] =
+    result = s[x.a .. (s.len - int(x.b))]
+  # `a ..< ^n` is `a .. ^(n + 1)`, as in Nim 2: nimony's `..<` (`a .. pred(b)`) makes it `a .. ^(n - 1)`
+  template `..<`*(a: int; b: BackwardsIndex): HSlice[int, BackwardsIndex] =
+    a .. BackwardsIndex(int(b) + 1)
 
 when not defined(nimony):
   # Python enumerate(s): Nim's for-loop macro handles `for (i, x) in enumerate(s)` (emitted by
@@ -34,6 +45,16 @@ when not defined(nimony):
   # no std/enumerate: a module using enumerate doesn't compile there yet
   import std/enumerate
   export enumerate
+
+# rule:global: a routine that assigns a module-level variable (`global x` in nimic) runs its statements in
+# this block: nimony rejects a routine touching a module's mutable global outside `{.cast(assumeSync).}`;
+# Nim 2 has no such check (nor the cast)
+when defined(nimony):
+  template assumeSync*(body: untyped) =
+    {.cast(assumeSync).}:
+      body
+else:
+  template assumeSync*(body: untyped) = body
 
 type
   TextIOWrapper* = File

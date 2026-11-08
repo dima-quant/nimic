@@ -7,7 +7,7 @@ from nimic.ntypes import *
 def foo():
     with var:
         a = array[int, 10]()
-        b = ch("#")
+        b = char("#")
     return a
 
 @ptr

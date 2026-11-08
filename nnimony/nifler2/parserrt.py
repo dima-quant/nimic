@@ -1195,9 +1195,9 @@ def routineLayout(p: mut @ Parser, m: Mark, keyword: NiflerKind):
 
 def _hexVal(c: char) -> uint64:
     """{.inline.}"""
-    if c <= ch('9'): return uint64(ord(c) - ord(ch('0')))
-    elif c <= ch('F'): return uint64(ord(c) - ord(ch('A')) + 10)
-    else: return uint64(ord(c) - ord(ch('a')) + 10)
+    if c <= char('9'): return uint64(ord(c) - ord(char('0')))
+    elif c <= char('F'): return uint64(ord(c) - ord(char('A')) + 10)
+    else: return uint64(ord(c) - ord(char('a')) + 10)
 
 
 def _floatValue(tok: Token) -> float64:
@@ -1217,7 +1217,7 @@ def _floatValue(tok: Token) -> float64:
             xi = u64(0)
             i = nint(2)  # past `0x` / `0o` / `0c` / `0b`
         while i < tok.s.len:
-            if tok.s[i] != ch('_'): xi = (xi << shiftBy) | _hexVal(tok.s[i])
+            if tok.s[i] != char('_'): xi = (xi << shiftBy) | _hexVal(tok.s[i])
             i += 1
         if tok.kind == TokKind.tkFloat32Lit:
             result = float64(cast[float32](uint32(xi & u64(0xffffffff))))
@@ -1295,7 +1295,7 @@ def emitLeaf(p: mut @ Parser):
             p._emitStr((string("R") if p.tok.kind == TokKind.tkRStrLit or p.tok.kind == TokKind.tkGStrLit else string("T")), info)
             _closeNode(p, x, NiflerKind.SufL, info)
         case TokKind.tkCharLit:
-            p.append(p._newNode(charToken(p.tok.s[0] if p.tok.s.len > 0 else ch('\x00')), info))
+            p.append(p._newNode(charToken(p.tok.s[0] if p.tok.s.len > 0 else char('\x00')), info))
         case TokKind.tkCustomLit:
         # `identOrLiteral` turns `-1'big` into a call of the suffix operator:
         # `nkDotExpr(nkRStrLit("-1"), ident("'big"))`, the apostrophe included.

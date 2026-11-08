@@ -1198,7 +1198,7 @@ def findModule(conf: ConfigRef, modulename: string, currentModule: string) -> Ab
             with let:
                 currentPath = splitFile(currentModule).dir
             result = AbsoluteFile(currentPath / m)
-            if startsWith(m, ch('.')) and not result.fileExists():
+            if startsWith(m, char('.')) and not result.fileExists():
                 result = AbsoluteFile(string(""))
                 hasRelativeDot = True
 
@@ -1238,7 +1238,7 @@ def canonicalImport(conf: ConfigRef, file: AbsoluteFile) -> string:
 def _canonDynlibName(s: string) -> string:
     with let:
         start = 3 if startsWith(s, string("lib")) else 0
-        ende = find(s, Tset[char]({ch('('), ch(')'), ch('.')}))
+        ende = find(s, Tset[char]({char('('), char(')'), char('.')}))
     if ende >= 0:
         result = substr(s, start, ende - 1)
     else:

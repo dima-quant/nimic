@@ -154,7 +154,7 @@ def tokenize(line: string) -> tuple[nint, string]:
         elif not token.endsWith(string("_Idx")):  # Ignore address indexes
             # It might be in the form originalName_randomInt
             with let:
-                lastUnderscore = token.rfind(ch('_'))
+                lastUnderscore = token.rfind(char('_'))
             if lastUnderscore != -1:
                 name = token[0:lastUnderscore]
         if name != string(""):

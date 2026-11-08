@@ -1303,6 +1303,7 @@ def include(*names: str) -> None:
         code = compile(source, path, "exec", dont_inherit=True)
         tree = _valuecheck.watch(code, source, path) or _ast.parse(source, path)  # rule:valuecheck
         _transpiler.check_private_names(tree, path)
+        _transpiler.check_reserved_names(tree, path)
         exec(code, namespace)
         _transpiler.check_imported_module(tree, sys.modules[namespace["__name__"]], path)
 
@@ -1340,6 +1341,7 @@ def _n_check_module_source(code, source: str, path: str, module: _types.ModuleTy
     have run: when the next line starts (`module` is still being loaded). Returns its tree."""
     tree = _valuecheck.watch(code, source, path) or _ast.parse(source, path)
     _transpiler.check_private_names(tree, path)
+    _transpiler.check_reserved_names(tree, path)
     _valuecheck.at_line(code, _n_imports_end(tree),
                         lambda: _transpiler.check_imported_module(tree, module, path))
     return tree

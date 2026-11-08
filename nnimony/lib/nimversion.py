@@ -43,7 +43,7 @@ def _firstField(s: string) -> string:
     result = string("")
     with var:
         i = 0
-    while i < len(s) and s[i] > ch(' '):
+    while i < len(s) and s[i] > char(' '):
         result.add(s[i])
         i += 1
     return result

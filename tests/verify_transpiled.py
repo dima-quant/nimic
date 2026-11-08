@@ -113,6 +113,7 @@ from nimic.ntypesystem import _n_registry
 mod = importlib.import_module(sys.argv[1])
 tree = transpiler.parse(inspect.getsource(mod))
 transpiler.check_private_names(tree)
+transpiler.check_reserved_names(tree)
 transpiler.check_imported_module(tree, mod)
 # UTF-8 like nimic's own writer (stdout is byte-transparent: Latin-1 for chars below 0x100)
 sys.stdout.buffer.write(transpiler.unparse(tree, _n_registry, mod.__package__)[0].encode("utf-8"))
@@ -125,6 +126,7 @@ from nimic.ntypesystem import _n_registry
 harness = importlib.import_module(sys.argv[2])  # registers the types, as nimic.nimp does (a harness for include files)
 tree = transpiler.parse(pathlib.Path(sys.argv[1]).read_text())
 transpiler.check_private_names(tree)
+transpiler.check_reserved_names(tree)
 # an include file's code runs in its includer's namespace: its relative imports are the includer's
 path = str(pathlib.Path(sys.argv[1]).resolve())
 includer = next((sys.modules.get(m._n_included_by) for m in list(sys.modules.values())
@@ -662,6 +664,7 @@ for name, mod in sorted(sys.modules.items()):
     if name.startswith("nnimony.") and getattr(mod, "__file__", None):
         tree = transpiler.parse(inspect.getsource(mod))
         transpiler.check_private_names(tree)
+        transpiler.check_reserved_names(tree)
         transpiler.check_imported_module(tree, mod)
         target = pathlib.Path(sys.argv[2], *name.split(".")[1:]).with_suffix(".nim")
         target.parent.mkdir(parents=True, exist_ok=True)

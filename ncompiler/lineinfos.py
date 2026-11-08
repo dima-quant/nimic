@@ -19,7 +19,7 @@ def createDocLink(urlSuffix: string) -> string:
     # os.`/` is not appropriate for urls.
     with var:
         result = string(explanationsBaseUrl)
-    if len(urlSuffix) > 0 and urlSuffix[0] == ch('/'):
+    if len(urlSuffix) > 0 and urlSuffix[0] == char('/'):
         result.add(urlSuffix)
     else:
         result.add(string("/"))

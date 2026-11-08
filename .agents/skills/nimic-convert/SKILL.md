@@ -51,7 +51,7 @@ Translate every construct following `nimic_translation_rules_nimony.md`. Key rul
 - **Loops**: Convert Nim loops as Python loops. Do not use Python expressions or idioms (no list comprehensions replacing loops).
 - **Ranges**: Inclusive ranges `a..b` → `inrange(a, b)`. Half-open ranges `0 ..<a` → `range(a)`.
 - **Sets**: `set[T]` → `Tset[T]`. Initialize with `Tset[T](inrange(low(T), high(T)))`.
-- **Types**: `int` → `nint`, `string` → `string`, `bool` → `bool`. Char literals: `'#'` → `ch("#")`. **Do not shadow Python's `int`**: always use `nint` for Nim `int` (in type annotations, field types, parameter types, return types, and explicit casts like `nint(x)`). Standard Python integer literals (e.g. `0`, `1`, `42`) are allowed.
+- **Types**: `int` → `nint`, `string` → `string`, `bool` → `bool`. Char literals: `'#'` → `char("#")`. **Do not shadow Python's `int`**: always use `nint` for Nim `int` (in type annotations, field types, parameter types, return types, and explicit casts like `nint(x)`). Standard Python integer literals (e.g. `0`, `1`, `42`) are allowed.
 - **Operators**: Nim binary `and`/`or` → Python `&`/`|`. Bitwise shift `shr`/`shl` → `>>`/`<<`.
 - **Private names**: every Nim identifier without `*` (procs, templates, types, fields, module variables, private overloads of public procs) is written `_name`; it transpiles to `name`, unexported. A private operator gets a `"""{.private.}"""` docstring. If the transpiler reports a private-name collision, rename the private one.
 - **Pointers**: `ptr T` → `ptr[T]`, `p[]` → `p.contents`, `addr x` → `addr(x)`.

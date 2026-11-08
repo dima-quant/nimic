@@ -1,6 +1,6 @@
 """Nim std/parseutils — parsing utility functions."""
 from __future__ import annotations
-from nimic.ntypes import (string, nint, char, ch, Tset, mut, ufcs, BiggestInt, uint64, BiggestFloat,
+from nimic.ntypes import (string, nint, char, Tset, mut, ufcs, BiggestInt, uint64, BiggestFloat,
                           openArray)
 from .strutils import IdentStartChars, IdentChars, Whitespace
 
@@ -40,7 +40,7 @@ def skip_until(s: string | str | openArray, until: set | Tset | str, start: nint
     idx = int(start)
     count = 0
     while idx < len(s_val):
-        c = ch(s_val[idx])
+        c = char(s_val[idx])
         if c in until:
             break
         count += 1
@@ -56,9 +56,9 @@ def parse_ident(s: string | str | openArray, ident: mut@string, start: nint | in
     s_val = _as_str(s)
     first = int(start)
     idx = first
-    if idx < len(s_val) and ch(s_val[idx]) in IdentStartChars:
+    if idx < len(s_val) and char(s_val[idx]) in IdentStartChars:
         idx += 1
-        while idx < len(s_val) and ch(s_val[idx]) in IdentChars:
+        while idx < len(s_val) and char(s_val[idx]) in IdentChars:
             idx += 1
     ident <<= string(s_val[first:idx])
     return nint(idx - first)

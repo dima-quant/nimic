@@ -88,7 +88,7 @@ def _wrapPar(value: Snippet) -> Snippet:
 
 def _removeSinglePar(value: Snippet) -> Snippet:
     # removes a single paren layer expected to exist, to silence Wparentheses-equality
-    assert value[0] == ch("(") and value[len(value) - 1] == ch(")")
+    assert value[0] == char("(") and value[len(value) - 1] == char(")")
     return value[1:len(value) - 1]
 
 
@@ -303,40 +303,40 @@ with const:
 
 @dispatch
 def _addOp(builder: mut@Builder, binOp: _TypedBinaryOp, t: Snippet, a: Snippet, b: Snippet) -> None:
-    builder.add(ch("("))
+    builder.add(char("("))
     builder.add(a)
-    builder.add(ch(" "))
+    builder.add(char(" "))
     builder.add(_typedBinaryOperators[binOp])
-    builder.add(ch(" "))
+    builder.add(char(" "))
     builder.add(b)
-    builder.add(ch(")"))
+    builder.add(char(")"))
 
 
 @dispatch
 def _addOp(builder: mut@Builder, unOp: _TypedUnaryOp, t: Snippet, a: Snippet) -> None:
-    builder.add(ch("("))
+    builder.add(char("("))
     builder.add(_typedUnaryOperators[unOp])
-    builder.add(ch("("))
+    builder.add(char("("))
     builder.add(a)
     builder.add(string("))"))
 
 
 @dispatch
 def _addOp(builder: mut@Builder, binOp: _UntypedBinaryOp, a: Snippet, b: Snippet) -> None:
-    builder.add(ch("("))
+    builder.add(char("("))
     builder.add(a)
-    builder.add(ch(" "))
+    builder.add(char(" "))
     builder.add(_untypedBinaryOperators[binOp])
-    builder.add(ch(" "))
+    builder.add(char(" "))
     builder.add(b)
-    builder.add(ch(")"))
+    builder.add(char(")"))
 
 
 @dispatch
 def _addOp(builder: mut@Builder, unOp: _UntypedUnaryOp, a: Snippet) -> None:
-    builder.add(ch("("))
+    builder.add(char("("))
     builder.add(_untypedUnaryOperators[unOp])
-    builder.add(ch("("))
+    builder.add(char("("))
     builder.add(a)
     builder.add(string("))"))
 

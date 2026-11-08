@@ -26,19 +26,19 @@ if comptime(defined("nimPreviewSlimSystem")):
     from nimic.std.assertions import *
 
 with const:
-    Lrz = ch(' ')
-    Apo = ch('\'')
-    Tabulator = ch('\x09')
-    ESC = ch('\x1B')
-    CR = ch('\x0D')
-    FF = ch('\x0C')
-    LF = ch('\x0A')
-    BEL = ch('\x07')
-    BACKSPACE = ch('\x08')
-    VT = ch('\x0B')
+    Lrz = char(' ')
+    Apo = char('\'')
+    Tabulator = char('\x09')
+    ESC = char('\x1B')
+    CR = char('\x0D')
+    FF = char('\x0C')
+    LF = char('\x0A')
+    BEL = char('\x07')
+    BACKSPACE = char('\x08')
+    VT = char('\x0B')
 
 with const:
-    EndOfFile = ch('\0')        # end of file marker
+    EndOfFile = char('\0')        # end of file marker
                                 # A little picture makes everything clear :-)
                                 #  buf:
                                 #  "Example Text\n ha!"   bufLen = 17
@@ -159,7 +159,7 @@ class TBaseLexer(RootObj):
         return result
 
     def _skipUTF8BOM(L: mut@TBaseLexer):
-        if L.buf[0] == ch('\xEF') and L.buf[1] == ch('\xBB') and L.buf[2] == ch('\xBF'):
+        if L.buf[0] == char('\xEF') and L.buf[1] == char('\xBB') and L.buf[2] == char('\xBF'):
             L.bufpos += 3
             L.lineStart += 3
 
@@ -190,7 +190,7 @@ class TBaseLexer(RootObj):
             i += 1
         result.add(string("\n"))
         if marker:
-            result.add(spaces(L.getColNumber(L.bufpos)) + ch('^') + string("\n"))
+            result.add(spaces(L.getColNumber(L.bufpos)) + char('^') + string("\n"))
         return result
 
 

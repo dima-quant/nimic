@@ -148,16 +148,16 @@ class Parser(Object):
         ## not an operator scores below every `limit`, which is what stops the loop.
         if p.tok().kind != TokKind.tkOpr: return -1000
         match p.tok().s[0]:
-            case _ if p.tok().s[0] == ch('$') or p.tok().s[0] == ch('^'): return 10
-            case _ if p.tok().s[0] == ch('*') or p.tok().s[0] == ch('/') or p.tok().s[0] == ch('%'): return 9
-            case _ if p.tok().s[0] == ch('+') or p.tok().s[0] == ch('-') or p.tok().s[0] == ch('~') or p.tok().s[0] == ch('|'): return 8
-            case _ if p.tok().s[0] == ch('&'): return 7
-            case _ if p.tok().s[0] == ch('.'): return 6
-            case _ if p.tok().s[0] == ch('=') or p.tok().s[0] == ch('<') or p.tok().s[0] == ch('>') or p.tok().s[0] == ch('!'): return 5
+            case _ if p.tok().s[0] == char('$') or p.tok().s[0] == char('^'): return 10
+            case _ if p.tok().s[0] == char('*') or p.tok().s[0] == char('/') or p.tok().s[0] == char('%'): return 9
+            case _ if p.tok().s[0] == char('+') or p.tok().s[0] == char('-') or p.tok().s[0] == char('~') or p.tok().s[0] == char('|'): return 8
+            case _ if p.tok().s[0] == char('&'): return 7
+            case _ if p.tok().s[0] == char('.'): return 6
+            case _ if p.tok().s[0] == char('=') or p.tok().s[0] == char('<') or p.tok().s[0] == char('>') or p.tok().s[0] == char('!'): return 5
             case _: return 4
 
     def isRightAssoc(p: Parser) -> bool:
-        return p.tok().kind == TokKind.tkOpr and p.tok().s[0] == ch('^')
+        return p.tok().kind == TokKind.tkOpr and p.tok().s[0] == char('^')
 
     def insertLeafAt(p: mut @ Parser, m: Mark, text: string):
         _insertAt(p.buf, _BufTok(_kind=_BufKind.bLeaf, _text=text), m.pos)
@@ -198,15 +198,15 @@ class Parser(Object):
         for t in p.buf:
             match t._kind:
                 case _BufKind.bOpen:
-                    if needSpace: result.add(ch(' '))
-                    result.add(ch('('))
+                    if needSpace: result.add(char(' '))
+                    result.add(char('('))
                     result.add(t._text)
                     needSpace = True
                 case _BufKind.bClose:
-                    result.add(ch(')'))
+                    result.add(char(')'))
                     needSpace = True
                 case _BufKind.bLeaf:
-                    if needSpace: result.add(ch(' '))
+                    if needSpace: result.add(char(' '))
                     result.add(t._text)
                     needSpace = True
         return result
@@ -215,7 +215,7 @@ class Parser(Object):
 
 
 with const:
-    _OpChars = Tset[char](ch('+'), ch('-'), ch('*'), ch('/'), ch('<'), ch('>'), ch('='), ch('^'), ch('&'), ch('%'), ch('!'), ch('~'), ch('|'))
+    _OpChars = Tset[char](char('+'), char('-'), char('*'), char('/'), char('<'), char('>'), char('='), char('^'), char('&'), char('%'), char('!'), char('~'), char('|'))
 
 
 def lex(src: string) -> seq[Token]:
@@ -229,19 +229,19 @@ def lex(src: string) -> seq[Token]:
     while i < src.len:
         with let:
             c = src[i]
-        if c == ch('\n'):
+        if c == char('\n'):
             line += 1
             i += 1
             lineStart = copy(i)
             atLineStart = True
             sawSpace = True
             continue
-        if c in Tset[char](ch(' '), ch('\t'), ch('\r')):
+        if c in Tset[char](char(' '), char('\t'), char('\r')):
             i += 1
             sawSpace = True
             continue
-        if c == ch('#'):
-            while i < src.len and src[i] != ch('\n'): i += 1
+        if c == char('#'):
+            while i < src.len and src[i] != char('\n'): i += 1
             continue
         with let:
             col = int32(i - lineStart)
@@ -249,19 +249,19 @@ def lex(src: string) -> seq[Token]:
             t = Token(indent=(col if atLineStart else i32(-1)), spaceBefore=sawSpace, line=line, col=col)
         atLineStart = False
         sawSpace = False
-        if c in Tset[char](inrange(ch('a'), ch('z')), inrange(ch('A'), ch('Z')), ch('_')):
+        if c in Tset[char](inrange(char('a'), char('z')), inrange(char('A'), char('Z')), char('_')):
             with let:
                 start = copy(i)
-            while i < src.len and src[i] in Tset[char](inrange(ch('a'), ch('z')), inrange(ch('A'), ch('Z')), inrange(ch('0'), ch('9')), ch('_')): i += 1
+            while i < src.len and src[i] in Tset[char](inrange(char('a'), char('z')), inrange(char('A'), char('Z')), inrange(char('0'), char('9')), char('_')): i += 1
             t.s = src.substr(start, i - 1)
             match t.s:
                 case "if": t.kind = TokKind.tkIf
                 case "while": t.kind = TokKind.tkWhile
                 case _: t.kind = TokKind.tkSymbol
-        elif c in Tset[char](inrange(ch('0'), ch('9'))):
+        elif c in Tset[char](inrange(char('0'), char('9'))):
             with let:
                 start = copy(i)
-            while i < src.len and src[i] in Tset[char](inrange(ch('0'), ch('9'))): i += 1
+            while i < src.len and src[i] in Tset[char](inrange(char('0'), char('9'))): i += 1
             t.s = src.substr(start, i - 1)
             t.kind = TokKind.tkIntLit
         elif c in _OpChars:
@@ -274,14 +274,14 @@ def lex(src: string) -> seq[Token]:
             t.s = str(c)
             i += 1
             match c:
-                case _ if c == ch(':'): t.kind = TokKind.tkColon
-                case _ if c == ch(';'): t.kind = TokKind.tkSemiColon
-                case _ if c == ch(','): t.kind = TokKind.tkComma
-                case _ if c == ch('.'): t.kind = TokKind.tkDot
-                case _ if c == ch('('): t.kind = TokKind.tkParLe
-                case _ if c == ch(')'): t.kind = TokKind.tkParRi
-                case _ if c == ch('['): t.kind = TokKind.tkBracketLe
-                case _ if c == ch(']'): t.kind = TokKind.tkBracketRi
+                case _ if c == char(':'): t.kind = TokKind.tkColon
+                case _ if c == char(';'): t.kind = TokKind.tkSemiColon
+                case _ if c == char(','): t.kind = TokKind.tkComma
+                case _ if c == char('.'): t.kind = TokKind.tkDot
+                case _ if c == char('('): t.kind = TokKind.tkParLe
+                case _ if c == char(')'): t.kind = TokKind.tkParRi
+                case _ if c == char('['): t.kind = TokKind.tkBracketLe
+                case _ if c == char(']'): t.kind = TokKind.tkBracketRi
                 case _: t.kind = TokKind.tkEof
         result.add(t)
     result.add(Token(kind=TokKind.tkEof, s=string(""), indent=0, line=line, col=0))

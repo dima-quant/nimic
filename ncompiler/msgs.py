@@ -68,11 +68,11 @@ def flushDot(conf: ConfigRef) -> None:
 def toCChar(c: char, result: mut@string) -> None:
     """{.inline.}"""
     match c:
-        case _ if c in inrange(ch('\0'), ch('\x1F')) or c in inrange(ch('\x7F'), ch('\xFF')):
-            result.add(ch('\\'))
+        case _ if c in inrange(char('\0'), char('\x1F')) or c in inrange(char('\x7F'), char('\xFF')):
+            result.add(char('\\'))
             result.add(toOctal(c))
-        case _ if c == ch('\'') or c == ch('"') or c == ch('\\') or c == ch('?'):
-            result.add(ch('\\'))
+        case _ if c == char('\'') or c == char('"') or c == char('\\') or c == char('?'):
+            result.add(char('\\'))
             result.add(c)
         case _:
             result.add(c)
@@ -88,7 +88,7 @@ def makeCString(s: string) -> Rope:
         # if (i + 1) mod MaxLineLength == 0:
         #   res.add("\"\L\"")
         toCChar(s[i], result)
-    result.add(ch('\"'))
+    result.add(char('\"'))
     return result
 
 
@@ -682,7 +682,7 @@ def _getSurroundingSrc(conf: ConfigRef, info: TLineInfo) -> string:
             indent = string("  ")
         result = string("\n") + indent + string(str(sourceLine(conf, info)))
         if info.col >= 0:
-            result.add(string("\n") + indent + spaces(info.col) + ch('^'))
+            result.add(string("\n") + indent + spaces(info.col) + char('^'))
     else:
         result = string("")
     return result
@@ -991,8 +991,8 @@ if comptime(__name__ == "__main__"):
         doAssert(makeCString(string("hello\nworld\"?")) == string("\"hello\\012world\\\"\\?\""))
         with var:
             cc = string("")
-        toCChar(ch('\x01'), cc)
-        toCChar(ch('a'), cc)
+        toCChar(char('\x01'), cc)
+        toCChar(char('a'), cc)
         doAssert(cc == string("\\001a"))
 
         # 2. file infos: absolute, relative, pseudo paths, NIF suffixes

@@ -90,20 +90,20 @@ def encodeStr(s: string, result: mut @ string):
     for i in range(len(s)):
         with let:
             c = s[i]
-        if (c >= ch('a') and c <= ch('z')) or (c >= ch('A') and c <= ch('Z')) or (c >= ch('0') and c <= ch('9')) or c == ch('_'):
+        if (c >= char('a') and c <= char('z')) or (c >= char('A') and c <= char('Z')) or (c >= char('0') and c <= char('9')) or c == char('_'):
             result.add(c)
         else:
-            result.add(ch('\\'))
+            result.add(char('\\'))
             result.add(toHex(ord(c), 2))
 
 
 def _hexChar(c: char, xi: mut @ nint):
-    if c >= ch('0') and c <= ch('9'):
-        xi <<= (xi << 4) | (ord(c) - ord(ch('0')))
-    elif c >= ch('a') and c <= ch('f'):
-        xi <<= (xi << 4) | (ord(c) - ord(ch('a')) + 10)
-    elif c >= ch('A') and c <= ch('F'):
-        xi <<= (xi << 4) | (ord(c) - ord(ch('A')) + 10)
+    if c >= char('0') and c <= char('9'):
+        xi <<= (xi << 4) | (ord(c) - ord(char('0')))
+    elif c >= char('a') and c <= char('f'):
+        xi <<= (xi << 4) | (ord(c) - ord(char('a')) + 10)
+    elif c >= char('A') and c <= char('F'):
+        xi <<= (xi << 4) | (ord(c) - ord(char('A')) + 10)
 
 
 def decodeStr(s: cstring, pos: mut @ nint) -> string:
@@ -113,14 +113,14 @@ def decodeStr(s: cstring, pos: mut @ nint) -> string:
     while True:
         with let:
             c = s[i]
-        if c == ch('\\'):
+        if c == char('\\'):
             i += 3
             with var:
                 xi = nint(0)
             _hexChar(s[i - 2], xi)
             _hexChar(s[i - 1], xi)
             result.add(chr(int(xi)))
-        elif (c >= ch('a') and c <= ch('z')) or (c >= ch('A') and c <= ch('Z')) or (c >= ch('0') and c <= ch('9')) or c == ch('_'):
+        elif (c >= char('a') and c <= char('z')) or (c >= char('A') and c <= char('Z')) or (c >= char('0') and c <= char('9')) or c == char('_'):
             result.add(c)
             i += 1
         else:
@@ -143,11 +143,11 @@ with push("overflowChecks: off"):
     @template
     def _encodeIntImpl(self: untyped):
         with var:
-            d = ch('\0')
+            d = char('\0')
             v = x
             rem = v % 190
         if rem < 0:
-            result.add(ch('-'))
+            result.add(char('-'))
             v = -(v // 190)
             rem = -rem
         else:
@@ -193,20 +193,20 @@ with push("overflowChecks: off"):
             sign = -1
         with let:
             c0 = s[i]
-        assert (c0 >= ch('a') and c0 <= ch('z')) or (c0 >= ch('A') and c0 <= ch('Z')) or (c0 >= ch('0') and c0 <= ch('9')) or c0 == ch('-') or (ord(c0) >= 128 and ord(c0) <= 255)
-        if c0 == ch('-'):
+        assert (c0 >= char('a') and c0 <= char('z')) or (c0 >= char('A') and c0 <= char('Z')) or (c0 >= char('0') and c0 <= char('9')) or c0 == char('-') or (ord(c0) >= 128 and ord(c0) <= 255)
+        if c0 == char('-'):
             i += 1
             sign = 1
         result <<= 0
         while True:
             match s[i]:
-                case _ if s[i] in inrange(ch('0'), ch('9')):
-                    result = result * 190 - (ord(s[i]) - ord(ch('0')))
-                case _ if s[i] in inrange(ch('a'), ch('z')):
-                    result = result * 190 - (ord(s[i]) - ord(ch('a')) + 10)
-                case _ if s[i] in inrange(ch('A'), ch('Z')):
-                    result = result * 190 - (ord(s[i]) - ord(ch('A')) + 36)
-                case _ if s[i] in inrange(ch('\x80'), ch('\xFF')):
+                case _ if s[i] in inrange(char('0'), char('9')):
+                    result = result * 190 - (ord(s[i]) - ord(char('0')))
+                case _ if s[i] in inrange(char('a'), char('z')):
+                    result = result * 190 - (ord(s[i]) - ord(char('a')) + 10)
+                case _ if s[i] in inrange(char('A'), char('Z')):
+                    result = result * 190 - (ord(s[i]) - ord(char('A')) + 36)
+                case _ if s[i] in inrange(char('\x80'), char('\xFF')):
                     result = result * 190 - (ord(s[i]) - 128 + 62)
                 case _:
                     break
@@ -231,18 +231,18 @@ with push("overflowChecks: off"):
 def decodeVIntArray(s: cstring) -> nint:
     with var:
         i = nint(0)
-    while s[i] != ch('\0'):
+    while s[i] != char('\0'):
         yield decodeVInt(s, i)
-        if s[i] == ch(' '):
+        if s[i] == char(' '):
             i += 1
 
 
 def decodeStrArray(s: cstring) -> string:
     with var:
         i = nint(0)
-    while s[i] != ch('\0'):
+    while s[i] != char('\0'):
         yield decodeStr(s, i)
-        if s[i] == ch(' '):
+        if s[i] == char(' '):
             i += 1
 
 
@@ -323,7 +323,7 @@ if comptime(__name__ == "__main__"):
         sample_ints = [10, -5, 42, 100]
     for i in range(len(sample_ints)):
         if i > 0:
-            arr_buf.add(ch(' '))
+            arr_buf.add(char(' '))
         encodeVInt(sample_ints[i], arr_buf)
 
     with var:
@@ -343,7 +343,7 @@ if comptime(__name__ == "__main__"):
         sample_strs = [string("alpha"), string("beta gamma"), string("delta_1")]
     for i in range(len(sample_strs)):
         if i > 0:
-            sarr_buf.add(ch(' '))
+            sarr_buf.add(char(' '))
         encodeStr(sample_strs[i], sarr_buf)
 
     with var:

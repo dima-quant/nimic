@@ -44,10 +44,10 @@ def loadFile(filename: string):
     """{.canRaise.}"""
     with var:
         entry = CachedFile(_content=readFile(filename), _lineStarts=seq[nint]([0]))
-        nl = find(entry._content, ch('\n'))
+        nl = find(entry._content, char('\n'))
     while nl > 0:
         entry._lineStarts.add(nl)
-        nl = find(entry._content, ch('\n'), nl + 1)
+        nl = find(entry._content, char('\n'), nl + 1)
     _gFileLineCache._files[filename] = ensureMove(entry)
 
 

@@ -40,7 +40,7 @@ from nimic.ntypes import *
 with const:
     CrucialPrefix = string("__crucial\0")
     ## Marks a forged filename that carries template-expansion provenance.
-    CrucialFieldSep = ch("\1")
+    CrucialFieldSep = char("\1")
     ## Separates `<sym>`, `<declfile>` and `<declline>` inside one chain entry.
 
 
@@ -56,7 +56,7 @@ def isCrucialFile(fname: string) -> bool:
     ## source path. Cheap enough to call per token: the `\0` at the end of the
     ## prefix is checked first, and a real path never has one.
     if fname.len <= CrucialPrefix.len: return False
-    if fname[CrucialPrefix.len - 1] != ch('\0'): return False
+    if fname[CrucialPrefix.len - 1] != char('\0'): return False
     for i in range(CrucialPrefix.len):
         if fname[i] != CrucialPrefix[i]: return False
     result = True
@@ -82,7 +82,7 @@ def addCrucialInfo(dest: mut @ string, sym: string, declFile: string,
     dest.add(declFile)
     dest.add(CrucialFieldSep)
     dest.add(str(declLine))
-    dest.add(ch('\0'))
+    dest.add(char('\0'))
 
 
 def crucialTail(fname: string) -> string:
@@ -102,7 +102,7 @@ def realFile(fname: string) -> string:
     with var:
         last = -1
     for i in range(fname.len):
-        if fname[i] == ch('\0'): last = i
+        if fname[i] == char('\0'): last = i
     return fname if last < 0 else fname.substr(last + 1)
 
 
@@ -145,7 +145,7 @@ def crucialOrigins(fname: string) -> CrucialOrigin:
             start = CrucialPrefix.len
             i = copy(start)
         while i < fname.len:
-            if fname[i] == ch('\0'):
+            if fname[i] == char('\0'):
                 yield _parseCrucialOrigin(fname.substr(start, i - 1))
                 start = i + 1
             i += 1

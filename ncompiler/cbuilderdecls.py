@@ -224,7 +224,7 @@ def _addStructInitializer(builder: mut @ Builder, constr: out @ _StructInitializ
 def _addField(obj: mut @ Builder, name: Snippet, typ: Snippet, isFlexArray: bool = False,
              initializer: Snippet = string("")):
     ## adds a field inside a struct/union type
-    obj.add(ch('\t'))
+    obj.add(char('\t'))
     obj.add(typ)
     obj.add(string(" "))
     obj.add(name)
@@ -238,7 +238,7 @@ def _addField(obj: mut @ Builder, name: Snippet, typ: Snippet, isFlexArray: bool
 def _addArrayField(obj: mut @ Builder, name: Snippet, elementType: Snippet, len: nint,
                   initializer: Snippet = string("")):
     ## adds an array field inside a struct/union type
-    obj.add(ch('\t'))
+    obj.add(char('\t'))
     obj.add(elementType)
     obj.add(string(" "))
     obj.add(name)
@@ -254,7 +254,7 @@ def _addArrayField(obj: mut @ Builder, name: Snippet, elementType: Snippet, len:
 def _addField(obj: mut @ Builder, field: PSym, name: Snippet, typ: Snippet, isFlexArray: bool = False,
              initializer: Snippet = string("")):
     ## adds an field inside a struct/union type, based on an `skField` symbol
-    obj.add(ch('\t'))
+    obj.add(char('\t'))
     if field.alignment > 0:
         obj.add(string("NIM_ALIGN("))
         obj.addIntValue(field.alignment)
@@ -435,7 +435,7 @@ def _addStruct(obj: mut @ Builder, m: BModule, typ: PType, name: string, baseTyp
 @template
 def _addFieldWithStructType(obj: mut @ Builder, m: BModule, parentTyp: PType, fieldName: string, body: typed):
     ## adds a field with a `struct { ... }` type, building the fields according to `body`
-    obj.add(ch('\t'))
+    obj.add(char('\t'))
     if TTypeFlag.tfPacked in parentTyp.flags:
         if TInfoCCProp.hasAttribute in CC[m.config.cCompiler].props:
             obj.add(string("struct __attribute__((__packed__)) {\n"))

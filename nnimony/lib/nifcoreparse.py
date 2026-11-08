@@ -154,7 +154,7 @@ def _addSplitSymbol(b: mut @ TokenBuf, r: mut @ rd.Reader,
                     dedupTok = t
                 else:
                     if dedups == 2: dedupStr = rd.decodeStr(r, dedupTok)
-                    dedupStr.add(ch('.'))
+                    dedupStr.add(char('.'))
                     dedupStr.add(rd.decodeStr(r, t))
             case rd.SymbolPart.SymModule:
                 moduleTok = t
@@ -174,16 +174,16 @@ def _addSplitSymbol(b: mut @ TokenBuf, r: mut @ rd.Reader,
         with var:
             spelling = rd.decodeStr(r, head)
         if hasDisamb:
-            spelling.add(ch('.'))
+            spelling.add(char('.'))
             spelling.add(disambText)
         if dedups == 1:
-            spelling.add(ch('.'))
+            spelling.add(char('.'))
             spelling.add(rd.decodeStr(r, dedupTok))
         elif dedups > 1:
-            spelling.add(ch('.'))
+            spelling.add(char('.'))
             spelling.add(dedupStr)
         if moduleTok.tk == NifKind.ExtendedSuffix:
-            spelling.add(ch('.'))
+            spelling.add(char('.'))
             spelling.add(rd.decodeStr(r, moduleTok))
         if isDef: addSymDef(b, spelling)
         else: addSymUse(b, spelling)
@@ -226,7 +226,7 @@ def parse(r: mut @ rd.Reader, b: mut @ TokenBuf,
         tok = default(rd.ExpandedToken)
 
     @template
-    def emit(info: NifLineInfo):
+    def emit_(info: NifLineInfo):
         if info.isValid() and (denseLineInfo or info != last):
             b.appendLineInfo(info)
             last = info
@@ -247,7 +247,7 @@ def parse(r: mut @ rd.Reader, b: mut @ TokenBuf,
                 # 9-bit tag field into the adapter's escape tag by itself, and the
                 # line-info suffix lands on the head either way.
                 b.openTag(getOrInclFromView(b.tags.tags, tok.data))
-                emit(info)
+                emit_(info)
                 parents.add((info.file, info.line, info.col))
                 nested += 1
             case rd.NifKind.ParRi:
@@ -258,43 +258,43 @@ def parse(r: mut @ rd.Reader, b: mut @ TokenBuf,
             case rd.NifKind.DotToken:
                 with let:
                     info = _resolveInfo(b, tok, parents)
-                b.addDotToken(); emit(info)
+                b.addDotToken(); emit_(info)
             case rd.NifKind.Ident:
                 with let:
                     info = _resolveInfo(b, tok, parents)
-                addIdent(b, rd.decodeStr(r, tok)); emit(info)
+                addIdent(b, rd.decodeStr(r, tok)); emit_(info)
             case rd.NifKind.Symbol:
                 with let:
                     info = _resolveInfo(b, tok, parents)
                 if tok.suffixes > u8(0): _addSplitSymbol(b, r, tok, isDef=False)
                 else: addSymUse(b, rd.decodeStr(r, tok))
-                emit(info)
+                emit_(info)
             case rd.NifKind.SymbolDef:
                 with let:
                     info = _resolveInfo(b, tok, parents)
                 if tok.suffixes > u8(0): _addSplitSymbol(b, r, tok, isDef=True)
                 else: addSymDef(b, rd.decodeStr(r, tok))
-                emit(info)
+                emit_(info)
             case rd.StringLit:
                 with let:
                     info = _resolveInfo(b, tok, parents)
-                addStrLit(b, rd.decodeStr(r, tok)); emit(info)
+                addStrLit(b, rd.decodeStr(r, tok)); emit_(info)
             case rd.NifKind.CharLit:
                 with let:
                     info = _resolveInfo(b, tok, parents)
-                b.addCharLit(rd.decodeChar(tok)); emit(info)
+                b.addCharLit(rd.decodeChar(tok)); emit_(info)
             case rd.NifKind.IntLit:
                 with let:
                     info = _resolveInfo(b, tok, parents)
-                b.addIntLit(rd.decodeInt(tok)); emit(info)
+                b.addIntLit(rd.decodeInt(tok)); emit_(info)
             case rd.NifKind.UIntLit:
                 with let:
                     info = _resolveInfo(b, tok, parents)
-                b.addUIntLit(rd.decodeUInt(tok)); emit(info)
+                b.addUIntLit(rd.decodeUInt(tok)); emit_(info)
             case rd.NifKind.FloatLit:
                 with let:
                     info = _resolveInfo(b, tok, parents)
-                b.addFloatLit(rd.decodeFloat(tok)); emit(info)
+                b.addFloatLit(rd.decodeFloat(tok)); emit_(info)
         if nested == 0 and tok.tk not in Tset[rd.NifKind](rd.NifKind.ParLe):
             # A bare top-level atom is a complete "tree" on its own.
             break
