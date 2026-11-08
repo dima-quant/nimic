@@ -23,17 +23,10 @@ when defined(nimony):
   # Nim 2's doAssert: an assert that -d:danger keeps
   template doAssert*(cond: bool; msg = "") =
     if not cond: failedAssertImpl(msg)
-  # `$` nimony's system lacks; echo's arguments are `$`-converted by rule:echodollar
-  func `$`*(c: char): string =
-    result = newString(1)
-    result[0] = c
-  func `$`*(x: cstring): string =
-    result = ""
-    if x != nil:
-      var i = 0
-      while x[i] != '\0':
-        result.add x[i]
-        inc i
+  # `$` of a char and a cstring, which nimony's system lacks (echo's arguments are `$`-converted by
+  # rule:echodollar): std/strutils' own, so a module that imports strutils too sees one symbol, not two
+  from std/strutils import `$`
+  export `$`
 
 when not defined(nimony):
   # Python enumerate(s): Nim's for-loop macro handles `for (i, x) in enumerate(s)` (emitted by

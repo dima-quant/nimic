@@ -175,17 +175,48 @@ _N_THIS_FILE = __file__
 _N_RUNTIME_DIR = __file__.rsplit("/", 1)[0] + "/"  # nimic's runtime modules (skipped when resolving UFCS)
 
 
+# Dialects: the compiler a module's code is written for. A module or package declares it with
+# `__nimic_dialect__ = "nimony"` (the nearest declaration wins: the module, then its packages); without one
+# it is Nim 2's. A dialect lists the runtime checks its compiler doesn't have: nimony's signed arithmetic
+# wraps (`{.keepOverflowFlag.}` / `overflowFlag()` ask explicitly), so code written for it doesn't raise.
+_N_DIALECT_NO_CHECKS: dict[str, frozenset] = {"nim2": frozenset(), "nimony": frozenset({"overflowchecks"})}
+_n_module_dialects: dict[str, str] = {}  # module name -> its dialect (cache)
+
+
+def _n_module_dialect(module_name: str) -> str:
+    """The dialect of the module `module_name`: its own `__nimic_dialect__` or its nearest package's."""
+    dialect = _n_module_dialects.get(module_name)
+    if dialect is None:
+        dialect = "nim2"
+        name = module_name
+        while name:
+            module = sys.modules.get(name)
+            declared = getattr(module, "__nimic_dialect__", None) if module is not None else None
+            if declared is not None:
+                if declared not in _N_DIALECT_NO_CHECKS:
+                    raise ValueError(f"{name}: unknown __nimic_dialect__ {declared!r} "
+                                     f"(one of {', '.join(_N_DIALECT_NO_CHECKS)})")
+                dialect = declared
+                break
+            name = name.rpartition(".")[0]
+        _n_module_dialects[module_name] = dialect
+    return dialect
+
+
 def _n_check_enabled(name: str) -> bool:
     """Whether the runtime check `name` (normalized, e.g. "overflowchecks") applies to the code that
-    triggered it: the first caller frame outside nimic's runtime modules."""
+    triggered it: the first caller frame outside nimic's runtime modules. Off in a push region, in a proc
+    defined in one, in code of a dialect without the check, and when the build profile turns it off."""
     if _n_push_depth.get(name):
         return False
-    codes = _n_unchecked_codes.get(name)
-    if codes:
-        frame = sys._getframe(1)
-        while frame is not None and frame.f_code.co_filename == _N_THIS_FILE:
-            frame = frame.f_back
-        if frame is not None and frame.f_code in codes:
+    frame = sys._getframe(1)
+    while frame is not None and frame.f_code.co_filename == _N_THIS_FILE:
+        frame = frame.f_back
+    if frame is not None:
+        codes = _n_unchecked_codes.get(name)
+        if codes and frame.f_code in codes:
+            return False
+        if name in _N_DIALECT_NO_CHECKS[_n_module_dialect(frame.f_globals.get("__name__", ""))]:
             return False
     return _n_check_provider(name) if _n_check_provider is not None else True
 
@@ -3016,6 +3047,19 @@ class _NLen:
         return len(self)
 
 
+class _NIndexed:
+    """Nim's `s.low` / `s.high` are the calls `low(s)` / `high(s)`: the index bounds of an indexable nimic value
+    (seq, string, array, openArray). Not on a Tset or cstring, which have no `high` in Nim."""
+
+    @property
+    def low(self):
+        return low(self)
+
+    @property
+    def high(self):
+        return high(self)
+
+
 def _n_len_of_object(self) -> int:
     """`len(b)` of an Object whose class declares `len` (a @property or a method): Nim's `len(b)` is `b.len`."""
     n = self.len
@@ -4350,7 +4394,7 @@ class UncheckedArray(Ntype):
 
 UncheckedArray._n_register_type()
 
-class array(_NLen, Ntype):
+class array(_NIndexed, _NLen, Ntype):
     """Fixed-size array: array[N, T] → Nim array[N, T].
 
     Backed by a ctypes buffer of exactly N elements of type T.
@@ -4584,7 +4628,7 @@ def _n_delete_bounds(what, length: int) -> tuple[int, int]:
 # --- Sequences (seq) ---
 
 
-class seq(Ntype):
+class seq(_NIndexed, Ntype):
     _n_is_list = False  # True for types without ctypes backing (e.g. string)
 
     def __init__(self, c_base: object | None = None) -> None:
@@ -4906,7 +4950,7 @@ class seq(Ntype):
                 DICT_OF_TYPES[class_name] = seq_type
 
 
-class openArray(_NLen, Ntype):
+class openArray(_NIndexed, _NLen, Ntype):
     """Nim's openArray[T] — accepts array[N,T] or seq[T] transparently.
 
     In Python: thin wrapper that delegates indexing to the underlying container.
@@ -6845,7 +6889,7 @@ def _n_join_path(head: str, tail: str) -> str:
     return result[0]
 
 
-class string(collections.UserString):
+class string(_NIndexed, collections.UserString):
     """Nim-compatible string with C-buffer backing to support addr().
 
     A Nim string is a sequence of bytes. `.data` is its Latin-1 *byte view*:

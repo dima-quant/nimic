@@ -63,7 +63,7 @@ NIMICGEN = NIMONY_NIMIC / "bin" / "nimicgen"
 WORK = ROOT / ".scratch" / "nimicgen_roundtrip"
 PY = sys.executable
 # the modules whose originals nimony itself rejects (nimony_check_issues.md, issues 11, 13, 14)
-UPSTREAM = {"lib/nifqueries", "lib/nifstreams", "lib/vfs"}
+UPSTREAM = {"lib/nifqueries"}
 
 
 # ── the canonical form ──────────────────────────────────────────────────────

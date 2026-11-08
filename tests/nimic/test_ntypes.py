@@ -3412,6 +3412,83 @@ class TestNTypes(unittest.TestCase):
         with push("checks: off"):
             self.assertEqual(int(int8(127) + 1), -128)  # module-level code inside the region
 
+    def test_strutils_join(self):
+        """Nim strutils.join: the elements separated by `sep` ($ of each that isn't a string), free or with
+        method syntax on a seq, array or openArray (tmini's `p.errors.join(" | ")`)."""
+        from nimic.std import strutils
+        errs = seq[string]([string("a"), string("b"), string("c")])
+        self.assertEqual(strutils.join(errs, string(" | ")), string("a | b | c"))
+        self.assertEqual(errs.join(string(", ")), string("a, b, c"))
+        self.assertEqual(errs.join(), string("abc"))
+        self.assertIsInstance(errs.join(), string)
+        self.assertEqual(seq[string]([]).join(string("-")), string(""))
+        self.assertEqual(seq[nint]([nint(1), nint(2)]).join(string("+")), string("1+2"))
+        self.assertEqual(array[2, nint]([nint(3), nint(4)]).join(string(" ")), string("3 4"))
+        self.assertEqual(toOpenArray(errs, 1, 2).join(string("")), string("bc"))
+
+    def test_low_high_method_syntax_of_indexable_values(self):
+        """Nim's `s.high` / `s.low` are the calls `high(s)` / `low(s)` (minirt's `p.toks.high`): seq, string,
+        array and openArray answer both spellings alike; a Tset or cstring has no `.high` (Nim neither)."""
+        s = seq[nint]([nint(4), nint(5), nint(6)])
+        self.assertEqual((s.low, s.high), (low(s), high(s)))
+        self.assertEqual((s.low, s.high), (0, 2))
+        self.assertEqual(seq[nint]([]).high, -1)
+        t = string("abcd")
+        self.assertEqual((t.low, t.high), (0, 3))
+        a = array[3, nint]([nint(1), nint(2), nint(3)])
+        self.assertEqual((a.low, a.high), (low(a), high(a)))
+        self.assertEqual(toOpenArray(s, 1, 2).high, 1)
+        self.assertFalse(hasattr(Tset[uint8](), "high"))
+        self.assertFalse(hasattr(cstring("ab"), "high"))
+
+    def test_overflow_wraps_in_nimony_dialect(self):
+        """nimony has no overflow checks (signed arithmetic wraps; `{.keepOverflowFlag.}` asks explicitly):
+        code of a module or package declaring `__nimic_dialect__ = "nimony"` wraps, the nearest declaration
+        wins (a subpackage or module may say "nim2"), code without one keeps Nim 2's OverflowDefect, and
+        -d:danger / push still turn checks off in either."""
+        code = textwrap.dedent('''
+            from nimic.ntypes import *
+            def neg_low() -> int64:
+                with var:
+                    x = low(int64)
+                x = -x
+                return x
+            def add32(a: int32, b: int32) -> int32:
+                return a + b
+        ''')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "dialectpkg"
+            (root / "sub").mkdir(parents=True)
+            (root / "nim2sub").mkdir()
+            (root / "__init__.py").write_text('__nimic_dialect__ = "nimony"\n')
+            (root / "nim2sub" / "__init__.py").write_text('__nimic_dialect__ = "nim2"\n')
+            for path in (root / "mod.py", root / "sub" / "deep.py", root / "nim2sub" / "strict.py",
+                         Path(tmp) / "plainmod.py"):
+                path.write_text(code)
+            (Path(tmp) / "scriptmod.py").write_text('__nimic_dialect__ = "nimony"\n' + code)
+            sys.path.insert(0, tmp)
+            try:
+                mod = importlib.import_module("dialectpkg.mod")
+                deep = importlib.import_module("dialectpkg.sub.deep")  # a namespace subpackage
+                strict = importlib.import_module("dialectpkg.nim2sub.strict")
+                plain = importlib.import_module("plainmod")
+                script = importlib.import_module("scriptmod")
+                for m in (mod, deep, script):
+                    self.assertEqual(int(m.neg_low()), -9223372036854775808)
+                    self.assertEqual(int(m.add32(int32(2147483647), int32(1))), -2147483648)
+                for m in (strict, plain):
+                    with self.assertRaises(OverflowDefect):
+                        m.neg_low()
+                    with self.assertRaises(OverflowDefect):
+                        m.add32(int32(2147483647), int32(1))
+                with self.assertRaises(OverflowDefect):  # this test module declares no dialect
+                    int32(2147483647) + int32(1)
+            finally:
+                sys.path.remove(tmp)
+                for name in ("dialectpkg.mod", "dialectpkg.sub.deep", "dialectpkg.sub", "dialectpkg.nim2sub.strict",
+                             "dialectpkg.nim2sub", "dialectpkg", "plainmod", "scriptmod"):
+                    sys.modules.pop(name, None)
+
     def test_string_index_at_len_reads_terminator(self):
         """A Nim string is '\\0'-terminated: s[s.len] raises IndexDefect with bound checks on and reads
         '\\0' with them off (-d:danger, push boundChecks: off)."""

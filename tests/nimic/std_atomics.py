@@ -3,8 +3,8 @@
 # ///
 ## std/atomics in Python (the nimic shim) and in compiled Nim: the default value, load / store / exchange,
 ## compareExchange (success, and failure loading the value into `expected`), fetchAdd / fetchSub / fetchAnd /
-## fetchOr / fetchXor, atomicInc / atomicDec, `+=` / `-=`, wrapping like C11 atomics, AtomicFlag (vfs's
-## `atomicWriteCounter.fetchAdd(1)`; tests/verify_transpiled.py nimic compares the outputs).
+## fetchOr / fetchXor, atomicInc / atomicDec, `+=` / `-=`, wrapping like C11 atomics, AtomicFlag, and Nim's method
+## syntax of these procs (vfs's `atomicWriteCounter.fetchAdd(1)`; tests/verify_transpiled.py nimic compares the outputs).
 from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std.atomics import *
@@ -50,6 +50,14 @@ if comptime(__name__ == "__main__"):
         echo(string("flag "), testAndSet(flag), string(" "), testAndSet(flag))
         clear(flag)
         echo(string("cleared "), testAndSet(flag, moAcquire))
+        with var:
+            seqNo = Atomic[nint]()
+        echo(string("method fetchAdd "), seqNo.fetchAdd(1), string(" "), seqNo.fetchAdd(1), string(" now "), seqNo.load())
+        seqNo.store(7)
+        seqNo.atomicInc()
+        echo(string("method exchange "), seqNo.exchange(1), string(" fetchSub "), seqNo.fetchSub(1), string(" now "), seqNo.load())
+        flag.clear()
+        echo(string("method flag "), flag.testAndSet(), string(" "), flag.testAndSet())
         fence(moSequentiallyConsistent)
         signalFence(moRelease)
 

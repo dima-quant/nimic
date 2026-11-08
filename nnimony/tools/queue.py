@@ -32,14 +32,17 @@ LEGACY_MODULES = {
     "lib/keymatcher": "macro machinery (`declareMatcher`), called only by its own tests; macros are legacy",
     "lib/legacy/nif26reader": "NIF26 reader, used only by the nif26 -> nif27 migration tool, which nimic doesn't "
                               "need (also not for a newer nimony)",
-    # proposed 2026-11-06 with nifler2's conversion, for the user to confirm (nnimony/nimony_check_issues.md)
-    "nifler2/deps/parsegen": "the `grammar:` plugin: nimic has no plugins, its output is expanded into nimgrammar "
-                             "(nimony-nimic's plugexpand)",
-    "nifler2/tests/tnimlexer": "doesn't build at the pin (nimony: unsynchronized global `failures`); its cases are "
-                               "nimlexer's self-test",
-    "nifler2/tests/minirt": "runtime of the parsegen plugin's test grammar (tests/mini, tmini): tests of the plugin",
-    "nifler2/tests/mini": "a test grammar of the parsegen plugin",
-    "nifler2/tests/tmini": "the parsegen plugin's test (calls the plugin on tests/mini)",
+    "lib/nifstreams": "the classic NIF streaming surface of the Nim 2 compiler's IC modules; no nimony tool "
+                      "imports it and nimony rejects it (unsynchronized global `lineMan`); taken out "
+                      "2026-11-07 (user)",
+}
+
+# modules that aren't converted for a reason other than legacy: they are covered otherwise (decided 2026-11-07)
+NOT_CONVERTED = {
+    "nifler2/deps/parsegen": "🔌 Plugin: run at its call sites (plugexpand expands each `grammar:` call, nimicgen "
+                             "converts the expansion: nimgrammar, tests/mini)",
+    "nifler2/tests/tnimlexer": "☑️ Covered: its cases are nimlexer's self-test (it doesn't build at the pin: nimony "
+                               "rejects its unsynchronized global `failures`)",
 }
 
 # components in the order of the plan; the current one is scanned module by module
@@ -153,19 +156,21 @@ def write_queue() -> None:
         deps, std, sizes = scan(component)
         tier = tiers(deps)
         done = {k for k in deps if _converted(k)}
-        ready = sorted((k for k in deps if k not in done and k not in LEGACY_MODULES and deps[k] <= done),
+        ready = sorted((k for k in deps if k not in done and k not in LEGACY_MODULES and k not in NOT_CONVERTED and deps[k] <= done),
                        key=lambda k: sizes[k])
         legacy = [k for k in deps if k in LEGACY_MODULES]
+        covered = [k for k in deps if k in NOT_CONVERTED]
         lines += ["", f"## Ready to Convert (`src/{component}`)", "",
                   "| Module | Size | Std imports (✗ = no nimic shim yet) | Agent |", "|---|---|---|---|"]
         for k in ready:
             lines.append(f"| `{k}` | {sizes[k]:,} bytes | {_std_list(std[k])} | {AGENT.get(k, '')} |")
-        lines += ["", f"## All modules of `src/{component}` ({len(done)}/{len(deps) - len(legacy)} converted"
+        lines += ["", f"## All modules of `src/{component}` ({len(done)}/{len(deps) - len(legacy) - len(covered)} converted"
+                      + (f", {len(covered)} covered otherwise" if covered else "")
                       + (f", {len(legacy)} legacy" if legacy else "") + ")", "",
                   "| Module | Tier | Size | Depends on | Std imports | Status |", "|---|---|---|---|---|---|"]
         for k in sorted(deps, key=lambda k: (tier[k], k)):
             status = ("✅ Converted" if k in done else f"⛔ Legacy: {LEGACY_MODULES[k]}" if k in LEGACY_MODULES
-                      else "🔲 Pending")
+                      else NOT_CONVERTED[k] if k in NOT_CONVERTED else "🔲 Pending")
             lines.append(f"| `{k}` | {tier[k]} | {sizes[k]:,} bytes | {', '.join(sorted(deps[k]))} | "
                          f"{_std_list(std[k])} | {status} |")
     QUEUE.write_text("\n".join(lines) + "\n")

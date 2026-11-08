@@ -1,6 +1,6 @@
 """Nim std/strutils — string utility functions."""
 from __future__ import annotations
-from nimic.ntypes import dispatch, ufcs, string, char, ch, Tset, nint, NIntEnum, auto, float64, seq
+from nimic.ntypes import dispatch, ufcs, string, char, ch, Tset, nint, NIntEnum, auto, float64, seq, array, openArray
 from nimic.ntypesystem import _n_addf
 
 # Nim strutils.Whitespace (ASCII only: nimic strings are bytes)
@@ -60,6 +60,17 @@ def toLowerAscii(c):
     if isinstance(c, char):
         return char(_n_lower_ascii(c))
     return string(_n_lower_ascii(str(c)))
+
+
+@ufcs(seq, array, openArray)
+def join(a, sep: string = string("")) -> string:
+    """Nim strutils.join: the elements of `a` separated by `sep`; an element that isn't a string as `$x`."""
+    result = string("")
+    for i, x in enumerate(a):
+        if i > 0:
+            result.add(sep)
+        result.add(x if isinstance(x, string) else string(str(x)))
+    return result
 
 
 @ufcs(string)

@@ -1,6 +1,7 @@
 """Nim std/atomics — atomic values, the API of Nim 2.2.4's lib/pure/concurrency/atomics.nim: MemoryOrder,
 Atomic[T], AtomicFlag, load / store / exchange / compareExchange(Weak), fetchAdd / fetchSub / fetchAnd /
-fetchOr / fetchXor, atomicInc / atomicDec, `+=` / `-=`, testAndSet / clear, fence / signalFence.
+fetchOr / fetchXor, atomicInc / atomicDec, `+=` / `-=`, testAndSet / clear, fence / signalFence. The procs of an
+atomic are also called with Nim's method syntax (`counter.fetchAdd(1)`, `flag.testAndSet()`): `@ufcs`.
 
 Each Atomic holds a Python lock, so its operations are atomic for Python threads too. The memory orders are
 accepted and change nothing (Python has no weaker orders). Integer operations wrap like C11 atomics
@@ -8,7 +9,7 @@ accepted and change nothing (Python has no weaker orders). Integer operations wr
 from __future__ import annotations
 import threading as _threading
 
-from nimic.ntypes import NIntEnum, Object, auto, int8
+from nimic.ntypes import NIntEnum, Object, auto, int8, ufcs
 from nimic.ntypesystem import _n_value_copy
 
 
@@ -63,18 +64,21 @@ def _n_typed(location: Atomic, value):
     return type(current)(value) if hasattr(current, "plus_percent") and not isinstance(value, type(current)) else value
 
 
+@ufcs(Atomic)
 def load(location: Atomic, order: MemoryOrder = moSequentiallyConsistent):
     """Atomically obtains the value of the atomic object."""
     with location._n_guard:
         return _n_value(location)
 
 
+@ufcs(Atomic)
 def store(location: Atomic, desired, order: MemoryOrder = moSequentiallyConsistent) -> None:
     """Atomically replaces the value of the atomic object with the desired value."""
     with location._n_guard:
         _n_set(location, _n_typed(location, desired))
 
 
+@ufcs(Atomic)
 def exchange(location: Atomic, desired, order: MemoryOrder = moSequentiallyConsistent):
     """Atomically replaces the value with desired and returns the value it held."""
     with location._n_guard:
@@ -83,6 +87,7 @@ def exchange(location: Atomic, desired, order: MemoryOrder = moSequentiallyConsi
         return result
 
 
+@ufcs(Atomic)
 def compareExchange(location: Atomic, expected, desired, *orders: MemoryOrder) -> bool:
     """If the value equals expected, replaces it with desired (true); else loads it into expected (false).
     `expected` is a `var T`: a cell (nint, ...) that is assigned with `<<=`. The orders: none, one, or the
@@ -96,6 +101,7 @@ def compareExchange(location: Atomic, expected, desired, *orders: MemoryOrder) -
         return True
 
 
+@ufcs(Atomic)
 def compareExchangeWeak(location: Atomic, expected, desired, *orders: MemoryOrder) -> bool:
     """compareExchange that may fail spuriously in C; in Python it doesn't."""
     return compareExchange(location, expected, desired, *orders)
@@ -108,36 +114,43 @@ def _n_fetch(location: Atomic, value, op):
         return result
 
 
+@ufcs(Atomic)
 def fetchAdd(location: Atomic, value, order: MemoryOrder = moSequentiallyConsistent):
     """Atomically adds value (wrapping) and returns the value before."""
     return _n_fetch(location, value, lambda a, b: a.plus_percent(b))
 
 
+@ufcs(Atomic)
 def fetchSub(location: Atomic, value, order: MemoryOrder = moSequentiallyConsistent):
     """Atomically subtracts value (wrapping) and returns the value before."""
     return _n_fetch(location, value, lambda a, b: a.minus_percent(b))
 
 
+@ufcs(Atomic)
 def fetchAnd(location: Atomic, value, order: MemoryOrder = moSequentiallyConsistent):
     """Atomically replaces the value with `value and it` and returns the value before."""
     return _n_fetch(location, value, lambda a, b: a & b)
 
 
+@ufcs(Atomic)
 def fetchOr(location: Atomic, value, order: MemoryOrder = moSequentiallyConsistent):
     """Atomically replaces the value with `value or it` and returns the value before."""
     return _n_fetch(location, value, lambda a, b: a | b)
 
 
+@ufcs(Atomic)
 def fetchXor(location: Atomic, value, order: MemoryOrder = moSequentiallyConsistent):
     """Atomically replaces the value with `value xor it` and returns the value before."""
     return _n_fetch(location, value, lambda a, b: a ^ b)
 
 
+@ufcs(Atomic)
 def atomicInc(location: Atomic, value=1) -> None:
     """Atomically increments the atomic integer by some value."""
     fetchAdd(location, value)
 
 
+@ufcs(Atomic)
 def atomicDec(location: Atomic, value=1) -> None:
     """Atomically decrements the atomic integer by some value."""
     fetchSub(location, value)
@@ -159,6 +172,7 @@ Atomic.__iadd__ = _atomic_iadd
 Atomic.__isub__ = _atomic_isub
 
 
+@ufcs(AtomicFlag)
 def testAndSet(location: AtomicFlag, order: MemoryOrder = moSequentiallyConsistent) -> bool:
     """Atomically sets the flag and returns whether it was set before."""
     with _n_flag_lock:
@@ -167,6 +181,7 @@ def testAndSet(location: AtomicFlag, order: MemoryOrder = moSequentiallyConsiste
         return was
 
 
+@ufcs(AtomicFlag)
 def clear(location: AtomicFlag, order: MemoryOrder = moSequentiallyConsistent) -> None:
     """Atomically clears the flag."""
     with _n_flag_lock:
