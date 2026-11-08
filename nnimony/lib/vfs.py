@@ -23,10 +23,10 @@ from __future__ import annotations
 from nimic.ntypes import *
 
 if comptime(defined("nimony")):
-    pragma('feature: "lenientnils"')
+    pragma("feature: \"lenientnils\"")
     # The `*Relay` hooks are installed once at startup; the compiler is
     # single threaded.
-    pragma('feature: "assumeSync"')
+    pragma("feature: \"assumeSync\"")
 
 ##
 ## Mmap'd reads return a `VfsBlob` rather than a raw `MemFile`. The blob
@@ -37,10 +37,9 @@ if comptime(defined("nimony")):
 ## wraps a `MDB_txn`; a sandbox adapter would wrap whatever its source
 ## blob is and refuse to provide one for paths outside the allow-list.
 
+from nimic.std import memfiles, syncio
 from nimic.std.memfiles import MemFile
-from nimic.std import memfiles
-from nimic.std.syncio import writeLine
-from nimic.std.times import getTime, toUnix
+from nimic.std.times import getTime, Time, toUnix
 
 # --- profiling --------------------------------------------------------
 #
@@ -63,15 +62,12 @@ if comptime(defined("vfsProfile")):
         statMtime = VfsCounter()
         statRemove = VfsCounter()
 
-    from nimic.std.strutils import ffDecimal, formatFloat, parseInt
+    from nimic.std.strutils import ffDecimal, formatFloat
 
     def dumpVfsProfile(label: string):
         @template
         def emit(name: string, c: VfsCounter):
-            writeLine(stderr, string("[vfs] ") + label + string(" ") + name +
-                             string(" count=") + str(c.count) +
-                             string(" ms=") + formatFloat(float64(c.ns) / 1_000_000.0, ffDecimal, 3) +
-                             string(" bytes=") + str(c.bytes))
+            stderr.writeLine(string("[vfs] ") + label + string(" ") + name + string(" count=") + str(c.count) + string(" ms=") + formatFloat(float64(c.ns) / 1_000_000.0, ffDecimal, 3) + string(" bytes=") + str(c.bytes))
         emit(string("openMmap"), statOpenMmap)
         emit(string("read"), statRead)
         emit(string("write"), statWrite)
@@ -95,14 +91,13 @@ class FileWriteMode(NIntEnum):
 #
 # Never truncate a .nif or .bif that a reader may have mmap'd.
 
+
 from nimic.std.atomics import Atomic
-from nimic.std.atomics import fetchAdd
 
 if comptime(defined("windows")):
     @importc
     def _osProcessId() -> int32:
-        """{.importc: "GetCurrentProcessId", stdcall,
-                              dynlib: "kernel32".}"""
+        """{.importc: "GetCurrentProcessId", stdcall, dynlib: "kernel32".}"""
         pass
 else:
     @importc
@@ -112,16 +107,14 @@ else:
 
 if comptime(defined("nimony")):
     with var:
-        _atomicWriteCounter: nint = 0
-
+        _atomicWriteCounter: nint = nint(0)
     def _nextTempSeq() -> nint:
         return atomicFetchAdd(_atomicWriteCounter, 1)
 else:
     with var:
         _atomicWriteCounter = Atomic[nint]()
-
     def _nextTempSeq() -> nint:
-        return fetchAdd(_atomicWriteCounter, 1)
+        return _atomicWriteCounter.fetchAdd(1)
 
 
 def atomicTempPath(target: string) -> string:
@@ -139,7 +132,6 @@ elif comptime(defined("nimony")):
     # `nanosleep`, not libc's `usleep`: the native backend links no libc and
     # knows `nanosleep` as the syscall it is.
     importFrom("nimic.std.posix.posix", "Timespec", "nanosleep")
-
     def vfsSleepMs(ms: uint32):
         with var:
             req = Timespec()
@@ -150,39 +142,31 @@ elif comptime(defined("nimony")):
         _ = nanosleep(req, rem)
 else:
     importFrom("nimic.std.os", "sleep")
-
     def vfsSleepMs(ms: uint32):
         sleep(nint(ms))
 
 if comptime(defined("nimony")):
-    from nimic.std.os import (
-        createDir, dirExists, existsOrCreateDir, fileExists, getLastModificationTime, getTempDir, moveFile, pcDir,
-        removeDir, removeFile, walkDir)
-    from nimic.std.dirs import *
-    from nimic.std.paths import path
-    from nimic.std.private.oscommons import *
+    from nimic.std.os import existsOrCreateDir, fileExists, getLastModificationTime, moveFile, sleep
+    from nimic.std.dirs import path, removeFile, tryCreateFinalDir, tryRemoveFile, tryRemoveFinalDir, walkDir
+    from nimic.std import paths
+    from nimic.std.private.oscommons import tryMoveFSObject
     # Nimony's stdlib procs are `.raises`. Wrap them so vfs.nim stays
     # non-raising (the rest of the compiler is wired that way).
-
     def _unixModTime(p: string) -> int64:
         try: return getLastModificationTime(p)
         except: return i64(0)
-
     def _unixNow() -> int64:
         try:
             with let:
                 t = getTime()
-            return toUnix(t) * _nanosPerSec + int64(t.nanosecond)
+            return toUnix(t) * _nanosPerSec + int64(t.nanosecond())
         except: return i64(0)
-
     def _rmPath(p: string):
         try: removeFile(path(p))
         except: pass
-
     def _moveIntoImpl(src: string, dst: string) -> bool:
         try: return tryMoveFSObject(src, dst, False)
         except: return False
-
     def _removeTreeImpl(d: string):
         try:
             for it in walkDir(path(d)):
@@ -190,15 +174,12 @@ if comptime(defined("nimony")):
                 else: _ = tryRemoveFile(it.path)
             _ = tryRemoveFinalDir(path(d))
         except: pass
-
     def _readBytes(p: string) -> string:
         try: return readFile(p)
         except: return string("")
-
     def _createDirImpl(d: string) -> bool:
         try: return tryCreateFinalDir(path(d)) == Success
         except: return False
-
     def _removeDirImpl(d: string):
         try: _ = tryRemoveFinalDir(path(d))
         except: pass
@@ -214,54 +195,44 @@ if comptime(defined("nimony")):
         except:
             ok = False
         if not ok:
-            try: removeFile(path(tmp))
-            except: pass   # no `.tmp.NNN` litter
+            try: removeFile(path(tmp))  # no `.tmp.NNN` litter
+            except: pass
             quit(string("vfs: write failed: ") + p)
 
     def _fileMaybeExists(p: string) -> bool:
         try: return fileExists(p)
         except: return False
-
     def _openMmapImpl(p: string) -> MemFile:
         try: return memfiles.open(p)
         except: quit(string("vfs: open failed: ") + p)
 else:
-    from nimic.std.os import (
-        createDir, dirExists, existsOrCreateDir, fileExists, getLastModificationTime, getTempDir, moveFile, pcDir,
-        removeDir, removeFile, walkDir)
-
+    from nimic.std.os import existsOrCreateDir, fileExists, getLastModificationTime, moveFile, removeDir, removeFile
     def _unixModTime(path: string) -> int64:
         with let:
             t = getLastModificationTime(path)
         return toUnix(t) * _nanosPerSec + int64(t.nanosecond)
-
     def _unixNow() -> int64:
         with let:
             t = getTime()
         return toUnix(t) * _nanosPerSec + int64(t.nanosecond)
-
-    def _rmPath(path: string): removeFile(path)
-
+    def _rmPath(path: string):
+        removeFile(path)
     def _moveIntoImpl(src: string, dst: string) -> bool:
         try:
             moveFile(src, dst)
             return True
         except CatchableError: return False
-
     def _removeTreeImpl(d: string):
         try: removeDir(d)
         except CatchableError: pass
-
-    def _readBytes(p: string) -> string: return readFile(p)
-
+    def _readBytes(p: string) -> string:
+        return readFile(p)
     def _createDirImpl(d: string) -> bool:
         try: return not existsOrCreateDir(d)
         except CatchableError: return False
-
     def _removeDirImpl(d: string):
         try: removeDir(d)
         except CatchableError: pass
-
     def _writeBytes(p: string, c: string):
         with let:
             tmp = atomicTempPath(p)
@@ -269,13 +240,13 @@ else:
             writeFile(tmp, c)
             if not _moveIntoImpl(tmp, p): raise newException(IOError, string("move failed: ") + p)
         except CatchableError:
-            try: removeFile(tmp)
-            except CatchableError: pass   # no `.tmp.NNN` litter
+            try: removeFile(tmp)  # no `.tmp.NNN` litter
+            except CatchableError: pass
             raise
-
-    def _fileMaybeExists(p: string) -> bool: return fileExists(p)
-
-    def _openMmapImpl(p: string) -> MemFile: return memfiles.open(p)
+    def _fileMaybeExists(p: string) -> bool:
+        return fileExists(p)
+    def _openMmapImpl(p: string) -> MemFile:
+        return memfiles.open(p)
 
 
 def vfsMoveInto(src: string, dst: string) -> bool:
@@ -371,8 +342,7 @@ def _closeMemFileBlob(b: mut @ VfsBlob):
 
 def fromMemFile(mf: sink @ MemFile) -> VfsBlob:
     ## Wrap an already-opened MemFile in a blob whose cleanup closes it.
-    result = VfsBlob(data=mf.mem, size=mf.size, _mf=mf,
-                     cookie=None, _cleanup=_closeMemFileBlob)
+    result = VfsBlob(data=mf.mem, size=mf.size, _mf=mf, cookie=None, _cleanup=_closeMemFileBlob)
     return result
 
 
@@ -470,34 +440,29 @@ else:
     def vfsOpenMmap(path: string) -> VfsBlob:
         """{.inline.}"""
         return openMmapRelay(path)
-
     def vfsRead(path: string) -> string:
         """{.inline.}"""
         return readBytesRelay(path)
-
     def vfsWrite(path: string, content: string):
         """{.inline.}"""
         writeBytesRelay(path, content)
-
     def vfsExists(path: string) -> bool:
         """{.inline.}"""
         return existsRelay(path)
-
     def vfsMtime(path: string) -> int64:
         """{.inline.}"""
         return mtimeRelay(path)
-
     def vfsNow() -> int64:
         """{.inline.}"""
         return nowRelay()
-
     def vfsRemove(path: string):
         """{.inline.}"""
         removeRelay(path)
 
 
 if comptime(__name__ == "__main__"):
-    from nimic.std.strutils import ffDecimal, formatFloat, parseInt
+    from nimic.std.os import createDir, dirExists, getTempDir, walkDir
+    from nimic.std.strutils import parseInt
 
     def countEntries(dir: string) -> nint:
         result = nint(0)
