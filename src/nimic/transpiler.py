@@ -117,7 +117,8 @@ Control flow:
     in the `when isMainModule:` block (imports and standalone pragmas stay there); under nimony the proc is
     `.raises` and called in `try: ... except: quit(1)`: nimony calls a `.raises` routine only in a try or a
     `.raises` routine; definitions and the variable sections its procs use stay at the block's top level
-    (before its statements), and nothing of the block is exported (no `*`: `_x` and `x` are the same Nim)
+    (before its statements), and nothing of the block is exported (no `*`: `_x` and `x` are the same Nim); the
+    block's procs take `.raises` too (the pragma alias), except one named as a value: its proc type decides
   rule:comptimeexpr -> the expression `a if comptime(c) else b` is written as `when c: a else: b`
   rule:assigncall -> the statement assign(target, value) is written as `target = value`; used where Python
     can't assign, e.g. through a call returning var T: assign(p.s(cpsStmts), oldCode)
@@ -1058,6 +1059,7 @@ class _Unparser(NodeVisitor):
         self._main_blocks = 0  # rule:mainproc: the module's `if comptime(__name__ == "__main__")` blocks so far
         self._in_main_block = False  # rule:mainproc: a main block exports nothing
         self._main_raises = None  # rule:mainproc: the pragma alias of the main block being written
+        self._main_value_procs = set()  # rule:mainproc: the main block's procs used as values (no `.raises`)
         self._noreturn_procs = set()  # rule:tryassign: names of the module's procs that don't return
         self._operator_procs = {}  # rule:operator: Python name of an @operator proc -> its Nim operator (`+!`)
         self._import_paths = set()  # rule:import: the Nim paths imported so far
@@ -2252,8 +2254,10 @@ class _Unparser(NodeVisitor):
             if "private" in parsed_pragma:  # rule:privatepragma
                 is_private = True
                 pragma = ",".join([x for x in parsed_pragma if x != "private"])
-        if self._main_raises and plain_def and decl_str != "func" and write_body:
-            # rule:mainproc -> a proc of a main block may call `.raises` routines (`.raises` under nimony)
+        if (self._main_raises and plain_def and decl_str != "func" and write_body
+                and node.name not in self._main_value_procs):
+            # rule:mainproc -> a proc of a main block may call `.raises` routines (`.raises` under nimony); not
+            # one used as a value (vfs's test assigns `taggedRead` to a relay variable): its proc type decides
             pragma = ", ".join(p for p in (pragma, self._main_raises) if p)
         func_name = node.name
         do_arg_swap = False  # rule:funcdefargswap
@@ -2618,6 +2622,12 @@ class _Unparser(NodeVisitor):
             with self.block(start=""):
                 self.fill(f"{{.pragma: {name}Raises.}}")
             self._main_raises = f"{name}Raises"
+            # the block's procs named as a value (not called): they take no `.raises` (rule:mainproc)
+            defs = {s.name for s in body if isinstance(s, (FunctionDef, AsyncFunctionDef))}
+            called = {id(n.func) for s in body for n in ast.walk(s) if isinstance(n, Call)}
+            self._main_value_procs = {n.id for s in body for n in ast.walk(s)
+                                      if isinstance(n, Name) and isinstance(n.ctx, Load) and n.id in defs
+                                      and id(n) not in called}
             # variables the block's procs use stay globals: their sections stay at the top level too
             used = {n for s in body if isinstance(s, (FunctionDef, AsyncFunctionDef, ClassDef))
                     for n in self._free_names(s)}

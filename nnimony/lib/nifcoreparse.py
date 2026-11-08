@@ -320,7 +320,7 @@ def parseFromBuffer(input: string, thisModule: sink @ string,
     ## Parses NIF text and returns its `.unusedname` directive via `unusedName`.
     with var:
         r = rd.openFromBuffer(input.copy(), thisModule)
-    unusedName <<= r.firstUnusedName()
+    unusedName <<= rd.firstUnusedName(r)
     result = createTokenBuf(sizeHint, sharedPool, sharedTags)
     parse(r, result, denseLineInfo=denseLineInfo)
     return result
@@ -348,7 +348,7 @@ def parseFromFile(filename: string, unusedName: mut @ string,
     ## Parses a NIF file and returns its `.unusedname` directive via `unusedName`.
     with var:
         r = rd.open(filename)
-    unusedName <<= r.firstUnusedName()
+    unusedName <<= rd.firstUnusedName(r)
     result = createTokenBuf(sizeHint, sharedPool, sharedTags)
     parse(r, result, denseLineInfo=denseLineInfo)
     rd.close(r)

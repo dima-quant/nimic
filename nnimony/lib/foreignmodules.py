@@ -33,7 +33,7 @@ from .nifcore import (
     addSubtree, createTokenBuf, Cursor, lineInfoFile, newPool, newTagPool, NifKind, Pool,
     symId, symName, TagPool, TokenBuf)
 from .nifcoreparse import parse, parseFromBuffer, peekRootInfo, toModuleString, toString
-from .nifreader import close, decodeInt, decodeStr, ExpandedToken, indexStartsAt, next, offset, Reader
+from .nifreader import close, decodeInt, decodeStr, ExpandedToken, indexStartsAt, jumpTo, next, offset, Reader
 from . import nifreader
 from . import stringviews
 from .bif import getOrQuit, isBifFile
@@ -89,13 +89,13 @@ class ForeignModule(Object):
             addSubtree(buf, m.bifBuf.cursorAt(pos))
         else:
             if withLineInfo:
-                m.r.jumpTo(m._rootOffset)
+                jumpTo(m.r, m._rootOffset)
                 with let:
                     seed = peekRootInfo(m.r, buf.pool)
-                m.r.jumpTo(pos)
+                jumpTo(m.r, pos)
                 parse(m.r, buf, parentSeed=seed, denseLineInfo=True)
             else:
-                m.r.jumpTo(pos)
+                jumpTo(m.r, pos)
                 parse(m.r, buf)                         # exactly one balanced decl tree
         # Take the cursor on the LOCAL buffer *before* moving it into `declBufs`
         # (the leng/nimony pattern, see nifmodules.getDeclOrNil): `beginRead` installs
@@ -118,7 +118,7 @@ def readEmbeddedIndex(r: mut @ Reader) -> Table[string, nint]:
     with let:
         indexPos = indexStartsAt(r)
     if indexPos <= 0: return result
-    r.jumpTo(indexPos)
+    jumpTo(r, indexPos)
     with var:
         prev = nint(0)
     with var:
@@ -313,7 +313,7 @@ if comptime(__name__ == "__main__"):
         echo("increasing: ", increasing)
         with var:
             one = createTokenBuf(16, None, tags)
-        r.jumpTo(getOrQuit(tab, string("v.0.m")))
+        jumpTo(r, getOrQuit(tab, string("v.0.m")))
         parse(r, one)
         echo("at v.0.m: ", toString(one, includeLineInfo=False))
         close(r)

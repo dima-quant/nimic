@@ -234,29 +234,29 @@ class Lexer(Object):
         result = string("")
         with var:
             pos = copy(start)
-        while L.ch(pos) in LiteralishChars:
-            result.add(L.ch(pos))
+        while ch(L, pos) in LiteralishChars:
+            result.add(ch(L, pos))
             pos += 1
-        if L.ch(pos) in Tset[char](char('+'), char('-')) and L.ch(pos - 1) in Tset[char](char('e'), char('E')):
-            result.add(L.ch(pos))
+        if ch(L, pos) in Tset[char](char('+'), char('-')) and ch(L, pos - 1) in Tset[char](char('e'), char('E')):
+            result.add(ch(L, pos))
             pos += 1
-            while L.ch(pos) in LiteralishChars:
-                result.add(L.ch(pos))
+            while ch(L, pos) in LiteralishChars:
+                result.add(ch(L, pos))
                 pos += 1
-        if L.ch(pos) in LiteralishChars:
-            result.add(L.ch(pos))
+        if ch(L, pos) in LiteralishChars:
+            result.add(ch(L, pos))
             pos += 1
-            while L.ch(pos) in Tset[char](inrange(char('0'), char('9'))):
-                result.add(L.ch(pos))
+            while ch(L, pos) in Tset[char](inrange(char('0'), char('9'))):
+                result.add(ch(L, pos))
                 pos += 1
         return result
 
     def _handleCRLF(L: mut @ Lexer, pos: nint) -> nint:
         result = copy(pos)
-        if L.ch(result) == char('\r'):
+        if ch(L, result) == char('\r'):
             result += 1
-            if L.ch(result) == char('\n'): result += 1
-        elif L.ch(result) == char('\n'):
+            if ch(L, result) == char('\n'): result += 1
+        elif ch(L, result) == char('\n'):
             result += 1
         L.lineNumber += 1
         L.lineStart = result
@@ -884,7 +884,7 @@ class Lexer(Object):
             case 14:
                 L._error(numEnd, string("invalid number suffix: \'") + L.buf.substr(numEnd, pos - 1) + string("\'"))
             case _:
-                if L.ch(pos) == char('\''):
+                if ch(L, pos) == char('\''):
                     L._error(pos + 1, string("invalid number suffix"))
         L.pos = pos
         if kind == TokKind.tkCustomLit:
@@ -898,36 +898,36 @@ class Lexer(Object):
             toStrip = nint(0)
         if isDoc:
             toStrip = pos - L.lineStart
-            while L.ch(pos) == char(' '):
+            while ch(L, pos) == char(' '):
                 pos += 1
                 toStrip += 1
-            while L.ch(pos) == char('\r') or L.ch(pos) == char('\n'):
+            while ch(L, pos) == char('\r') or ch(L, pos) == char('\n'):
                 pos = L._handleCRLF(pos)
                 toStrip = 0
-                while L.ch(pos) == char(' '):
+                while ch(L, pos) == char(' '):
                     pos += 1
                     toStrip += 1
         with var:
             nesting = nint(0)
         while True:
             with let:
-                c = L.ch(pos)
+                c = ch(L, pos)
             if c == char('#'):
                 if isDoc:
-                    if L.ch(pos + 1) == char('#') and L.ch(pos + 2) == char('['): nesting += 1
+                    if ch(L, pos + 1) == char('#') and ch(L, pos + 2) == char('['): nesting += 1
                     tok.s.add(char('#'))
-                elif L.ch(pos + 1) == char('['):
+                elif ch(L, pos + 1) == char('['):
                     nesting += 1
                 pos += 1
             elif c == char(']'):
                 if isDoc:
-                    if L.ch(pos + 1) == char('#') and L.ch(pos + 2) == char('#'):
+                    if ch(L, pos + 1) == char('#') and ch(L, pos + 2) == char('#'):
                         if nesting == 0:
                             pos += 3
                             break
                         nesting -= 1
                     tok.s.add(char(']'))
-                elif L.ch(pos + 1) == char('#'):
+                elif ch(L, pos + 1) == char('#'):
                     if nesting == 0:
                         pos += 2
                         break
@@ -939,7 +939,7 @@ class Lexer(Object):
                     tok.s.add(char('\n'))
                     with var:
                         n = copy(toStrip)
-                    while L.ch(pos) == char(' ') and n > 0:
+                    while ch(L, pos) == char(' ') and n > 0:
                         pos += 1
                         n -= 1
             elif c == char('\x00'):
@@ -957,7 +957,7 @@ class Lexer(Object):
         with var:
             pos = copy(L.pos)
         tok.kind = TokKind.tkComment
-        if L.ch(pos + 2) == char('['):
+        if ch(L, pos + 2) == char('['):
             L._skipMultiLineComment(tok, pos + 3, True)
             return
         pos += 2
@@ -966,38 +966,38 @@ class Lexer(Object):
             stripInit = False
         while True:
             if not stripInit:
-                while L.ch(pos) == char(' '):
+                while ch(L, pos) == char(' '):
                     pos += 1
                     toStrip += 1
-                if L.ch(pos) == char('\r') or L.ch(pos) == char('\n'): toStrip = 0
+                if ch(L, pos) == char('\r') or ch(L, pos) == char('\n'): toStrip = 0
                 else: stripInit = True
-            while L.ch(pos) != char('\r') and L.ch(pos) != char('\n') and L.ch(pos) != char('\x00'):
+            while ch(L, pos) != char('\r') and ch(L, pos) != char('\n') and ch(L, pos) != char('\x00'):
                 tok.s.add(L.buf[pos])
                 pos += 1
-            if L.ch(pos) == char('\x00'): break
+            if ch(L, pos) == char('\x00'): break
             pos = L._handleCRLF(pos)
             with var:
                 indent = nint(0)
-            while L.ch(pos) == char(' '):
+            while ch(L, pos) == char(' '):
                 pos += 1
                 indent += 1
-            if L.ch(pos) == char('#') and L.ch(pos + 1) == char('#'):
+            if ch(L, pos) == char('#') and ch(L, pos + 1) == char('#'):
                 tok.s.add(char('\n'))
                 pos += 2
                 if stripInit:
                     with var:
                         n = copy(toStrip)
-                    while L.ch(pos) == char(' ') and n > 0:
+                    while ch(L, pos) == char(' ') and n > 0:
                         pos += 1
                         n -= 1
             else:
-                if L.ch(pos) > char(' '): L.indentAhead = int32(indent)
+                if ch(L, pos) > char(' '): L.indentAhead = int32(indent)
                 break
         L.pos = pos
 
     def _handleHexChar(L: mut @ Lexer, xi: mut @ nint, position: Trange[0, 4]):
         with let:
-            c = L.ch(L.pos)
+            c = ch(L, L.pos)
         if c >= char('0') and c <= char('9'): xi <<= (xi << 4) | (ord(c) - ord(char('0')))
         elif c >= char('a') and c <= char('f'): xi <<= (xi << 4) | (ord(c) - ord(char('a')) + 10)
         elif c >= char('A') and c <= char('F'): xi <<= (xi << 4) | (ord(c) - ord(char('A')) + 10)
@@ -1026,7 +1026,7 @@ class Lexer(Object):
         tok.spacing.excl(TokSpacing.tsLeading)
         while True:
             with let:
-                c = L.ch(pos)
+                c = ch(L, pos)
             if c == char(' '):
                 pos += 1
                 tok.spacing.incl(TokSpacing.tsLeading)
@@ -1038,28 +1038,28 @@ class Lexer(Object):
                 with var:
                     indent = nint(0)
                 while True:
-                    if L.ch(pos) == char(' '):
+                    if ch(L, pos) == char(' '):
                         pos += 1
                         indent += 1
-                    elif L.ch(pos) == char('#') and L.ch(pos + 1) == char('['):
+                    elif ch(L, pos) == char('#') and ch(L, pos + 1) == char('['):
                         L.pos = pos
                         L._skipMultiLineComment(tok, pos + 2, False)
                         pos = L.pos.copy()
                     else:
                         break
                 tok.spacing.excl(TokSpacing.tsLeading)
-                if L.ch(pos) > char(' ') and (L.ch(pos) != char('#') or L.ch(pos + 1) == char('#')):
+                if ch(L, pos) > char(' ') and (ch(L, pos) != char('#') or ch(L, pos + 1) == char('#')):
                     tok.indent = int32(indent)
                     L.currLineIndent = int32(indent)
                     break
             elif c == char('#'):
-                if L.ch(pos + 1) == char('#'): break  # a doc comment is a token
-                if L.ch(pos + 1) == char('['):
+                if ch(L, pos + 1) == char('#'): break  # a doc comment is a token
+                if ch(L, pos + 1) == char('['):
                     L.pos = pos
                     L._skipMultiLineComment(tok, pos + 2, False)
                     pos = L.pos.copy()
                 else:
-                    while L.ch(pos) != char('\r') and L.ch(pos) != char('\n') and L.ch(pos) != char('\x00'):
+                    while ch(L, pos) != char('\r') and ch(L, pos) != char('\n') and ch(L, pos) != char('\x00'):
                         pos += 1
             else:
                 break  # end of file leaves the loop too
@@ -1103,7 +1103,6 @@ def _charAt(buf: string, i: nint) -> char:
     return buf[i] if i >= 0 and i < buf.len else char('\x00')
 
 
-@ufcs(Lexer)
 @dispatch
 def ch(L: Lexer, i: nint) -> char:
     """{.inline.}"""
@@ -1332,8 +1331,8 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
         isFloat = False
     with block:
         with let:
-            d = start + 1 if L.ch(start) == char('-') else start
-        if L.ch(d) == char('0') and L.ch(d + 1) == char('O'):
+            d = start + 1 if ch(L, start) == char('-') else start
+        if ch(L, d) == char('0') and ch(L, d + 1) == char('O'):
             L._error(d + 1, L._litNumText(d) + string(" is an invalid int literal; For octal literals use the '0o' prefix."))
     # plugexpand: `lex L.buf, pos:` (line 446), expanded
     with var:
@@ -1553,7 +1552,7 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
             pass
         case _:
             tok.kind = TokKind.tkInvalid
-            tok.s = _str(L.ch(pos))
+            tok.s = _str(ch(L, pos))
             L._error(pos, string("invalid number"))
             pos += 1
             L.pos = pos
@@ -1567,7 +1566,7 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
     L._numberSuffix(tok, start, isFloat)
     tok._normalizeBasePrefix()
     _numberValue(L, tok, digits)
-    if L.ch(L.pos) in SymChars + Tset[char](char('_')) and unicodeOprLen(L.buf, L.pos)[0] == 0:
+    if ch(L, L.pos) in SymChars + Tset[char](char('_')) and unicodeOprLen(L.buf, L.pos)[0] == 0:
         L._error(L.pos, string("invalid token: no whitespace between number and identifier"))
 
 
@@ -4968,7 +4967,7 @@ def _scanSymbol(L: mut @ Lexer, tok: mut @ Token):
         kind = _symbolKind(L.buf, pos)
     if kind == TokKind.tkInvalid:
         tok.kind = TokKind.tkInvalid
-        tok.s = _str(L.ch(pos))
+        tok.s = _str(ch(L, pos))
         pos += 1
         L.pos = pos
         return
@@ -4990,11 +4989,11 @@ def _scanSymbol(L: mut @ Lexer, tok: mut @ Token):
         i += 1
     if pos == start:
         tok.kind = TokKind.tkInvalid
-        tok.s = _str(L.ch(pos))
+        tok.s = _str(ch(L, pos))
         pos += 1
         L.pos = pos
         return
-    if L.ch(pos) == char('_'):
+    if ch(L, pos) == char('_'):
         L._error(start, string("invalid token: trailing underscore"))
     L.pos = pos
     tok.s = L.buf.substr(start, pos - 1)
@@ -5031,7 +5030,7 @@ def _addUnicodeCodePoint(s: mut @ string, i: nint):
 def _getEscapedChar(L: mut @ Lexer, tok: mut @ Token):
     L.pos += 1  # skip '\'
     with let:
-        c = L.ch(L.pos)
+        c = ch(L, L.pos)
     match c:
         case _ if c == char('n') or c == char('N'):
             tok.s.add(char('\n'))
@@ -5084,14 +5083,14 @@ def _getEscapedChar(L: mut @ Lexer, tok: mut @ Token):
             L.pos += 1
             with var:
                 xi = nint(0)
-            if L.ch(L.pos) == char('{'):
+            if ch(L, L.pos) == char('{'):
                 L.pos += 1
                 with let:
                     start = copy(L.pos)
-                while L.ch(L.pos) != char('}') and L.ch(L.pos) != char('\x00'):
+                while ch(L, L.pos) != char('}') and ch(L, L.pos) != char('\x00'):
                     L._handleHexChar(xi, 0)
                 if start == L.pos: L._error(L.pos, string("Unicode codepoint cannot be empty"))
-                if L.ch(L.pos) == char('}'): L.pos += 1
+                if ch(L, L.pos) == char('}'): L.pos += 1
                 if xi > 0x10FFFF:
                     L._error(L.pos, string("Unicode codepoint must be lower than 0x10FFFF"))
             else:
@@ -5103,8 +5102,8 @@ def _getEscapedChar(L: mut @ Lexer, tok: mut @ Token):
         case _ if c in inrange(char('0'), char('9')):
             with var:
                 xi = 0
-            while L.ch(L.pos) >= char('0') and L.ch(L.pos) <= char('9'):
-                xi = xi * 10 + (ord(L.ch(L.pos)) - ord(char('0')))
+            while ch(L, L.pos) >= char('0') and ch(L, L.pos) <= char('9'):
+                xi = xi * 10 + (ord(ch(L, L.pos)) - ord(char('0')))
                 L.pos += 1
             if xi <= 255: tok.s.add(chr(xi))
             else: L._error(L.pos, string("invalid character constant"))
@@ -5125,22 +5124,22 @@ def _getString(L: mut @ Lexer, tok: mut @ Token, mode: _StringMode):
     with let:
         line = copy(L.lineNumber)
     pos += 1  # skip the opening quote
-    if L.ch(pos) == char('"') and L.ch(pos + 1) == char('"'):
+    if ch(L, pos) == char('"') and ch(L, pos + 1) == char('"'):
         tok.kind = TokKind.tkTripleStrLit
         pos += 2
         # a newline directly after `"""` is not part of the string
-        if L.ch(pos) == char(' ') or L.ch(pos) == char('\t'):
+        if ch(L, pos) == char(' ') or ch(L, pos) == char('\t'):
             with var:
                 newpos = nint(pos + 1)
-            while L.ch(newpos) == char(' ') or L.ch(newpos) == char('\t'): newpos += 1
-            if L.ch(newpos) == char('\r') or L.ch(newpos) == char('\n'): pos = newpos
-        if L.ch(pos) == char('\r') or L.ch(pos) == char('\n'):
+            while ch(L, newpos) == char(' ') or ch(L, newpos) == char('\t'): newpos += 1
+            if ch(L, newpos) == char('\r') or ch(L, newpos) == char('\n'): pos = newpos
+        if ch(L, pos) == char('\r') or ch(L, pos) == char('\n'):
             pos = L._handleCRLF(pos)
         while True:
             with let:
-                c = L.ch(pos)
+                c = ch(L, pos)
             if c == char('"'):
-                if L.ch(pos + 1) == char('"') and L.ch(pos + 2) == char('"') and L.ch(pos + 3) != char('"'):
+                if ch(L, pos + 1) == char('"') and ch(L, pos + 2) == char('"') and ch(L, pos + 3) != char('"'):
                     pos = pos + 3
                     break
                 tok.s.add(char('"'))
@@ -5159,9 +5158,9 @@ def _getString(L: mut @ Lexer, tok: mut @ Token, mode: _StringMode):
         tok.kind = TokKind.tkStrLit if mode == _StringMode.smNormal else TokKind.tkRStrLit
         while True:
             with let:
-                c = L.ch(pos)
+                c = ch(L, pos)
             if c == char('"'):
-                if mode != _StringMode.smNormal and L.ch(pos + 1) == char('"'):
+                if mode != _StringMode.smNormal and ch(L, pos + 1) == char('"'):
                     pos += 2
                     tok.s.add(char('"'))
                 else:
@@ -5187,7 +5186,7 @@ def _getCharacter(L: mut @ Lexer, tok: mut @ Token):
     tok.kind = TokKind.tkCharLit
     L.pos += 1  # skip '
     with let:
-        c = L.ch(L.pos)
+        c = ch(L, L.pos)
     if c < char(' ') or c == char('\''):
         L._error(L.pos, string("invalid character literal"))
         tok.s = _str(c)
@@ -5196,9 +5195,9 @@ def _getCharacter(L: mut @ Lexer, tok: mut @ Token):
     else:
         tok.s = _str(c)
         L.pos += 1
-    if L.ch(L.pos) == char('\''):
+    if ch(L, L.pos) == char('\''):
         L.pos += 1
-    elif startPos > 0 and L.ch(startPos - 1) == char('`'):
+    elif startPos > 0 and ch(L, startPos - 1) == char('`'):
     # `'` as an operator name inside backticks
         tok.s = string("'")
         L.pos = startPos + 1
@@ -5217,7 +5216,7 @@ def _getOperator(L: mut @ Lexer, tok: mut @ Token):
         pos = copy(L.pos)
     while True:
         with let:
-            c = L.ch(pos)
+            c = ch(L, pos)
         if c in OpChars:
             pos += 1
         elif c in UnicodeOperatorStartChars:
@@ -5233,11 +5232,11 @@ def _getOperator(L: mut @ Lexer, tok: mut @ Token):
     tok.spacing = tok.spacing - Tset[TokSpacing](TokSpacing.tsTrailing, TokSpacing.tsEof)
     with var:
         trailing = False
-    while L.ch(pos) == char(' '):
+    while ch(L, pos) == char(' '):
         pos += 1
         trailing = True
     with let:
-        c = L.ch(pos)
+        c = ch(L, pos)
     if c == char('\r') or c == char('\n') or c == char('\x00'): tok.spacing.incl(TokSpacing.tsEof)
     elif trailing: tok.spacing.incl(TokSpacing.tsTrailing)
 
@@ -5272,7 +5271,7 @@ def next(L: mut @ Lexer, tok: mut @ Token):
         L.indentAhead = -1
     L._skip(tok)
     with let:
-        c = L.ch(L.pos)
+        c = ch(L, L.pos)
     tok.line = L.lineNumber
     tok.col = int32(L.pos - L.lineStart)
 
@@ -5285,7 +5284,7 @@ def next(L: mut @ Lexer, tok: mut @ Token):
         L._scanComment(tok)
     elif c == char('*'):
     # `*:` is two tokens in `var v*: int`, and one operator in `a *: b`
-        if L.ch(L.pos + 1) == char(':') and L.ch(L.pos + 2) not in OpChars:
+        if ch(L, L.pos + 1) == char(':') and ch(L, L.pos + 2) not in OpChars:
             L._endOperator(tok, L.pos, L.pos)
         else:
             _getOperator(L, tok)
@@ -5293,14 +5292,14 @@ def next(L: mut @ Lexer, tok: mut @ Token):
         tok.kind = TokKind.tkComma
         L.pos += 1
     elif c == char('r') or c == char('R'):
-        if L.ch(L.pos + 1) == char('"'):
+        if ch(L, L.pos + 1) == char('"'):
             L.pos += 1
             _getString(L, tok, _StringMode.smRaw)
         else:
             _scanSymbol(L, tok)
     elif c == char('('):
         L.pos += 1
-        if L.ch(L.pos) == char('.') and L.ch(L.pos + 1) != char('.'):
+        if ch(L, L.pos) == char('.') and ch(L, L.pos + 1) != char('.'):
             tok.kind = TokKind.tkParDotLe
             L.pos += 1
         else:
@@ -5310,10 +5309,10 @@ def next(L: mut @ Lexer, tok: mut @ Token):
         L.pos += 1
     elif c == char('['):
         L.pos += 1
-        if L.ch(L.pos) == char('.') and L.ch(L.pos + 1) != char('.'):
+        if ch(L, L.pos) == char('.') and ch(L, L.pos + 1) != char('.'):
             tok.kind = TokKind.tkBracketDotLe
             L.pos += 1
-        elif L.ch(L.pos) == char(':'):
+        elif ch(L, L.pos) == char(':'):
             tok.kind = TokKind.tkBracketLeColon
             L.pos += 1
         else:
@@ -5322,20 +5321,20 @@ def next(L: mut @ Lexer, tok: mut @ Token):
         tok.kind = TokKind.tkBracketRi
         L.pos += 1
     elif c == char('.'):
-        if L.ch(L.pos + 1) == char(']'):
+        if ch(L, L.pos + 1) == char(']'):
             tok.kind = TokKind.tkBracketDotRi
             L.pos += 2
-        elif L.ch(L.pos + 1) == char('}'):
+        elif ch(L, L.pos + 1) == char('}'):
             tok.kind = TokKind.tkCurlyDotRi
             L.pos += 2
-        elif L.ch(L.pos + 1) == char(')'):
+        elif ch(L, L.pos + 1) == char(')'):
             tok.kind = TokKind.tkParDotRi
             L.pos += 2
         else:
             _getOperator(L, tok)
     elif c == char('{'):
         L.pos += 1
-        if L.ch(L.pos) == char('.') and L.ch(L.pos + 1) != char('.'):
+        if ch(L, L.pos) == char('.') and ch(L, L.pos + 1) != char('.'):
             tok.kind = TokKind.tkCurlyDotLe
             L.pos += 1
         else:
@@ -5351,7 +5350,7 @@ def next(L: mut @ Lexer, tok: mut @ Token):
         L.pos += 1
     elif c == char('_'):
         L.pos += 1
-        if L.ch(L.pos) not in SymChars + Tset[char](char('_')):
+        if ch(L, L.pos) not in SymChars + Tset[char](char('_')):
             tok.kind = TokKind.tkSymbol
             tok.s = string("_")
         else:
@@ -5361,7 +5360,7 @@ def next(L: mut @ Lexer, tok: mut @ Token):
     elif c == char('"'):
     # `foo"bar"` is a generalized string literal, `foo "bar"` is a command
         with let:
-            mode = _StringMode.smGeneralized if L.pos > 0 and L.ch(L.pos - 1) in SymChars else _StringMode.smNormal
+            mode = _StringMode.smGeneralized if L.pos > 0 and ch(L, L.pos - 1) in SymChars else _StringMode.smNormal
         _getString(L, tok, mode)
         if mode == _StringMode.smGeneralized:
             if tok.kind == TokKind.tkRStrLit: tok.kind = TokKind.tkGStrLit
@@ -5371,7 +5370,7 @@ def next(L: mut @ Lexer, tok: mut @ Token):
     elif c >= char('0') and c <= char('9'):
         _scanNumber(L, tok)
     elif c == char('-'):
-        if L.ch(L.pos + 1) >= char('0') and L.ch(L.pos + 1) <= char('9') and (L.pos == 0 or L.ch(L.pos - 1) in _UnaryMinusWhitelist):
+        if ch(L, L.pos + 1) >= char('0') and ch(L, L.pos + 1) <= char('9') and (L.pos == 0 or ch(L, L.pos - 1) in _UnaryMinusWhitelist):
             _scanNumber(L, tok)
         else:
             _getOperator(L, tok)

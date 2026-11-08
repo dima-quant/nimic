@@ -184,7 +184,6 @@ def floatVal(n: Node) -> float64:
     return cast[float64](n.wide)
 
 
-@ufcs(Node)
 def isEmpty(n: Node) -> bool:
     """{.inline.}"""
     ## The `.` that stands for an absent child.

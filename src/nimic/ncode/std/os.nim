@@ -14,3 +14,9 @@ when defined(nimony):
 
   proc createDir*(dir: string) {.raises.} =
     dirs.createDir(path(dir))
+
+  iterator walkDir*(dir: string; relative = false; checkDir = false;
+                    skipSpecial = false): tuple[kind: PathComponent, path: string] {.raises, sideEffect.} =
+    ## Nim 2's os.walkDir on a `string`: nimony's walks a `Path` (std/dirs)
+    for (kind, p) in dirs.walkDir(path(dir), relative, checkDir, skipSpecial):
+      yield (kind, $p)

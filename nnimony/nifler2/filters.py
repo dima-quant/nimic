@@ -25,8 +25,8 @@ from nimic.std.strutils import cmpIgnoreStyle, repeat, spaces, startsWith
 from nimic.std import syncio
 from . import nimgrammar
 from .nimgrammar import (
-    add, charLit, childCursor, Cursor, endRead, globalTags, inc, intVal, NifKind, openParser, pModule,
-    pool, resolvedTagId, skip, strVal)
+    add, charLit, childCursor, Cursor, endRead, globalTags, inc, intVal, kind, NifKind, openParser, pModule,
+    pool, resolvedTagId, skip, strVal, tags)
 from nimic.std import strutils
 replace = overloads(strutils.replace, nimgrammar.replace)
 
@@ -82,12 +82,12 @@ class _FilterContext(Object):
 
 def _tag(c: Cursor) -> string:
     """{.inline.}"""
-    return c.tags().tags[resolvedTagId(c)]
+    return tags(c).tags[resolvedTagId(c)]
 
 
 def _render(c: Cursor) -> string:
     ## Enough of `renderTree` for the arguments a filter can be given.
-    match c.kind():
+    match kind(c):
         case NifKind.Ident: result = strVal(c)
         case NifKind.IntLit: result = str(intVal(c))
         case NifKind.StrLit: result = string("\"") + strVal(c) + string("\"")
@@ -139,17 +139,17 @@ def _invalidPragma(ctx: mut @ _FilterContext, n: Cursor):
 
 def _getArg(n: Cursor, name: string, pos: nint, found: mut @ Cursor) -> bool:
     ## The argument called `name`, or else the `pos`-th one (the callee is 0).
-    if n.kind() != NifKind.TagLit: return False
+    if kind(n) != NifKind.TagLit: return False
     with var:
         k = childCursor(n)
     skip(k)
     with var:
         i = nint(1)
     while k.hasMore():
-        if k.kind() == NifKind.TagLit and _tag(k) == "vv":
+        if kind(k) == NifKind.TagLit and _tag(k) == "vv":
             with let:
                 key = childCursor(k)
-            if key.kind() == NifKind.Ident and cmpIgnoreStyle(strVal(key), name) == 0:
+            if kind(key) == NifKind.Ident and cmpIgnoreStyle(strVal(key), name) == 0:
                 found <<= key
                 skip(found)
                 return True
@@ -165,7 +165,7 @@ def _charArg(ctx: mut @ _FilterContext, n: Cursor, name: string, pos: nint, defa
     with var:
         x = n.copy()
     if not _getArg(n, name, pos, x): result = default.copy()
-    elif x.kind() == NifKind.CharLit: result = charLit(x)
+    elif kind(x) == NifKind.CharLit: result = charLit(x)
     else:
         result = char('\x00')
         _invalidPragma(ctx, n)
@@ -176,9 +176,9 @@ def _strArg(ctx: mut @ _FilterContext, n: Cursor, name: string, pos: nint, defau
     with var:
         x = n.copy()
     if not _getArg(n, name, pos, x): return default.copy()
-    if x.kind() == NifKind.TagLit and _tag(x) == "suf":
+    if kind(x) == NifKind.TagLit and _tag(x) == "suf":
         x = childCursor(x)  # a raw or triple-quoted string
-    if x.kind() == NifKind.StrLit: result = strVal(x)
+    if kind(x) == NifKind.StrLit: result = strVal(x)
     else:
         result = string("")
         _invalidPragma(ctx, n)
@@ -189,8 +189,8 @@ def _boolArg(ctx: mut @ _FilterContext, n: Cursor, name: string, pos: nint, defa
     with var:
         x = n.copy()
     if not _getArg(n, name, pos, x): result = default
-    elif x.kind() == NifKind.Ident and cmpIgnoreStyle(strVal(x), string("true")) == 0: result = True
-    elif x.kind() == NifKind.Ident and cmpIgnoreStyle(strVal(x), string("false")) == 0: result = False
+    elif kind(x) == NifKind.Ident and cmpIgnoreStyle(strVal(x), string("true")) == 0: result = True
+    elif kind(x) == NifKind.Ident and cmpIgnoreStyle(strVal(x), string("false")) == 0: result = False
     else:
         result = False
         _invalidPragma(ctx, n)
@@ -501,9 +501,9 @@ def _getFilter(name: string) -> _FilterKind:
 def _applyFilter(ctx: mut @ _FilterContext, n: Cursor, input: mut @ _LineReader):
     with var:
         callee = string("")
-    if n.kind() == NifKind.Ident:
+    if kind(n) == NifKind.Ident:
         callee = strVal(n)
-    elif n.kind() == NifKind.TagLit and _tag(n) in [string("call"), string("cmd"), string("callstrlit"), string("infix"), string("prefix"), string("postfix")] and childCursor(n).kind() == NifKind.Ident:
+    elif kind(n) == NifKind.TagLit and _tag(n) in [string("call"), string("cmd"), string("callstrlit"), string("infix"), string("prefix"), string("postfix")] and kind(childCursor(n)) == NifKind.Ident:
         callee = strVal(childCursor(n))
     else:
         with let:
@@ -520,17 +520,17 @@ def _applyFilter(ctx: mut @ _FilterContext, n: Cursor, input: mut @ _LineReader)
 
 
 def _evalPipe(ctx: mut @ _FilterContext, n: Cursor, input: mut @ _LineReader):
-    if n.kind() == NifKind.TagLit and _tag(n) == "infix" and childCursor(n).kind() == NifKind.Ident and strVal(childCursor(n)) == "|":
+    if kind(n) == NifKind.TagLit and _tag(n) == "infix" and kind(childCursor(n)) == NifKind.Ident and strVal(childCursor(n)) == "|":
         with var:
             k = childCursor(n)
         skip(k)
         for i in inrange(1, 2):
-            if k.kind() == NifKind.TagLit and _tag(k) == "infix":
+            if kind(k) == NifKind.TagLit and _tag(k) == "infix":
                 _evalPipe(ctx, k, input)
             else:
                 _applyFilter(ctx, k, input)
             skip(k)
-    elif n.kind() == NifKind.TagLit and _tag(n) == "stmts":
+    elif kind(n) == NifKind.TagLit and _tag(n) == "stmts":
         with let:
             k = childCursor(n)
         if k.hasMore(): _evalPipe(ctx, k, input)

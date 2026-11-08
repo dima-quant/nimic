@@ -55,7 +55,6 @@ def _sanitizePart(s: string) -> string:
     return result
 
 
-@ufcs(string)
 def _startsWithPath(s: string, prefix: string) -> bool:
     """{.inline.}"""
     # True iff `s` starts with `prefix` followed by a path separator (or
@@ -93,9 +92,9 @@ def deriveRelpath(srcPath: string, projectRoot: string, stdlibRoot: string) -> s
     # `deps.nim` and `dagon` use `absoluteParentDir`/`stdlibDir`). If `srcPath`
     # is relative, fall through to bucket 3.
     if srcPath.isAbsolute():
-        if stdlibRoot.len > 0 and srcPath._startsWithPath(stdlibRoot):
+        if stdlibRoot.len > 0 and _startsWithPath(srcPath, stdlibRoot):
             return srcPath.substr(stdlibRoot.len + 1).changeFileExt(string("html"))
-        if projectRoot.len > 0 and srcPath._startsWithPath(projectRoot):
+        if projectRoot.len > 0 and _startsWithPath(srcPath, projectRoot):
             return srcPath.substr(projectRoot.len + 1).changeFileExt(string("html"))
     result = _externalBucketPath(srcPath)
     return result

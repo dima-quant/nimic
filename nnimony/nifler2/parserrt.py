@@ -43,8 +43,8 @@ from nimic.std.parseutils import parseBiggestFloat
 from nimic.std import syncio
 from ..lib.nifpools import add, inc, NoLineInfo, tagId
 from .linkedtok import (
-    Arena, charToken, charVal, dotToken, FileId, flatten, floatVal, identToken, initArena, intVal, kind,
-    NifKind, NifLineInfo, NifToken, Node, Pool, strId, strLitToken, tag, TagId, tagLitToken, TagPool,
+    Arena, charToken, charVal, dotToken, FileId, flatten, floatVal, getOrIncl, identToken, initArena, intVal,
+    isEmpty, kind, NifKind, NifLineInfo, NifToken, Node, Pool, strId, strLitToken, tag, TagId, tagLitToken, TagPool,
     TokenBuf, uintVal)
 from . import linkedtok
 export(linkedtok)
@@ -400,13 +400,13 @@ class Parser(Object):
         return p.arena.alloc(payload, info)
 
     def _identNode(p: mut @ Parser, s: string, info: NifLineInfo) -> Node:
-        return p._newNode(identToken(p.pool.strings.getOrIncl(s)), info)
+        return p._newNode(identToken(getOrIncl(p.pool.strings, s)), info)
 
     def _emitIdent(p: mut @ Parser, s: string, info: NifLineInfo):
         p.append(p._identNode(s, info))
 
     def _emitStr(p: mut @ Parser, s: string, info: NifLineInfo):
-        p.append(p._newNode(strLitToken(p.pool.strings.getOrIncl(s)), info))
+        p.append(p._newNode(strLitToken(getOrIncl(p.pool.strings, s)), info))
 
     def _openNode(p: Parser) -> Mark:
         """{.inline.}"""
@@ -567,7 +567,7 @@ def openParser(src: string, filename: string, pool: Pool, tags: TagPool) -> Pars
     ## globals, a plugin parses into its own. `tags` is not stored -- a cell
     ## holds a `TagId` and the tag pool is only consulted when the tree is
     ## written out.
-    result = Parser(lex=openLexer(src, filename), tok=Token(kind=TokKind.tkInvalid, s=string(""), indent=-1, spacing=Tset[TokSpacing](), line=0, col=0, base=10, suffixPos=-1, iNumber=0), arena=initArena(), first=None, last=None, _file=pool.filenames.getOrIncl(filename), currInd=0, _indStack=seq[int32]([]), inPragma=0, _sections=seq[NiflerKind]([]), _lastSection=NiflerKind.VarL, _wrapFields=seq[bool]([]), pool=pool, tags=tags, failed=False, errLine=0, errCol=0, errMsg=string(""))
+    result = Parser(lex=openLexer(src, filename), tok=Token(kind=TokKind.tkInvalid, s=string(""), indent=-1, spacing=Tset[TokSpacing](), line=0, col=0, base=10, suffixPos=-1, iNumber=0), arena=initArena(), first=None, last=None, _file=getOrIncl(pool.filenames, filename), currInd=0, _indStack=seq[int32]([]), inPragma=0, _sections=seq[NiflerKind]([]), _lastSection=NiflerKind.VarL, _wrapFields=seq[bool]([]), pool=pool, tags=tags, failed=False, errLine=0, errCol=0, errMsg=string(""))
     next(result.lex, result.tok)
     return result
 
@@ -834,8 +834,8 @@ def _nameNodeInfo(name: Node, exp: Node, pragmas: Node) -> NifLineInfo:
     ## The position of parser.nim's name node, which is what a declaration is
     ## positioned at: `nkPragmaExpr` (created at the `{.`) if there is a pragma,
     ## else `nkPostfix` (created at the export operator), else the name.
-    if not pragmas.isEmpty(): return pragmas.info
-    elif not exp.isEmpty(): return exp.info
+    if not isEmpty(pragmas): return pragmas.info
+    elif not isEmpty(exp): return exp.info
     else: return name.info
 
 
@@ -1049,7 +1049,7 @@ def doLayout(p: mut @ Parser, m: Mark, atBody: bool):
     with let:
         kids = p._takeTail(m)
     if p.failed: return
-    if kids[1].isEmpty() and kids[2].isEmpty() and kids[3].isEmpty():
+    if isEmpty(kids[1]) and isEmpty(kids[2]) and isEmpty(kids[3]):
         p.append(kids[4])
     else:
     # `postExprBlocks` builds the first `do` with `stmtList.info`, the loop
@@ -1059,7 +1059,7 @@ def doLayout(p: mut @ Parser, m: Mark, atBody: bool):
     # the body has been parsed.
         with let:
             info = kids[4].info if atBody else m.info
-            paramsInfo = kids[5].info if kids[1].isEmpty() and kids[2].isEmpty() else kids[0].info
+            paramsInfo = kids[5].info if isEmpty(kids[1]) and isEmpty(kids[2]) else kids[0].info
             d = p._openNode()
         _addParams(p, kids[1], paramsInfo)
         p.append(kids[2])
@@ -1072,7 +1072,7 @@ def emptyDiscriminator(p: mut @ Parser):
     ## nodes. Its name is the empty node, whose position has no file, so
     ## bridge.nim writes it absolute -- as `~1,,???`.
     with let:
-        unknown = NifLineInfo(file=p.pool.filenames.getOrIncl(string("???")), line=0, col=-1)
+        unknown = NifLineInfo(file=getOrIncl(p.pool.filenames, string("???")), line=0, col=-1)
         f = p._openNode()
     for i in inrange(0, 4): p.emitEmpty()
     _closeNode(p, f, NiflerKind.FldL, unknown)
@@ -1123,7 +1123,7 @@ def wrapSection(p: mut @ Parser, m: Mark):
 def _addParams(p: mut @ Parser, c: Node, info: NifLineInfo):
     ## `parseParamList` always builds an `nkFormalParams`, created at the token
     ## where the list would start.
-    if c.isEmpty():
+    if isEmpty(c):
         with let:
             x = p._openNode()
         _closeNode(p, x, NiflerKind.ParamsL, info)
@@ -1146,7 +1146,7 @@ def procLayout(p: mut @ Parser, m: Mark, keyword: NiflerKind):
         ret = kids[1]
         pragmas = kids[2]
         body = kids[3]
-    if not body.isEmpty():
+    if not isEmpty(body):
         with let:
             x = p._openNode()
         for i in inrange(0, 3): p.emitEmpty()
@@ -1160,8 +1160,8 @@ def procLayout(p: mut @ Parser, m: Mark, keyword: NiflerKind):
         with let:
             t = NiflerKind.ItertypeL if keyword == NiflerKind.IteratorL else NiflerKind.ProctypeL
             x = p._openNode()
-            hasSig = not params.isEmpty() or not ret.isEmpty()
-        if hasSig or not pragmas.isEmpty():
+            hasSig = not isEmpty(params) or not isEmpty(ret)
+        if hasSig or not isEmpty(pragmas):
             for i in inrange(0, 3): p.emitEmpty()
             if hasSig:
                 _addParams(p, params, m.info)

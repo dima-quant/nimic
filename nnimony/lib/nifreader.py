@@ -359,7 +359,6 @@ def decodeChar(t: ExpandedToken) -> char:
     return result
 
 
-@ufcs(Reader)
 @template_expand
 def decodeStr(r: Reader, t: ExpandedToken) -> string:
     result = default(string)
@@ -788,7 +787,6 @@ def _handleSuffix(r: mut @ Reader, result: mut @ ExpandedToken):
         _captureComment(r, result)  # consumes through the closing '#'
 
 
-@ufcs(Reader)
 def splitSymbols(r: mut @ Reader, enable=True):
     """{.inline.}
     ## Turn the split-symbol parsing mode on or off (default: off).
@@ -1061,7 +1059,6 @@ def _linePrelude(r: mut @ Reader, tok: mut @ ExpandedToken) -> bool:
     return result
 
 
-@ufcs(Reader)
 @dispatch
 @template_expand
 def next(r: mut @ Reader, result: mut @ ExpandedToken):
@@ -1239,7 +1236,6 @@ def next(r: mut @ Reader, result: mut @ ExpandedToken):
                 _inc(r._p)
 
 
-@ufcs(Reader)
 @dispatch
 def next(r: mut @ Reader) -> ExpandedToken:
     """{.deprecated: "use the other next instead".}"""
@@ -1254,7 +1250,6 @@ class DirectivesResult(NIntEnum):
     Success = auto()
 
 
-@ufcs(Reader)
 @template_expand
 def startsWith(r: Reader, prefix: string) -> bool:
     result = default(bool)
@@ -1279,7 +1274,7 @@ def _readDirectives(r: mut @ Reader):
         tok = default(ExpandedToken)
     while True:
         _skipWhitespace(r)
-        if r.startsWith(string("(.")):
+        if startsWith(r, string("(.")):
             next(r, tok)
             assert tok.tk == NifKind.ParLe
             if tok.data == ".indexat":
@@ -1378,7 +1373,6 @@ def openFromBuffer(
     return result
 
 
-@ufcs(Reader)
 def processDirectives(r: mut @ Reader) -> DirectivesResult:
     result = default(DirectivesResult)
     result = DirectivesResult.Success
@@ -1386,13 +1380,11 @@ def processDirectives(r: mut @ Reader) -> DirectivesResult:
 
 
 # module-level for `rd.fileSize(r)` in lengc/nifmodules.nim (rules §4, methods rule: nimicModuleLevel)
-@ufcs(Reader)
 def fileSize(r: mut @ Reader) -> nint:
     """{.inline, nimicModuleLevel.}"""
     return r._f.size.copy()
 
 
-@ufcs(Reader)
 def offset(r: mut @ Reader) -> nint:
     """{.inline.}"""
     result = default(nint)
@@ -1400,7 +1392,6 @@ def offset(r: mut @ Reader) -> nint:
     return result
 
 
-@ufcs(Reader)
 def jumpTo(r: mut @ Reader, offset: nint):
     """{.inline.}"""
     r._p = _plus_bang(cast[pchar](r._f.data), offset)
@@ -1414,12 +1405,10 @@ def jumpTo(r: mut @ Reader, offset: nint):
     r._depth = int32(0)
 
 
-@ufcs(Reader)
 def indexStartsAt(r: Reader) -> nint:
     return r._indexAt.copy()
 
 
-@ufcs(Reader)
 def firstUnusedName(r: Reader) -> string:
     """Returns the symbol supplied by the `.unusedname` directive, or `""`."""
     result = default(string)
@@ -1436,12 +1425,12 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
         result = default(seq[string])
         with var:
             r = openFromBuffer(input.copy(), string("ThisMod"))
-        r.splitSymbols(split)
+        splitSymbols(r, split)
         result = seq[string]([])
         with var:
             tok = default(ExpandedToken)
         while True:
-            r.next(tok)
+            next(r, tok)
             match tok.tk:
                 case NifKind.EofToken:
                     break
@@ -1450,18 +1439,18 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
                         string("sym")
                         + str(tok.suffixes)
                         + string(":")
-                        + r.decodeStr(tok)
+                        + decodeStr(r, tok)
                     )
                 case NifKind.SymbolDef:
                     result.add(
                         string("def")
                         + str(tok.suffixes)
                         + string(":")
-                        + r.decodeStr(tok)
+                        + decodeStr(r, tok)
                     )
                 case NifKind.ExtendedSuffix:
                     with var:
-                        s = string(str(tok.part)) + string(":") + r.decodeStr(tok)
+                        s = string(str(tok.part)) + string(":") + decodeStr(r, tok)
                     if tok.part == SymbolPart.SymDisamb:
                         s.add(string("=") + str(tok.decodeDisamb()))
                     result.add(s)
@@ -1470,7 +1459,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
                 case NifKind.ParRi:
                     result.add(string(")"))
                 case _:
-                    result.add(string(str(tok.tk)) + string(":") + r.decodeStr(tok))
+                    result.add(string(str(tok.tk)) + string(":") + decodeStr(r, tok))
         close(r)
         return result
 
@@ -1483,7 +1472,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
         with var:
             tok = default(ExpandedToken)
         while True:
-            r.next(tok)
+            next(r, tok)
             match tok.tk:
                 case NifKind.EofToken:
                     break
@@ -1521,10 +1510,10 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
                                string("ThisMod"))
         with var:
             tok = default(ExpandedToken)
-        r.next(tok); r.next(tok); r.next(tok)
-        assert tok.tk == StringLit and r.decodeStr(tok) == "2026-10-11T12:00:00Z"
-        r.next(tok); r.next(tok)
-        assert tok.tk == StringLit and r.decodeStr(tok) == "key: value; # text"
+        next(r, tok); next(r, tok); next(r, tok)
+        assert tok.tk == StringLit and decodeStr(r, tok) == "2026-10-11T12:00:00Z"
+        next(r, tok); next(r, tok)
+        assert tok.tk == StringLit and decodeStr(r, tok) == "key: value; # text"
         assert decodeComment(tok) == "comment"
         close(r)
 
@@ -1612,18 +1601,18 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
     if True:  # a jump abandons the components nobody asked for
         with var:
             r = openFromBuffer(string("abc.12.mod tail.1"), string("ThisMod"))
-        r.splitSymbols()
+        splitSymbols(r)
         assert r.symbolsAreSplit()
         with var:
             tok = default(ExpandedToken)
         with let:
             start = offset(r)
-        r.next(tok)
+        next(r, tok)
         assert tok.tk == NifKind.Symbol and tok.suffixes == uint8(2)
-        r.jumpTo(start)
-        r.next(tok)
-        assert r.decodeStr(tok) == "abc"
-        r.next(tok)
+        jumpTo(r, start)
+        next(r, tok)
+        assert decodeStr(r, tok) == "abc"
+        next(r, tok)
         assert tok.tk == NifKind.ExtendedSuffix and tok.part == SymbolPart.SymDisamb
         close(r)
 
@@ -1636,7 +1625,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
         with var:
             tok = default(ExpandedToken)
         while True:
-            r.next(tok)
+            next(r, tok)
             match tok.tk:
                 case NifKind.EofToken:
                     break
@@ -1645,11 +1634,11 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
                 case NifKind.ParRi:
                     result.add(string(")"))
                 case NifKind.StrLit:
-                    result.add(string('"') + r.decodeStr(tok) + string('"'))
+                    result.add(string('"') + decodeStr(r, tok) + string('"'))
                 case NifKind.UnknownToken:
                     result.add(string("?") + str(tok.data))
                 case _:
-                    result.add(r.decodeStr(tok))
+                    result.add(decodeStr(r, tok))
         close(r)
         return result
 
@@ -1790,17 +1779,17 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
                 )
             with var:
                 tok = default(ExpandedToken)
-            r.next(tok)
-            r.next(tok)
-            assert tok.tk == StringLit and r.decodeStr(tok) == "src/main.nim"
+            next(r, tok)
+            next(r, tok)
+            assert tok.tk == StringLit and decodeStr(r, tok) == "src/main.nim"
             assert tok.pos.line == int32(3) and decodeComment(tok) == "c"
-            r.next(tok)
+            next(r, tok)
             assert (
                 tok.tk == StringLit
-                and r.decodeStr(tok) == "2024-08-12"
+                and decodeStr(r, tok) == "2024-08-12"
                 and tok.pos.col == int32(-2)
             )
-            r.next(tok)
+            next(r, tok)
             assert (
                 tok.tk == NifKind.IntLit
                 and tok.pos.col == int32(3)
@@ -1831,7 +1820,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
                 )
             with var:
                 tok = default(ExpandedToken)
-            r.next(tok)
+            next(r, tok)
             assert (
                 tok.tk == NifKind.ParLe
                 and tok.data == "warn"
@@ -1854,7 +1843,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
             with var:
                 tok = default(ExpandedToken)
             while True:
-                r.next(tok)
+                next(r, tok)
                 if tok.tk == NifKind.EofToken:
                     break
             assert r.line == int32(3)
@@ -1878,7 +1867,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
                 r = openFromBuffer(bad.copy(), string("ThisMod"))
             with var:
                 tok = default(ExpandedToken)
-            r.next(tok)
+            next(r, tok)
             assert tok.tk != NifKind.CharLit, bad
             close(r)
         with block:
@@ -1886,7 +1875,7 @@ if comptime(__name__ == "__main__" and not defined("nimony")):
                 r = openFromBuffer(string("'\\41'"), string("ThisMod"))
             with var:
                 tok = default(ExpandedToken)
-            r.next(tok)
+            next(r, tok)
             assert tok.tk == NifKind.CharLit and decodeChar(tok) == char("A")
             close(r)
 
@@ -1909,62 +1898,62 @@ if comptime(__name__ == "__main__"):
                 ),
                 string("MyMod"),
             )
-        assert r.processDirectives() == DirectivesResult.Success
-        assert r.indexStartsAt() == 128
-        assert r.firstUnusedName() == "unused.1.MyMod"
-        assert r.fileSize() > 0
-        assert r.startsWith(string("(stmts"))
+        assert processDirectives(r) == DirectivesResult.Success
+        assert indexStartsAt(r) == 128
+        assert firstUnusedName(r) == "unused.1.MyMod"
+        assert fileSize(r) > 0
+        assert startsWith(r, string("(stmts"))
 
         with var:
             tok = default(ExpandedToken)
-        r.next(tok)
+        next(r, tok)
         assert tok.tk == NifKind.ParLe and str(tok) == "(stmts"
 
-        r.next(tok)
+        next(r, tok)
         assert tok.tk == NifKind.DotToken and str(tok) == "."
 
-        r.next(tok)
+        next(r, tok)
         assert tok.tk == NifKind.CharLit and decodeChar(tok) == char("A")
         assert str(tok) == "CharLit:"
 
-        r.next(tok)
+        next(r, tok)
         assert tok.tk == NifKind.CharLit and decodeChar(tok) == char("A")
 
-        r.next(tok)
+        next(r, tok)
         assert tok.tk == NifKind.IntLit and decodeInt(tok) == BiggestInt(42)
         assert str(tok) == "IntLit:42"
 
-        r.next(tok)
+        next(r, tok)
         assert tok.tk == NifKind.IntLit and decodeInt(tok) == BiggestInt(-17)
 
-        r.next(tok)
+        next(r, tok)
         assert tok.tk == NifKind.UIntLit and decodeUInt(tok) == BiggestUInt(99)
 
-        r.next(tok)
+        next(r, tok)
         assert tok.tk == NifKind.FloatLit and decodeFloat(tok) == BiggestFloat(3.25)
 
-        r.next(tok)
+        next(r, tok)
         assert tok.tk == StringLit
         assert needsDecoding(tok)
-        assert r.decodeStr(tok) == 'hi\n\t\r\\"!', r.decodeStr(tok)
+        assert decodeStr(r, tok) == 'hi\n\t\r\\"!', decodeStr(r, tok)
         assert tok.pos.col == int32(62) and tok.pos.line == int32(-2)
         assert decodeFilename(tok) == "path name.nim"
         assert decodeComment(tok) == "cmt!"
 
-        r.next(tok)
+        next(r, tok)
         assert tok.tk == NifKind.SymbolDef
         assert needsDecoding(tok)
-        assert r.decodeStr(tok) == "local.1.MyMod"
+        assert decodeStr(r, tok) == "local.1.MyMod"
 
-        r.next(tok)
+        next(r, tok)
         assert tok.tk == NifKind.Symbol
         assert needsDecoding(tok)
-        assert r.decodeStr(tok) == "sym.2.MyMod"
+        assert decodeStr(r, tok) == "sym.2.MyMod"
 
-        r.next(tok)
+        next(r, tok)
         assert tok.tk == NifKind.ParRi and str(tok) == ")"
 
-        r.next(tok)
+        next(r, tok)
         assert tok.tk == NifKind.EofToken and str(tok) == "<eof>"
 
         with var:
@@ -2000,11 +1989,11 @@ if comptime(__name__ == "__main__"):
             case NifKind.ParLe | NifKind.ParRi | NifKind.DotToken | NifKind.EofToken | NifKind.UnknownToken:
                 result.add(string(" ") + str(tok.data))
             case NifKind.Symbol | NifKind.SymbolDef:
-                result.add(string(" ") + r.decodeStr(tok) + string(" suffixes=") + str(tok.suffixes))
+                result.add(string(" ") + decodeStr(r, tok) + string(" suffixes=") + str(tok.suffixes))
             case NifKind.ExtendedSuffix:
-                result.add(string(" ") + str(tok.part) + string(" ") + r.decodeStr(tok))
+                result.add(string(" ") + str(tok.part) + string(" ") + decodeStr(r, tok))
             case _:
-                result.add(string(" ") + r.decodeStr(tok))
+                result.add(string(" ") + decodeStr(r, tok))
         result.add(string(" @") + str(tok.pos.col) + string(",") + str(tok.pos.line))
         if tok.filename.len > 0:
             result.add(string(" file=") + decodeFilename(tok))
@@ -2018,7 +2007,7 @@ if comptime(__name__ == "__main__"):
         with var:
             tok = default(ExpandedToken)
         while True:
-            r.next(tok)
+            next(r, tok)
             echo(show(r, tok))
             if tok.tk == NifKind.EofToken:
                 break
@@ -2038,25 +2027,25 @@ if comptime(__name__ == "__main__"):
         # through vfs (an mmap'd file); the module suffix comes from the file name
         with var:
             r = open(path)
-        echo("file: size=", r.fileSize(), " len=", len(text), " indexat=", r.indexStartsAt(),
-             " unused=", r.firstUnusedName(), " directives=", r.processDirectives(),
-             " startsWith=", r.startsWith(string("(stmts")), " ", r.startsWith(string("(.nif")))
+        echo("file: size=", fileSize(r), " len=", len(text), " indexat=", indexStartsAt(r),
+             " unused=", firstUnusedName(r), " directives=", processDirectives(r),
+             " startsWith=", startsWith(r, string("(stmts")), " ", startsWith(r, string("(.nif")))
         with let:
-            start = r.offset()
+            start = offset(r)
         dump(r)
         # back to the first node: the same tokens again
-        r.jumpTo(start)
+        jumpTo(r, start)
         with var:
             tok = default(ExpandedToken)
-        r.next(tok)
-        echo("jumped: ", show(r, tok), " offset=", r.offset() - start)
+        next(r, tok)
+        echo("jumped: ", show(r, tok), " offset=", offset(r) - start)
         close(r)
         removeFile(path)
         # from a buffer, with the symbols split
         with var:
             b = openFromBuffer(text, string("Buf"))
-        b.splitSymbols()
-        echo("split: ", b.symbolsAreSplit(), " unused=", b.firstUnusedName())
+        splitSymbols(b)
+        echo("split: ", b.symbolsAreSplit(), " unused=", firstUnusedName(b))
         dump(b)
         close(b)
 

@@ -492,8 +492,11 @@ if comptime(__name__ == "__main__"):
     # the mmap'd blob: its data and size; closeBlob twice is a no-op
     with var:
         blob = vfsOpenMmap(f)
-        text = newString(blob.size)
-    copyMem(addr(text[0]), blob.data, blob.size)
+        text = string("")
+    with let:
+        chars = cast[ptr[UncheckedArray[char]]](blob.data)
+    for i in range(blob.size):
+        text.add(chars[i])  # nimony takes no `addr` of a string's char: no copyMem into `text`
     echo(blob.size, " ", text, " ", blob.data is not None)
     blob.closeBlob()
     echo(blob.size, " ", blob.data is None)

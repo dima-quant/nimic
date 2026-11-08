@@ -21,7 +21,6 @@ from nimic.std import assertions
 Key = tuple[string, string]  # 2nd component is the enum field name as a string
 
 
-@ufcs(seq)
 def _addUnique(s: mut @ seq[char], x: char):
     """{.noSideEffect.}"""
     for y in items(s):
@@ -33,7 +32,7 @@ def _splitValue(a: openArray[Key], position: nint) -> tuple[char, float64]:
     with var:
         cand: seq[char] = seq[char]([])
     for t in items(a):
-        if t[0].len > position: cand._addUnique(t[0][position])
+        if t[0].len > position: _addUnique(cand, t[0][position])
 
     result = (char("\0"), -1.0)
     for disc in items(cand):

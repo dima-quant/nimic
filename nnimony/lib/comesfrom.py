@@ -63,7 +63,6 @@ def isCrucialFile(fname: string) -> bool:
     return result
 
 
-@ufcs(string)
 def addCrucialInfo(dest: mut @ string, sym: string, declFile: string,
                    declLine: int32):
     """{.noSideEffect.}"""
@@ -163,7 +162,7 @@ if comptime(__name__ == "__main__"):
 
     with var:
         f1 = CrucialPrefix.copy()
-    f1.addCrucialInfo(string("[]=.0.system"), string("system.nim"), i32(34))
+    addCrucialInfo(f1, string("[]=.0.system"), string("system.nim"), i32(34))
     f1.add(crucialTail(string("system.nim")))
     echo(isCrucialFile(f1), "|", realFile(f1), "|", crucialTail(f1).len)
     for o in crucialOrigins(f1):
@@ -171,7 +170,7 @@ if comptime(__name__ == "__main__"):
 
     with var:
         f2 = CrucialPrefix.copy()
-    f2.addCrucialInfo(string("setElem.0.foo"), string("foo.nim"), i32(16))
+    addCrucialInfo(f2, string("setElem.0.foo"), string("foo.nim"), i32(16))
     f2.add(crucialTail(f1))
     echo(isCrucialFile(f2), "|", realFile(f2), "|", crucialTail(f2).len)
     for o in crucialOrigins(f2):

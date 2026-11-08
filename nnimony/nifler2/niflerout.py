@@ -38,11 +38,18 @@ from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std import syncio, assertions
 from ..lib import nifbuilder
-from ..lib.nifbuilder import Builder
+from ..lib.nifbuilder import addEmpty, addHeader, addRaw, addTree, attachLineInfo, Builder, endTree, extract
+from ..lib import nifpools
 from ..lib.nifpools import inc, NoLineInfo, writeFile
 from .parserrt import (
-    charVal, childCount, FileId, floatVal, intVal, kind, NifKind, NiflerKind, NifLineInfo, Node, Pool, strId,
-    tag, TagPool, uintVal)
+    charVal, childCount, FileId, floatVal, intVal, isValid, kind, NifKind, NiflerKind, NifLineInfo, Node,
+    Pool, strId, tag, TagPool, uintVal)
+addIdent = overloads(nifbuilder.addIdent, nifpools.addIdent)
+addStrLit = overloads(nifbuilder.addStrLit, nifpools.addStrLit)
+addCharLit = overloads(nifbuilder.addCharLit, nifpools.addCharLit)
+addIntLit = overloads(nifbuilder.addIntLit, nifpools.addIntLit)
+addUIntLit = overloads(nifbuilder.addUIntLit, nifpools.addUIntLit)
+addFloatLit = overloads(nifbuilder.addFloatLit, nifpools.addFloatLit)
 
 
 class _Writer(Object):
@@ -56,8 +63,8 @@ class _Writer(Object):
     def _lineInfo(w: mut @ _Writer, info: NifLineInfo, reference: NifLineInfo):
         ## bridge.nim's `relLineInfo`: absolute with the file at the root, else the
         ## difference to the reference, and nothing when that is zero.
-        if w._noLineInfo or not info.file.isValid(): return
-        if not reference.file.isValid() or info.file != reference.file:
+        if w._noLineInfo or not isValid(info.file): return
+        if not isValid(reference.file) or info.file != reference.file:
         # absolute, with the file: the root, and an empty node's `???`
             with let:
                 name = w._file if info.file == w._rootFile else w._pool.filenames[info.file]
@@ -65,9 +72,9 @@ class _Writer(Object):
             # clamps a stored column at 0, so it is restored here
             with let:
                 col = i32(-1) if name == "???" else info.col
-            w._b.attachLineInfo(col, info.line, name)
+            attachLineInfo(w._b, col, info.line, name)
         else:
-            w._b.attachLineInfo(info.col - reference.col, info.line - reference.line, string(""))
+            attachLineInfo(w._b, info.col - reference.col, info.line - reference.line, string(""))
 
     def _tagName(w: _Writer, n: Node) -> string:
         """{.inline.}"""
@@ -154,7 +161,7 @@ def _emit(w: mut @ _Writer, n: Node, reference: NifLineInfo, parentTag: NiflerKi
             # `nkStmtListExpr` writes none on `expr` and its own on the `stmts`
             with let:
                 stmtListExpr = tg == NiflerKind.ExprL
-            w._b.addTree(w._tagName(n))
+            addTree(w._b, w._tagName(n))
             if not lambda_ and not stmtListExpr:
                 w._lineInfo(info, reference)
             with let:
@@ -179,13 +186,13 @@ def _emit(w: mut @ _Writer, n: Node, reference: NifLineInfo, parentTag: NiflerKi
                     childRef = reference
                 prevParams = NoLineInfo
                 if kind(k) == NifKind.Ident and i == 1 and _isDecl(tg) and w._pool.strings[strId(k)] == "x":
-                    w._b.addRaw(string(" x"))  # bridge.nim's export marker, verbatim:
+                    addRaw(w._b, string(" x"))  # bridge.nim's export marker, verbatim:
                                                # a space even after a `)`
                 elif kind(k) == NifKind.DotToken:
                     with let:
                         dots = runs._runAt(i)
                     if dots > 0:
-                        w._b.addEmpty(dots)
+                        addEmpty(w._b, dots)
                         if lambda_ and i == 0: w._lineInfo(info, reference)
                 else:
                     if routine and kind(k) == NifKind.TagLit and _tagKind(k) == NiflerKind.ParamsL:
@@ -197,30 +204,30 @@ def _emit(w: mut @ _Writer, n: Node, reference: NifLineInfo, parentTag: NiflerKi
                         _emit(w, k, childRef, tg, childInForTuple, childForLoop)
                 i += 1
                 k = k.next
-            w._b.endTree()
+            endTree(w._b)
         case NifKind.DotToken:
-            w._b.addEmpty()
+            addEmpty(w._b)
         case NifKind.Ident:
-            w._b.addIdent(w._pool.strings[strId(n)])
+            addIdent(w._b, w._pool.strings[strId(n)])
             w._lineInfo(info, reference)
         case NifKind.StrLit:
-            w._b.addStrLit(w._pool.strings[strId(n)])
+            addStrLit(w._b, w._pool.strings[strId(n)])
             w._lineInfo(info, reference)
         case NifKind.CharLit:
-            w._b.addCharLit(charVal(n))
+            addCharLit(w._b, charVal(n))
             w._lineInfo(info, reference)
         case NifKind.IntLit:
-            w._b.addIntLit(intVal(n))
+            addIntLit(w._b, intVal(n))
             w._lineInfo(info, reference)
         case NifKind.UIntLit:
-            w._b.addUIntLit(uintVal(n))
+            addUIntLit(w._b, uintVal(n))
             w._lineInfo(info, reference)
         case NifKind.FloatLit:
         # nifbuilder puts the position inside `(inf)` itself
             if info.isValid() and reference.isValid():
-                w._b.addFloatLit(floatVal(n), info.col - reference.col, info.line - reference.line)
+                addFloatLit(w._b, floatVal(n), info.col - reference.col, info.line - reference.line)
             else:
-                w._b.addFloatLit(floatVal(n))
+                addFloatLit(w._b, floatVal(n))
         case _:
             assert False, string("nifler2 writes no ") + str(kind(n))
 
@@ -231,14 +238,14 @@ def writeNifler(first: Node, pool: Pool, tags: TagPool, sizeHint: nint, outfile:
     ## directory.
     with var:
         w = _Writer(_b=nifbuilder.open(sizeHint), _file=file, _pool=pool, _tags=tags)
-    w._b.addHeader(string("Nifler"), string("nim-parsed"))
+    addHeader(w._b, string("Nifler"), string("nim-parsed"))
     if not isNil(first): w._rootFile = first.info.file
     with var:
         n = first
     while not isNil(n):
         _emit(w, n, NoLineInfo, NiflerKind.None_, False, False)
         n = n.next
-    writeFile(outfile, w._b.extract())
+    writeFile(outfile, extract(w._b))
 
 # --------------------------------------------------------------- deps file
 #
@@ -275,16 +282,16 @@ class _DepsWalker(Object):
 
     def _whenMarker(d: mut @ _DepsWalker):
         if d._conds.len == 0: return
-        d._w._b.addTree(string("when"))
+        addTree(d._w._b, string("when"))
         for entry in d._conds:
             if entry._negated:
-                d._w._b.addTree(string("prefix"))
-                d._w._b.addIdent(string("not"))
+                addTree(d._w._b, string("prefix"))
+                addIdent(d._w._b, string("not"))
                 _emit(d._w, entry._cond, NoLineInfo, NiflerKind.None_, False, False)
-                d._w._b.endTree()
+                endTree(d._w._b)
             else:
                 _emit(d._w, entry._cond, NoLineInfo, NiflerKind.None_, False, False)
-        d._w._b.endTree()
+        endTree(d._w._b)
 
     def _isPlugin(d: _DepsWalker, kv: Node, name: mut @ string) -> bool:
         ## `plugin: "name"`; a raw or triple-quoted string is written plain.
@@ -312,14 +319,14 @@ class _DepsWalker(Object):
         with let:
             tg = _tagKind(n)
         if _isDep(tg):
-            d._w._b.addTree(d._w._tagName(n))
+            addTree(d._w._b, d._w._tagName(n))
             d._whenMarker()
             with var:
                 k = n.down
             while not isNil(k):
                 _emit(d._w, k, NoLineInfo, tg, False, False)
                 k = k.next
-            d._w._b.endTree()
+            endTree(d._w._b)
             return
         if tg == NiflerKind.CallL or tg == NiflerKind.CmdL:
             with let:
@@ -332,15 +339,15 @@ class _DepsWalker(Object):
                 with var:
                     name = string("")
                 if d._isPlugin(k, name):
-                    d._w._b.addTree(string("plugin"))
+                    addTree(d._w._b, string("plugin"))
                     d._whenMarker()
-                    d._w._b.addStrLit(name)
-                    d._w._b.endTree()
+                    addStrLit(d._w._b, name)
+                    endTree(d._w._b)
                 elif kind(k) == NifKind.Ident and d._w._pool.strings[strId(k)] == "enableTrace":
                 # the memory management runtime collects cycles (`deps.processDep`)
-                    d._w._b.addTree(string("enableTrace"))
+                    addTree(d._w._b, string("enableTrace"))
                     d._whenMarker()
-                    d._w._b.endTree()
+                    endTree(d._w._b)
                 k = k.next
             return
         if tg == NiflerKind.WhenL and not inObject:
@@ -382,12 +389,12 @@ def writeDeps(first: Node, pool: Pool, tags: TagPool, outfile: string):
     """{.raises.}"""
     with var:
         d = _DepsWalker(_w=_Writer(_b=nifbuilder.open(1024), _pool=pool, _tags=tags, _noLineInfo=True), _conds=seq[_WhenCond]([]))
-    d._w._b.addHeader(string("Nifler"), string("nim-deps"))
-    d._w._b.addTree(string("stmts"))
+    addHeader(d._w._b, string("Nifler"), string("nim-deps"))
+    addTree(d._w._b, string("stmts"))
     with var:
         n = first
     while not isNil(n):
         d._walkDeps(n, False)
         n = n.next
-    d._w._b.endTree()
-    writeFile(outfile, d._w._b.extract())
+    endTree(d._w._b)
+    writeFile(outfile, extract(d._w._b))

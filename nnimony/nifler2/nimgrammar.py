@@ -31,7 +31,7 @@ from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std import strutils
 from .parserrt import (
-    accentEnd, add, afterOperator, attachBlocks, blockNameEnd, callOrObjConstr, checkInd, childCursor,
+    accentEnd, add, addSubtree, afterOperator, attachBlocks, blockNameEnd, callOrObjConstr, checkInd, childCursor,
     curlyOrTable, doLayout, dotLayout, emitLeaf, emptyDiscriminator, endRead, enumListEnd, expect, expectLeaf,
     exprExpected, fanOut, fanOutKv, identExpected, inc, IndClass, indentError, inheritLayout, inSemiStmtList,
     insertTokAt, listEnd, Mark, NiflerKind, noIndHere, openParser, Parser, Pool, pragmaBlock, PrimaryMode,
@@ -4817,7 +4817,7 @@ def parseSnippet(code: string, asExpr: bool, pool: Pool, tags: TagPool, err: mut
             buf = p.finish()
             c = buf.beginRead()
         if not asExpr:
-            result.addSubtree(c)
+            addSubtree(result, c)
         else:
             with var:
                 kids = childCursor(c)
@@ -4826,7 +4826,7 @@ def parseSnippet(code: string, asExpr: bool, pool: Pool, tags: TagPool, err: mut
             while kids.hasMore():
                 n += 1
                 skip(kids)
-            if n == 1: result.addSubtree(first)
+            if n == 1: addSubtree(result, first)
             else: err <<= string("expected expression, but got multiple statements")
         endRead(c)
     p.close()

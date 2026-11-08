@@ -19,7 +19,17 @@ from nimic.std import hashes
 from nimic.std import syncio
 from nimic.std import strutils
 from .bitabs import getOrIncl
-from .nifreader import close, decodeFilename, decodeInt, decodeStr, ExpandedToken, indexStartsAt, next, offset, Reader
+from .nifreader import (
+    close,
+    decodeFilename,
+    decodeInt,
+    decodeStr,
+    ExpandedToken,
+    indexStartsAt,
+    jumpTo,
+    next,
+    offset,
+    Reader)
 from . import nifreader
 from .nifpools import (
     addDotToken, addIdent, addParLe, addParRi, addStrLit, addSymUse, createTokenBuf, Cursor,
@@ -262,7 +272,7 @@ class NifIndex(Object):
 
 def _symOrIdentOrDot(n: mut @ Cursor) -> string:
     if isSymbol(n): result = pool.symString(symId(n))
-    elif isIdent(n): result = pool.strings[n.strId()].copy()
+    elif isIdent(n): result = pool.strings[strId(n)].copy()
     elif isDotToken(n): result = string(".")
     else: result = string("")
     skip(n)
@@ -346,7 +356,7 @@ def readEmbeddedIndex(r: mut @ Reader) -> OrderedTable[string, NifIndexEntry]:
     if indexPos <= 0: return result
     with let:
         contentPos = offset(r)
-    r.jumpTo(indexPos)
+    jumpTo(r, indexPos)
     with var:
         previousOffset = nint(0)
     with var:
@@ -387,7 +397,7 @@ def readEmbeddedIndex(r: mut @ Reader) -> OrderedTable[string, NifIndexEntry]:
                 if t.tk == NifKind.ParRi: next(r, t)
             else:
                 next(r, t)
-    r.jumpTo(contentPos)
+    jumpTo(r, contentPos)
     return result
 
 

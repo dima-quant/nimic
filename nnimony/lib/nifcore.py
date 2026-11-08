@@ -170,7 +170,6 @@ with const:
     InlineJumpCap = (u32(1) << JumpBits) - u32(1)     # 524287
 
 
-@ufcs(NifToken)
 @dispatch
 def kind(n: NifToken) -> NifKind:
     """{.inline, noSideEffect.}"""
@@ -1255,7 +1254,6 @@ def pool(c: Cursor) -> Pool:
     return c._owner._pool if not isNil(c._owner) and c._owner._pool is not None else _defaultPool()
 
 
-@ufcs(Cursor)
 def tags(c: Cursor) -> TagPool:
     """{.inline.}"""
     ## Tag pool the cursor's underlying buffer was built against, or the plugin
@@ -1357,7 +1355,6 @@ def load(c: Cursor) -> NifToken:
     return c._p.contents.copy()
 
 
-@ufcs(Cursor)
 @dispatch
 def kind(c: Cursor) -> NifKind:
     """{.inline, noSideEffect.}"""
@@ -1497,7 +1494,6 @@ def strVal(c: Cursor) -> string:
         return strVal(c, c._owner._pool)
 
 
-@ufcs(Cursor)
 @dispatch
 def strId(c: Cursor, pool: Pool) -> StrId:
     ## Stable pool id of the StrLit/Ident at `c` — the inverse of `strVal`.
@@ -1513,7 +1509,6 @@ def strId(c: Cursor, pool: Pool) -> StrId:
         return StrId(uint32(combinedPayload(c) >> 1))
 
 
-@ufcs(Cursor)
 @dispatch
 def strId(c: Cursor) -> StrId:
     """{.inline.}"""
@@ -2545,7 +2540,7 @@ def addStrLit(b: mut @ TokenBuf, s: openArray[char]):
         for i in range(s.len):
             tmp[i] = s[i]
         with let:
-            id = uint32(b.pool.strings.getOrIncl(tmp))
+            id = uint32(getOrIncl(b.pool.strings, tmp))
         with let:
             payload = uint64(id) << u64(1)               # bit 0 = 0 => pool ref
         b.add(NifToken(_toX(NifKind.StrLit, _lowBits(payload))))
@@ -2746,7 +2741,6 @@ def _addAcrossPools(dest: mut @ TokenBuf, c: mut @ Cursor,
             assert False, "reader-level lexical kind cannot appear in a token buffer"
 
 
-@ufcs(TokenBuf)
 def addSubtree(dest: mut @ TokenBuf, c: Cursor):
     """{.nifEmits: "Any".}"""
     ## Copy the subtree rooted at `c` into `dest`. When both pools AND

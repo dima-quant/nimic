@@ -4967,6 +4967,25 @@ class TestNTypes(unittest.TestCase):
             check_reserved_names(tree, "m.py")
         check_reserved_names(tree, os.path.join(os.path.dirname(reserved.__file__), "std", "m.py"))
 
+    def test_transpile_main_proc_value_takes_no_raises(self):
+        """rule:mainproc: a main block's procs take its `.raises` alias, except one named as a value (assigned to
+        a proc variable, passed): its proc type decides, and nimony rejects a raising proc for a non-raising
+        `{.nimcall.}` type (vfs's test assigns `taggedRead` to `readBytesRelay`)."""
+        src = textwrap.dedent('''\
+            if comptime(__name__ == "__main__"):
+                def tagged(path: string) -> string:
+                    return path
+                def helper(x: nint) -> nint:
+                    return x + 1
+                with let:
+                    saved = relay
+                relay = tagged
+                echo(helper(1))
+            ''')
+        out = unparse(ast.parse(src))[0]
+        self.assertIn("proc tagged(path: string): string =", out)
+        self.assertIn("proc helper(x: int): int {.nimicMain1Raises.} =", out)
+
     def test_transpile_global_assume_sync(self):
         """rule:global: `global x` in a routine is dropped, its statements after it are an `assumeSync:` block (the
         prelude's template: nimony's `{.cast(assumeSync).}`), also for a routine that only reads x; a main
