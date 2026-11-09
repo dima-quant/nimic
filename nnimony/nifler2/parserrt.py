@@ -54,7 +54,7 @@ from ..models.nifler_tags import NiflerKind
 from ..models import nifler_tags
 export(nifler_tags)
 from .nimlexer import (
-    ch, getPrecedence, KeywordHigh, KeywordLow, Lexer, next, openLexer, Token, TokKind, TokSpacing)
+    getPrecedence, KeywordHigh, KeywordLow, Lexer, next, openLexer, Token, TokKind, TokSpacing)
 from . import nimlexer
 export(nimlexer)
 from ..lib import nifpools

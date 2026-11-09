@@ -86,6 +86,7 @@ from typing import Sequence, TypeAliasType
 
 from nimic.nvariants import NCase, NField, NRecord, NVariantLayout, parse_record
 from nimic import valuecheck as _valuecheck
+from nimic.reserved import nim_name as _nim_name
 
 
 # --- Defects and {.cast(uncheckedAssign).} ---
@@ -2525,8 +2526,8 @@ class NIntEnum(IntEnum):
         return int(self)
 
     def __str__(self) -> str:
-        """Nim `$` of an enum member: its name."""
-        return self.name
+        """Nim `$` of an enum member: its Nim name (an escaped member `alias_` / `None_` is `alias` / `None`)."""
+        return _nim_name(self.name)
 
     def __format__(self, spec: str) -> str:
         return format(str(self), spec)  # `$`: the name, or the enum's own `$` (__str__)
@@ -2597,7 +2598,7 @@ class NStrEnum(StrEnum):
 
     @staticmethod
     def _generate_next_value_(name, start, count, last_values):
-        return name  # Nim: `$` of a member without a string value is its name
+        return _nim_name(name)  # Nim: `$` of a member without a string value is its (Nim) name
 
     __ilshift__ = _n_enum_ilshift
     _n_cast = classmethod(_n_enum_cast)

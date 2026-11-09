@@ -17,6 +17,8 @@ checks and nimicgen's core-name list read it without importing the core. `tests/
 each public name of `nimic.ntypes` is either reserved here or one of Nim's: a new core name is classified when it is
 added (adding a reserved name renames the user identifiers spelled like it, which the name check then reports)."""
 
+import keyword as _keyword
+
 CORE_NAMES = frozenset({
     # literal helpers and value forms the transpiler reads as syntax
     "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "f16", "f32", "f64", "utf8", "cell", "inrange",
@@ -47,3 +49,12 @@ def escaped(name: str) -> str | None:
     if len(name) > 1 and name.endswith("_") and name[:-1] in RESERVED_NAMES:
         return name[:-1]
     return None
+
+
+def nim_name(name: str) -> str:
+    """The Nim spelling of a nimic identifier: a Python keyword's (`rule:keywordescape`, `None_` -> `None`) or a
+    reserved name's (`rule:reservedescape`, `hook_` -> `hook`) trailing `_` dropped, any other name unchanged.
+    Used by the transpiler and by the core where a name is a value at run time (an enum member's `$`)."""
+    if len(name) > 1 and name.endswith("_") and (_keyword.iskeyword(name[:-1]) or name[:-1] in RESERVED_NAMES):
+        return name[:-1]
+    return name

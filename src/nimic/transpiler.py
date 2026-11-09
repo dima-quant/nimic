@@ -291,7 +291,6 @@ import builtins
 import copy
 import importlib.util
 import inspect
-import keyword as pykeyword
 import os
 import re
 import symtable
@@ -1871,12 +1870,10 @@ class _Unparser(NodeVisitor):
     def _adjust_name(self, name, definition=True):
         # rule:localname
         # rule:keywordescape -> strip trailing _ from Python keyword clashes (None_ -> None)
-        if len(name) > 1 and name.endswith("_") and pykeyword.iskeyword(name[:-1]):
-            name = name[:-1]
         # rule:reservedescape -> strip trailing _ from a user name spelled like a reserved one (hook_ -> hook)
-        user_name = reserved.escaped(name)
-        if user_name is not None:
-            name = user_name
+        nim_name = reserved.nim_name(name)
+        if nim_name != name:
+            name = nim_name
         # rule:nint -> nint transpiles to Nim int (nimic does not shadow Python int), nbool to bool
         elif not definition and name in ("nint", "nbool"):
             return "int" if name == "nint" else "bool"

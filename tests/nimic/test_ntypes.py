@@ -4945,6 +4945,31 @@ class TestNTypes(unittest.TestCase):
         self.assertIn(" $(int(1))", out)
         self.assertEqual(reserved_name_bindings(ast.parse("def isinstance(x): pass")), [(1, "isinstance")])
 
+    def test_escaped_enum_member_str_is_its_nim_name(self):
+        """rule:reservedescape / rule:keywordescape: `$` of an escaped enum member is its Nim name (`alias_` and
+        `None_` print `alias` and `None`, as the transpiled Nim does), also an auto() text of an NStrEnum; the
+        Python name keeps the `_`. A name merely ending with `_` (not a keyword's or reserved name's) is kept."""
+        self.assertEqual((reserved.nim_name("alias_"), reserved.nim_name("None_"), reserved.nim_name("plain_"),
+                          reserved.nim_name("_"), reserved.nim_name("alias")), ("alias", "None", "plain_", "_", "alias"))
+
+        class Mode(NIntEnum):
+            alias_ = 0
+            None_ = 1
+            plain = 2
+            other_ = 3
+
+        self.assertEqual([str(m) for m in Mode], ["alias", "None", "plain", "other_"])
+        self.assertEqual(f"{Mode.alias_}|{Mode.None_:>5}", "alias| None")
+        self.assertEqual(Mode.alias_.name, "alias_")
+
+        class Kind(NStrEnum):
+            back_ = auto()
+            in_ = auto()
+            text_ = "t"
+
+        self.assertEqual([str(k) for k in Kind], ["back", "in", "t"])
+        self.assertIs(Kind("back"), Kind.back_)
+
     def test_check_reserved_names(self):
         """rule:reservedescape: a user module binding a reserved name unescaped (a routine, class, field,
         parameter, local, enum member, an import's `as` name) is rejected, with its escaped spelling; reading the
