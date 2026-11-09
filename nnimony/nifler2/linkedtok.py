@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/nifler2/linkedtok.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/nifler2/linkedtok.nim
 # ///
 #
 #
@@ -52,7 +52,7 @@ pragma("feature: \"lenientnils\"")
 from nimic.std import assertions
 from ..lib.nifpools import (
     addCharLit, addDotToken, addFloatLit, addIdent, addIntLit, addParLe, addParRi, addStrLit, addUIntLit,
-    floatVal, inc, intVal, kind, KindBits, NifKind, NifLineInfo, NifToken, Pool, StrId, strId, TagId, TagMask,
+    floatVal, intVal, kind, KindBits, NifKind, NifLineInfo, NifToken, Pool, StrId, strId, TagId, TagMask,
     TagShift, TokenBuf, uintVal)
 from ..lib import nifpools
 export(nifpools)
@@ -175,7 +175,7 @@ def intVal(n: Node) -> int64:
 @dispatch
 def uintVal(n: Node) -> uint64:
     """{.inline.}"""
-    return n.wide
+    return copy(n.wide)
 
 
 @dispatch

@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/lib/intrinsics.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/lib/intrinsics.nim
 # ///
 #
 #           The intrinsic table
@@ -272,6 +272,13 @@ class IntrinsicOp(NIntEnum):
     MemsetOp = auto()  # Memset(dest: pointer; byte: int; size: int)
     MemcpyOp = auto()  # Memcpy(dest, src: pointer; size: int) — the regions must not overlap
     MemcmpOp = auto()  # int32 = Memcmp(a, b: pointer; size: int)
+    # ── floating point. IEEE 754 requires `sqrt` to be correctly rounded, and
+    #    every FPU this table targets implements exactly that operation in one
+    #    instruction (`sqrtsd`/`sqrtss`, `fsqrt`) — a software root is the
+    #    fallback for a target without an FPU, not a portable spelling. As a
+    #    call it also made each float local live across it a spill on x86-64,
+    #    where no xmm register is callee-saved.
+    SqrtOp = auto()  # f = Sqrt(x: f)  — f32 or f64
 
     def isMachineQuery(op: IntrinsicOp) -> bool:
         """{.inline.}"""
@@ -562,7 +569,8 @@ with const:
       string("adds3"), string("adcs3"), string("subs3"), string("sbcs3"), string("mul3"), string("umulh"), string("umull"), string("umlal"), string("bic3"),
       string("cseleq"), string("cselne"), string("csellt"), string("cselle"), string("cselgt"), string("cselge"), string("csello"),
       string("csells"), string("cselhi"), string("cselhs"),
-      string("Memset"), string("Memcpy"), string("Memcmp")])
+      string("Memset"), string("Memcpy"), string("Memcmp"),
+      string("Sqrt")])
 
     _Imm8 = array[MaxOperands, PatKind]([PatKind.ptImmLit, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone])
       ## one operand, and the instruction encodes it — see `ptImmLit`.
@@ -572,6 +580,7 @@ with const:
     _Un = array[MaxOperands, PatKind]([PatKind.ptAnyIntW, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone])  ## one integer source
     _UnCount = array[MaxOperands, PatKind]([PatKind.ptAnyIntW, PatKind.ptAnyInt, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone])  ## a value plus a count
     _Bin = array[MaxOperands, PatKind]([PatKind.ptAnyIntW, PatKind.ptAnyIntW, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone])  ## two same-width int sources
+    _FUn = array[MaxOperands, PatKind]([PatKind.ptFloatW, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone, PatKind.ptNone])  ## one float source
 
     # ── atomic operand shapes ────────────────────────────────────────────────
     # Every one of them ends in a memory order, because the C builtins do and the
@@ -1281,12 +1290,16 @@ with const:
                    widths=Tset[uint8](), tie=-1, effects=Tset[IntrinsicEffect](IntrinsicEffect.efReads, IntrinsicEffect.efWrites), uses=Tset[MachineFlag](), defs=Tset[MachineFlag]()),
       IntrinsicRow(cls=IntrinsicClass.icPortable, targets=Tset[IntrinsicTarget](IntrinsicTarget.tgX64, IntrinsicTarget.tgA64, IntrinsicTarget.tgThumbM, IntrinsicTarget.tgRv32), arity=3,  # Memcmp
                    params=_MemBin, roles=_AllIn, ret=PatKind.ptInt32,
-                   widths=Tset[uint8](), tie=-1, effects=Tset[IntrinsicEffect](IntrinsicEffect.efReads), uses=Tset[MachineFlag](), defs=Tset[MachineFlag]())
+                   widths=Tset[uint8](), tie=-1, effects=Tset[IntrinsicEffect](IntrinsicEffect.efReads), uses=Tset[MachineFlag](), defs=Tset[MachineFlag]()),
+      # ── floating point ──
+      IntrinsicRow(cls=IntrinsicClass.icPortable, targets=Tset[IntrinsicTarget](IntrinsicTarget.tgX64, IntrinsicTarget.tgA64), arity=1,  # Sqrt
+                   params=_FUn, roles=_AllIn, ret=PatKind.ptFloatW,
+                   widths=Tset[uint8](u8(32), u8(64)), tie=-1, effects=Tset[IntrinsicEffect](IntrinsicEffect.efPure), uses=Tset[MachineFlag](), defs=Tset[MachineFlag]())
     ])
 
 
 with const:
-    LastIntrinsicOp = IntrinsicOp.MemcmpOp
+    LastIntrinsicOp = IntrinsicOp.SqrtOp
       ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
       ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
       ## over an enum *type* — hence the ordinal loop below too.

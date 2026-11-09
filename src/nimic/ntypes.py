@@ -83,6 +83,7 @@ from nimic.nsystem import (
     importc,
     stackTraceAvailable,
     writeStackTrace,
+    getCurrentExceptionMsg,
     getMaxMem,
     getTotalMem,
     getOccupiedMem,

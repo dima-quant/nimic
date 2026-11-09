@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/nifler2/tests/tmini.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/nifler2/tests/tmini.nim
 # program: the main block runs the tests (the original runs them at its top level)
 # ///
 ## End-to-end test of the generated parser: source text in, tree out.

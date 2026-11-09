@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/lib/nifreader.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/lib/nifreader.nim
 # ///
 #       Nif library
 # (c) Copyright 2024 Andreas Rumpf
@@ -1337,7 +1337,12 @@ def open(filename: string, lineBased=False) -> Reader:
         except:
             if comptime(defined("debug") and not defined("nimony")):
                 writeStackTrace()
-            quit(string("[Error] cannot open: ") + filename)
+            if comptime(defined("nimony")):
+                quit(string("[Error] cannot open: ") + filename)
+            else:
+                # the OS's reason: a Windows sharing violation reads very differently
+                # from a missing file
+                quit(string("[Error] cannot open: ") + filename + string(" (") + getCurrentExceptionMsg() + string(")"))
     result = Reader(
         _f=f, _p=None, thisModule=extractModuleSuffix(filename), _lineBased=lineBased
     )

@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/nifler2/filters.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/nifler2/filters.nim
 # ///
 #
 #
@@ -25,7 +25,7 @@ from nimic.std.strutils import cmpIgnoreStyle, repeat, spaces, startsWith
 from nimic.std import syncio
 from . import nimgrammar
 from .nimgrammar import (
-    add, charLit, childCursor, Cursor, endRead, globalTags, inc, intVal, kind, NifKind, openParser, pModule,
+    charLit, childCursor, Cursor, endRead, globalTags, intVal, kind, NifKind, openParser, pModule,
     pool, resolvedTagId, skip, strVal, tags)
 from nimic.std import strutils
 replace = overloads(strutils.replace, nimgrammar.replace)
@@ -82,7 +82,7 @@ class _FilterContext(Object):
 
 def _tag(c: Cursor) -> string:
     """{.inline.}"""
-    return tags(c).tags[resolvedTagId(c)]
+    return copy(tags(c).tags[resolvedTagId(c)])
 
 
 def _render(c: Cursor) -> string:

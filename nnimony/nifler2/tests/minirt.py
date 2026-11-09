@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/nifler2/tests/minirt.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/nifler2/tests/minirt.nim
 # ///
 ## Runtime the generated parsers are written against: a token stream that
 ## carries indentation, and an output buffer that supports inserting an
@@ -87,7 +87,7 @@ class Parser(Object):
     errors: seq[string]
 
     def tok(p: Parser) -> Token:
-        return p.toks[p.pos]
+        return copy(p.toks[p.pos])
 
     def error(p: mut @ Parser, msg: string):
         with let:
@@ -159,14 +159,6 @@ class Parser(Object):
     def isRightAssoc(p: Parser) -> bool:
         return p.tok().kind == TokKind.tkOpr and p.tok().s[0] == char('^')
 
-    def insertLeafAt(p: mut @ Parser, m: Mark, text: string):
-        _insertAt(p.buf, _BufTok(_kind=_BufKind.bLeaf, _text=text), m.pos)
-
-    def insertOpLeafAt(p: mut @ Parser, m: Mark):
-        with let:
-            text = p.tok().s
-        p.insertLeafAt(m, text)
-
     def emitLeaf(p: mut @ Parser):
         p.buf.add(_BufTok(_kind=_BufKind.bLeaf, _text=p.tok().s))
         p.getTok()
@@ -176,16 +168,6 @@ class Parser(Object):
 
     def closeTag(p: mut @ Parser):
         p.buf.add(_BufTok(_kind=_BufKind.bClose, _text=string("")))
-
-    def wrap(p: mut @ Parser, m: Mark, tag: NiflerKind):
-        ## Insert the opening token at the mark and close at the end. The whole
-        ## point of the design: the tag is decided after the fact.
-        _insertAt(p.buf, _BufTok(_kind=_BufKind.bOpen, _text=str(tag)), m.pos)
-        p.buf.add(_BufTok(_kind=_BufKind.bClose, _text=string("")))
-
-    def wrapAt(p: mut @ Parser, m: Mark, tag: NiflerKind, info: nint):
-        ## Positions are not modelled here, so this is `wrap`.
-        p.wrap(m, tag)
 
     def info(p: Parser) -> nint:
         """{.inline.}"""
@@ -210,6 +192,29 @@ class Parser(Object):
                     result.add(t._text)
                     needSpace = True
         return result
+
+
+# `insertLeafAt` and `wrap` read `_insertAt`, a routine below the class, and
+# `insertOpLeafAt` / `wrapAt` call them: they are module-level (rules §4, the
+# methods rule) and called free
+def insertLeafAt(p: mut @ Parser, m: Mark, text: string):
+    _insertAt(p.buf, _BufTok(_kind=_BufKind.bLeaf, _text=text), m.pos)
+
+
+def wrap(p: mut @ Parser, m: Mark, tag: NiflerKind):
+    ## Insert the opening token at the mark and close at the end. The whole
+    ## point of the design: the tag is decided after the fact.
+    _insertAt(p.buf, _BufTok(_kind=_BufKind.bOpen, _text=str(tag)), m.pos)
+    p.buf.add(_BufTok(_kind=_BufKind.bClose, _text=string("")))
+
+def insertOpLeafAt(p: mut @ Parser, m: Mark):
+    with let:
+        text = p.tok().s
+    insertLeafAt(p, m, text)
+
+def wrapAt(p: mut @ Parser, m: Mark, tag: NiflerKind, info: nint):
+    ## Positions are not modelled here, so this is `wrap`.
+    wrap(p, m, tag)
 
 # --------------------------------------------------------------- lexing
 

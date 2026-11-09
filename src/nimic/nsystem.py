@@ -772,20 +772,33 @@ def overloads(*procs: object) -> object:
 _n_hooks = ("copy", "sink", "destroy", "wasMoved", "dup", "trace")
 
 
-def hook(name: str):
-    """Nim: a lifetime hook, proc `=copy`(dest: var T; src: T) and the others of _n_hooks (rule:hook). It
-    registers on T (its first parameter's type): T's owning objects run `=destroy` when CPython frees them,
-    `.copy()` / stores run `=dup` / `=copy`, `<<=` runs `=copy`, move() runs `=wasMoved`; a `=copy` with
-    {.error.} makes T move-only (stores move it, `.copy()` raises). See
-    ncompiler/proposals/feature_lifetime_hooks_runtime.md. The proc stays callable."""
-    if name not in _n_hooks:
-        raise ValueError(f"@hook: unknown lifetime hook {name!r} (one of {', '.join(_n_hooks)})")
+class _Hook:
+    """`hook`: @hook("copy") declares a lifetime hook (__call__); hook.destroy(x) calls one directly."""
 
-    def mark(fn):
-        fn._n_hook = name
-        _ntypesystem._n_register_hook(_n_hooked_type(fn, sys._getframe(1)), name, fn)
-        return fn
-    return mark
+    def __call__(self, name: str):
+        """Nim: a lifetime hook, proc `=copy`(dest: var T; src: T) and the others of _n_hooks (rule:hook). It
+        registers on T (its first parameter's type): T's owning objects run `=destroy` when CPython frees them,
+        `.copy()` / stores run `=dup` / `=copy`, `<<=` runs `=copy`, move() runs `=wasMoved`; a `=copy` with
+        {.error.} makes T move-only (stores move it, `.copy()` raises). See
+        ncompiler/proposals/feature_lifetime_hooks_runtime.md. The proc stays callable."""
+        if name not in _n_hooks:
+            raise ValueError(f"@hook: unknown lifetime hook {name!r} (one of {', '.join(_n_hooks)})")
+
+        def mark(fn):
+            fn._n_hook = name
+            _ntypesystem._n_register_hook(_n_hooked_type(fn, sys._getframe(1)), name, fn)
+            return fn
+        return mark
+
+    @staticmethod
+    def destroy(x) -> None:
+        """Nim: `=destroy`(x) called directly (rule:hookcall), as a custom `=destroy` releases its fields
+        (nifcore's TokenBuf): x's hook now, or its parts' (_ntypesystem._n_destroy); a ref is dropped with its
+        holder."""
+        _ntypesystem._n_destroy(x)
+
+
+hook = _Hook()
 
 
 _n_internal_files = {os.path.dirname(os.path.abspath(__file__))}  # nimic's own frames (dispatch, templates)
@@ -1129,6 +1142,19 @@ def writeStackTrace() -> None:
     for fr in frames:
         sys.stderr.write(f"{fr.filename}({fr.lineno}) {fr.name}\n")
     sys.stderr.flush()
+
+
+def getCurrentExceptionMsg() -> _ntypesystem.string:
+    """Nim: getCurrentExceptionMsg — the message of the exception being handled, "" outside a handler. Nim's
+    `msg` field (newException sets it); else a Python exception's own message: its one argument, or its text
+    (an OSError's: the OS's reason and the file)."""
+    e = sys.exception()
+    if e is None:
+        return _ntypesystem.string("")
+    msg = getattr(e, "msg", None)
+    if msg is None:
+        msg = e.args[0] if len(e.args) == 1 else (str(e) if e.args else "")
+    return _ntypesystem.string(str(msg))
 
 
 def _n_process_memory() -> int:

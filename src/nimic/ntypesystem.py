@@ -1204,6 +1204,22 @@ def _n_destroy_owned(x) -> bool:
     return True
 
 
+def _n_destroy(x) -> None:
+    """Nim `=destroy`(x) called directly (hook.destroy, rule:hookcall), e.g. a custom `=destroy` releasing its
+    fields. A value with a `=destroy` hook runs it now if it owns its value, and not again when CPython frees it
+    (_n_destroy_owned); one without is destroyed part by part (_n_destroy_parts: an object's active fields, a
+    seq's or array's elements), as Nim's built-in `=destroy`. A ref (its count drops when CPython drops the
+    reference with its holder: a shared object lives on), nil and a scalar have nothing to run."""
+    if x is None or getattr(type(x), "_n_is_ref", False):
+        return
+    if "destroy" in (getattr(type(x), "_n_hooks", None) or {}):
+        _n_destroy_owned(x)
+        return
+    parts = getattr(x, "_n_destroy_parts", None)
+    if parts is not None:
+        parts()
+
+
 def _n_frozen_setter(name: str) -> callable:
     def frozen(*_args) -> None:
         raise TypeError(f"constant `{name}` changed through an alias: a variable bound to a constant needs "
@@ -3459,6 +3475,11 @@ class _Object(Ntype):
         """What the value holds, for a fingerprint (_n_fingerprint): its active fields' values."""
         return tuple(getattr(self, n) for n in self._n_active_fields())
 
+    def _n_destroy_parts(self) -> None:
+        """Nim's built-in `=destroy` of an object without a hook: its active fields (_n_destroy)."""
+        for n in self._n_active_fields():
+            _n_destroy(getattr(self, n))
+
     __hash__ = object.__hash__  # Nim's `hash` is independent of `==`
 
     # Nim has no reflected operators: `proc +(a: BiggestInt, b: T)` is an ordinary overload with that
@@ -4453,6 +4474,11 @@ class array(_NIndexed, _NLen, Ntype):
     _n_size: int = 0
     _n_first: int = 0
 
+    def _n_destroy_parts(self) -> None:
+        """Nim's built-in `=destroy` of a array: its elements (_n_destroy)."""
+        for e in self:
+            _n_destroy(e)
+
     def __init__(self, it: Sequence | dict | None = None) -> None:
         self._n_cache = {}
         if hasattr(self, "_n_type") and hasattr(self, "_n_size"):
@@ -4684,6 +4710,11 @@ def _n_delete_bounds(what, length: int) -> tuple[int, int]:
 
 class seq(_NIndexed, Ntype):
     _n_is_list = False  # True for types without ctypes backing (e.g. string)
+
+    def _n_destroy_parts(self) -> None:
+        """Nim's built-in `=destroy` of a seq: its elements (_n_destroy)."""
+        for e in self:
+            _n_destroy(e)
 
     def __init__(self, c_base: object | None = None) -> None:
         self._n_cache = {}

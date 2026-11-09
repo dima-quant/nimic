@@ -1,5 +1,6 @@
 """Nim std/os — OS utilities (the file modes are syncio's FileMode)."""
 from __future__ import annotations
+import ctypes as _ctypes
 import glob as _glob
 import os as _os
 import pathlib as _pathlib
@@ -18,6 +19,35 @@ from nimic.std.syncio import read_file, read_file_bytes, write_buffer, set_file_
 
 stderr.flush_file = stderr.flush
 stdout.flush_file = stdout.flush
+
+class OSErrorCode(int):
+    """Nim: OSErrorCode (std/oserrors, re-exported by std/os): an OS error code (errno, or Windows' GetLastError)."""
+
+    def __str__(self) -> str:
+        return str(int(self))
+
+
+def osLastError() -> OSErrorCode:
+    """Nim: osLastError — the last OS error code: Windows' last error of a std/winlean call, else errno (of a
+    nimic call through the C library)."""
+    return OSErrorCode(_ctypes.get_last_error() if sys.platform == "win32" else _ctypes.get_errno())
+
+
+def osErrorMsg(errorCode: OSErrorCode) -> string:
+    """Nim: osErrorMsg — the OS's text of an error code ("" for 0)."""
+    return string("") if int(errorCode) == 0 else string(_os.strerror(int(errorCode)))
+
+
+def raiseOSError(errorCode: OSErrorCode, additionalInfo: string = string("")) -> None:
+    """Nim: raiseOSError — raises OSError with the code's text, and `Additional info:` when given."""
+    msg = str(osErrorMsg(errorCode)) or f"unknown OS error ({int(errorCode)})"
+    if len(additionalInfo) > 0:
+        msg += "\nAdditional info: " + str(additionalInfo)
+    e = OSError(int(errorCode), msg)
+    e.msg = string(msg)
+    e.errorCode = errorCode
+    raise e
+
 
 def create_dir(dir: str) -> None:
     """Create directory and parents if needed (Nim: os.createDir)."""

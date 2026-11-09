@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/nifler2/nimlexer.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/nifler2/nimlexer.nim
 # ///
 #
 #
@@ -206,8 +206,10 @@ class Token(Object):
         if tok.base == 10: return
         with let:
             i = 2 if tok.s.len > 0 and tok.s[0] == char('-') else 1
-        if i < tok.s.len and tok.s[i] >= char('A') and tok.s[i] <= char('Z'):
-            tok.s[i] = chr(ord(tok.s[i]) - ord(char('A')) + ord(char('a')))
+        if i < tok.s.len:
+            with let:
+                c = copy(tok.s[i])
+            if c >= char('A') and c <= char('Z'): tok.s[i] = chr(ord(c) - ord(char('A')) + ord(char('a')))
 
 
 class Lexer(Object):
@@ -226,786 +228,6 @@ class Lexer(Object):
     def _error(L: mut @ Lexer, pos: nint, msg: string):
         L._errorAt(L.lineNumber, pos - L.lineStart, msg)
 
-    def _litNumText(L: Lexer, start: nint) -> string:
-        ## The number as `lexMessageLitNum` quotes it: everything literal-ish from
-        ## `start`, which is behind a leading `-`.
-        with const:
-            LiteralishChars = Tset[char](inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('0'), char('9')), char('_'), char('.'), char('\''))
-        result = string("")
-        with var:
-            pos = copy(start)
-        while ch(L, pos) in LiteralishChars:
-            result.add(ch(L, pos))
-            pos += 1
-        if ch(L, pos) in Tset[char](char('+'), char('-')) and ch(L, pos - 1) in Tset[char](char('e'), char('E')):
-            result.add(ch(L, pos))
-            pos += 1
-            while ch(L, pos) in LiteralishChars:
-                result.add(ch(L, pos))
-                pos += 1
-        if ch(L, pos) in LiteralishChars:
-            result.add(ch(L, pos))
-            pos += 1
-            while ch(L, pos) in Tset[char](inrange(char('0'), char('9'))):
-                result.add(ch(L, pos))
-                pos += 1
-        return result
-
-    def _handleCRLF(L: mut @ Lexer, pos: nint) -> nint:
-        result = copy(pos)
-        if ch(L, result) == char('\r'):
-            result += 1
-            if ch(L, result) == char('\n'): result += 1
-        elif ch(L, result) == char('\n'):
-            result += 1
-        L.lineNumber += 1
-        L.lineStart = result
-        return result
-
-    def _numberSuffix(L: mut @ Lexer, tok: mut @ Token, start: nint, isFloat: bool):
-        ## Second stage, as in `getNumber`: the first automaton matched the number,
-        ## this one reads the `'i8` / `u32` / `'myLit` behind it. They are two
-        ## automata and not one because the number must be the *longest* number:
-        ## `0x1f32` is a hex literal, not `0x1` with the suffix `f32`, and a single
-        ## automaton's maximal munch cannot tell those apart.
-        tok.kind = TokKind.tkFloatLit if isFloat else TokKind.tkIntLit
-        with let:
-            numEnd = copy(L.pos)
-        tok.s = L.buf.substr(start, numEnd - 1)
-        with var:
-            pos = copy(numEnd)
-            kind = tok.kind
-        # The built-in suffixes come first so that they win against the custom
-        # literal and the bad suffix on a tie; a longer spelling (`'i8x`) does not
-        # tie and is not built in.
-        # plugexpand: `lex L.buf, pos:` (line 316), expanded
-        with var:
-            tmp1 = 1
-            tmp3 = 0
-            tmp4 = copy(pos)
-        while True:
-            with var:
-                tmp2 = char('\x00')
-            if pos < len(L.buf):
-                tmp2 = L.buf[pos]
-            match tmp1:
-                case 1:
-                    if tmp2 in Tset[char](char('F'), char('f')):
-                        pos += 1
-                        tmp1 = 2
-                    elif tmp2 in Tset[char](char('D'), char('d')):
-                        pos += 1
-                        tmp1 = 3
-                    elif tmp2 in Tset[char](char('U'), char('u')):
-                        pos += 1
-                        tmp1 = 9
-                    elif tmp2 in Tset[char](char('I'), char('i')):
-                        pos += 1
-                        tmp1 = 31
-                    elif tmp2 == char('\''):
-                        pos += 1
-                        tmp1 = 32
-                    else:
-                        break
-                case 2:
-                    tmp3 = 1
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    elif tmp2 == char('1'):
-                        pos += 1
-                        tmp1 = 15
-                    elif tmp2 == char('3'):
-                        pos += 1
-                        tmp1 = 28
-                    elif tmp2 == char('6'):
-                        pos += 1
-                        tmp1 = 52
-                    else:
-                        break
-                case 3:
-                    tmp3 = 2
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    else:
-                        break
-                case 4:
-                    tmp3 = 3
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    else:
-                        break
-                case 5:
-                    tmp3 = 4
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    else:
-                        break
-                case 6:
-                    tmp3 = 5
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    else:
-                        break
-                case 7:
-                    tmp3 = 6
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    else:
-                        break
-                case 8:
-                    tmp3 = 7
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    else:
-                        break
-                case 9:
-                    tmp3 = 8
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), char('7'), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    elif tmp2 == char('8'):
-                        pos += 1
-                        tmp1 = 10
-                    elif tmp2 == char('6'):
-                        pos += 1
-                        tmp1 = 29
-                    elif tmp2 == char('1'):
-                        pos += 1
-                        tmp1 = 30
-                    elif tmp2 == char('3'):
-                        pos += 1
-                        tmp1 = 35
-                    else:
-                        break
-                case 10:
-                    tmp3 = 9
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    else:
-                        break
-                case 11:
-                    tmp3 = 10
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    else:
-                        break
-                case 12:
-                    tmp3 = 11
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    else:
-                        break
-                case 13:
-                    tmp3 = 12
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    else:
-                        break
-                case 14:
-                    tmp3 = 13
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    elif tmp2 == char('2'):
-                        pos += 1
-                        tmp1 = 27
-                    else:
-                        break
-                case 15:
-                    tmp3 = 14
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    elif tmp2 == char('2'):
-                        pos += 1
-                        tmp1 = 36
-                    else:
-                        break
-                case 16:
-                    tmp3 = 12
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    else:
-                        break
-                case 17:
-                    tmp3 = 11
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    else:
-                        break
-                case 18:
-                    tmp3 = 10
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    else:
-                        break
-                case 19:
-                    tmp3 = 9
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    else:
-                        break
-                case 20:
-                    tmp3 = 8
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), char('7'), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    elif tmp2 == char('8'):
-                        pos += 1
-                        tmp1 = 19
-                    elif tmp2 == char('1'):
-                        pos += 1
-                        tmp1 = 46
-                    elif tmp2 == char('3'):
-                        pos += 1
-                        tmp1 = 47
-                    elif tmp2 == char('6'):
-                        pos += 1
-                        tmp1 = 48
-                    else:
-                        break
-                case 21:
-                    tmp3 = 7
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    else:
-                        break
-                case 22:
-                    tmp3 = 6
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    else:
-                        break
-                case 23:
-                    tmp3 = 5
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    else:
-                        break
-                case 24:
-                    tmp3 = 4
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    else:
-                        break
-                case 25:
-                    tmp3 = 3
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    else:
-                        break
-                case 26:
-                    tmp3 = 2
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    else:
-                        break
-                case 27:
-                    tmp3 = 1
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    else:
-                        break
-                case 28:
-                    tmp3 = 14
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    elif tmp2 == char('2'):
-                        pos += 1
-                        tmp1 = 34
-                    else:
-                        break
-                case 29:
-                    tmp3 = 14
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    elif tmp2 == char('4'):
-                        pos += 1
-                        tmp1 = 13
-                    else:
-                        break
-                case 30:
-                    tmp3 = 14
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('5')), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    elif tmp2 == char('6'):
-                        pos += 1
-                        tmp1 = 11
-                    else:
-                        break
-                case 31:
-                    tmp3 = 14
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), char('7'), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    elif tmp2 == char('8'):
-                        pos += 1
-                        tmp1 = 5
-                    elif tmp2 == char('6'):
-                        pos += 1
-                        tmp1 = 49
-                    elif tmp2 == char('3'):
-                        pos += 1
-                        tmp1 = 50
-                    elif tmp2 == char('1'):
-                        pos += 1
-                        tmp1 = 51
-                    else:
-                        break
-                case 32:
-                    if tmp2 in Tset[char](char('U'), char('u')):
-                        pos += 1
-                        tmp1 = 20
-                    elif tmp2 in Tset[char](char('D'), char('d')):
-                        pos += 1
-                        tmp1 = 26
-                    elif tmp2 in Tset[char](char('F'), char('f')):
-                        pos += 1
-                        tmp1 = 39
-                    elif tmp2 in Tset[char](char('I'), char('i')):
-                        pos += 1
-                        tmp1 = 42
-                    elif tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('C')), char('E'), char('G'), char('H'), inrange(char('J'), char('T')), inrange(char('V'), char('Z')), inrange(char('a'), char('c')), char('e'), char('g'), char('h'), inrange(char('j'), char('t')), inrange(char('v'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    else:
-                        break
-                case 33:
-                    tmp3 = 14
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    else:
-                        break
-                case 34:
-                    tmp3 = 1
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    else:
-                        break
-                case 35:
-                    tmp3 = 14
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    elif tmp2 == char('2'):
-                        pos += 1
-                        tmp1 = 12
-                    else:
-                        break
-                case 36:
-                    tmp3 = 14
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('7')), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    elif tmp2 == char('8'):
-                        pos += 1
-                        tmp1 = 4
-                    else:
-                        break
-                case 37:
-                    tmp3 = 13
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    elif tmp2 == char('2'):
-                        pos += 1
-                        tmp1 = 44
-                    else:
-                        break
-                case 38:
-                    tmp3 = 13
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    elif tmp2 == char('2'):
-                        pos += 1
-                        tmp1 = 22
-                    else:
-                        break
-                case 39:
-                    tmp3 = 1
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    elif tmp2 == char('3'):
-                        pos += 1
-                        tmp1 = 14
-                    elif tmp2 == char('1'):
-                        pos += 1
-                        tmp1 = 37
-                    elif tmp2 == char('6'):
-                        pos += 1
-                        tmp1 = 40
-                    else:
-                        break
-                case 40:
-                    tmp3 = 13
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    elif tmp2 == char('4'):
-                        pos += 1
-                        tmp1 = 26
-                    else:
-                        break
-                case 41:
-                    tmp3 = 13
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('5')), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    elif tmp2 == char('6'):
-                        pos += 1
-                        tmp1 = 23
-                    else:
-                        break
-                case 42:
-                    tmp3 = 13
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), char('7'), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    elif tmp2 == char('8'):
-                        pos += 1
-                        tmp1 = 24
-                    elif tmp2 == char('3'):
-                        pos += 1
-                        tmp1 = 38
-                    elif tmp2 == char('1'):
-                        pos += 1
-                        tmp1 = 41
-                    elif tmp2 == char('6'):
-                        pos += 1
-                        tmp1 = 45
-                    else:
-                        break
-                case 43:
-                    tmp3 = 13
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    else:
-                        break
-                case 44:
-                    tmp3 = 13
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('7')), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    elif tmp2 == char('8'):
-                        pos += 1
-                        tmp1 = 25
-                    else:
-                        break
-                case 45:
-                    tmp3 = 13
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    elif tmp2 == char('4'):
-                        pos += 1
-                        tmp1 = 21
-                    else:
-                        break
-                case 46:
-                    tmp3 = 13
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('5')), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    elif tmp2 == char('6'):
-                        pos += 1
-                        tmp1 = 18
-                    else:
-                        break
-                case 47:
-                    tmp3 = 13
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    elif tmp2 == char('2'):
-                        pos += 1
-                        tmp1 = 17
-                    else:
-                        break
-                case 48:
-                    tmp3 = 13
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 43
-                    elif tmp2 == char('4'):
-                        pos += 1
-                        tmp1 = 16
-                    else:
-                        break
-                case 49:
-                    tmp3 = 14
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    elif tmp2 == char('4'):
-                        pos += 1
-                        tmp1 = 8
-                    else:
-                        break
-                case 50:
-                    tmp3 = 14
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    elif tmp2 == char('2'):
-                        pos += 1
-                        tmp1 = 7
-                    else:
-                        break
-                case 51:
-                    tmp3 = 14
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('5')), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    elif tmp2 == char('6'):
-                        pos += 1
-                        tmp1 = 6
-                    else:
-                        break
-                case 52:
-                    tmp3 = 14
-                    tmp4 = copy(pos)
-                    if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
-                        pos += 1
-                        tmp1 = 33
-                    elif tmp2 == char('4'):
-                        pos += 1
-                        tmp1 = 3
-                    else:
-                        break
-                case _:
-                    break
-        pos = tmp4
-        match tmp3:
-            case 1:
-                kind = TokKind.tkFloat32Lit
-            case 2:
-                kind = TokKind.tkFloat64Lit
-            case 3:
-                kind = TokKind.tkFloat128Lit
-            case 4:
-                kind = TokKind.tkInt8Lit
-            case 5:
-                kind = TokKind.tkInt16Lit
-            case 6:
-                kind = TokKind.tkInt32Lit
-            case 7:
-                kind = TokKind.tkInt64Lit
-            case 8:
-                kind = TokKind.tkUIntLit
-            case 9:
-                kind = TokKind.tkUInt8Lit
-            case 10:
-                kind = TokKind.tkUInt16Lit
-            case 11:
-                kind = TokKind.tkUInt32Lit
-            case 12:
-                kind = TokKind.tkUInt64Lit
-            case 13:
-                kind = TokKind.tkCustomLit
-            case 14:
-                L._error(numEnd, string("invalid number suffix: \'") + L.buf.substr(numEnd, pos - 1) + string("\'"))
-            case _:
-                if ch(L, pos) == char('\''):
-                    L._error(pos + 1, string("invalid number suffix"))
-        L.pos = pos
-        if kind == TokKind.tkCustomLit:
-            tok.suffixPos = int32(numEnd - start)
-            tok.s = L.buf.substr(start, pos - 1)
-        tok.kind = kind
-
-    def _skipMultiLineComment(L: mut @ Lexer, tok: mut @ Token, start: nint, isDoc: bool):
-        with var:
-            pos = copy(start)
-            toStrip = nint(0)
-        if isDoc:
-            toStrip = pos - L.lineStart
-            while ch(L, pos) == char(' '):
-                pos += 1
-                toStrip += 1
-            while ch(L, pos) == char('\r') or ch(L, pos) == char('\n'):
-                pos = L._handleCRLF(pos)
-                toStrip = 0
-                while ch(L, pos) == char(' '):
-                    pos += 1
-                    toStrip += 1
-        with var:
-            nesting = nint(0)
-        while True:
-            with let:
-                c = ch(L, pos)
-            if c == char('#'):
-                if isDoc:
-                    if ch(L, pos + 1) == char('#') and ch(L, pos + 2) == char('['): nesting += 1
-                    tok.s.add(char('#'))
-                elif ch(L, pos + 1) == char('['):
-                    nesting += 1
-                pos += 1
-            elif c == char(']'):
-                if isDoc:
-                    if ch(L, pos + 1) == char('#') and ch(L, pos + 2) == char('#'):
-                        if nesting == 0:
-                            pos += 3
-                            break
-                        nesting -= 1
-                    tok.s.add(char(']'))
-                elif ch(L, pos + 1) == char('#'):
-                    if nesting == 0:
-                        pos += 2
-                        break
-                    nesting -= 1
-                pos += 1
-            elif c == char('\r') or c == char('\n'):
-                pos = L._handleCRLF(pos)
-                if isDoc:
-                    tok.s.add(char('\n'))
-                    with var:
-                        n = copy(toStrip)
-                    while ch(L, pos) == char(' ') and n > 0:
-                        pos += 1
-                        n -= 1
-            elif c == char('\x00'):
-                L._error(pos, string("end of multiline comment expected"))
-                break
-            else:
-                if isDoc: tok.s.add(c)
-                pos += 1
-        L.pos = pos
-
-    def _scanComment(L: mut @ Lexer, tok: mut @ Token):
-        ## Only doc comments get here: `skip` eats the ordinary ones. Consecutive
-        ## `##` lines become **one** token, and the indentation of the line after
-        ## the block is remembered in `indentAhead` for the token that follows.
-        with var:
-            pos = copy(L.pos)
-        tok.kind = TokKind.tkComment
-        if ch(L, pos + 2) == char('['):
-            L._skipMultiLineComment(tok, pos + 3, True)
-            return
-        pos += 2
-        with var:
-            toStrip = nint(0)
-            stripInit = False
-        while True:
-            if not stripInit:
-                while ch(L, pos) == char(' '):
-                    pos += 1
-                    toStrip += 1
-                if ch(L, pos) == char('\r') or ch(L, pos) == char('\n'): toStrip = 0
-                else: stripInit = True
-            while ch(L, pos) != char('\r') and ch(L, pos) != char('\n') and ch(L, pos) != char('\x00'):
-                tok.s.add(L.buf[pos])
-                pos += 1
-            if ch(L, pos) == char('\x00'): break
-            pos = L._handleCRLF(pos)
-            with var:
-                indent = nint(0)
-            while ch(L, pos) == char(' '):
-                pos += 1
-                indent += 1
-            if ch(L, pos) == char('#') and ch(L, pos + 1) == char('#'):
-                tok.s.add(char('\n'))
-                pos += 2
-                if stripInit:
-                    with var:
-                        n = copy(toStrip)
-                    while ch(L, pos) == char(' ') and n > 0:
-                        pos += 1
-                        n -= 1
-            else:
-                if ch(L, pos) > char(' '): L.indentAhead = int32(indent)
-                break
-        L.pos = pos
-
-    def _handleHexChar(L: mut @ Lexer, xi: mut @ nint, position: Trange[0, 4]):
-        with let:
-            c = ch(L, L.pos)
-        if c >= char('0') and c <= char('9'): xi <<= (xi << 4) | (ord(c) - ord(char('0')))
-        elif c >= char('a') and c <= char('f'): xi <<= (xi << 4) | (ord(c) - ord(char('a')) + 10)
-        elif c >= char('A') and c <= char('F'): xi <<= (xi << 4) | (ord(c) - ord(char('A')) + 10)
-        else:
-            if position <= 1: L._error(L.pos, string("expected a hex digit"))
-            return
-        L.pos += 1
-
     def _endOperator(L: mut @ Lexer, tok: mut @ Token, start: nint, stop: nint):
         ## The five operator spellings that are punctuation rather than operators.
         tok.s = L.buf.substr(start, stop)
@@ -1017,54 +239,840 @@ class Lexer(Object):
         else: tok.kind = TokKind.tkOpr
         L.pos = stop + 1
 
-    def _skip(L: mut @ Lexer, tok: mut @ Token):
-        ## Everything that is not a token. `tok.indent` comes out of here: it is the
-        ## column of the first token on a line and -1 for every other token, which
-        ## is the single input the generated parser's `IndClass` is computed from.
+
+def _litNumText(L: Lexer, start: nint) -> string:
+    ## The number as `lexMessageLitNum` quotes it: everything literal-ish from
+    ## `start`, which is behind a leading `-`.
+    with const:
+        LiteralishChars = Tset[char](inrange(char('A'), char('Z')), inrange(char('a'), char('z')), inrange(char('0'), char('9')), char('_'), char('.'), char('\''))
+    result = string("")
+    with var:
+        pos = copy(start)
+    while ch(L, pos) in LiteralishChars:
+        result.add(ch(L, pos))
+        pos += 1
+    if ch(L, pos) in Tset[char](char('+'), char('-')) and ch(L, pos - 1) in Tset[char](char('e'), char('E')):
+        result.add(ch(L, pos))
+        pos += 1
+        while ch(L, pos) in LiteralishChars:
+            result.add(ch(L, pos))
+            pos += 1
+    if ch(L, pos) in LiteralishChars:
+        result.add(ch(L, pos))
+        pos += 1
+        while ch(L, pos) in Tset[char](inrange(char('0'), char('9'))):
+            result.add(ch(L, pos))
+            pos += 1
+    return result
+
+
+def _handleCRLF(L: mut @ Lexer, pos: nint) -> nint:
+    result = copy(pos)
+    if ch(L, result) == char('\r'):
+        result += 1
+        if ch(L, result) == char('\n'): result += 1
+    elif ch(L, result) == char('\n'):
+        result += 1
+    L.lineNumber += 1
+    L.lineStart = result
+    return result
+
+
+def _numberSuffix(L: mut @ Lexer, tok: mut @ Token, start: nint, isFloat: bool):
+    ## Second stage, as in `getNumber`: the first automaton matched the number,
+    ## this one reads the `'i8` / `u32` / `'myLit` behind it. They are two
+    ## automata and not one because the number must be the *longest* number:
+    ## `0x1f32` is a hex literal, not `0x1` with the suffix `f32`, and a single
+    ## automaton's maximal munch cannot tell those apart.
+    tok.kind = TokKind.tkFloatLit if isFloat else TokKind.tkIntLit
+    with let:
+        numEnd = copy(L.pos)
+    tok.s = L.buf.substr(start, numEnd - 1)
+    with var:
+        pos = copy(numEnd)
+        kind = tok.kind
+    # The built-in suffixes come first so that they win against the custom
+    # literal and the bad suffix on a tie; a longer spelling (`'i8x`) does not
+    # tie and is not built in.
+    # plugexpand: `lex L.buf, pos:` (line 316), expanded
+    with var:
+        tmp1 = 1
+        tmp3 = 0
+        tmp4 = copy(pos)
+    while True:
         with var:
-            pos = copy(L.pos)
-        tok.spacing.excl(TokSpacing.tsLeading)
-        while True:
-            with let:
-                c = ch(L, pos)
-            if c == char(' '):
-                pos += 1
-                tok.spacing.incl(TokSpacing.tsLeading)
-            elif c == char('\t'):
-                L._error(pos, string("tabs are not allowed, use spaces instead"))
-                pos += 1
-            elif c == char('\r') or c == char('\n'):
-                pos = L._handleCRLF(pos)
-                with var:
-                    indent = nint(0)
-                while True:
-                    if ch(L, pos) == char(' '):
-                        pos += 1
-                        indent += 1
-                    elif ch(L, pos) == char('#') and ch(L, pos + 1) == char('['):
-                        L.pos = pos
-                        L._skipMultiLineComment(tok, pos + 2, False)
-                        pos = L.pos.copy()
-                    else:
-                        break
-                tok.spacing.excl(TokSpacing.tsLeading)
-                if ch(L, pos) > char(' ') and (ch(L, pos) != char('#') or ch(L, pos + 1) == char('#')):
-                    tok.indent = int32(indent)
-                    L.currLineIndent = int32(indent)
+            tmp2 = char('\x00')
+        if pos < len(L.buf):
+            tmp2 = L.buf[pos]
+        match tmp1:
+            case 1:
+                if tmp2 in Tset[char](char('F'), char('f')):
+                    pos += 1
+                    tmp1 = 2
+                elif tmp2 in Tset[char](char('D'), char('d')):
+                    pos += 1
+                    tmp1 = 3
+                elif tmp2 in Tset[char](char('U'), char('u')):
+                    pos += 1
+                    tmp1 = 9
+                elif tmp2 in Tset[char](char('I'), char('i')):
+                    pos += 1
+                    tmp1 = 31
+                elif tmp2 == char('\''):
+                    pos += 1
+                    tmp1 = 32
+                else:
                     break
-            elif c == char('#'):
-                if ch(L, pos + 1) == char('#'): break  # a doc comment is a token
-                if ch(L, pos + 1) == char('['):
+            case 2:
+                tmp3 = 1
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                elif tmp2 == char('1'):
+                    pos += 1
+                    tmp1 = 15
+                elif tmp2 == char('3'):
+                    pos += 1
+                    tmp1 = 28
+                elif tmp2 == char('6'):
+                    pos += 1
+                    tmp1 = 52
+                else:
+                    break
+            case 3:
+                tmp3 = 2
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                else:
+                    break
+            case 4:
+                tmp3 = 3
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                else:
+                    break
+            case 5:
+                tmp3 = 4
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                else:
+                    break
+            case 6:
+                tmp3 = 5
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                else:
+                    break
+            case 7:
+                tmp3 = 6
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                else:
+                    break
+            case 8:
+                tmp3 = 7
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                else:
+                    break
+            case 9:
+                tmp3 = 8
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), char('7'), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                elif tmp2 == char('8'):
+                    pos += 1
+                    tmp1 = 10
+                elif tmp2 == char('6'):
+                    pos += 1
+                    tmp1 = 29
+                elif tmp2 == char('1'):
+                    pos += 1
+                    tmp1 = 30
+                elif tmp2 == char('3'):
+                    pos += 1
+                    tmp1 = 35
+                else:
+                    break
+            case 10:
+                tmp3 = 9
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                else:
+                    break
+            case 11:
+                tmp3 = 10
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                else:
+                    break
+            case 12:
+                tmp3 = 11
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                else:
+                    break
+            case 13:
+                tmp3 = 12
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                else:
+                    break
+            case 14:
+                tmp3 = 13
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                elif tmp2 == char('2'):
+                    pos += 1
+                    tmp1 = 27
+                else:
+                    break
+            case 15:
+                tmp3 = 14
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                elif tmp2 == char('2'):
+                    pos += 1
+                    tmp1 = 36
+                else:
+                    break
+            case 16:
+                tmp3 = 12
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                else:
+                    break
+            case 17:
+                tmp3 = 11
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                else:
+                    break
+            case 18:
+                tmp3 = 10
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                else:
+                    break
+            case 19:
+                tmp3 = 9
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                else:
+                    break
+            case 20:
+                tmp3 = 8
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), char('7'), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                elif tmp2 == char('8'):
+                    pos += 1
+                    tmp1 = 19
+                elif tmp2 == char('1'):
+                    pos += 1
+                    tmp1 = 46
+                elif tmp2 == char('3'):
+                    pos += 1
+                    tmp1 = 47
+                elif tmp2 == char('6'):
+                    pos += 1
+                    tmp1 = 48
+                else:
+                    break
+            case 21:
+                tmp3 = 7
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                else:
+                    break
+            case 22:
+                tmp3 = 6
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                else:
+                    break
+            case 23:
+                tmp3 = 5
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                else:
+                    break
+            case 24:
+                tmp3 = 4
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                else:
+                    break
+            case 25:
+                tmp3 = 3
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                else:
+                    break
+            case 26:
+                tmp3 = 2
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                else:
+                    break
+            case 27:
+                tmp3 = 1
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                else:
+                    break
+            case 28:
+                tmp3 = 14
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                elif tmp2 == char('2'):
+                    pos += 1
+                    tmp1 = 34
+                else:
+                    break
+            case 29:
+                tmp3 = 14
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                elif tmp2 == char('4'):
+                    pos += 1
+                    tmp1 = 13
+                else:
+                    break
+            case 30:
+                tmp3 = 14
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('5')), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                elif tmp2 == char('6'):
+                    pos += 1
+                    tmp1 = 11
+                else:
+                    break
+            case 31:
+                tmp3 = 14
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), char('7'), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                elif tmp2 == char('8'):
+                    pos += 1
+                    tmp1 = 5
+                elif tmp2 == char('6'):
+                    pos += 1
+                    tmp1 = 49
+                elif tmp2 == char('3'):
+                    pos += 1
+                    tmp1 = 50
+                elif tmp2 == char('1'):
+                    pos += 1
+                    tmp1 = 51
+                else:
+                    break
+            case 32:
+                if tmp2 in Tset[char](char('U'), char('u')):
+                    pos += 1
+                    tmp1 = 20
+                elif tmp2 in Tset[char](char('D'), char('d')):
+                    pos += 1
+                    tmp1 = 26
+                elif tmp2 in Tset[char](char('F'), char('f')):
+                    pos += 1
+                    tmp1 = 39
+                elif tmp2 in Tset[char](char('I'), char('i')):
+                    pos += 1
+                    tmp1 = 42
+                elif tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('C')), char('E'), char('G'), char('H'), inrange(char('J'), char('T')), inrange(char('V'), char('Z')), inrange(char('a'), char('c')), char('e'), char('g'), char('h'), inrange(char('j'), char('t')), inrange(char('v'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                else:
+                    break
+            case 33:
+                tmp3 = 14
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                else:
+                    break
+            case 34:
+                tmp3 = 1
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                else:
+                    break
+            case 35:
+                tmp3 = 14
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                elif tmp2 == char('2'):
+                    pos += 1
+                    tmp1 = 12
+                else:
+                    break
+            case 36:
+                tmp3 = 14
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('7')), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                elif tmp2 == char('8'):
+                    pos += 1
+                    tmp1 = 4
+                else:
+                    break
+            case 37:
+                tmp3 = 13
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                elif tmp2 == char('2'):
+                    pos += 1
+                    tmp1 = 44
+                else:
+                    break
+            case 38:
+                tmp3 = 13
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                elif tmp2 == char('2'):
+                    pos += 1
+                    tmp1 = 22
+                else:
+                    break
+            case 39:
+                tmp3 = 1
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                elif tmp2 == char('3'):
+                    pos += 1
+                    tmp1 = 14
+                elif tmp2 == char('1'):
+                    pos += 1
+                    tmp1 = 37
+                elif tmp2 == char('6'):
+                    pos += 1
+                    tmp1 = 40
+                else:
+                    break
+            case 40:
+                tmp3 = 13
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                elif tmp2 == char('4'):
+                    pos += 1
+                    tmp1 = 26
+                else:
+                    break
+            case 41:
+                tmp3 = 13
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('5')), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                elif tmp2 == char('6'):
+                    pos += 1
+                    tmp1 = 23
+                else:
+                    break
+            case 42:
+                tmp3 = 13
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](char('0'), char('2'), char('4'), char('5'), char('7'), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                elif tmp2 == char('8'):
+                    pos += 1
+                    tmp1 = 24
+                elif tmp2 == char('3'):
+                    pos += 1
+                    tmp1 = 38
+                elif tmp2 == char('1'):
+                    pos += 1
+                    tmp1 = 41
+                elif tmp2 == char('6'):
+                    pos += 1
+                    tmp1 = 45
+                else:
+                    break
+            case 43:
+                tmp3 = 13
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                else:
+                    break
+            case 44:
+                tmp3 = 13
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('7')), char('9'), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                elif tmp2 == char('8'):
+                    pos += 1
+                    tmp1 = 25
+                else:
+                    break
+            case 45:
+                tmp3 = 13
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                elif tmp2 == char('4'):
+                    pos += 1
+                    tmp1 = 21
+                else:
+                    break
+            case 46:
+                tmp3 = 13
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('5')), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                elif tmp2 == char('6'):
+                    pos += 1
+                    tmp1 = 18
+                else:
+                    break
+            case 47:
+                tmp3 = 13
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                elif tmp2 == char('2'):
+                    pos += 1
+                    tmp1 = 17
+                else:
+                    break
+            case 48:
+                tmp3 = 13
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 43
+                elif tmp2 == char('4'):
+                    pos += 1
+                    tmp1 = 16
+                else:
+                    break
+            case 49:
+                tmp3 = 14
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                elif tmp2 == char('4'):
+                    pos += 1
+                    tmp1 = 8
+                else:
+                    break
+            case 50:
+                tmp3 = 14
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](char('0'), char('1'), inrange(char('3'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                elif tmp2 == char('2'):
+                    pos += 1
+                    tmp1 = 7
+                else:
+                    break
+            case 51:
+                tmp3 = 14
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('5')), inrange(char('7'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                elif tmp2 == char('6'):
+                    pos += 1
+                    tmp1 = 6
+                else:
+                    break
+            case 52:
+                tmp3 = 14
+                tmp4 = copy(pos)
+                if tmp2 in Tset[char](inrange(char('0'), char('3')), inrange(char('5'), char('9')), inrange(char('A'), char('Z')), char('_'), inrange(char('a'), char('z')), inrange(char('\x80'), char('\xff'))):
+                    pos += 1
+                    tmp1 = 33
+                elif tmp2 == char('4'):
+                    pos += 1
+                    tmp1 = 3
+                else:
+                    break
+            case _:
+                break
+    pos = tmp4
+    match tmp3:
+        case 1:
+            kind = TokKind.tkFloat32Lit
+        case 2:
+            kind = TokKind.tkFloat64Lit
+        case 3:
+            kind = TokKind.tkFloat128Lit
+        case 4:
+            kind = TokKind.tkInt8Lit
+        case 5:
+            kind = TokKind.tkInt16Lit
+        case 6:
+            kind = TokKind.tkInt32Lit
+        case 7:
+            kind = TokKind.tkInt64Lit
+        case 8:
+            kind = TokKind.tkUIntLit
+        case 9:
+            kind = TokKind.tkUInt8Lit
+        case 10:
+            kind = TokKind.tkUInt16Lit
+        case 11:
+            kind = TokKind.tkUInt32Lit
+        case 12:
+            kind = TokKind.tkUInt64Lit
+        case 13:
+            kind = TokKind.tkCustomLit
+        case 14:
+            L._error(numEnd, string("invalid number suffix: \'") + L.buf.substr(numEnd, pos - 1) + string("\'"))
+        case _:
+            if ch(L, pos) == char('\''):
+                L._error(pos + 1, string("invalid number suffix"))
+    L.pos = pos
+    if kind == TokKind.tkCustomLit:
+        tok.suffixPos = int32(numEnd - start)
+        tok.s = L.buf.substr(start, pos - 1)
+    tok.kind = kind
+
+
+def _skipMultiLineComment(L: mut @ Lexer, tok: mut @ Token, start: nint, isDoc: bool):
+    with var:
+        pos = copy(start)
+        toStrip = nint(0)
+    if isDoc:
+        toStrip = pos - L.lineStart
+        while ch(L, pos) == char(' '):
+            pos += 1
+            toStrip += 1
+        while ch(L, pos) == char('\r') or ch(L, pos) == char('\n'):
+            pos = _handleCRLF(L, pos)
+            toStrip = 0
+            while ch(L, pos) == char(' '):
+                pos += 1
+                toStrip += 1
+    with var:
+        nesting = nint(0)
+    while True:
+        with let:
+            c = ch(L, pos)
+        if c == char('#'):
+            if isDoc:
+                if ch(L, pos + 1) == char('#') and ch(L, pos + 2) == char('['): nesting += 1
+                tok.s.add(char('#'))
+            elif ch(L, pos + 1) == char('['):
+                nesting += 1
+            pos += 1
+        elif c == char(']'):
+            if isDoc:
+                if ch(L, pos + 1) == char('#') and ch(L, pos + 2) == char('#'):
+                    if nesting == 0:
+                        pos += 3
+                        break
+                    nesting -= 1
+                tok.s.add(char(']'))
+            elif ch(L, pos + 1) == char('#'):
+                if nesting == 0:
+                    pos += 2
+                    break
+                nesting -= 1
+            pos += 1
+        elif c == char('\r') or c == char('\n'):
+            pos = _handleCRLF(L, pos)
+            if isDoc:
+                tok.s.add(char('\n'))
+                with var:
+                    n = copy(toStrip)
+                while ch(L, pos) == char(' ') and n > 0:
+                    pos += 1
+                    n -= 1
+        elif c == char('\x00'):
+            L._error(pos, string("end of multiline comment expected"))
+            break
+        else:
+            if isDoc: tok.s.add(c)
+            pos += 1
+    L.pos = pos
+
+
+def _scanComment(L: mut @ Lexer, tok: mut @ Token):
+    ## Only doc comments get here: `skip` eats the ordinary ones. Consecutive
+    ## `##` lines become **one** token, and the indentation of the line after
+    ## the block is remembered in `indentAhead` for the token that follows.
+    with var:
+        pos = copy(L.pos)
+    tok.kind = TokKind.tkComment
+    if ch(L, pos + 2) == char('['):
+        _skipMultiLineComment(L, tok, pos + 3, True)
+        return
+    pos += 2
+    with var:
+        toStrip = nint(0)
+        stripInit = False
+    while True:
+        if not stripInit:
+            while ch(L, pos) == char(' '):
+                pos += 1
+                toStrip += 1
+            if ch(L, pos) == char('\r') or ch(L, pos) == char('\n'): toStrip = 0
+            else: stripInit = True
+        while ch(L, pos) != char('\r') and ch(L, pos) != char('\n') and ch(L, pos) != char('\x00'):
+            tok.s.add(L.buf[pos])
+            pos += 1
+        if ch(L, pos) == char('\x00'): break
+        pos = _handleCRLF(L, pos)
+        with var:
+            indent = nint(0)
+        while ch(L, pos) == char(' '):
+            pos += 1
+            indent += 1
+        if ch(L, pos) == char('#') and ch(L, pos + 1) == char('#'):
+            tok.s.add(char('\n'))
+            pos += 2
+            if stripInit:
+                with var:
+                    n = copy(toStrip)
+                while ch(L, pos) == char(' ') and n > 0:
+                    pos += 1
+                    n -= 1
+        else:
+            if ch(L, pos) > char(' '): L.indentAhead = int32(indent)
+            break
+    L.pos = pos
+
+
+def _handleHexChar(L: mut @ Lexer, xi: mut @ nint, position: Trange[0, 4]):
+    with let:
+        c = ch(L, L.pos)
+    if c >= char('0') and c <= char('9'): xi <<= (xi << 4) | (ord(c) - ord(char('0')))
+    elif c >= char('a') and c <= char('f'): xi <<= (xi << 4) | (ord(c) - ord(char('a')) + 10)
+    elif c >= char('A') and c <= char('F'): xi <<= (xi << 4) | (ord(c) - ord(char('A')) + 10)
+    else:
+        if position <= 1: L._error(L.pos, string("expected a hex digit"))
+        return
+    L.pos += 1
+
+
+def _skip(L: mut @ Lexer, tok: mut @ Token):
+    ## Everything that is not a token. `tok.indent` comes out of here: it is the
+    ## column of the first token on a line and -1 for every other token, which
+    ## is the single input the generated parser's `IndClass` is computed from.
+    with var:
+        pos = copy(L.pos)
+    tok.spacing.excl(TokSpacing.tsLeading)
+    while True:
+        with let:
+            c = ch(L, pos)
+        if c == char(' '):
+            pos += 1
+            tok.spacing.incl(TokSpacing.tsLeading)
+        elif c == char('\t'):
+            L._error(pos, string("tabs are not allowed, use spaces instead"))
+            pos += 1
+        elif c == char('\r') or c == char('\n'):
+            pos = _handleCRLF(L, pos)
+            with var:
+                indent = nint(0)
+            while True:
+                if ch(L, pos) == char(' '):
+                    pos += 1
+                    indent += 1
+                elif ch(L, pos) == char('#') and ch(L, pos + 1) == char('['):
                     L.pos = pos
-                    L._skipMultiLineComment(tok, pos + 2, False)
+                    _skipMultiLineComment(L, tok, pos + 2, False)
                     pos = L.pos.copy()
                 else:
-                    while ch(L, pos) != char('\r') and ch(L, pos) != char('\n') and ch(L, pos) != char('\x00'):
-                        pos += 1
+                    break
+            tok.spacing.excl(TokSpacing.tsLeading)
+            if ch(L, pos) > char(' ') and (ch(L, pos) != char('#') or ch(L, pos + 1) == char('#')):
+                tok.indent = int32(indent)
+                L.currLineIndent = int32(indent)
+                break
+        elif c == char('#'):
+            if ch(L, pos + 1) == char('#'): break  # a doc comment is a token
+            if ch(L, pos + 1) == char('['):
+                L.pos = pos
+                _skipMultiLineComment(L, tok, pos + 2, False)
+                pos = L.pos.copy()
             else:
-                break  # end of file leaves the loop too
-        L.pos = pos
-
+                while ch(L, pos) != char('\r') and ch(L, pos) != char('\n') and ch(L, pos) != char('\x00'):
+                    pos += 1
+        else:
+            break  # end of file leaves the loop too
+    L.pos = pos
 
 with const:
     KeywordLow = TokKind.tkAddr
@@ -1103,7 +1111,6 @@ def _charAt(buf: string, i: nint) -> char:
     return buf[i] if i >= 0 and i < buf.len else char('\x00')
 
 
-@dispatch
 def ch(L: Lexer, i: nint) -> char:
     """{.inline.}"""
     return _charAt(L.buf, i)
@@ -1297,10 +1304,11 @@ def _numberValue(L: mut @ Lexer, tok: mut @ Token, start: nint):
             limit = u64(0xffffffffffffffff) if tok.kind == TokKind.tkUIntLit or tok.kind == TokKind.tkUInt64Lit else u64(0x8000000000000000) if negative else u64(0x7fffffffffffffff)
         if overflow or xi > limit:
         # Nim's third stage has rewound to the start of the digits
-            L._error(start, string("number out of range: '") + L._litNumText(start) + string("'"))
+            L._error(start, string("number out of range: '") + _litNumText(L, start) + string("'"))
             return
-        tok.iNumber = cast[int64](xi)
-        if negative: tok.iNumber = -tok.iNumber
+        # negated as `uint64`: `xi` may be `2^63`, whose signed negation
+        # overflows
+        tok.iNumber = cast[int64](u64(0) - xi) if negative else cast[int64](xi)
         with let:
             match tok.kind:
                 case TokKind.tkInt8Lit: tooWide = tok.iNumber > i64(127) or tok.iNumber < i64(-128)
@@ -1311,8 +1319,9 @@ def _numberValue(L: mut @ Lexer, tok: mut @ Token, start: nint):
                 case TokKind.tkUInt16Lit: tooWide = tok.iNumber > i64(65535) or tok.iNumber < i64(0)
                 case TokKind.tkUInt32Lit: tooWide = tok.iNumber > i64(4294967295) or tok.iNumber < i64(0)
                 case _: tooWide = False
-        if tooWide: L._error(start, string("number out of range: '") + L._litNumText(start) + string("'"))
-    if tok.base != 10 and negative: tok.iNumber = -tok.iNumber
+        if tooWide: L._error(start, string("number out of range: '") + _litNumText(L, start) + string("'"))
+    if tok.base != 10 and negative:
+        tok.iNumber = cast[int64](u64(0) - cast[uint64](tok.iNumber))
     # "Promote int literal to int64? Not always necessary, but more consistent"
     if tok.kind == TokKind.tkIntLit and (tok.iNumber > i64(2147483647) or tok.iNumber < i64(-2147483648)):
         tok.kind = TokKind.tkInt64Lit
@@ -1333,7 +1342,7 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
         with let:
             d = start + 1 if ch(L, start) == char('-') else start
         if ch(L, d) == char('0') and ch(L, d + 1) == char('O'):
-            L._error(d + 1, L._litNumText(d) + string(" is an invalid int literal; For octal literals use the '0o' prefix."))
+            L._error(d + 1, _litNumText(L, d) + string(" is an invalid int literal; For octal literals use the '0o' prefix."))
     # plugexpand: `lex L.buf, pos:` (line 446), expanded
     with var:
         tmp6 = 1
@@ -1562,8 +1571,8 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
     with let:
         digits = start + 1 if L.buf[start] == char('-') else start
     if base != 10 and pos - digits <= 2:
-        L._error(pos, string("invalid number: '") + L._litNumText(digits) + string("'"))
-    L._numberSuffix(tok, start, isFloat)
+        L._error(pos, string("invalid number: '") + _litNumText(L, digits) + string("'"))
+    _numberSuffix(L, tok, start, isFloat)
     tok._normalizeBasePrefix()
     _numberValue(L, tok, digits)
     if ch(L, L.pos) in SymChars + Tset[char](char('_')) and unicodeOprLen(L.buf, L.pos)[0] == 0:
@@ -5011,6 +5020,8 @@ def _scanSymbol(L: mut @ Lexer, tok: mut @ Token):
 def _addUnicodeCodePoint(s: mut @ string, i: nint):
     ## UTF-8 encode; the only place `nimlexer` produces multi-byte output of its
     ## own rather than copying input.
+    with let:
+        i = i & 0x1F_FFFF  # a code point's 21 bits; a bigger one was reported
     if i <= 127:
         s.add(chr(i))
     elif i <= 0x07FF:
@@ -5074,9 +5085,9 @@ def _getEscapedChar(L: mut @ Lexer, tok: mut @ Token):
             L.pos += 1
             with var:
                 xi = nint(0)
-            L._handleHexChar(xi, 1)
-            L._handleHexChar(xi, 2)
-            tok.s.add(chr(xi))
+            _handleHexChar(L, xi, 1)
+            _handleHexChar(L, xi, 2)
+            tok.s.add(chr(xi & 0xFF))  # two hex digits
         case _ if c == char('u') or c == char('U'):
             if tok.kind == TokKind.tkCharLit:
                 L._error(L.pos, string("\\u not allowed in character literal"))
@@ -5088,16 +5099,16 @@ def _getEscapedChar(L: mut @ Lexer, tok: mut @ Token):
                 with let:
                     start = copy(L.pos)
                 while ch(L, L.pos) != char('}') and ch(L, L.pos) != char('\x00'):
-                    L._handleHexChar(xi, 0)
+                    _handleHexChar(L, xi, 0)
                 if start == L.pos: L._error(L.pos, string("Unicode codepoint cannot be empty"))
                 if ch(L, L.pos) == char('}'): L.pos += 1
                 if xi > 0x10FFFF:
                     L._error(L.pos, string("Unicode codepoint must be lower than 0x10FFFF"))
             else:
-                L._handleHexChar(xi, 1)
-                L._handleHexChar(xi, 2)
-                L._handleHexChar(xi, 3)
-                L._handleHexChar(xi, 4)
+                _handleHexChar(L, xi, 1)
+                _handleHexChar(L, xi, 2)
+                _handleHexChar(L, xi, 3)
+                _handleHexChar(L, xi, 4)
             _addUnicodeCodePoint(tok.s, xi)
         case _ if c in inrange(char('0'), char('9')):
             with var:
@@ -5105,7 +5116,7 @@ def _getEscapedChar(L: mut @ Lexer, tok: mut @ Token):
             while ch(L, L.pos) >= char('0') and ch(L, L.pos) <= char('9'):
                 xi = xi * 10 + (ord(ch(L, L.pos)) - ord(char('0')))
                 L.pos += 1
-            if xi <= 255: tok.s.add(chr(xi))
+            if xi >= 0 and xi <= 255: tok.s.add(chr(xi))
             else: L._error(L.pos, string("invalid character constant"))
         case _:
             L._error(L.pos, string("invalid character constant"))
@@ -5134,7 +5145,7 @@ def _getString(L: mut @ Lexer, tok: mut @ Token, mode: _StringMode):
             while ch(L, newpos) == char(' ') or ch(L, newpos) == char('\t'): newpos += 1
             if ch(L, newpos) == char('\r') or ch(L, newpos) == char('\n'): pos = newpos
         if ch(L, pos) == char('\r') or ch(L, pos) == char('\n'):
-            pos = L._handleCRLF(pos)
+            pos = _handleCRLF(L, pos)
         while True:
             with let:
                 c = ch(L, pos)
@@ -5145,7 +5156,7 @@ def _getString(L: mut @ Lexer, tok: mut @ Token, mode: _StringMode):
                 tok.s.add(char('"'))
                 pos += 1
             elif c == char('\r') or c == char('\n'):
-                pos = L._handleCRLF(pos)
+                pos = _handleCRLF(L, pos)
                 tok.s.add(char('\n'))
             elif c == char('\x00'):
                 L._errorAt(line, 0, string("closing \"\"\" expected, but end of file reached"))
@@ -5269,7 +5280,7 @@ def next(L: mut @ Lexer, tok: mut @ Token):
         tok.indent = L.indentAhead
         L.currLineIndent = L.indentAhead
         L.indentAhead = -1
-    L._skip(tok)
+    _skip(L, tok)
     with let:
         c = ch(L, L.pos)
     tok.line = L.lineNumber
@@ -5281,7 +5292,7 @@ def next(L: mut @ Lexer, tok: mut @ Token):
         if unicodeOprLen(L.buf, L.pos)[0] != 0: _getOperator(L, tok)
         else: _scanSymbol(L, tok)
     elif c == char('#'):
-        L._scanComment(tok)
+        _scanComment(L, tok)
     elif c == char('*'):
     # `*:` is two tokens in `var v*: int`, and one operator in `a *: b`
         if ch(L, L.pos + 1) == char(':') and ch(L, L.pos + 2) not in OpChars:

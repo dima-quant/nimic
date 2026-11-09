@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/nifler2/nifler2.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/nifler2/nifler2.nim
 # program: the main block runs nifler2 (the original runs `main()` at its top level)
 # test-args: t src/nifler2/linkedtok.nim
 # ///
@@ -22,7 +22,7 @@
 from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std import syncio, assertions
-from nimic.std.os import absolutePath, addFileExt, changeFileExt, getCurrentDir, relativePath
+from nimic.std.os import absolutePath, addFileExt, changeFileExt, expandFilename, getCurrentDir, relativePath
 from nimic.std.parseopt import CmdLineKind, getopt
 from . import nimgrammar, niflerout, filters
 from .nimgrammar import globalTags, openParser, parseModule, Parser, pool, toString
@@ -37,8 +37,9 @@ Usage:
   nifler2 t|tree file.nim                        parse one file, print the tree
 
 Options:
-  --portablePaths   accepted; paths are always written relative to the
-                    current directory, as `nifler --portablePaths` does
+  --portablePaths   write the file's path relative to the current directory,
+                    as `nifler --portablePaths` does; without it the path is
+                    absolute
   --deps            also write <out>.deps.nif, the module's dependencies
   --force, -f       accepted; the output is always rewritten
 """)
@@ -73,6 +74,7 @@ def _main():
         action = string("")
         args: seq[string] = seq[string]([])
         deps = False
+        portablePaths = False
     for kind, key, val in getopt():
         match kind:
             case CmdLineKind.cmdArgument:
@@ -80,7 +82,8 @@ def _main():
                 else: args.add(key)
             case CmdLineKind.cmdLongOption | CmdLineKind.cmdShortOption:
                 match key:
-                    case "portablePaths" | "portablepaths" | "force" | "f": pass
+                    case "portablePaths" | "portablepaths": portablePaths = True
+                    case "force" | "f": pass
                     case "deps": deps = True
                     case "help" | "h": quit(_Usage)
                     case _: quit(string("nifler2: unsupported option: ") + key)
@@ -101,9 +104,19 @@ def _main():
             with let:
                 outp = addFileExt(args[1], string("nif")) if args.len >= 2 else changeFileExt(inp, string(".nif"))
             if action != "deps":
-            # nimony runs nifler with `--portablePaths`: the file is written relative
-            # to the current directory
-                writeNifler(p.first, p.pool, p.tags, p.arena.cellCount() * 8, outp, relativePath(absolutePath(inp), getCurrentDir(), char('/')))
+                # as nifler writes it: relative to the current directory with
+                # `--portablePaths`, else absolute (`expandFilename`, which is Nim's
+                # `canonicalizePath`), with `/` on every OS
+                with var:
+                    file = string("")
+                if portablePaths:
+                    file = relativePath(absolutePath(inp), getCurrentDir(), char('/'))
+                else:
+                    file = expandFilename(inp)
+                    if comptime(defined("windows")):
+                        for i in range(file.len):
+                            if file[i] == char('\\'): file[i] = char('/')
+                writeNifler(p.first, p.pool, p.tags, p.arena.cellCount() * 8, outp, file)
             if deps or action == "deps":
                 writeDeps(p.first, p.pool, p.tags, changeFileExt(outp, string(".deps.nif")))
         case "t" | "tree":

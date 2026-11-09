@@ -35,7 +35,7 @@ see *History*).
 
 | Source | Commit | Use |
 |---|---|---|
-| nimony (github.com/nim-lang/nimony) | `8e0321d8917bc55953b17a354f6fd478890d479f` (master, 2026-11-01; before: `3f56467ab15a`, 2026-10-20) | converted into `nnimony/`; pin in `nnimony/tools/queue.py` |
+| nimony (github.com/nim-lang/nimony) | `2c5b3dca14667398bef077edea2d036dd0ff949e` (master, 2026-11-09; before: `8e0321d8917b`, 2026-11-01, and `3f56467ab15a`, 2026-10-20) | converted into `nnimony/`; pin in `nnimony/tools/queue.py` |
 | Nim compiler (`compiler/`) | `f0c60b06e5cff8064bf0a9a32ec2d2bc14a694d9` (devel, 2026-05-09) | the frozen corpus `ncompiler/` |
 | checksums (github.com/nim-lang/checksums) | `0b8e46379c5bc1bf73d8b3011908389c60fb9b98` (2.0.1) | `ChecksumsStableCommit` of that compiler's `koch.nim` |
 
@@ -115,7 +115,11 @@ converted (`nnimony/tools/queue.py`). Then, in this order:
    tool: done 2026-11-01.* The first re-pin's target, `8e0321d8` (2026-11-01, 106 commits): 9 of 37 modules
    changed (nifreader +225 -37, nifcore +94 -94, bif, intrinsics, compat2, bitabs, lineinfos, models/leng_tags,
    models/tags), no file added. *The first re-pin: done 2026-11-01* (`8e0321d8`; all 37 headers moved; it
-   needed two core fixes, `ncompiler/review_core_2026_11_01.md`).
+   needed two core fixes, `ncompiler/review_core_2026_11_01.md`). *The second re-pin: 2026-11-09* (`2c5b3dca`, 62
+   commits): 11 of 47 modules changed (models/tags +235 -223, regenerated from `tags.nim`; nimlexer, nifler2,
+   niflerout, nifindexes, nifreader, intrinsics, filelinecache, models/nifindex_tags, nifcore, vfs), no file added; headers
+   moved, all 47 with nifcore (`hook.destroy`, N88) and vfs (a Windows `openMmapImpl` on new std/winlean and
+   std/widestrs shims, N89; `nnimony/nimony_check_issues.md`).
 3. **Before Phase B:**
    - revisit [a nimic backend for nimony](#idea-for-later-a-nimic-backend-for-nimony), now that the rules
      change less per batch;

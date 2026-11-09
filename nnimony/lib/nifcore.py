@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/lib/nifcore.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/lib/nifcore.nim
 # ///
 ## nifcore — in-memory NIF representation, builder, and cursor.
 ##
@@ -2354,6 +2354,12 @@ if comptime(defined("nimAllowNonVarDestructor") and defined("gcDestructors")):
             _decRcAndFree(dest._owner)
         elif not isNil(dest._data):
             dealloc(dest._data)
+        # A custom `=destroy` replaces the field-wise one, so the owned fields
+        # must be released here. The cursor owner holds references of its own on
+        # both pools (`ensureOwner`), so cursors still outlive the buffer.
+        hook.destroy(dest._openTags)
+        hook.destroy(dest.pool)
+        hook.destroy(dest.tags)
 else:
     @hook("destroy")
     def _destroyTokenBuf(dest: mut @ TokenBuf):
@@ -2362,6 +2368,12 @@ else:
             _decRcAndFree(dest._owner)
         elif not isNil(dest._data):
             dealloc(dest._data)
+        # A custom `=destroy` replaces the field-wise one, so the owned fields
+        # must be released here. The cursor owner holds references of its own on
+        # both pools (`ensureOwner`), so cursors still outlive the buffer.
+        hook.destroy(dest._openTags)
+        hook.destroy(dest.pool)
+        hook.destroy(dest.tags)
 
 
 def createTokenBuf(cap: nint = 16, sharedPool: Pool = None,

@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/lib/filelinecache.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/lib/filelinecache.nim
 # ///
 #       Nif library
 # (c) Copyright 2024 Andreas Rumpf
@@ -47,7 +47,10 @@ def loadFile(filename: string):
         nl = find(entry._content, char('\n'))
     while nl > 0:
         entry._lineStarts.add(nl)
-        nl = find(entry._content, char('\n'), nl + 1)
+        with let:
+            next = nl + 1
+        pragma('assume: 0 <= next')  # `find` returns an index of `entry.content`: no wrap
+        nl = find(entry._content, char('\n'), next)
     _gFileLineCache._files[filename] = ensureMove(entry)
 
 

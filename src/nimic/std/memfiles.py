@@ -41,11 +41,17 @@ def _raise_os_error() -> None:
 
 
 class MemFile(Object):
-    """Represents a memory mapped file."""
+    """Represents a memory mapped file. Its fields are Nim's of the OS: Windows' handles (fHandle, mapHandle,
+    wasOpened: what a Windows-specific open such as vfs's builds), else the POSIX descriptor."""
     mem: pointer  # a pointer to the memory mapped file; nil when it is closed
     size: nint  # size of the memory mapped file
-    handle: cint  # (POSIX) the file's descriptor while remapping is allowed, else -1
-    _flags: cint
+    if _sys.platform == "win32":
+        fHandle: nint  # the file (winlean.Handle)
+        mapHandle: nint  # the mapping (winlean.Handle)
+        wasOpened: bool  # the file was opened by open, not given
+    else:
+        handle: cint  # (POSIX) the file's descriptor while remapping is allowed, else -1
+        _flags: cint
 
 
 def _setFileSize(fh: int, newFileSize: int = -1, oldSize: int = -1) -> None:

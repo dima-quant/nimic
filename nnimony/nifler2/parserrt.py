@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/nifler2/parserrt.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/nifler2/parserrt.nim
 # ///
 from __future__ import annotations
 from nimic.ntypes import *
@@ -41,7 +41,7 @@ pragma("feature: \"lenientnils\"")
 
 from nimic.std.parseutils import parseBiggestFloat
 from nimic.std import syncio
-from ..lib.nifpools import add, inc, NoLineInfo, tagId
+from ..lib.nifpools import NoLineInfo, tagId
 from .linkedtok import (
     Arena, charToken, charVal, dotToken, FileId, flatten, floatVal, getOrIncl, identToken, initArena, intVal,
     isEmpty, kind, NifKind, NifLineInfo, NifToken, Node, Pool, strId, strLitToken, tag, TagId, tagLitToken, TagPool,
@@ -834,9 +834,9 @@ def _nameNodeInfo(name: Node, exp: Node, pragmas: Node) -> NifLineInfo:
     ## The position of parser.nim's name node, which is what a declaration is
     ## positioned at: `nkPragmaExpr` (created at the `{.`) if there is a pragma,
     ## else `nkPostfix` (created at the export operator), else the name.
-    if not isEmpty(pragmas): return pragmas.info
-    elif not isEmpty(exp): return exp.info
-    else: return name.info
+    if not isEmpty(pragmas): return copy(pragmas.info)
+    elif not isEmpty(exp): return copy(exp.info)
+    else: return copy(name.info)
 
 
 def wrapLikeFirst(p: mut @ Parser, m: Mark, tag: NiflerKind):

@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/nifler2/niflerout.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/nifler2/niflerout.nim
 # ///
 #
 #
@@ -27,7 +27,7 @@
 ##   absolute position, so storing the position nifler's output decodes to and
 ##   encoding it against the NIF parent gives the same bytes.
 ## * The root carries the file, relative to the current directory
-##   (`--portablePaths`, which is how nimony runs nifler).
+##   (`--portablePaths`), else absolute.
 ## * `addEmpty(n)` writes `n` dots without separators, and bridge.nim calls it
 ##   with `n > 1` in exactly three places: the first four and the last two
 ##   slots of a `proctype`/`itertype`, the four empty slots of a `for` loop's
@@ -40,7 +40,7 @@ from nimic.std import syncio, assertions
 from ..lib import nifbuilder
 from ..lib.nifbuilder import addEmpty, addHeader, addRaw, addTree, attachLineInfo, Builder, endTree, extract
 from ..lib import nifpools
-from ..lib.nifpools import inc, NoLineInfo, writeFile
+from ..lib.nifpools import NoLineInfo, writeFile
 from .parserrt import (
     charVal, childCount, FileId, floatVal, intVal, isValid, kind, NifKind, NiflerKind, NifLineInfo, Node,
     Pool, strId, tag, TagPool, uintVal)
@@ -78,7 +78,7 @@ class _Writer(Object):
 
     def _tagName(w: _Writer, n: Node) -> string:
         """{.inline.}"""
-        return w._tags.tags[tag(n)]
+        return copy(w._tags.tags[tag(n)])
 
 
 def _tagKind(n: Node) -> NiflerKind:
@@ -100,8 +100,8 @@ class _EmptyRuns(Object):
         ## How many dots the call starting at child `i` wrote; 0 when `i` was
         ## swallowed by an earlier run. The runs are tested before the ranges they
         ## span, because a later run may start inside an earlier one.
-        if i == r._s1: return r._n1
-        elif i == r._s2: return r._n2
+        if i == r._s1: return copy(r._n1)
+        elif i == r._s2: return copy(r._n2)
         elif i > r._s1 and i < r._s1 + r._n1: return 0
         elif i > r._s2 and i < r._s2 + r._n2: return 0
         else: return 1
@@ -235,7 +235,7 @@ def _emit(w: mut @ _Writer, n: Node, reference: NifLineInfo, parentTag: NiflerKi
 def writeNifler(first: Node, pool: Pool, tags: TagPool, sizeHint: nint, outfile: string, file: string):
     """{.raises.}"""
     ## `file` is the module's path as nifler writes it: relative to the current
-    ## directory.
+    ## directory (`--portablePaths`) or absolute.
     with var:
         w = _Writer(_b=nifbuilder.open(sizeHint), _file=file, _pool=pool, _tags=tags)
     addHeader(w._b, string("Nifler"), string("nim-parsed"))

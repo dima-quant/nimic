@@ -86,6 +86,8 @@ Function definitions:
   rule:pragma -> docstring with {.x.} is written as pragma {.x.}, if pragma contains "noSideEffect" func is defined
   rule:hook -> a def decorated @hook("copy") is the lifetime hook proc `=copy` (also sink, destroy, wasMoved,
     dup, trace); exported unless its name starts with _; a call by its Python name is `=copy`(...)
+  rule:hookcall -> hook.destroy(x) is a direct call of x's `=destroy`: `=destroy`(x) (a custom `=destroy`
+    releasing its fields; Python: x's hook now, else its fields' / elements', a ref left to CPython)
   rule:calltype -> def decorated with "calltype" emit as type alias: Name* = proc(...): T {.pragma.}
   rule:calltypeinline -> @calltype(inline=True) def _P(...) declares no type; each use of _P is the
     anonymous proc type proc (...): T {.pragma.} (a private name only: importers couldn't name it)
@@ -183,7 +185,8 @@ Operators & renaming:
     `let x = case s of a: v ...`; the branches' assignments are written as their values
   rule:tryassign -> a try (no else / finally) directly inside `with let:`/`with var:`/`with const:` whose body and
     handlers all end by assigning the same name (a handler may end with a raise / a call of a {.noreturn.} proc:
-    `quit`, `raiseAssert`, the module's own) is that name's try expression:
+    `quit`, `raiseAssert`, the module's own, or an `if` / `when` whose every branch ends so) is that name's try
+    expression:
     `let x = try: a except: b`; the assignments are written as their values
   rule:tryreturn -> a proc body that ends with such a try whose branches end with `return <value>` is a Nim try
     expression as the proc's result (the values without `return`)
@@ -3419,6 +3422,9 @@ class _Unparser(NodeVisitor):
             self.interleave(lambda: self.write(s), increasing_level_traverse, node.values)
 
     def visit_Attribute(self, node):
+        if isinstance(node.value, Name) and node.value.id == "hook" and node.attr == "destroy":
+            self.write(f"`={node.attr}`")  # rule:hookcall -> hook.destroy(x) is `=destroy`(x)
+            return
         self.set_precedence(_Precedence.ATOM, node.value)
         self.traverse(node.value)
         # Special case: 3.__abs__() is a syntax error, so if node.value
@@ -3793,9 +3799,16 @@ class _Unparser(NodeVisitor):
                     return None
                 name = last.targets[0].id
                 assigns.add(id(last))
-            elif i == 0 or not (isinstance(last, Raise) or self._is_noreturn_call(last)):
+            elif i == 0 or not self._ends_noreturn(last):
                 return None
         return name, assigns
+
+    def _ends_noreturn(self, stmt) -> bool:
+        """rule:tryassign -> a statement after which control doesn't go on: a raise, a call of a {.noreturn.}
+        proc, or an `if` / `when` whose every branch (an else included) ends so."""
+        if isinstance(stmt, If):
+            return bool(stmt.orelse) and self._ends_noreturn(stmt.body[-1]) and self._ends_noreturn(stmt.orelse[-1])
+        return isinstance(stmt, Raise) or self._is_noreturn_call(stmt)
 
     @staticmethod
     def _case_assign_target(node):

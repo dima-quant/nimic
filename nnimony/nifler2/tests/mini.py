@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/nifler2/tests/mini.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/nifler2/tests/mini.nim
 # ///
 ## A miniature indentation-based language, used to exercise the generator end
 ## to end before the full Nim grammar is wired up. It is deliberately the
@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 from nimic.ntypes import *
-from .minirt import IndClass, Mark, NiflerKind, Parser, TokKind
+from .minirt import IndClass, insertOpLeafAt, Mark, NiflerKind, Parser, TokKind, wrap, wrapAt
 from . import minirt
 export(minirt)
 
@@ -45,7 +45,7 @@ def pModule(p: mut @ Parser):
         if p.tok().kind in Tset[TokKind](TokKind.tkIf, TokKind.tkIntLit, TokKind.tkParLe, TokKind.tkSemiColon, TokKind.tkSymbol, TokKind.tkWhile) and p.indClass() == IndClass.icGt:
             p.indentError()
         m1.discardUnused()
-    p.wrap(m0, NiflerKind.StmtsL)
+    wrap(p, m0, NiflerKind.StmtsL)
     m0.discardUnused()
 
 
@@ -66,13 +66,13 @@ def pStmt(p: mut @ Parser):
         pExpr(p, -1)
         p.expect(TokKind.tkColon)
         pBody(p)
-        p.wrap(m0, NiflerKind.IfL)
+        wrap(p, m0, NiflerKind.IfL)
     elif p.tok().kind in Tset[TokKind](TokKind.tkWhile):
         p.expect(TokKind.tkWhile)
         pExpr(p, -1)
         p.expect(TokKind.tkColon)
         pBody(p)
-        p.wrap(m0, NiflerKind.WhileL)
+        wrap(p, m0, NiflerKind.WhileL)
     else:
         pExprStmt(p)
     m0.discardUnused()
@@ -115,7 +115,7 @@ def pExprStmt(p: mut @ Parser):
         if p.tok().kind in Tset[TokKind](TokKind.tkEquals):
             p.expect(TokKind.tkEquals)
             pExpr(p, -1)
-            p.wrap(m0, NiflerKind.AsgnL)
+            wrap(p, m0, NiflerKind.AsgnL)
         elif p.tok().kind in Tset[TokKind](TokKind.tkIntLit, TokKind.tkParLe, TokKind.tkSymbol):
             with let:
                 m1 = p.mark()
@@ -126,7 +126,7 @@ def pExprStmt(p: mut @ Parser):
                     m2 = p.mark()
                 pExpr(p, -1)
                 m2.discardUnused()
-            p.wrap(m0, NiflerKind.CmdL)
+            wrap(p, m0, NiflerKind.CmdL)
         else:
             pass
     else:
@@ -147,11 +147,11 @@ def pExpr(p: mut @ Parser, limit: nint):
             assoc = 0
         with let:
             opInfo = p.info()
-        p.insertOpLeafAt(m0)
+        insertOpLeafAt(p, m0)
         p.getTok()
         p.afterOperator()
         pExpr(p, prec + assoc)
-        p.wrapAt(m0, NiflerKind.InfixL, opInfo)
+        wrapAt(p, m0, NiflerKind.InfixL, opInfo)
         prec = p.getPrecedence()
     m0.discardUnused()
 
@@ -185,14 +185,14 @@ def pSuffix(p: mut @ Parser, anchor: Mark):
                     pExpr(p, -1)
                 m2.discardUnused()
             p.expect(TokKind.tkParRi)
-            p.wrapAt(anchor, NiflerKind.CallL, at1)
+            wrapAt(p, anchor, NiflerKind.CallL, at1)
         elif p.tok().kind in Tset[TokKind](TokKind.tkBracketLe):
             with var:
                 at3 = p.info()
             p.expect(TokKind.tkBracketLe)
             pExpr(p, -1)
             p.expect(TokKind.tkBracketRi)
-            p.wrapAt(anchor, NiflerKind.AtL, at3)
+            wrapAt(p, anchor, NiflerKind.AtL, at3)
         else:
             p.ruleError(string("suffix"), False)
     elif p.tok().kind in Tset[TokKind](TokKind.tkDot):
@@ -200,7 +200,7 @@ def pSuffix(p: mut @ Parser, anchor: Mark):
             at4 = p.info()
         p.expect(TokKind.tkDot)
         p.emitLeaf()
-        p.wrapAt(anchor, NiflerKind.DotL, at4)
+        wrapAt(p, anchor, NiflerKind.DotL, at4)
     else:
         p.ruleError(string("suffix"), False)
     m0.discardUnused()

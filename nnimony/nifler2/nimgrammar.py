@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/nifler2/nimgrammar.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/nifler2/nimgrammar.nim
 # ///
 #       Nifler2
 # (c) Copyright 2026 Andreas Rumpf
@@ -31,9 +31,9 @@ from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std import strutils
 from .parserrt import (
-    accentEnd, add, addSubtree, afterOperator, attachBlocks, blockNameEnd, callOrObjConstr, checkInd, childCursor,
+    accentEnd, addSubtree, afterOperator, attachBlocks, blockNameEnd, callOrObjConstr, checkInd, childCursor,
     curlyOrTable, doLayout, dotLayout, emitLeaf, emptyDiscriminator, endRead, enumListEnd, expect, expectLeaf,
-    exprExpected, fanOut, fanOutKv, identExpected, inc, IndClass, indentError, inheritLayout, inSemiStmtList,
+    exprExpected, fanOut, fanOutKv, identExpected, IndClass, indentError, inheritLayout, inSemiStmtList,
     insertTokAt, listEnd, Mark, NiflerKind, noIndHere, openParser, Parser, Pool, pragmaBlock, PrimaryMode,
     procLayout, pushInd, requireFields, routineLayout, ruleError, skip, stmtListEnd, stmtListExprLayout,
     strictListEnd, strictListStart, TagPool, TokenBuf, TokKind, tupleEnd, wrap, wrapAt, wrapLikeFirst,

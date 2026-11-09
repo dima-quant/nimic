@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/lib/vfs.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/lib/vfs.nim
 # ///
 #       Nif library
 # (c) Copyright 2026 Andreas Rumpf
@@ -245,8 +245,50 @@ else:
             raise
     def _fileMaybeExists(p: string) -> bool:
         return fileExists(p)
-    def _openMmapImpl(p: string) -> MemFile:
-        return memfiles.open(p)
+    if comptime(defined("windows")):
+        from nimic.std.winlean import (
+            closeHandle, createFileMappingW, createFileW, DWORD, FILE_ATTRIBUTE_READONLY, FILE_FLAG_RANDOM_ACCESS,
+            FILE_MAP_READ, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GENERIC_READ, getFileSize,
+            INVALID_HANDLE_VALUE, mapViewOfFileEx, OPEN_EXISTING, PAGE_READONLY)
+        from nimic.std.widestrs import newWideCString
+        from nimic.std.os import osLastError, raiseOSError
+        def _openMmapImpl(p: string) -> MemFile:
+            # `memfiles.open` shares a read-only file for reading only, so it fails
+            # with a sharing violation while another process moves a file into its
+            # place (how every artifact is published, see `vfsMoveInto`). Same
+            # mapping, with the sharing a reader of a replaceable file needs.
+            with let:
+                h = createFileW(newWideCString(p), GENERIC_READ,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                None, OPEN_EXISTING,
+                                FILE_ATTRIBUTE_READONLY | FILE_FLAG_RANDOM_ACCESS, 0)
+            if h == INVALID_HANDLE_VALUE: raiseOSError(osLastError(), p)
+            with var:
+                hi: DWORD = 0
+            with let:
+                lo = getFileSize(h, addr(hi))
+            with let:
+                m = createFileMappingW(h, None, PAGE_READONLY, 0, 0, None)
+            if m == 0:
+                with let:
+                    e = osLastError()
+                _ = closeHandle(h)
+                raiseOSError(e, p)
+            with let:
+                mem = mapViewOfFileEx(m, FILE_MAP_READ, 0, 0, 0, None)
+            if mem is None:
+                with let:
+                    e = osLastError()
+                _ = closeHandle(m)
+                _ = closeHandle(h)
+                raiseOSError(e, p)
+            _ = closeHandle(h)  # the mapping keeps the file open
+            result = MemFile(mem=mem, size=nint((int64(hi) << 32) | int64(uint32(lo))),
+                             fHandle=INVALID_HANDLE_VALUE, mapHandle=m, wasOpened=True)
+            return result
+    else:
+        def _openMmapImpl(p: string) -> MemFile:
+            return memfiles.open(p)
 
 
 def vfsMoveInto(src: string, dst: string) -> bool:

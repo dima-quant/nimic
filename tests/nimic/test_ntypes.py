@@ -3581,6 +3581,65 @@ class TestNTypes(unittest.TestCase):
             self.assertEqual(str(fmt(tm.fromUnix(0), string("yyyy"))), "1970")
         self.assertAlmostEqual(tm.epochTime(), __import__("time").time(), delta=5)
 
+    def test_get_current_exception_msg(self):
+        """getCurrentExceptionMsg: the message of the exception being handled (newException's msg, a raised
+        nimic or Python exception's), also in a routine the handler calls; "" outside a handler. An OS error
+        gives the OS's reason. The result is a nimic string."""
+        self.assertEqual(getCurrentExceptionMsg(), string(""))
+        try:
+            raise newException(ValueError, string("bad value"))
+        except:
+            msg = getCurrentExceptionMsg()
+        self.assertIsInstance(msg, string)
+        self.assertEqual(msg, string("bad value"))
+
+        def reason() -> string:
+            return getCurrentExceptionMsg()
+        try:
+            raise newException(CatchableError, string("from a callee"))
+        except CatchableError:
+            self.assertEqual(reason(), string("from a callee"))
+        try:
+            open("/no/such/dir/file.nif")
+        except:
+            msg = getCurrentExceptionMsg()
+        self.assertIn("No such file or directory", str(msg))
+        try:
+            raise KeyError("k")
+        except:
+            self.assertEqual(getCurrentExceptionMsg(), string("k"))
+        try:
+            raise ValueError()
+        except:
+            self.assertEqual(getCurrentExceptionMsg(), string(""))
+        self.assertEqual(getCurrentExceptionMsg(), string(""))
+
+    def test_std_os_errors_and_windows_shims(self):
+        """std/os' osLastError / osErrorMsg / raiseOSError (Nim's message: the code's text, `Additional info:`);
+        std/widestrs' newWideCString; std/winlean's names import on every OS (a `when defined(windows)` branch
+        transpiles anywhere), its procs raise OSError off Windows."""
+        from nimic.std.os import OSErrorCode, osErrorMsg, osLastError, raiseOSError
+        from nimic.std import widestrs, winlean
+        self.assertIsInstance(osLastError(), OSErrorCode)
+        self.assertEqual(osErrorMsg(OSErrorCode(0)), string(""))
+        with self.assertRaises(OSError) as cm:
+            raiseOSError(OSErrorCode(2), string("x.nif"))
+        self.assertEqual(cm.exception.errno, 2)
+        self.assertEqual(cm.exception.errorCode, 2)
+        try:
+            raiseOSError(OSErrorCode(2), string("x.nif"))
+        except:
+            self.assertEqual(getCurrentExceptionMsg(), osErrorMsg(OSErrorCode(2)) + string("\nAdditional info: x.nif"))
+        w = widestrs.newWideCString(utf8("a\u00e9\U0001f600"))
+        self.assertEqual(w.len(), 4)  # UTF-16 code units: the emoji is a surrogate pair
+        self.assertEqual(str(w), "a\u00e9\U0001f600")
+        self.assertEqual(int(winlean.GENERIC_READ), -0x80000000)
+        self.assertEqual(int(winlean.FILE_SHARE_READ | winlean.FILE_SHARE_WRITE | winlean.FILE_SHARE_DELETE), 7)
+        self.assertEqual(int(winlean.INVALID_HANDLE_VALUE), -1)
+        if sys.platform != "win32":
+            with self.assertRaises(OSError):
+                winlean.closeHandle(winlean.INVALID_HANDLE_VALUE)
+
     def test_system_stacktrace_and_memory(self):
         """stackTraceAvailable follows the build (stacktrace:off under -d:danger/release);
         getMaxMem/getTotalMem/getOccupiedMem give the process memory (Nim: its allocator's)."""
@@ -4895,7 +4954,8 @@ class TestNTypes(unittest.TestCase):
             addr alloc alloc0 array ashr astToStr auto block byte cast char chr cint close cmp compileOption const
             containsOrIncl converter copy copyMem countdown create createU cstring cuint dealloc declared default
             defined delete discard distinct do doAssert echo ensureMove enum equalMem excl export fields float32
-            float64 fmAppend fmRead fmReadWrite fmReadWriteExisting fmWrite getMaxMem getOccupiedMem getTotalMem high
+            float64 fmAppend fmRead fmReadWrite fmReadWriteExisting fmWrite getCurrentExceptionMsg getMaxMem getOccupiedMem
+            getTotalMem high
             hostCPU hostOS incl include instantiationInfo int16 int32 int64 int8 isNil items lent let likely low
             mitems move moveMem newException newSeq newSeqOfCap newString newStringOfCap nil open openArray ord out
             pairs pointer pred ptr push quit raiseAssert readBuffer readFile readLine realloc realloc0 ref reset
@@ -6702,6 +6762,66 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(o.rc, 1)
         del h
         self.assertEqual(o.rc, 0)
+
+    def test_hook_destroy_call(self):
+        """hook.destroy(x), Nim's direct `=destroy`(x) (a custom `=destroy` releasing its fields): an owning value
+        with a hook runs it now and not again when CPython frees it; a value without one is destroyed field by
+        field / element by element, as Nim's built-in `=destroy`; a ref, nil or a scalar is left to CPython (the
+        reference is dropped with its holder: a shared object lives on)."""
+        @ref
+        class _TDOwner(Object):
+            rc: nint
+
+        class _TDHandle(Object):
+            owner: _TDOwner
+
+        @hook("destroy")
+        def _tdDestroy(x: mut @ _TDHandle):
+            if x.owner is not None:
+                x.owner.rc -= 1
+
+        class _TDPair(Object):  # no hook of its own: field-wise
+            a: _TDHandle
+            b: _TDHandle
+            items: seq[_TDHandle]
+            shared: _TDOwner
+            n: nint
+
+        o = _TDOwner()
+        h = _TDHandle(owner=o)
+        o.rc += 1
+        hook.destroy(h)
+        self.assertEqual(o.rc, 0)
+        del h
+        gc.collect()
+        self.assertEqual(o.rc, 0)  # not run again
+        p = _TDPair(a=_TDHandle(owner=o), b=_TDHandle(owner=o), shared=o)
+        p.items.add(_TDHandle(owner=o))
+        gc.collect()
+        o.rc = nint(3)  # the three handles p holds
+        hook.destroy(p.items)
+        self.assertEqual(o.rc, 2)
+        hook.destroy(p)
+        self.assertEqual(o.rc, 0)
+        self.assertEqual(p.shared, o)  # a ref field: the object lives on
+        del p
+        gc.collect()
+        self.assertEqual(o.rc, 0)
+        hook.destroy(o)  # a ref: nothing
+        hook.destroy(None)
+        hook.destroy(nint(3))
+        hook.destroy(string("s"))
+        self.assertEqual(o.rc, 0)
+
+    def test_transpile_hook_destroy_call(self):
+        """rule:hookcall: hook.destroy(x) is Nim's `=destroy`(x)."""
+        out = unparse(ast.parse(textwrap.dedent('''
+            @hook("destroy")
+            def _destroyBuf(dest: Buf):
+                hook.destroy(dest.openTags)
+                hook.destroy(dest.pool)
+        ''')))[0]
+        self.assertIn("  `=destroy`(dest.openTags)\n  `=destroy`(dest.pool)", out)
 
     def test_array_assign_python_held_elements(self):
         """`a <<= b` of arrays without C storage (here of seqs) copies the elements; it called
@@ -8665,6 +8785,31 @@ def addWord(b: mut@Builder, w: string) -> None:
         ''')), _n_registry)[0]  # a handler may end with a call of a {.noreturn.} proc: system's quit (the registry)
         self.assertIn("  let\n    f = try:\n        vfsOpenMmap(filename)\n      except:\n"
                       "        when defined(debug):\n          writeStackTrace()\n        quit(", out)
+        out = unparse(ast.parse(textwrap.dedent('''
+            def o(filename: string) -> VfsBlob:
+                with let:
+                    try:
+                        f = vfsOpenMmap(filename)
+                    except:
+                        if comptime(defined("nimony")):
+                            quit(string("[Error] cannot open: ") + filename)
+                        else:
+                            quit(string("[Error] cannot open: ") + filename + getCurrentExceptionMsg())
+                return f
+        ''')), _n_registry)[0]  # or with a `when` / `if` whose every branch ends so (nifreader's `open`)
+        self.assertIn("  let\n    f = try:\n        vfsOpenMmap(filename)\n      except:\n"
+                      "        when defined(nimony):\n          quit(", out)
+        out = nim('''
+            def q(s: string) -> nint:
+                with let:
+                    try:
+                        n = parseInt(s)
+                    except ValueError:
+                        if s.len > 3:
+                            raise
+                return n
+        ''')  # an `if` without else may fall through: no try expression
+        self.assertNotIn("n = try:", out)
         out = nim('''
             def fail():
                 \"\"\"{.noinline, noreturn.}\"\"\"

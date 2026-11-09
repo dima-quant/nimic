@@ -20,7 +20,7 @@ from ncompiler.tools.dependencies import _statements, _strip_comments, tiers
 
 ROOT = Path(__file__).resolve().parents[2]
 NIMONY = Path(os.environ.get("NIMONY_DIR", ROOT.parent / "nimony"))
-NIMONY_PIN = "8e0321d8917bc55953b17a354f6fd478890d479f"  # nimony master, 2026-11-01
+NIMONY_PIN = "2c5b3dca14667398bef077edea2d036dd0ff949e"  # nimony master, 2026-11-09
 NNIMONY = ROOT / "nnimony"
 QUEUE = NNIMONY / "conversion_queue.md"
 STD_SHIMS = ROOT / "src" / "nimic" / "std"

@@ -1,5 +1,5 @@
 # /// nimic
-# source: nimony@8e0321d8917bc55953b17a354f6fd478890d479f:src/lib/nifindexes.nim
+# source: nimony@2c5b3dca14667398bef077edea2d036dd0ff949e:src/lib/nifindexes.nim
 # test-args: {tmp}/nifindexes_main.s.nif
 # ///
 #       Nif library
@@ -33,7 +33,7 @@ from .nifreader import (
 from . import nifreader
 from .nifpools import (
     addDotToken, addIdent, addParLe, addParRi, addStrLit, addSymUse, createTokenBuf, Cursor,
-    cursorTagId, info, into, isDotToken, isIdent, isStringLit, isSymbol, isTagLit, isValid, loopInto,
+    cursorTagId, globalTags, info, into, isDotToken, isIdent, isStringLit, isSymbol, isTagLit, isValid, loopInto,
     NifKind, NifLineInfo, NoLineInfo, NoNifLineInfo, parseFromBuffer, pool, skip, StrId, strId, SymId, symId,
     TagId, TokenBuf, toString, writeFile)  # writeFile: its set overloads syncio's
 from .nifchecksums import updateLoop
@@ -43,13 +43,13 @@ from . import stringviews  # its `add` is called as a method
 importFrom(".lineinfos", "PackedLineInfo")  # only for NifIndexEntry.info (frozen Nim side)
 
 if comptime(defined("nimony")):
-    from nimic.std.sha1 import finalize, newSha1State, SecureHash, Sha1State
+    from nimic.std.sha1 import finalize, newSha1State, SecureHash, Sha1State, update
 else:
     # See `nifchecksums.nim`: `std/sha1` is the portable choice that ships in
     # `lib/std` on every Nim 2.x (the `$nim/dist/checksums/...` path only exists in
     # a git/devel layout). Same SHA-1 fork → identical digests.
     with push("warning[Deprecated]: off"):
-        from nimic.std.sha1 import finalize, newSha1State, SecureHash, Sha1State
+        from nimic.std.sha1 import finalize, newSha1State, SecureHash, Sha1State, update
 from ..models.tags import TagEnum
 from ..models.nifindex_tags import NifIndexKind, rawTagIsNifIndexKind
 
@@ -134,7 +134,7 @@ def _processDeclForChecksum(dest: mut @ Sha1State, n: mut @ Cursor):
                     while n.hasMore(): skip(n)
             case NifIndexKind.NoIndexTag | NifIndexKind.InlineIdx | NifIndexKind.KvIdx | NifIndexKind.VvIdx | \
                     NifIndexKind.BuildIdx | NifIndexKind.BundleIdx | NifIndexKind.IndexIdx | \
-                    NifIndexKind.DependencyIdx | NifIndexKind.LinkIdx | \
+                    NifIndexKind.DependencyIdx | NifIndexKind.LinkIdx | NifIndexKind.OptionkeyIdx | \
                     NifIndexKind.ExportIdx | NifIndexKind.FromexportIdx | NifIndexKind.ExportexceptIdx:
                 for _ in loopInto(n):
                     _processDeclForChecksum(dest, n)
@@ -157,6 +157,9 @@ class HookIndexEntry(Object):
 class IndexSections(Object):
     converters: seq[tuple[SymId, SymId]]  # string is for compat with `methods`
     exportBuf: TokenBuf
+    reexportedChecksums: seq[string]  ## the checksums of the modules
+    ## `exportBuf` re-exports: an importer reads their declarations through
+    ## this module, so they are part of its interface
 
 
 def _getSymbolSection(tag: TagId, values: seq[tuple[SymId, SymId]]) -> TokenBuf:
@@ -216,6 +219,8 @@ def createIndex(infile: string, root: NifLineInfo, buildChecksum: bool, sections
         with var:
             checksum = newSha1State()
         _processForChecksum(checksum, buf)
+        for cs in sections.reexportedChecksums:
+            update(checksum, cs)
         with let:
             final = SecureHash(finalize(checksum))
         content.add(string("(checksum \"") + str(final) + string("\")"))
@@ -268,6 +273,7 @@ class NifIndexEntry(Object):
 class NifIndex(Object):
     converters: seq[tuple[string, string]]  # map of dest types to converter symbols
     exports: seq[tuple[string, NifIndexKind, seq[StrId]]]  # module, export kind, filtered names
+    checksum: string  ## the interface checksum, "" when the index has none
 
 
 def _symOrIdentOrDot(n: mut @ Cursor) -> string:
@@ -329,6 +335,10 @@ def readIndex(indexName: string) -> NifIndex:
                             if isIdent(n): names.add(strId(n))
                             skip(n)
                         result.exports.add((path, kind, names))
+                elif globalTags.tags[t] == "checksum":
+                    with into(n):
+                        if isStringLit(n): result.checksum = pool.strings[strId(n)]
+                        while n.hasMore(): skip(n)
                 else:
                     skip(n)
             else:
