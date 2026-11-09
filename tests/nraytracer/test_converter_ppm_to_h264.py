@@ -8,6 +8,7 @@ from nimic.std.os import *
 from nimic.std.strutils import *
 from nimic.std.strformat import *
 from nimic.std.algorithm import *
+from nimic.std.syncio import read_file
 from h264 import H264Encoder, init, getFrameBuffers, flushFrame, finish
 from color_conversions import RGB_Raw, initChannelDesc, rgbRaw_to_ycbcr420, YCbCrKind
 

@@ -12,6 +12,13 @@ import threading as _threading
 from nimic.ntypes import NIntEnum, Object, auto, int8, ufcs
 from nimic.ntypesystem import _n_value_copy
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'Atomic', 'atomicDec', 'AtomicFlag', 'atomicInc', 'clear', 'compareExchange', 'compareExchangeWeak', 'exchange',
+    'fence', 'fetchAdd', 'fetchAnd', 'fetchOr', 'fetchSub', 'fetchXor', 'load', 'MemoryOrder', 'moAcquire',
+    'moAcquireRelease', 'moConsume', 'moRelaxed', 'moRelease', 'moSequentiallyConsistent', 'signalFence', 'store',
+    'testAndSet'
+]
+
 
 class MemoryOrder(NIntEnum):
     """Specifies how non-atomic operations can be reordered around atomic operations."""

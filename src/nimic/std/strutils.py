@@ -3,6 +3,15 @@ from __future__ import annotations
 from nimic.ntypes import dispatch, ufcs, string, char, Tset, nint, NIntEnum, auto, float64, seq, array, openArray
 from nimic.ntypesystem import _n_addf
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'addf', 'BinaryPrefixMode', 'bpColloquial', 'bpIEC', 'cmpIgnoreStyle', 'continuesWith', 'endsWith', 'ffDecimal',
+    'ffDefault', 'ffScientific', 'find', 'FloatFormatMode', 'format', 'formatBiggestFloat', 'formatFloat',
+    'formatSize', 'IdentChars', 'IdentStartChars', 'int_to_str', 'isLowerAscii', 'isUpperAscii', 'join',
+    'nimIdentNormalize', 'normalize', 'parse_float', 'parse_int', 'parseFloat', 'parseInt', 'r_find', 'repeat',
+    'replace', 'rfind', 'spaces', 'split', 'split_lines', 'splitLines', 'startsWith', 'strip', 'to_hex', 'to_octal',
+    'toHex', 'toLowerAscii', 'toOctal', 'trimZeros', 'Whitespace'
+]
+
 # Nim strutils.Whitespace (ASCII only: nimic strings are bytes)
 Whitespace = " \t\v\r\n\f"
 

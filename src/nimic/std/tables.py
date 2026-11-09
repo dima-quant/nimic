@@ -4,6 +4,11 @@ The tables are generic objects (`class Table[K, V](Object)`): `Table[string, nin
 registered specialization, so a generic proc over `Table[A, B]` binds A and B from its argument."""
 from nimic.ntypesystem import DICT_OF_TYPES, Object, _n_default_value, _n_value_copy
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'CountTable', 'init_table', 'initCountTable', 'initOrderedTable', 'initTable', 'newTable', 'OrderedTable',
+    'Table', 'TableRef'
+]
+
 
 class CountTable[T](Object):
     def __init__(self, *args):

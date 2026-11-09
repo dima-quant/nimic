@@ -2,6 +2,10 @@
 import time
 from nimic.std.times import Duration
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'get_mono_time', 'MonoTime'
+]
+
 class MonoTime:
     """Nim MonoTime — a monotonic time point."""
 

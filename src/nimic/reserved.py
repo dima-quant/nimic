@@ -25,6 +25,7 @@ CORE_NAMES = frozenset({
     # nimic's types and type constructors
     "nint", "nbool", "nord", "intp", "uintp", "float16", "Tset", "Trange", "NTuple", "NCell", "NInteger",
     "NIntEnum", "NStrEnum", "Object", "Concept", "Type", "Self", "DICT_OF_TYPES",
+    "TextIOWrapper",  # the prelude's alias of File (pydefs.nim): stdin / stdout / stderr's Python type
     # decorators, directives and block forms
     "dispatch", "ufcs", "overloads", "alias", "calltype", "comptime", "generic", "hook", "mut", "operator",
     "pragma", "emit", "importc", "template_expand", "template_inline", "breakBlock", "importFrom", "importExcept",

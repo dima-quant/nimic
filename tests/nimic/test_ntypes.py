@@ -3640,6 +3640,66 @@ class TestNTypes(unittest.TestCase):
             with self.assertRaises(OSError):
                 winlean.closeHandle(winlean.INVALID_HANDLE_VALUE)
 
+    def test_prelude_binds_textiowrapper(self):
+        # the Nim prelude's `TextIOWrapper* = File` (pydefs.nim): the type of stdin / stdout / stderr in Python;
+        # ppm.py's `f: TextIOWrapper` got it only through nimic.std.os' star export (N92)
+        ns = {}
+        exec("from nimic.ntypes import *", ns)
+        self.assertIn("TextIOWrapper", ns)
+        for stream in (ns["stdin"], ns["stdout"], ns["stderr"]):
+            self.assertIsInstance(stream, ns["TextIOWrapper"])
+
+    def test_std_shims_star_export_only_their_own_names(self):
+        # N92: like a Nim module, a std shim exports the names it defines, not the ones it imports
+        # (nimicgen's corenames.txt lists what `from nimic.std.<m> import *` binds)
+        root = Path(importlib.import_module("nimic.std").__path__[0])
+
+        def module_level(body):
+            for node in body:
+                yield node
+                if isinstance(node, (ast.If, ast.Try, ast.With, ast.For)):
+                    for block in (node.body, getattr(node, "orelse", []), getattr(node, "finalbody", [])):
+                        yield from module_level(block)
+                    for handler in getattr(node, "handlers", []):
+                        yield from module_level(handler.body)
+
+        def bound(target):
+            if isinstance(target, ast.Name):
+                yield target.id
+            elif isinstance(target, (ast.Tuple, ast.List)):
+                for elt in target.elts:
+                    yield from bound(elt)
+
+        for path in sorted(root.rglob("*.py")):
+            if path.name == "__init__.py":
+                continue
+            name = "nimic.std." + ".".join(path.relative_to(root).with_suffix("").parts)
+            with self.subTest(module=name):
+                own, imported = set(), set()
+                for node in module_level(ast.parse(path.read_text()).body):
+                    if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                        own.add(node.name)
+                    elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                        for target in getattr(node, "targets", [getattr(node, "target", None)]):
+                            own.update(bound(target))
+                    elif isinstance(node, ast.Import):
+                        imported.update(a.asname or a.name.split(".")[0] for a in node.names)
+                    elif isinstance(node, ast.ImportFrom) and node.module != "__future__":
+                        for a in node.names:
+                            if a.name == "*":
+                                source = importlib.import_module(node.module)
+                                imported.update(getattr(source, "__all__", None) or dir(source))
+                            else:
+                                imported.add(a.asname or a.name)
+                module = importlib.import_module(name)
+                exported = set(module.__all__)
+                reexported = set(getattr(module, "_reexports", ()))  # Nim's `export`, stated
+                public = {n for n in own if not n.startswith("_") and n != "__all__"}
+                self.assertEqual(public - exported, set(), "defined, not exported")
+                self.assertEqual(reexported - exported, set(), "a re-export not exported")
+                self.assertEqual((exported & imported) - own - reexported, set(), "imported, exported")
+                self.assertEqual({n for n in exported if not hasattr(module, n)}, set(), "exported, unbound")
+
     def test_system_stacktrace_and_memory(self):
         """stackTraceAvailable follows the build (stacktrace:off under -d:danger/release);
         getMaxMem/getTotalMem/getOccupiedMem give the process memory (Nim: its allocator's)."""

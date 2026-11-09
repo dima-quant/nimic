@@ -5,6 +5,10 @@ import os
 from nimic.ntypes import string
 from nimic.ntypesystem import _n_encode_str
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'addNormalizePath', 'normalizePath'
+]
+
 def normalizePath(path: str, dirSep: str = '/') -> str:
     """Nim: pathnorm.normalizePath"""
     return string(os.path.normpath(str(path)).replace('\\', dirSep))

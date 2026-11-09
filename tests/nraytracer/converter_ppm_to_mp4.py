@@ -12,6 +12,7 @@ from h264 import H264Encoder, init, getFrameBuffers, flushFrame, finish
 from mp4 import MP4Muxer, writeMP4_from
 import h264, mp4
 from nimic.std import syncio
+from nimic.std.syncio import read_file
 # one name of two imports, called free: Nim overloads them (rule:overloads)
 close = overloads(syncio.close, mp4.close)
 initialize = overloads(h264.initialize, mp4.initialize)

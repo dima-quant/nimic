@@ -11,6 +11,14 @@ import sys as _sys
 
 from nimic.ntypes import int32, nint, pointer, uint
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'closeHandle', 'CREATE_ALWAYS', 'CREATE_NEW', 'createFileMappingW', 'createFileW', 'DWORD',
+    'FILE_ATTRIBUTE_NORMAL', 'FILE_ATTRIBUTE_READONLY', 'FILE_FLAG_RANDOM_ACCESS', 'FILE_MAP_READ',
+    'FILE_MAP_WRITE', 'FILE_SHARE_DELETE', 'FILE_SHARE_READ', 'FILE_SHARE_WRITE', 'GENERIC_ALL', 'GENERIC_READ',
+    'GENERIC_WRITE', 'getFileSize', 'getLastError', 'Handle', 'INVALID_HANDLE_VALUE', 'mapViewOfFileEx',
+    'OPEN_ALWAYS', 'OPEN_EXISTING', 'PAGE_READONLY', 'PAGE_READWRITE', 'unmapViewOfFile', 'WINBOOL', 'WinSizeT'
+]
+
 Handle = nint
 DWORD = int32
 WINBOOL = int32

@@ -4,6 +4,10 @@ import re
 from typing import Any
 from nimic.ntypes import string, nint, ufcs
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'scanf'
+]
+
 # Nim scanf matchers: `$x` -> (regex, conversion or None when nothing is captured)
 _MATCHERS = {
     "i": (r"([-+]?\d+)", lambda v: nint(int(v))),

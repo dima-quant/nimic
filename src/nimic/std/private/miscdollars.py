@@ -2,6 +2,10 @@
 from __future__ import annotations
 from nimic.ntypes import string
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'toLocation'
+]
+
 
 def toLocation(result: string, file: string, line: int, col: int) -> None:
     """Nim: toLocation — appends `file(line, col)` to result (a var string); the column only when > 0,

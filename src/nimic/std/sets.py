@@ -1,6 +1,10 @@
 """Nim std/sets — HashSet implementation."""
 from __future__ import annotations
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'HashSet', 'init_hash_set', 'initHashSet'
+]
+
 class HashSet(set):
     def __class_getitem__(cls, item):
         return cls

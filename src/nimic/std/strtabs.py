@@ -4,6 +4,11 @@ order)."""
 from __future__ import annotations
 from nimic.ntypes import string, NIntEnum, auto
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'modeCaseInsensitive', 'modeCaseSensitive', 'modeStyleInsensitive', 'new_string_table', 'newStringTable',
+    'StringTableMode', 'StringTableRef'
+]
+
 
 class StringTableMode(NIntEnum):
     """Nim: StringTableMode — describes the table's operation mode."""

@@ -2,6 +2,10 @@
 from __future__ import annotations
 from nimic.ntypes import float32, float64, string, ufcs
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'add_float', 'add_float_roundtrip', 'addFloat', 'addFloatRoundtrip'
+]
+
 
 @ufcs(string, aliases=("addFloatRoundtrip",))
 def add_float_roundtrip(result: string, f: float) -> None:

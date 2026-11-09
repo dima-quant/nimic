@@ -7,6 +7,10 @@ import ctypes as _ctypes
 from nimic.ntypes import nint
 from nimic.ntypesystem import _n_encode_str
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'newWideCString', 'WideCString', 'WideCStringObj'
+]
+
 
 class WideCStringObj:
     """Nim: WideCStringObj (a WideCString that owns its buffer)."""

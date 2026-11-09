@@ -8,6 +8,11 @@ import hashlib as _hashlib
 from nimic.ntypes import Object, array, distinct, string, uint8
 from nimic.ntypesystem import _n_encode_str
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'finalize', 'isValidSha1Hash', 'newSha1State', 'parseSecureHash', 'SecureHash', 'secureHash', 'secureHashFile',
+    'Sha1Digest', 'Sha1DigestSize', 'Sha1State', 'update'
+]
+
 Sha1DigestSize = 20
 
 Sha1Digest = array[Sha1DigestSize, uint8]

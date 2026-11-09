@@ -13,6 +13,11 @@ import builtins as _builtins
 from nimic.ntypes import NIntEnum, Object, Tset, auto, char, dispatch, nint, seq, string
 from nimic.std.os import parseCmdLine, quoteShellCommand, param_count, param_str
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'cmdArgument', 'cmdEnd', 'CmdLineKind', 'cmdLineRest', 'cmdLongOption', 'cmdShortOption', 'getopt',
+    'initOptParser', 'next', 'OptParser', 'remainingArgs'
+]
+
 
 class CmdLineKind(NIntEnum):
     """The detected command line token."""

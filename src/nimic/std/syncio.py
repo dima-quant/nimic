@@ -12,6 +12,14 @@ from enum import auto
 from nimic.ntypes import File, NIntEnum, ufcs, int64
 from nimic.ntypesystem import string, _n_encode_str, _n_decode_bytes, _n_os_arg, _n_file_mode
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'close', 'FileMode', 'FileSeekPos', 'flush_file', 'flushFile', 'fmAppend', 'fmRead', 'fmReadWrite',
+    'fmReadWriteExisting', 'fmWrite', 'fspCur', 'fspEnd', 'fspSet', 'get_file_pos', 'getFilePos', 'lines', 'open',
+    'read_buffer', 'read_file', 'read_file_bytes', 'read_line', 'readBuffer', 'readFile', 'readLine',
+    'set_file_pos', 'setFilePos', 'stderr', 'stdin', 'stdout', 'write', 'write_buffer', 'write_file', 'write_line',
+    'writeBuffer', 'writeFile', 'writeLine'
+]
+
 
 
 class FileMode(str, Enum):

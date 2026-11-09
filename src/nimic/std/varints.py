@@ -5,6 +5,10 @@ from __future__ import annotations
 
 from nimic.ntypes import int64, nint, uint8, uint64
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'decodeZigzag', 'encodeZigzag', 'maxVarIntLen', 'readVu64', 'writeVu64'
+]
+
 maxVarIntLen = 9  # the maximal number of bytes a varint can take
 
 _M64 = (1 << 64) - 1

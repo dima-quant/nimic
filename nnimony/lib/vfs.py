@@ -62,12 +62,12 @@ if comptime(defined("vfsProfile")):
         statMtime = VfsCounter()
         statRemove = VfsCounter()
 
-    from nimic.std.strutils import ffDecimal, formatFloat
+    from nimic.std.strutils import FloatFormatMode, formatFloat
 
     def dumpVfsProfile(label: string):
         @template
         def emit_(name: string, c: VfsCounter):
-            stderr.writeLine(string("[vfs] ") + label + string(" ") + name + string(" count=") + str(c.count) + string(" ms=") + formatFloat(float64(c.ns) / 1_000_000.0, ffDecimal, 3) + string(" bytes=") + str(c.bytes))
+            stderr.writeLine(string("[vfs] ") + label + string(" ") + name + string(" count=") + str(c.count) + string(" ms=") + formatFloat(float64(c.ns) / 1_000_000.0, FloatFormatMode.ffDecimal, 3) + string(" bytes=") + str(c.bytes))
         emit_(string("openMmap"), statOpenMmap)
         emit_(string("read"), statRead)
         emit_(string("write"), statWrite)
@@ -539,15 +539,15 @@ if comptime(__name__ == "__main__"):
         chars = cast[ptr[UncheckedArray[char]]](blob.data)
     for i in range(blob.size):
         text.add(chars[i])  # nimony takes no `addr` of a string's char: no copyMem into `text`
-    echo(blob.size, " ", text, " ", blob.data is not None)
+    echo(blob.size, " ", text, " ", not isNil(blob.data))
     blob.closeBlob()
-    echo(blob.size, " ", blob.data is None)
+    echo(blob.size, " ", isNil(blob.data))
     blob.closeBlob()
     echo(blob.size)
     with var:
         other = initBlob(None, 0)
     other.closeBlob()
-    echo(other.size, " ", other.cookie is None)
+    echo(other.size, " ", isNil(other.cookie))
 
     # mtimes in nanoseconds, not in the future
     with let:

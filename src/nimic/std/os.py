@@ -17,6 +17,20 @@ from nimic.std.times import Time as _NTime
 
 from nimic.std.syncio import read_file, read_file_bytes, write_buffer, set_file_pos, open
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'absolutePath', 'addFileExt', 'AltSep', 'changeFileExt', 'cmpPaths', 'copyFile', 'create_dir', 'createDir',
+    'dirExists', 'DirSep', 'execShellCmd', 'ExeExt', 'existsOrCreateDir', 'expand_tilde', 'expandFilename',
+    'expandTilde', 'extract_filename', 'extractFilename', 'fileExists', 'FileSystemCaseSensitive', 'find_exe',
+    'findExe', 'get_app_filename', 'get_current_compiler_exe', 'get_env', 'getAppDir', 'getAppFilename',
+    'getCurrentCompilerExe', 'getCurrentDir', 'getEnv', 'getHomeDir', 'getLastModificationTime', 'getTempDir',
+    'is_relative_to', 'isAbsolute', 'isRelativeTo', 'last_path_part', 'lastPathPart', 'moveFile', 'OSErrorCode',
+    'osErrorMsg', 'osLastError', 'param_count', 'param_str', 'paramCount', 'paramStr', 'parent_dir', 'parentDir',
+    'parseCmdLine', 'PathComponent', 'pcDir', 'pcFile', 'pcLinkToDir', 'pcLinkToFile', 'quoteShell',
+    'quoteShellCommand', 'quoteShellPosix', 'quoteShellWindows', 'raiseOSError', 'relativePath', 'remove_dir',
+    'removeDir', 'removeFile', 'searchExtPos', 'sleep', 'split_file', 'splitFile', 'splitPath',
+    'unix_to_native_path', 'unixToNativePath', 'walk_dir', 'walk_files', 'walkDir', 'walkFiles'
+]
+
 stderr.flush_file = stderr.flush
 stdout.flush_file = stdout.flush
 

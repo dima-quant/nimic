@@ -34,6 +34,7 @@ from __future__ import annotations
 import contextlib
 import ctypes as _ctypes  # underscore: not re-exported by `from nimic.ntypes import *`
 from enum import auto
+from io import TextIOWrapper  # the prelude's `TextIOWrapper* = File` (pydefs.nim): stdin / stdout / stderr's type
 from typing import Self  # a concept's own type in its signatures (rule:concept)
 
 from nimic.inliner import template, template_expand, do, TemplateBlockError

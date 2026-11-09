@@ -3,6 +3,10 @@ from __future__ import annotations
 from ..ntypes import string
 from ..ntypesystem import _n_join_path
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'Path'
+]
+
 class Path(string):
     def __init__(self, x: string | str = ""):
         super().__init__(str(x))

@@ -4,6 +4,11 @@ import sys
 from nimic.ntypes import NIntEnum, auto, Tset
 from nimic.std.syncio import write as _write
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'ansiResetCode', 'ansiStyleCode', 'BackgroundColor', 'ForegroundColor', 'is_atty', 'isatty', 'resetAttributes',
+    'setBackgroundColor', 'setForegroundColor', 'setStyle', 'Style', 'styledWrite', 'styledWriteLine', 'TerminalCmd'
+]
+
 
 def is_atty(f=sys.stderr) -> bool:
     """Nim: isatty — returns true if f refers to a terminal."""
@@ -74,6 +79,7 @@ class TerminalCmd(NIntEnum):
 for _enum in (Style, ForegroundColor, BackgroundColor, TerminalCmd):
     for _member in _enum:
         globals()[_member.name] = _member
+        __all__.append(_member.name)
 
 
 def ansiStyleCode(style) -> str:

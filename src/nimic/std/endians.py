@@ -3,6 +3,10 @@ import struct
 import ctypes
 from nimic.ntypesystem import uintp, pointer
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'big_endian32', 'little_endian32'
+]
+
 def _get_addr(obj):
     # If the obj itself is a pointer (from addr() or cast[pointer]()), we just take its integer address
     if isinstance(obj, pointer):

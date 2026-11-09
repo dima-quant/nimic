@@ -21,6 +21,10 @@ Transpiles to Nim:
     var y: Option[int32] = none(int32)
 """
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'none', 'Option', 'some'
+]
+
 
 class Option:
     """Nim Option[T] — either some(value) or none.

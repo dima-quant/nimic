@@ -4,6 +4,12 @@ from nimic.ntypes import (string, nint, char, Tset, mut, ufcs, BiggestInt, uint6
                           openArray)
 from .strutils import IdentStartChars, IdentChars, Whitespace
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'parse_biggest_float', 'parse_biggest_int', 'parse_biggest_uint', 'parse_hex', 'parse_ident',
+    'parseBiggestFloat', 'parseBiggestInt', 'parseBiggestUInt', 'parseHex', 'parseIdent', 'skip_until',
+    'skip_whitespace', 'skipUntil', 'skipWhitespace'
+]
+
 _POWTENS = (
     1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9,
     1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19,

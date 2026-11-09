@@ -2,6 +2,10 @@ from __future__ import annotations
 from typing import Iterator
 from nimic.ntypes import nint
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'contains', 'excl', 'incl', 'init_int_set', 'initIntSet', 'IntSet'
+]
+
 class IntSet:
     def __init__(self, elements=None):
         self._data = set(int(x) for x in elements) if elements else set()

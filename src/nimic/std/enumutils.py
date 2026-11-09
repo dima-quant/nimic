@@ -1,5 +1,9 @@
 import typing
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'gen_enum_case_stmt', 'genEnumCaseStmt'
+]
+
 def gen_enum_case_stmt(T, s, default, low, high, normalize):
     """
     Python implementation of Nim's genEnumCaseStmt macro.

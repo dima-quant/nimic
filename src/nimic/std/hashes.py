@@ -5,6 +5,10 @@ import struct
 from nimic.ntypesystem import (NIntEnum, NStrEnum, SomeFloat, SomeInteger, _n_item_type, char, cstring, dispatch,
                                nint, nord, openArray, string)
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'finish_hash', 'Hash', 'hash', 'hash_ignore_style', 'hashIgnoreStyle', 'mix_hash'
+]
+
 
 Hash = nint  # Nim: type Hash* = int (an alias: `cast[Hash](x)`, `Hash(0) + 1`, a hash is an int)
 

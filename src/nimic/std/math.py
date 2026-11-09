@@ -4,6 +4,12 @@ import math as _math
 import sys as _sys
 from nimic.ntypes import NIntEnum, auto
 
+_reexports = tuple(_name for _name in dir(_math) if not _name.startswith("_"))  # Python's math, as the docstring says
+__all__ = [  # its own names and the stated re-exports (N92)
+    'classify', 'fcInf', 'fcNan', 'fcNegInf', 'fcNegZero', 'fcNormal', 'fcSubnormal', 'fcZero', 'FloatClass', 'Inf',
+    'NaN', 'signbit', 'trunc'
+] + list(_reexports)
+
 
 class FloatClass(NIntEnum):
     """Describes the class a floating point value belongs to (Nim's members, in Nim's order)."""

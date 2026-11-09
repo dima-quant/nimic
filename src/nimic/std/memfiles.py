@@ -12,6 +12,10 @@ import sys as _sys
 from nimic.ntypes import Object, char, cint, dispatch, nint, pointer, string
 from nimic.std.syncio import lines  # memfiles' lines overloads extend syncio's (Nim: overloads)
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'close', 'flush', 'lines', 'mapMem', 'MemFile', 'MemSlice', 'memSlices', 'open', 'resize', 'unmapMem'
+]
+
 if _sys.platform == "win32":
     raise OSError("nimic std/memfiles: Windows is not supported (POSIX mmap only)")
 

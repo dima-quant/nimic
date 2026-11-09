@@ -5,6 +5,12 @@ import time as _time
 from datetime import datetime as _pydatetime, timezone as _timezone
 from nimic.ntypes import string, dispatch
 
+__all__ = [  # the module's own names: like a Nim module, it exports none it imports (N92)
+    'DateTime', 'Duration', 'epochTime', 'format', 'format_time', 'from_unix', 'fromUnix', 'get_time', 'getTime',
+    'in_microseconds', 'in_milliseconds', 'in_seconds', 'inMicroseconds', 'inMilliseconds', 'inSeconds', 'local',
+    'nanosecond', 'Time', 'to_unix', 'toUnix', 'utc'
+]
+
 
 class Duration:
 
