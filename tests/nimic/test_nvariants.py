@@ -3,7 +3,7 @@
 from __future__ import annotations
 import unittest
 
-from nimic.nvariants import NBranch, NCase, NField, NRecord, NVariantLayout, parse_class_source
+from nimic.nvariants import NBranch, NCase, NField, NRange, NRecord, NVariantLayout, parse_class_source
 
 NODE_SRC = '''
 class NodeObj(Object):
@@ -112,6 +112,56 @@ class V(Object):
             {body}
 ''')
         for case_line in ("case 0 if True:", "case [x]:", "case Foo():"):
+            with self.subTest(case=case_line), self.assertRaises(TypeError):
+                parse_class_source(f'''
+class V(Object):
+    k: int
+    match k:
+        {case_line}
+            a: int
+''')
+
+    def test_range_branch_guard(self):
+        """Nim `of 2..4, 7:`: the guard form of a range branch, `case _ if k in inrange(2, 4) or k == 7:`."""
+        rec = parse_class_source('''
+class V(Object):
+    k: int
+    match k:
+        case 0 | 1:
+            a: int
+        case _ if k in inrange(2, 4) or k == 7:
+            b: int
+        case _ if k in inrange(5, 6):
+            c: int
+        case _:
+            pass
+''')
+        case = rec.items[0]
+        self.assertEqual(case.branches[1].values, (NRange("2", "4"), "7"))
+        self.assertEqual(case.branches[2].values, (NRange("5", "6"),))
+        lay = NVariantLayout(rec, eval_value=eval, ordinal=int)
+        self.assertEqual([lay.active_fields({"k": v}) for v in range(9)],
+                         [("k", "a"), ("k", "a"), ("k", "b"), ("k", "b"), ("k", "b"), ("k", "c"), ("k", "c"),
+                          ("k", "b"), ("k",)])
+        self.assertEqual(lay.branch_values(case)[1], frozenset({2, 3, 4, 7}))
+        self.assertTrue(lay.is_exhaustive(case, range(20)))  # `case _`
+        no_else = NVariantLayout(parse_class_source('''
+class W(Object):
+    k: int
+    match k:
+        case _ if k in inrange(0, 3):
+            a: int
+        case 4:
+            b: int
+'''), eval_value=eval, ordinal=int)
+        self.assertTrue(no_else.is_exhaustive(no_else.record.items[0], range(5)))
+        self.assertFalse(no_else.is_exhaustive(no_else.record.items[0], range(6)))
+
+    def test_range_branch_guard_errors(self):
+        """A guard is only the range form on the discriminator, and only with the pattern `_`."""
+        for case_line in ("case _ if k > 3:", "case _ if j in inrange(0, 1):", "case _ if k in {0, 1}:",
+                          "case _ if k in inrange(0, 1) and k == 1:", "case 0 if k in inrange(0, 1):",
+                          "case _ if k in inrange(0):"):
             with self.subTest(case=case_line), self.assertRaises(TypeError):
                 parse_class_source(f'''
 class V(Object):

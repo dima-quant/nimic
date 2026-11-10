@@ -993,7 +993,9 @@ class _CursorOwnerObj(Object):
     ## lives in raw `alloc`'d memory and ARC won't trace ref fields here.
 
 
-_CursorOwner = ptr[_CursorOwnerObj]
+@ptr
+class _CursorOwner(_CursorOwnerObj):
+    pass
 
 
 class Cursor(Object):

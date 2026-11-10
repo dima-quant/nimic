@@ -817,17 +817,23 @@ def _n_node_at(frame, node_type: type) -> object:
     if frame.f_lasti // 2 >= len(positions):
         return None
     line, end_line, col, end_col = positions[frame.f_lasti // 2]
-    text = "".join(_linecache.getlines(frame.f_code.co_filename))
-    if text not in _n_parsed_sources:  # keyed by the text: a re-expanded or edited source is parsed again
-        try:
-            _n_parsed_sources[text] = _ast.parse(text) if text else None
-        except SyntaxError:
-            _n_parsed_sources[text] = None
-    tree = _n_parsed_sources[text]
+    tree = _n_parsed_source(frame.f_code)
     if tree is None:
         return None
     return next((n for n in _ast.walk(tree) if isinstance(n, node_type) and (n.lineno, n.end_lineno, n.col_offset,
                  n.end_col_offset) == (line, end_line, col, end_col)), None)
+
+
+def _n_parsed_source(code) -> object:
+    """The parsed source of a code object's file, or None; cached by the text (a re-expanded or edited source is
+    parsed again)."""
+    text = "".join(_linecache.getlines(code.co_filename))
+    if text not in _n_parsed_sources:
+        try:
+            _n_parsed_sources[text] = _ast.parse(text) if text else None
+        except SyntaxError:
+            _n_parsed_sources[text] = None
+    return _n_parsed_sources[text]
 
 
 def astToStr(x: object) -> string:
@@ -1267,12 +1273,17 @@ class push:
         return False
 
 
-def _n_collect_codes(obj, codes: set) -> None:
+def _n_collect_codes(obj, codes: set, classes: set | None = None) -> None:
     """Code objects of a proc (also behind @dispatch/@template wrappers), a class's methods, and the
-    procs nested in them."""
+    procs nested in them. Each class once (a class attribute may lead back to it); a ctypes type (an Object's
+    `_n_c_struct`) holds no code."""
     if isinstance(obj, type):
+        classes = set() if classes is None else classes
+        if obj in classes or type(obj).__module__ == "_ctypes":
+            return
+        classes.add(obj)
         for member in vars(obj).values():
-            _n_collect_codes(member, codes)
+            _n_collect_codes(member, codes, classes)
         return
     fn = getattr(obj, "_n_fn", obj)
     stack = []

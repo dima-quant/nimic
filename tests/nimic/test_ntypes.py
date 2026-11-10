@@ -32,7 +32,12 @@ from nimic.std.hashes import Hash, hashIgnoreStyle, mix_hash, finish_hash, hash 
 from nimic.std.strutils import parseFloat
 from nimic.std.math import FloatClass, classify, fcNormal, fcSubnormal, trunc
 from nimic.std.options import Option, none, some
-from nimic.std.os import ExeExt, absolutePath, addFileExt, changeFileExt, searchExtPos, fileExists, getCurrentDir, getEnv, walkDir
+from nimic.std.dirs import createDir as dirs_create_dir, removeDir as dirs_remove_dir
+from nimic.std import dirs as nim_dirs, files as nim_files, paths as nim_paths
+from nimic.std.osproc import execCmdEx
+from nimic.std.packedsets import PackedSet, initPackedSet, toPackedSet
+from nimic.std.paths import Path as NPath
+from nimic.std.os import ExeExt, absolutePath, addFileExt, changeFileExt, searchExtPos, fileExists, getCurrentDir, getEnv, walkDir, PathComponent
 from nimic.std.parseutils import parse_hex, parse_ident, parseBiggestInt, parseBiggestUInt
 from nimic.std.strscans import scanf
 from nimic.std.strutils import isUpperAscii, find, nimIdentNormalize, repeat, rfind, split, strip, toLowerAscii
@@ -42,6 +47,7 @@ from nimic.system.ansi_c import c_free, c_malloc, csize_t
 from nimic.transpiler import (unparse, private_name_collisions, check_private_names, free_call_overlaps,
                               check_imported_module, check_reserved_names, reserved_name_bindings)
 from nimic import ntypes as nimic_ntypes, reserved, valuecheck
+from nimic.imports import _comptime_taken
 from nimic.inliner import _n_template_entries
 from nnimony.tools import upstream
 
@@ -177,6 +183,10 @@ def _tBlkTree[T: enum](out: mut @ seq[string], tag: T, body: untyped):
     out.add(string("(high ") + str(ord(high(T))) + string(" ") + str(ord(tag)))
     body
     out.add(string(")"))
+
+
+class _TRefIdentObj(Object):
+    n: nint
 
 
 class TestNTypes(unittest.TestCase):
@@ -2865,6 +2875,8 @@ class TestNTypes(unittest.TestCase):
         self.assertTrue(string("abc").endsWith(string("bc")))
         self.assertEqual([x.data for x in string("a\nb").splitLines()], ["a", "b"])
         self.assertEqual(int(s.skipWhitespace(0)), 2)
+        n = string("Is_Main").normalize()  # lengc's `key.normalize` (std/strutils)
+        self.assertEqual((n, type(n)), ("ismain", string))
 
     def test_strutils_nim_semantics(self):
         """strutils procs follow Nim: ASCII-only whitespace/case, char args, last = -1 means 'to the end'."""
@@ -3244,6 +3256,253 @@ class TestNTypes(unittest.TestCase):
         m = TNodeObj(kind=TNodeKind.nkInt)
         with self.assertRaises(FieldDefect):
             m.hasElse  # nested discriminator of an inactive branch
+
+    def test_ref_of_object_type(self):
+        """`ref[T]` (Nim `ref T`) is the ref class of the object type T, made once: a subclass of T whose values are
+        references (stores share them, the zero value is nil), also of a generic instance (`ref Table[K, V]`); a ref
+        of a non-object type, of Object or of a ref is a TypeError."""
+        class _TCtx(Object):
+            m: nint
+
+        class _THolder(Object):
+            lifter: ref[_TCtx]
+            tab: ref[Table[string, nint]]
+
+        r = ref[_TCtx]
+        self.assertIs(ref[_TCtx], r)
+        self.assertTrue(issubclass(r, _TCtx) and r._n_is_ref and not getattr(_TCtx, "_n_is_ref", False))
+        self.assertEqual(r.__name__, "ref[_TCtx]")
+        h = _THolder()
+        self.assertIsNone(h.lifter)
+        self.assertIsNone(h.tab)
+        self.assertIsNone(default(r))
+        h.lifter = r(m=nint(3))
+        h2 = h.copy()
+        h2.lifter.m = nint(9)  # the copy shares the ref
+        self.assertEqual(h.lifter.m, 9)
+        s = seq[r]([])
+        s.add(h.lifter)
+        self.assertIs(s[0], h.lifter)
+        self.assertTrue(ref[Table[string, nint]]._n_is_ref)
+        for bad in (nint, string, Object, r):
+            with self.subTest(bad=bad), self.assertRaises(TypeError):
+                ref[bad]
+
+    def test_ref_ptr_named_target_class(self):
+        """`@ref class X(T): pass` (Nim `X = ref T`) is `ref[T]` itself, whether `ref[T]` was written before or not,
+        with the methods its body defines; `@ref` on a class with fields stays Nim's `ref object`. Likewise
+        `@ptr class P(T): pass` is `ptr[T]`."""
+        class _TIdentObj(Object):
+            n: nint
+
+        @ref
+        class _TIdent(_TIdentObj):
+            def twice(self) -> nint:
+                return self.n * 2
+
+        self.assertIs(ref[_TIdentObj], _TIdent)
+        self.assertEqual(_TIdent(n=nint(4)).twice(), 8)
+
+        class _TSymObj(Object):
+            n: nint
+
+        early = ref[_TSymObj]
+
+        @ref
+        class _TSym(_TSymObj):
+            def name(self) -> string:
+                return string("sym")
+
+        self.assertIs(_TSym, early)
+        self.assertEqual(_TSym(n=nint(1)).name(), "sym")
+
+        @ref
+        class _TCache(Object):
+            k: nint
+        self.assertTrue(_TCache._n_is_ref)
+        self.assertEqual(_TCache.__name__, "_TCache")
+
+        @ptr
+        class _TPtr(_TIdentObj):
+            pass
+        self.assertIs(_TPtr, ptr[_TIdentObj])
+
+    def test_forward_ref_alias_bound_at_target(self):
+        """`type X = ref[T]` / `type X = ptr[T]` before `class T` (a forward alias of the type section): the module
+        binds X to ref[T] / ptr[T] when T is defined, so X constructs and is the type from then on."""
+        src = textwrap.dedent('''
+            from nimic.ntypes import *
+            type LLType = ref[LLTypeObj]
+            type Node = ptr[Tok]
+            before = type(LLType).__name__
+            class LLTypeObj(Object):
+                name: string
+                next: LLType
+            class Tok(Object):
+                n: nint
+                next: Node
+            t = LLType(name=string("a"), next=LLType(name=string("b")))
+        ''')
+        g = {"__name__": "_t_forward_alias"}
+        exec(compile(src, "<forward_alias>", "exec"), g)
+        self.assertEqual(g["before"], "TypeAliasType")
+        self.assertIs(g["LLType"], ref[g["LLTypeObj"]])
+        self.assertIs(g["Node"], ptr[g["Tok"]])
+        self.assertEqual((g["t"].name, g["t"].next.name), ("a", "b"))
+
+    def test_transpile_ref_identity(self):
+        """rule:refident: `a is b` with neither operand None is reference identity, Nim's system.`==`(a, b) (llvmcodegen's
+        typeEq fast path), `a is not b` its negation; `is None` stays `== nil` (rule:nilident)."""
+        src = textwrap.dedent('''
+            def typeEq(a: LLType, b: LLType) -> bool:
+                if a is b:
+                    return True
+                if a is None or b is not None:
+                    return False
+                return a is not b and ok
+        ''')
+        expected = textwrap.dedent('''\
+            proc typeEq*(a: LLType, b: LLType): bool =
+              if system.`==`(a, b):
+                return true
+              if a == nil or b != nil:
+                return false
+              return not system.`==`(a, b) and ok''')
+        self.assertEqual(unparse(ast.parse(src))[0].strip(), expected)
+        a, b = ref[_TRefIdentObj](), ref[_TRefIdentObj]()
+        self.assertEqual((a is a, a is b, a == b), (True, False, False))  # Python: the same identity
+
+    def test_transpile_walrus_condition_and_stmtlist(self):
+        """rule:walrus: a condition of if / elif / while binding names is Nim's `(let x = e; cond)` (bindings in
+        Python's order, an inner one first); rule:stmtlist: stmtlist(x := e, mut @ (y := f), g(x), v) is
+        `(let x = e; var y = f; g(x); v)`, also as an if-expression's branch; a stmtlist's bindings stay its own."""
+        src = textwrap.dedent('''
+            def f(r, n, c):
+                if (op := r.exprKind) in Tset[X](AddX, SubX):
+                    pass
+                elif (loc := plain(c)) != Invalid:
+                    pass
+                elif stmtlist(mut @ (ov := VarId(0)), mut @ (ok := zero()), offsetAccessor(c, ov, ok)):
+                    pass
+                while (s := f2(g := h())) > 0:
+                    pass
+                with let:
+                    depth = stmtlist(d := int(intVal(n)), skip(n), _ := next(n), d) if n.hasMore() else nint(0)
+        ''')
+        expected = textwrap.dedent('''\
+            proc f*(r, n, c) =
+              if (let op = r.exprKind; op in {AddX, SubX}):
+                discard
+              elif (let loc = plain(c); loc != Invalid):
+                discard
+              elif (var ov = VarId(0); var ok = zero(); offsetAccessor(c, ov, ok)):
+                discard
+              while (let g = h(); let s = f2(g); s > 0):
+                discard
+              let
+                depth = if n.hasMore(): (let d = int(intVal(n)); skip(n); discard next(n); d) else: int(0)''')
+        self.assertEqual(unparse(ast.parse(src))[0].strip(), expected)
+
+    def test_stmtlist_runs_in_order(self):
+        """stmtlist(...) (Nim's statement list expression): its steps run in order, the last is the value; `x := e`
+        and `mut @ (y := f)` bind in the enclosing routine."""
+        xs = seq[nint]([nint(1), nint(2)])
+        v = stmtlist(d := xs.len, xs.add(nint(3)), mut @ (e := d + 1), e * 10)
+        self.assertEqual((v, d, e, xs.len), (30, 2, 3, 3))
+        self.assertIn("stmtlist", reserved.RESERVED_NAMES)
+
+    def test_transpile_ref_ptr_forms(self):
+        """rule:dropbrackets / rule:classdef: `ref[T]` / `ptr[T]` in an annotation or alias is `ref T` / `ptr T`; a
+        forward `type X = ref[T]` and `@ref class X(T): pass` are `X* = ref T`, `@ptr class P(T): pass` `P* = ptr T`."""
+        src = textwrap.dedent('''
+            type LLType = ref[LLTypeObj]
+            class LLTypeObj(Object):
+                next: LLType
+                lifter: ref[Ctx]
+                tab: ref[Table[SymId, nint]]
+            @ref
+            class PIdent(TIdent):
+                pass
+            @ptr
+            class P(TIdent):
+                pass
+        ''')
+        expected = textwrap.dedent('''\
+            type
+              LLType* = ref LLTypeObj
+              LLTypeObj* = object
+                next*: LLType
+                lifter*: ref Ctx
+                tab*: ref Table[SymId, int]
+
+              PIdent* = ref TIdent
+
+              P* = ptr TIdent''')
+        self.assertEqual(unparse(ast.parse(src))[0].strip(), expected)
+
+    def test_variant_range_branch(self):
+        """Nim `of a..b, c:` in a case object: `case _ if kind in inrange(K.a, K.b) or kind == K.c:`, the guard
+        form of a `match` statement's range branch; the ranges count for exhaustiveness."""
+        class TInstrKind(NIntEnum):
+            ikAdd = 0
+            ikZext = 1
+            ikSext = 2
+            ikTrunc = 3
+            ikLoad = 4
+
+        @ref
+        class TInstr(Object):
+            kind: TInstrKind
+            match kind:
+                case TInstrKind.ikAdd:
+                    lhs: nint
+                case _ if kind in inrange(TInstrKind.ikZext, TInstrKind.ikTrunc):
+                    castOp: string
+                case TInstrKind.ikLoad:
+                    loadAlign: nint
+
+        for k in (TInstrKind.ikZext, TInstrKind.ikSext, TInstrKind.ikTrunc):
+            i = TInstr(kind=k, castOp=string("op"))
+            self.assertEqual(i.castOp, "op")
+            with self.assertRaises(FieldDefect):
+                i.lhs
+        i.kind = TInstrKind.ikZext  # the same branch
+        with self.assertRaises(FieldDefect):
+            i.kind = TInstrKind.ikLoad
+        with self.assertRaises(FieldDefect):
+            TInstr(kind=TInstrKind.ikAdd, castOp=string("op"))
+        with self.assertRaises(TypeError):  # ikTrunc has no branch
+            class TPartial(Object):
+                kind: TInstrKind
+                match kind:
+                    case _ if kind in inrange(TInstrKind.ikAdd, TInstrKind.ikSext) or kind == TInstrKind.ikLoad:
+                        a: nint
+
+    def test_transpile_object_variant_range_branch(self):
+        """rule:matchcase: a record case's range branch `case _ if kind in inrange(K.a, K.b) or kind == K.c:` is
+        `of a .. b, c:`, with bare members."""
+        src = textwrap.dedent('''
+            class Instr(Object):
+                kind: InstrKind
+                match kind:
+                    case InstrKind.ikAdd:
+                        lhs: nint
+                    case _ if kind in inrange(InstrKind.ikZext, InstrKind.ikTrunc) or kind == InstrKind.ikBitcast:
+                        castOp: string
+                    case _:
+                        pass
+        ''')
+        expected = textwrap.dedent('''\
+            type
+              Instr* = object
+                case kind*: InstrKind
+                  of ikAdd:
+                    lhs*: int
+                  of ikZext .. ikTrunc, ikBitcast:
+                    castOp*: string
+                  else:
+                    discard''')
+        self.assertEqual(unparse(ast.parse(src))[0].strip(), expected)
 
     def test_variant_field_of_zeroed_struct_gets_default_discriminator(self):
         """A variant embedded in a default-constructed object: zeroed memory is not a valid
@@ -3649,19 +3908,132 @@ class TestNTypes(unittest.TestCase):
         for stream in (ns["stdin"], ns["stdout"], ns["stderr"]):
             self.assertIsInstance(stream, ns["TextIOWrapper"])
 
+    def test_std_packedsets_nimony_order(self):
+        """std/packedsets follows nimony's: items yields the trunks (512 values each) in the order they were first
+        touched, ascending within a trunk; a trunk emptied by excl keeps its place; an element comes back as the
+        set's element type (a distinct one too); a negative element is cast to uint (the last trunk)."""
+        @distinct
+        class _TFileNo(nint):
+            pass
+
+        s = initPackedSet[_TFileNo]()
+        for k in (700, 3, -1, 1, 600):
+            s.incl(_TFileNo(k))
+        self.assertEqual([int(x) for x in s], [600, 700, 1, 3, -1])
+        self.assertTrue(all(type(x) is _TFileNo for x in s))
+        s.excl(_TFileNo(600))
+        s.excl(_TFileNo(700))
+        s.incl(_TFileNo(513))  # the emptied first trunk keeps its place
+        self.assertEqual([int(x) for x in s], [513, 1, 3, -1])
+        self.assertEqual((len(s), str(s)), (4, "{513, 1, 3, -1}"))
+        t = s.copy()
+        t.incl(_TFileNo(5))
+        self.assertEqual((len(s), len(t), _TFileNo(5) in s, _TFileNo(5) in t), (4, 5, False, True))
+        self.assertIsInstance(toPackedSet([nint(1)]), PackedSet)
+        self.assertEqual([int(x) for x in toPackedSet([])], [])
+
+    def test_std_dirs_osproc(self):
+        """std/dirs' createDir (parents too, an existing directory is fine) and removeDir (recursive; a missing
+        one is fine unless checkDir); std/osproc's execCmdEx: output (stderr into it) and exit code."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d = NPath(string(tmp)) / NPath(string("a/b"))
+            dirs_create_dir(d)
+            dirs_create_dir(d)
+            self.assertTrue(os.path.isdir(str(d)))
+            dirs_remove_dir(NPath(string(tmp)) / NPath(string("a")))
+            self.assertFalse(os.path.exists(os.path.join(tmp, "a")))
+            dirs_remove_dir(d)
+            with self.assertRaises(OSError):
+                dirs_remove_dir(d, checkDir=True)
+        out, code = execCmdEx(string("echo out; echo err 1>&2; exit 3"))
+        self.assertEqual((out, code), ("out\nerr\n", 3))
+        self.assertIsInstance(out, string)
+
+    def test_std_dirs_files_paths_procs(self):
+        """Nim 2's and nimony's std/dirs walkDir (`(kind, Path)` entries, relative or joined; a directory that
+        can't be opened yields nothing, or raises with checkDir), std/files removeFile (a missing file is fine),
+        std/paths changeFileExt on a Path; dirs re-exports PathComponent (Nim's `export`)."""
+        self.assertIs(nim_dirs.PathComponent, PathComponent)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = NPath(string(tmp))
+            sub = root / NPath(string("x"))
+            f = root / NPath(string("f"))
+            dirs_create_dir(sub)
+            open(str(f), "w").close()
+            entries = sorted((e.kind.name, str(e.path)) for e in nim_dirs.walkDir(root, relative=True))
+            self.assertEqual(entries, [("pcDir", "x"), ("pcFile", "f")])
+            self.assertEqual({str(p) for _, p in nim_dirs.walkDir(root)}, {str(sub), str(f)})
+            self.assertTrue(all(isinstance(e.path, NPath) for e in nim_dirs.walkDir(root)))
+            nim_files.removeFile(f)
+            self.assertFalse(os.path.exists(str(f)))
+            nim_files.removeFile(f)
+            missing = root / NPath(string("missing"))
+            self.assertEqual(list(nim_dirs.walkDir(missing)), [])
+            with self.assertRaises(OSError):
+                list(nim_dirs.walkDir(missing, checkDir=True))
+        changed = nim_paths.changeFileExt(NPath(string("a/b.nim")), string("c"))
+        self.assertEqual((changed, type(changed)), (string("a/b.c"), NPath))
+
+    def test_std_shims_nimony_profile(self):
+        """N114: a std shim stands for Nim 2's std and nimony's: nimony-only API sits in `if comptime(defined(
+        "nimony")):` (Nim's one `import std/dirs`, its content by compiler). Nim 2's profile has none of it (lengc's
+        compat2 defines its own `path`); with `nimony` defined (NIMIC_DEFINES), dirs / files / paths bring nimony's
+        tryCreateFinalDir, tryRemoveFinalDir, tryRemoveFile (ErrorCode results, posixToErrorCode's generic POSIX
+        mapping), path and dirs' re-exports, and the export guard holds for that profile too."""
+        self.assertFalse(hasattr(nim_paths, "path") or hasattr(nim_files, "tryRemoveFile")
+                         or hasattr(nim_dirs, "tryCreateFinalDir"))
+        script = textwrap.dedent("""
+            import errno, os, tempfile
+            from nimic.ntypes import string
+            from nimic.std import dirs, files, paths
+            from nimic.std.private.errorcodes import ErrorCode, posixToErrorCode
+            assert posixToErrorCode(0) == ErrorCode.Success
+            assert posixToErrorCode(errno.EEXIST) == ErrorCode.NameExists
+            assert posixToErrorCode(errno.ENOTDIR) == ErrorCode.NameNotFound
+            assert posixToErrorCode(99999) == ErrorCode.Failure
+            assert dirs.path is paths.path is files.path and dirs.removeFile is files.removeFile
+            assert dirs.tryRemoveFile is files.tryRemoveFile
+            with tempfile.TemporaryDirectory() as tmp:
+                root = paths.path(string(tmp))
+                sub = root / paths.path(string("x"))
+                assert dirs.tryCreateFinalDir(sub) == ErrorCode.Success
+                assert dirs.tryCreateFinalDir(sub) == ErrorCode.NameExists
+                assert dirs.tryCreateFinalDir(sub / paths.path(string("a/b"))) == ErrorCode.NameNotFound
+                f = root / paths.path(string("f"))
+                open(str(f), "w").close()
+                assert dirs.tryRemoveFile(f) == ErrorCode.Success
+                assert dirs.tryRemoveFile(f) == ErrorCode.NameNotFound
+                assert dirs.tryRemoveFinalDir(sub) == ErrorCode.Success
+                assert dirs.tryRemoveFinalDir(sub) == ErrorCode.NameNotFound
+            print("ok")
+        """)
+        env = dict(os.environ, NIMIC_DEFINES="nimony")
+        src = str(Path(__file__).resolve().parents[2] / "src")
+        env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
+        run = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+        self.assertEqual((run.returncode, run.stdout.strip()), (0, "ok"), run.stderr)
+        guard = subprocess.run([sys.executable, "-m", "unittest", "-k", "star_export_only_their_own_names",
+                                "tests.nimic.test_ntypes"], env=env, capture_output=True, text=True,
+                               cwd=str(Path(__file__).resolve().parents[2]))
+        self.assertEqual(guard.returncode, 0, guard.stderr[-2000:])
+
     def test_std_shims_star_export_only_their_own_names(self):
         # N92: like a Nim module, a std shim exports the names it defines, not the ones it imports
         # (nimicgen's corenames.txt lists what `from nimic.std.<m> import *` binds)
         root = Path(importlib.import_module("nimic.std").__path__[0])
 
-        def module_level(body):
+        def module_level(body, namespace):
             for node in body:
+                taken = _comptime_taken(node, namespace)  # an `if comptime(...)` (Nim `when`): the branch that ran
+                if taken is not None:
+                    yield from module_level(taken, namespace)
+                    continue
                 yield node
                 if isinstance(node, (ast.If, ast.Try, ast.With, ast.For)):
                     for block in (node.body, getattr(node, "orelse", []), getattr(node, "finalbody", [])):
-                        yield from module_level(block)
+                        yield from module_level(block, namespace)
                     for handler in getattr(node, "handlers", []):
-                        yield from module_level(handler.body)
+                        yield from module_level(handler.body, namespace)
 
         def bound(target):
             if isinstance(target, ast.Name):
@@ -3676,7 +4048,8 @@ class TestNTypes(unittest.TestCase):
             name = "nimic.std." + ".".join(path.relative_to(root).with_suffix("").parts)
             with self.subTest(module=name):
                 own, imported = set(), set()
-                for node in module_level(ast.parse(path.read_text()).body):
+                module = importlib.import_module(name)
+                for node in module_level(ast.parse(path.read_text()).body, vars(module)):
                     if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
                         own.add(node.name)
                     elif isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -3691,7 +4064,6 @@ class TestNTypes(unittest.TestCase):
                                 imported.update(getattr(source, "__all__", None) or dir(source))
                             else:
                                 imported.add(a.asname or a.name)
-                module = importlib.import_module(name)
                 exported = set(module.__all__)
                 reexported = set(getattr(module, "_reexports", ()))  # Nim's `export`, stated
                 public = {n for n in own if not n.startswith("_") and n != "__all__"}
@@ -4439,12 +4811,13 @@ class TestNTypes(unittest.TestCase):
         two modules (doubleimport), a name that another imported module also makes visible as a different routine
         when the module calls it free, also one a core star import binds (hiddenoverload; a local of a proc named so
         doesn't count), a name imported from a module that only imports it
-        (notexported), a plain def of an imported name the module calls (plaindef), a @dispatch set missing a visible
+        (notexported), a plain def of an imported name the module calls, or of a name its own export brings from another module (plaindef, N113), a @dispatch set missing a visible
         routine (ownset), a name read but bound to nothing (unbound), a type of two imports (ambiguous), a qualified
         `m.f` reaching one of the procs `m` exports (qualified), a core star import rebinding an imported name
         (importorder). Accepted: a leaked proc (no overload in Nim), a hidden one (exportExcept), a name imported
         only for method syntax, a @dispatch extending the import, `overloads(...)`, also one a @dispatch extends
-        (the check runs after the import section, the sets that follow the last import included)."""
+        (the check runs after the import section, the sets that follow the last import included), one name imported
+        in two branches of a `when` (only the taken branch's import ran)."""
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         header = "# /// nimic\n#\n# ///\nfrom nimic.ntypes import *\n"
         main = "def use(b):\n    return addThing(b, nint(1))\necho('ran')\n"
@@ -4481,6 +4854,12 @@ class TestNTypes(unittest.TestCase):
             "nx_notexported.py": header + "from nx_parse import addThing\n" + main,
             "nx_star.py": header + "from nx_core import *\n" + main,
             "nx_double.py": header + "from nx_core import addThing\nfrom nx_builder import addThing\n" + main,
+            # the branches of a `when` (comptime) exclude each other: only the taken one's import ran, even when
+            # another module loaded the module the other branch imports (vfs: std/dirs under nimony, std/os else)
+            "nx_loadsbuilder.py": header + "import nx_builder\n",
+            "nx_whenbranch.py": header + "import nx_loadsbuilder\nif comptime(defined('nimony')):\n"
+                                         "    from nx_builder import addThing\nelse:\n"
+                                         "    from nx_core import addThing\n" + main,
             "nx_plaindef.py": header + "from nx_core import addThing\n"
                                        "def addThing(b, v: nint) -> nint:\n    return nint(4)\n"
                                        "def use(b):\n    return addThing(b, nint(1))\n",
@@ -4514,6 +4893,21 @@ class TestNTypes(unittest.TestCase):
             "nx_qualified.py": header + "import nx_both\necho(nx_both.addThing(nx_both.Buf(), nint(1)))\n",
             "nx_corelocal.py": header + "from nimic.std.syncio import *\nfrom nx_plainlib import Pb\n"
                                         "def f(open):\n    return open(1)\necho('ran')\n",
+            # N113 (A): a module that re-exports another module's addThing and defines its own: Nim's interface of
+            # the module is the overload set of both, whether the module itself calls it or not (nifpools'
+            # initTokenBuf next to `exportExcept(nifcore, ...)`): a plain def is plaindef, @dispatch extends it
+            "nx_reexportplain.py": header + "import nx_core\nexportExcept(nx_core, 'open')\n"
+                                            "def addThing(b: string) -> nint:\n    return nint(5)\necho('ran')\n",
+            "nx_reexportset.py": header + "import nx_core\nfrom nx_core import addThing\n"
+                                          "exportExcept(nx_core, 'open')\n@dispatch\n"
+                                          "def addThing(b: string) -> nint:\n    return nint(5)\necho('ran')\n",
+            # a private name is never exported (nifler2's parserrt `_hexVal` next to `export(nimlexer)`)
+            "nx_reexportprivate.py": header + "import nx_privdef\nexport(nx_privdef)\n"
+                                              "def _helper(b: string) -> nint:\n    return nint(5)\necho('ran')\n",
+            "nx_privdef.py": header + "def _helper(v: nint) -> nint:\n    return nint(6)\n",
+            # the export hides nx_core's addThing: the module's def is the only one its importers see
+            "nx_reexporthidden.py": header + "import nx_core\nexportExcept(nx_core, 'addThing')\n"
+                                             "def addThing(b: string) -> nint:\n    return nint(5)\necho('ran')\n",
             # Nim `when not declared(addThing)`: a def where the import binds nothing, so no plaindef
             "nx_whendeclared.py": header + "from nx_core import addThing\n"
                                            "if comptime(not declared('addThing')):\n"
@@ -4533,8 +4927,9 @@ class TestNTypes(unittest.TestCase):
 
             for name, out in (("nx_leak.py", "ran\n"), ("nx_except.py", "ran\n"),
                               ("nx_corelocal.py", "ran\n"), ("nx_plainunread.py", "ran\n"),
-                              ("nx_whendeclared.py", "ran\n"),
-                              ("nx_shadowqualified.py", "ran\n"),
+                              ("nx_whendeclared.py", "ran\n"), ("nx_whenbranch.py", "ran\n"),
+                              ("nx_shadowqualified.py", "ran\n"), ("nx_reexportset.py", "ran\n"),
+                              ("nx_reexporthidden.py", "ran\n"), ("nx_reexportprivate.py", "ran\n"),
                               ("nx_dispatch.py", "ran\n"), ("nx_overloads.py", "12\n"),
                               ("nx_setext.py", "ran\n")):
                 passed = run(name)
@@ -4552,6 +4947,8 @@ class TestNTypes(unittest.TestCase):
                     ("nx_star.py", "nx_star.py:5: starimport: `from nx_core import *`"),
                     ("nx_double.py", "nx_double.py:6: doubleimport: addThing is imported from nx_builder, nx_core"),
                     ("nx_plaindef.py", "nx_plaindef.py:6: plaindef: the module defines a plain addThing"),
+                    ("nx_reexportplain.py", "nx_reexportplain.py:7: plaindef: the module defines a plain "
+                                            "addThing, and re-exports nx_core's addThing"),
                     ("nx_order.py", "nx_order.py:6: importorder: `from nimic.std.syncio import *` rebinds open"),
                     ("nx_shadowparam.py", "nx_shadowparam.py:7: shadowed: addThing(...) calls a local addThing, "
                                           "while Nim calls the proc addThing of nx_core"),
@@ -6041,9 +6438,10 @@ class TestNTypes(unittest.TestCase):
 
     def test_loop_template(self):
         """A template that runs its code block in a loop (nifcore's loopInto) is called with `for _ in t():`,
-        one iteration per run of the block. `break` leaves the template's loop and the template finishes
-        (Nim's `break` in the expanded body); `return` and exceptions leave the template where it is. `with`
-        still rejects it (a block run twice). The transpiler writes the block call `t(3):`."""
+        one iteration per run of the block. A `break`, `return` or exception closes the template where it is
+        (Nim's `break` would run its code after the loop: a nimic module may `break` only out of a loop template
+        with nothing after its loop, the `blockjump` import check, test_block_template_jump_checks). `with` still
+        rejects it (a block run twice). The transpiler writes the block call `t(3):`."""
         log = []
 
         @template
@@ -6074,7 +6472,7 @@ class TestNTypes(unittest.TestCase):
         self.assertEqual(log, ["b", "b", "b", "end 3"])
         log.clear()
         stops()
-        self.assertEqual(log, ["b", "b", "end 1", "after"])
+        self.assertEqual(log, ["b", "b", "after"])  # closed at the break (the import check rejects it here)
         log.clear()
         self.assertEqual(returns(), "r")
         with self.assertRaises(ValueError):
@@ -7653,6 +8051,110 @@ class TestNTypes(unittest.TestCase):
         x, y = _TEqIdent(id=1), _TEqIdent(id=1)
         self.assertTrue(x == y)
         self.assertEqual(len({x, y}), 2)  # hashing is by identity, as for Nim refs
+
+    def test_distinct_scalar_eq_hash_keeps_hashable(self):
+        """A distinct integer with a borrowed `==` and `hash` (nifcore's SymId) is a table key: its `hash`
+        method answers Python's hash (as for an Object); with only `==` it keeps the value hash (Python drops
+        __hash__ when a class defines __eq__; in Nim `==` and `hash` are independent procs)."""
+        @distinct
+        class _TSymId(uint32):
+            def __eq__(a: _TSymId, b: _TSymId) -> bool:
+                return super().__eq__(b)
+
+            def hash(x: _TSymId) -> nint:
+                return nint(7000 + int(uint32(x)))
+
+        @distinct
+        class _TEqOnly(uint32):
+            def __eq__(a: _TEqOnly, b: _TEqOnly) -> bool:
+                return super().__eq__(b)
+
+        self.assertEqual(hash(_TSymId(5)), 7005)
+        t = Table[_TSymId, nint]()
+        t[_TSymId(5)] = nint(1)
+        self.assertEqual(t[_TSymId(5)], 1)
+        self.assertEqual(len({_TEqOnly(3), _TEqOnly(3)}), 1)
+        self.assertEqual(hash(_TEqOnly(3)), hash(uint32(3)))
+
+    def test_table_store_copies_value(self):
+        """`t[k] = x` stores a copy, as `s[i] = x` and `s.add(x)` do (rules §1.1: stores copy by themselves): a
+        value changed in place afterwards (a Cursor advanced by a `var` parameter: lengc's registerLocal, then
+        genType) leaves the stored one as it was; a ref is shared; a string key changed later is still found."""
+        class _TCur(Object):
+            rem: nint
+
+        def advance(c: mut @ _TCur):
+            c.rem -= 1
+
+        locals_ = Table[nint, _TCur]()
+        typ = _TCur(rem=nint(5))
+        locals_[nint(1)] = typ
+        advance(typ)
+        self.assertEqual((locals_[nint(1)].rem, typ.rem), (5, 4))
+
+        @ref
+        class _TNode(Object):
+            n: nint
+
+        refs = Table[nint, _TNode]()
+        node = _TNode(n=nint(1))
+        refs[nint(1)] = node
+        node.n = nint(2)
+        self.assertEqual(refs[nint(1)].n, 2)
+
+        names = Table[string, nint]()
+        key = string("ab")
+        names[key] = nint(1)
+        key.add("c")
+        self.assertEqual((names[string("ab")], string("abc") in names), (1, False))
+
+    def test_address_ints_are_table_keys(self):
+        """intp / uintp (an address as an integer: Cursor.toUniqueId) hash by their value, as they compare: a
+        Table key, a set member; equal to the int of the address (lengc's `typeBodyToDecl[body.toUniqueId()]`)."""
+        a, b = cast[intp](0x1000), cast[intp](0x1000)
+        t = Table[intp, nint]()
+        t[a] = nint(1)
+        self.assertEqual(t[b], 1)
+        self.assertEqual(len({a, b, cast[uintp](0x1000)}), 1)
+        self.assertEqual(hash(a), hash(0x1000))
+        self.assertEqual(hash(cast[intp](0)), hash(0))
+
+    def test_same_named_object_types_keep_their_structs(self):
+        """Two modules' types of one name (codegen's and llvmcodegen's private PragmaInfo) are two types, as in Nim:
+        each keeps its own fields and C struct, whichever was defined last; also as field types, in a seq and
+        nested."""
+        def module_a():
+            class _TPragmaInfo(Object):
+                flags: nint
+                attr: uint32
+                name: string
+            return _TPragmaInfo
+
+        def module_b():
+            class _TPragmaInfo(Object):
+                flags: int8
+                wasName: string
+                extra: float64
+            return _TPragmaInfo
+
+        A = module_a()
+        B = module_b()
+        a = A(flags=nint(1), attr=uint32(7), name=string("x"))
+        b = B(flags=int8(-2), wasName=string("y"), extra=float64(1.5))
+        self.assertEqual((a.flags, a.attr, a.name), (1, 7, "x"))
+        self.assertEqual((b.flags, b.wasName, b.extra), (-2, "y", 1.5))
+        self.assertEqual((A().attr, B().extra), (0, 0.0))
+        b.flags = int8(200)  # int8's width: B's struct, not A's nint
+        self.assertEqual(b.flags, -56)
+
+        class _THoldsA(Object):
+            inner: A
+            items: seq[A]
+
+        h = _THoldsA()
+        h.inner.attr = uint32(9)
+        h.items.add(A(flags=nint(3), attr=uint32(5)))
+        self.assertEqual((h.inner.attr, h.items[0].attr, h.items[0].flags), (9, 5, 3))
 
     def test_assign_and_when_expression(self):
         """assign(target, value) (rule:assigncall) assigns in place through a var-T result;
@@ -9273,6 +9775,159 @@ def addWord(b: mut@Builder, w: string) -> None:
         with _t_add_cast(b, string("char*")):
             b.buf.add(string("p"))
         self.assertEqual(str(b.buf), "((char*) p)")
+
+    def test_block_template_jump_checks(self):
+        """Import checks of blocks that leave a template (rules §2, transpiler.block_template_problems): rejected
+        are a `return` in a `with t():` block (write `for _ in t():`), a `break` leaving a `with` block of a
+        template with code after its block, a `break` in `for _ in t():` of a template without its own loop, a
+        `break` in a loop template with code after its loop, a `continue` with code after the block in the loop,
+        a `return` through the template's bare `except:`. Accepted: `for _ in t(): return`, a `with` block left by
+        `break` when nothing follows the template's block, a `break` in a loop template with nothing after the
+        loop; the same code runs as the main script."""
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        header = "# /// nimic\n#\n# ///\nfrom nimic.ntypes import *\n"
+        tpls = header + textwrap.dedent("""
+            log = seq[string]()
+
+            @template
+            def scope(body: untyped):
+                log.add(string("enter"))
+                body
+                log.add(string("leave"))
+
+            @template
+            def plain(body: untyped):
+                log.add(string("enter"))
+                body
+
+            @template
+            def scan(body: untyped):
+                with var:
+                    i = 0
+                while i < 3:
+                    body
+                    i += 1
+
+            @template
+            def each(body: untyped):
+                for i in range(3):
+                    body
+                log.add(string("done"))
+
+            @template
+            def guarded(body: untyped):
+                try:
+                    body
+                except:
+                    log.add(string("caught"))
+            """)
+        use = header + "from nx_tpls import log, scope, plain, scan, each, guarded\n"
+        files = {
+            "nx_tpls.py": tpls,
+            "nx_forreturn.py": use + "def f():\n    for _ in scope():\n        return 1\nf()\necho(len(log))\n",
+            "nx_withend.py": use + "with scope():\n    pass\necho(len(log))\n",
+            "nx_withbreakplain.py": use + "for i in range(2):\n    with plain():\n        break\necho(len(log))\n",
+            "nx_loopbreak.py": use + "for _ in scan():\n    break\necho(len(log))\n",
+            "nx_withreturn.py": use + "def f():\n    with scope():\n        return 1\n",
+            "nx_withbreak.py": use + "for i in range(2):\n    with scope():\n        break\n",
+            "nx_forbreak.py": use + "for i in range(2):\n    for _ in scope():\n        break\n",
+            "nx_eachbreak.py": use + "for _ in each():\n    break\n",
+            "nx_scancontinue.py": use + "for _ in scan():\n    continue\n",
+            "nx_guardedreturn.py": use + "def f():\n    for _ in guarded():\n        return 1\n",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, text in files.items():
+                with open(os.path.join(tmp, name), "w") as f:
+                    f.write(text)
+            env = dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(root, "src"), root, tmp)))
+
+            def run(name):
+                return subprocess.run([sys.executable, os.path.join(tmp, name)], capture_output=True, text=True,
+                                      cwd=tmp, env=env)
+
+            for name, out in (("nx_forreturn.py", "1\n"), ("nx_withend.py", "2\n"),
+                              ("nx_withbreakplain.py", "1\n"), ("nx_loopbreak.py", "0\n")):
+                passed = run(name)
+                self.assertEqual((passed.returncode, passed.stdout), (0, out), f"{name}: {passed.stderr}")
+            for name, message in (
+                    ("nx_withreturn.py", "nx_withreturn.py:8: blockjump: a return in the block of `with scope(...)`"),
+                    ("nx_withbreak.py", "nx_withbreak.py:8: blockjump: a break leaves the block of `with scope(...)`"),
+                    ("nx_forbreak.py", "nx_forbreak.py:8: blockjump: a break in the block of `for _ in scope(...)` "
+                                       "is the template's in Python"),
+                    ("nx_eachbreak.py", "nx_eachbreak.py:7: blockjump: a break in the block of each leaves each's "
+                                        "loop, and Nim runs each's code after the loop"),
+                    ("nx_scancontinue.py", "nx_scancontinue.py:7: blockjump: a continue in the block of scan"),
+                    ("nx_guardedreturn.py", "nx_guardedreturn.py:8: blockjump: a return in the block of guarded "
+                                            "passes a bare `except:`")):
+                failed = run(name)
+                self.assertNotEqual(failed.returncode, 0, name)
+                self.assertIn(message, failed.stderr, name)
+
+    def test_block_template_left_by_return_break_continue(self):
+        """Nim inlines a template: a `return` in its block leaves the template there, its code after the block
+        doesn't run (nifcore's `p.into: … return true` skips into's scope check), its `finally` does. nimic's
+        form for such a block is `for _ in t(args):`: a jump closes the template without resuming it; the end of
+        the block resumes it. In a loop template a `break` leaves the template's loop (nothing may follow that
+        loop: an import check). `with t(args):` runs the rest at the block's end."""
+        log = []
+
+        class _TBlkLog(Object):
+            n: nint
+
+        @template
+        def _t_scope(c: mut @ _TBlkLog, body: untyped):
+            log.append("enter")
+            body
+            log.append("leave")
+
+        @template
+        def _t_guarded(c: mut @ _TBlkLog, body: untyped):
+            try:
+                body
+                log.append("after")
+            finally:
+                log.append("finally")
+
+        @template
+        def _t_scan(c: mut @ _TBlkLog, body: untyped):
+            i = 0
+            while i < 3:
+                log.append(f"at {i}")
+                body
+                i += 1
+
+        def ret(c: _TBlkLog) -> bool:
+            for _ in _t_scope(c):
+                if c.n > 0:
+                    return True
+                c.n += 1
+            return False
+
+        def first(c: _TBlkLog) -> None:
+            for _ in _t_scan(c):
+                if c.n == 5:
+                    break
+                c.n += 1
+
+        def guarded(c: _TBlkLog) -> int:
+            for _ in _t_guarded(c):
+                return 1
+            return 0
+
+        c = _TBlkLog()
+        self.assertEqual((ret(c), log), (False, ["enter", "leave"]))
+        log.clear()
+        self.assertEqual((ret(c), log), (True, ["enter"]))
+        log.clear()
+        c.n = nint(4)
+        first(c)
+        self.assertEqual((c.n, log), (5, ["at 0", "at 1"]))
+        log.clear()
+        self.assertEqual((guarded(c), log), (1, ["finally"]))
+        log.clear()
+        with _t_scope(c):
+            c.n += 1
+        self.assertEqual(log, ["enter", "leave"])
 
     def test_expression_template_returns_untyped_param(self):
         """`return call` in a template with a return type is its value, not a code block (compat2's

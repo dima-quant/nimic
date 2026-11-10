@@ -54,7 +54,9 @@ class _NTable(Object):
         return self._n_dict[key]
 
     def __setitem__(self, key, value):
-        self._n_dict[key] = value
+        """Nim `t[k] = v`: a store copies, as `s[i] = x` (rules §1.1): the key and a value-type value; a ref is
+        shared."""
+        self._n_dict[_n_value_copy(key)] = _n_value_copy(value)
 
     def __contains__(self, key):
         return key in self._n_dict

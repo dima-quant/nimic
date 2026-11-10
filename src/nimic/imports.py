@@ -229,12 +229,45 @@ def is_main_block(stmt) -> bool:
             and test.comparators[0].value == "__main__")
 
 
+def _comptime_taken(node, namespace: dict) -> list | None:
+    """The branch an `if comptime(cond):` statement (Nim `when cond:`) ran, evaluated in the loaded module's
+    `namespace`; None for another statement, or when the module's namespace can't tell: a condition naming what
+    only a routine binds (a generic parameter: NameError), or calling `declared`, whose answer depends on the point
+    of the module (`when not declared(f): def f` is true before the def runs, false after)."""
+    test = node.test if isinstance(node, ast.If) else None
+    if not (isinstance(test, ast.Call) and isinstance(test.func, ast.Name) and test.func.id == "comptime"
+            and len(test.args) == 1):
+        return None
+    if any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "declared"
+           for n in ast.walk(test)):
+        return None
+    try:
+        taken = eval(compile(ast.Expression(test.args[0]), "<comptime>", "eval"), namespace)
+    except NameError:
+        return None
+    return node.body if taken else node.orelse
+
+
+def _walk_running(node, namespace: dict):
+    """ast.walk of `node`, entering only the branch each `if comptime(...)` in it ran (_comptime_taken)."""
+    taken = _comptime_taken(node, namespace)
+    if taken is not None:
+        for stmt in taken:
+            yield from _walk_running(stmt, namespace)
+        return
+    yield node
+    for child in ast.iter_child_nodes(node):
+        yield from _walk_running(child, namespace)
+
+
 def _running(tree, module: types.ModuleType):
-    """The module's nodes, without its main block when the module isn't the main program (that block didn't run)."""
+    """The module's nodes that ran: without its main block when the module isn't the main program, and without
+    the branches of `if comptime(...)` statements (Nim `when`) not taken (_comptime_taken). A module an untaken
+    branch imports may be loaded by another module: its import didn't run here."""
     main = module.__name__ == "__main__"
     for stmt in tree.body:
         if main or not is_main_block(stmt):
-            yield from ast.walk(stmt)
+            yield from _walk_running(stmt, vars(module))
 
 
 def imports_of(tree, module: types.ModuleType) -> list:

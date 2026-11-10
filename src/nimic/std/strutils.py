@@ -38,9 +38,10 @@ def parse_float(s: str | string):
 parseFloat = parse_float
 
 
-def normalize(s: str) -> str:
-    """Nim: normalize — normalize string (remove underscores and to lowercase)."""
-    return _n_lower_ascii(str(s).replace("_", ""))
+@ufcs(string)
+def normalize(s: string) -> string:
+    """Nim: normalize(s) / s.normalize — the string without underscores, in ASCII lower case."""
+    return string(_n_lower_ascii(str(s).replace("_", "")))
 
 def cmpIgnoreStyle(a: str, b: str) -> int:
     a_norm = normalize(str(a))

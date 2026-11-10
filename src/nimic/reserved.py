@@ -29,7 +29,7 @@ CORE_NAMES = frozenset({
     # decorators, directives and block forms
     "dispatch", "ufcs", "overloads", "alias", "calltype", "comptime", "generic", "hook", "mut", "operator",
     "pragma", "emit", "importc", "template_expand", "template_inline", "breakBlock", "importFrom", "importExcept",
-    "exportFrom", "exportExcept", "assign", "back", "subset",
+    "exportFrom", "exportExcept", "assign", "back", "subset", "stmtlist",
     # nimic's exceptions
     "NimicEncodingError", "TemplateBlockError",
     # snake_case aliases and nimic spellings of system procs and operators

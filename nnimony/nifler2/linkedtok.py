@@ -57,8 +57,6 @@ from ..lib.nifpools import (
 from ..lib import nifpools
 export(nifpools)
 
-type Node = ptr[LinkedToken]
-
 
 class LinkedToken(Object):
     payload: NifToken  ## kind plus the nifcore id: `TagId`, `StrId`,
@@ -69,6 +67,12 @@ class LinkedToken(Object):
                   ## which does not fit a token payload
     down: Node  ## first child; `nil` for an atom
     next: Node  ## next sibling
+
+
+@ptr
+class Node(LinkedToken):
+    pass
+
 
 with const:
     _BlockSize = 1024  ## cells per arena block

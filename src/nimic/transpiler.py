@@ -100,7 +100,8 @@ Control flow:
   rule:matchcase -> adjust match case according to Nim syntax, also for variant types: in a class body,
     `field: T` followed by `match field:` is a record case `case field*: T` (discriminator default dropped),
     `case _` -> else, `A | B` -> of A, B, a label `T.a` is the bare member `a` (nimony's sem doesn't count
-    `T.a` as covering `a`); branch bodies are records, so cases nest
+    `T.a` as covering `a`); a range branch `case _ if field in inrange(T.a, T.b) or field == T.c:` -> of a .. b, c;
+    branch bodies are records, so cases nest
     In statements, `case _ if c in inrange(a, b) or c in S or c == v:` (c: the match subject, S a set) ->
     `of a .. b, S, v:`, and
     `case _ if cond:` with any other condition -> `elif cond:`
@@ -172,6 +173,12 @@ Operators & renaming:
     (a literal, string(...) / FormatStr(...), a name declared as string or FormatStr in an enclosing scope, a call of
     a proc declared `-> string`) or the right one is a list / tuple or a name declared as a sequence of strings
   rule:nilident -> "is None" / "is not None" transpile as == nil / != nil
+  rule:walrus -> a condition of if / elif / while binding names, `if (op := r.exprKind) in S:`, transpiles as Nim's
+    `if (let op = r.exprKind; op in S):` (the bindings in Python's order, each name in its binding's place)
+  rule:stmtlist -> stmtlist(x := e, mut @ (y := f), g(x), _ := h(), value) transpiles as the statement list
+    expression `(let x = e; var y = f; g(x); discard h(); value)`: the arguments run in order, the last is the value
+  rule:refident -> `a is b` / `a is not b` with neither operand None (reference identity of two refs or pointers)
+    transpile as system.`==`(a, b) / not system.`==`(a, b), Nim's built-in identity whatever `==` the type has
   rule:keywordescape -> trailing _ stripped from Python keyword clashes (None_ -> None, type_ -> type)
   rule:reservedescape -> trailing _ stripped from a user identifier spelled like a nimic reserved name
     (nimic.reserved: hook_ -> hook, emit_ -> emit, x.back_ -> x.back), everywhere it occurs; the escaped name is the
@@ -305,8 +312,8 @@ from collections import deque
 from contextlib import contextmanager, nullcontext
 from enum import IntEnum, _simple_enum, auto
 from nimic.imports import (exported, imports_of, included_trees, is_core, is_main_block, is_overloads, is_routine,
-                           module_level_routines, nim_exports, own_definitions, reaches, star_imports,
-                           visible)
+                           module_exports, module_level_routines, nim_exports, own_definitions, reaches,
+                           star_imports, visible)
 from nimic import reserved
 from nimic.valuecheck import is_nimic_file
 
@@ -2078,15 +2085,21 @@ class _Unparser(NodeVisitor):
                 self.traverse(b.annotation)
                 with self.block(start=""):
                     for case in items[i + 1].cases:
-                        self._write_record_branch(case, b.annotation)
+                        self._write_record_branch(case, items[i + 1].subject, b.annotation)
                 i += 2
             else:
                 self.traverse(b)
                 i += 1
 
-    def _write_record_branch(self, case, discriminator_type):
-        # rule:matchcase: `case _` -> else, `A | B` -> of A, B
-        if isinstance(case.pattern, MatchAs) and case.pattern.name is None and case.pattern.pattern is None:
+    def _write_record_branch(self, case, discriminator, discriminator_type):
+        # rule:matchcase: `case _` -> else, `A | B` -> of A, B, `case _ if k in inrange(a, b) or k == v` -> of a .. b, v
+        wildcard = isinstance(case.pattern, MatchAs) and case.pattern.name is None and case.pattern.pattern is None
+        labels = self._case_labels(case.guard, discriminator) if wildcard and case.guard is not None else None
+        if labels is not None:
+            self.fill("of ")
+            self.interleave(lambda: self.write(", "),
+                            lambda v: self._write_record_value(v, discriminator_type), labels)
+        elif wildcard:
             self.fill("else")
         else:
             self.fill("of ")
@@ -2099,11 +2112,23 @@ class _Unparser(NodeVisitor):
     def _write_record_label(self, pattern, discriminator_type):
         """rule:matchcase -> a record case's label `K.a` (K the discriminator's type) is the bare member `a`:
         nimony's sem doesn't count a qualified member as covering it (Nim 2 accepts both)."""
-        value = pattern.value if isinstance(pattern, MatchValue) else None
-        if isinstance(value, Attribute) and ast.dump(value.value) == ast.dump(discriminator_type):
-            self.write(self._adjust_name(value.attr, definition=False))  # rule:localname
+        if isinstance(pattern, MatchValue):
+            self._write_record_value(pattern.value, discriminator_type)
         else:
             self.traverse(pattern)
+
+    def _write_record_value(self, value, discriminator_type):
+        """rule:matchcase -> a record case's label value: a member of the discriminator's type bare (as
+        _write_record_label), a range `inrange(K.a, K.b)` as `a .. b` with bare bounds."""
+        if isinstance(value, Attribute) and ast.dump(value.value) == ast.dump(discriminator_type):
+            self.write(self._adjust_name(value.attr, definition=False))  # rule:localname
+        elif (isinstance(value, Call) and isinstance(value.func, Name) and value.func.id == "inrange"
+              and len(value.args) == 2 and not value.keywords):
+            self._write_record_value(value.args[0], discriminator_type)
+            self.write(" .. ")
+            self._write_record_value(value.args[1], discriminator_type)
+        else:
+            self.traverse(value)
 
     @staticmethod
     def _is_string_annotation(ann) -> bool:
@@ -2657,6 +2682,45 @@ class _Unparser(NodeVisitor):
             with self.block(start=""):
                 self.fill(f"{name}()")
 
+    @staticmethod
+    def _condition_bindings(test) -> list:
+        """rule:walrus -> the `x := e` of a condition, in the order Python binds them (an inner one first), not those
+        of a stmtlist(...), a lambda or a comprehension (their own scopes or forms)."""
+        found = []
+
+        def visit(node):
+            if isinstance(node, (Lambda, ListComp, SetComp, DictComp, GeneratorExp)) or (
+                    isinstance(node, Call) and isinstance(node.func, Name) and node.func.id == "stmtlist"):
+                return
+            for child in ast.iter_child_nodes(node):
+                visit(child)
+            if isinstance(node, NamedExpr):
+                found.append(node)
+        visit(test)
+        return found
+
+    def _write_condition(self, test):
+        """rule:walrus -> a condition binding names, `if (op := r.exprKind) in {AddX, SubX}:`, is Nim's
+        `if (let op = r.exprKind; op in {AddX, SubX}):` (nimony's form): the bindings first, then the condition
+        with each binding's name in its place."""
+        bindings = self._condition_bindings(test)
+        if not bindings:
+            self.traverse(test)
+            return
+
+        class _Names(ast.NodeTransformer):
+            def visit_NamedExpr(self, n):
+                return ast.copy_location(Name(id=n.target.id, ctx=Load()), n)
+
+        with self.delimit("(", ")"):
+            for b in bindings:
+                value = _Names().visit(copy.deepcopy(b.value))
+                self._write_binding(ast.copy_location(NamedExpr(target=b.target, value=value), b))
+                self.write("; ")
+            condition = _Names().visit(copy.deepcopy(test))
+            self.set_precedence(_Precedence.TEST, condition)
+            self.traverse(condition)
+
     def visit_If(self, node):
         # rule:comptime
         comptime, test_expr = self._check_comptime(node.test)
@@ -2668,7 +2732,7 @@ class _Unparser(NodeVisitor):
             self.traverse(test_expr)
         else:
             self.fill("if ")
-            self.traverse(test_expr)
+            self._write_condition(test_expr)  # rule:walrus
         # a `when` is no scope: at module level its symbols are module-level (exported with `*`)
         depth = 0 if comptime else 1
         with self.block():
@@ -2682,7 +2746,7 @@ class _Unparser(NodeVisitor):
                 break
             node = node.orelse[0]
             self.fill("elif ")
-            self.traverse(next_test)
+            self._write_condition(next_test)  # rule:walrus
             with self.block():
                 self._scope_depth += depth
                 self.traverse(node.body)
@@ -2697,7 +2761,7 @@ class _Unparser(NodeVisitor):
 
     def visit_While(self, node):
         self.fill("while ")
-        self.traverse(node.test)
+        self._write_condition(node.test)  # rule:walrus
         with self.block():
             self._scope_depth += 1  # a loop body is a scope in Nim
             self.traverse(node.body)
@@ -3387,6 +3451,15 @@ class _Unparser(NodeVisitor):
             if isinstance(node.left, Name) and node.left.id == "__name__" and isinstance(node.ops[0], Eq) and \
                 isinstance(node.comparators[0], Constant) and node.comparators[0].value == "__main__":
                 self.write("isMainModule")
+            elif (len(node.ops) == 1 and isinstance(node.ops[0], (Is, IsNot))
+                  and not any(isinstance(x, Constant) and x.value is None for x in (node.left, node.comparators[0]))):
+                # rule:refident -> `a is b` (two refs or pointers, neither None) is reference identity: Nim's
+                # system.`==`(a, b), whatever `==` the type defines; `a is not b` its negation
+                if isinstance(node.ops[0], IsNot):
+                    self.write("not ")
+                self.write("system.`==`")
+                with self.delimit("(", ")"):
+                    self.interleave(lambda: self.write(", "), self.traverse, [node.left, node.comparators[0]])
             else:
                 self.traverse(node.left)
                 for o, e in zip(node.ops, node.comparators):
@@ -3451,7 +3524,38 @@ class _Unparser(NodeVisitor):
             return arg
         return ast.copy_location(Call(func=Name(id="str", ctx=Load()), args=[arg], keywords=[]), arg)
 
+    def _write_binding(self, node) -> bool:
+        """rule:stmtlist / rule:walrus -> `x := e` is `let x = e`, `mut @ (x := e)` is `var x = e`, `_ := e` is
+        `discard e`; False for another expression."""
+        keyword = "let"
+        if (isinstance(node, BinOp) and isinstance(node.op, MatMult) and isinstance(node.left, Name)
+                and node.left.id == "mut" and isinstance(node.right, NamedExpr)):
+            keyword, node = "var", node.right
+        if not isinstance(node, NamedExpr):
+            return False
+        if keyword == "let" and node.target.id == "_":  # `_ := f()` is `discard f()`, as `_ = f()` (rules §6)
+            self.write("discard ")
+        else:
+            self.write(keyword + " ")
+            self.traverse(node.target)
+            self.write(" = ")
+        self.set_precedence(_Precedence.TEST, node.value)
+        self.traverse(node.value)
+        return True
+
     def visit_Call(self, node):
+        if isinstance(node.func, Name) and node.func.id == "stmtlist" and node.args and not node.keywords:
+            # rule:stmtlist -> stmtlist(x := e, mut @ (y := f), g(x), value) is Nim's statement list expression
+            # `(let x = e; var y = f; g(x); value)`: its arguments run in order, the last one is its value
+            with self.delimit("(", ")"):
+                for arg in node.args[:-1]:
+                    if not self._write_binding(arg):
+                        self.set_precedence(_Precedence.TEST, arg)
+                        self.traverse(arg)
+                    self.write("; ")
+                self.set_precedence(_Precedence.TEST, node.args[-1])
+                self.traverse(node.args[-1])
+            return
         if (isinstance(node.func, Name) and node.func.id in ("echo", "print") and not node.keywords
                 and not getattr(node, "_n_echo_done", False)):
             # rule:echodollar -> Nim 2's echo applies `$` to each argument, nimony's writes it as it is (`write`
@@ -4335,6 +4439,21 @@ def _first_global_reads(tree) -> dict:
     return first
 
 
+def _reexported_routines(tree, module, name: str) -> list:
+    """The modules whose routine `name` the module's own `export` / `exportFrom` / `exportExcept` passes on to its
+    importers (nimic.imports.exported, recursively), other than the module's own binding (N113). A private name
+    (`_hexVal`) is never exported."""
+    if name.startswith("_") and not (name.startswith("__") and name.endswith("__")):
+        return []
+    own = vars(module).get(name)
+    found = set()
+    for m, names, hidden in module_exports(tree, module):
+        if (names is None or name in names) and name not in hidden:
+            found |= {getattr(obj, "__module__", None) or m.__name__
+                      for obj in exported(m, name) if is_routine(obj) and obj is not own}
+    return sorted(found)
+
+
 def import_problems(tree, module) -> list:
     """rule:import, rule:methodcall (nimic_translation_rules_nimony.md §8.1, name resolution): Python binds one object
     per name, Nim overloads every proc of a name that the module's imports make visible. For each name the module
@@ -4343,7 +4462,8 @@ def import_problems(tree, module) -> list:
     - hiddenoverload: the binding (a name import, a core star import) misses another visible routine of the name;
     - ownset: the module's @dispatch/@template set extends a binding that misses a visible routine;
     - plaindef: a plain `def` of a name another imported nimic module makes visible as a routine, read by the
-      module (Python replaces, Nim overloads; against a core proc not yet: proposal phase 3);
+      module (Python replaces, Nim overloads; against a core proc not yet: proposal phase 3), or one the module's
+      own export passes on from another module (its importers see both: N113);
     - notexported: the binding is an object Nim's imports don't bring (a module that only imports it);
     - unbound: a name the module reads, which Nim's imports bring and Python binds to nothing;
     - ambiguous: a type or value the binding holds, while another visible object has the name (Nim: ambiguous);
@@ -4410,6 +4530,12 @@ def import_problems(tree, module) -> list:
                 found.append((def_lines.get(name, line), f"plaindef: the module defines a plain {name}, and "
                                                          f"{', '.join(missing)} has a {name} too: Python replaces it, "
                                                          f"Nim overloads them: write @dispatch"))
+            elif reexporters := _reexported_routines(tree, module, name):
+                # N113 (A): Nim's interface of the module is its own proc and the re-exported ones, one overload set
+                # for its importers' free and qualified calls alike, whether the module reads the name or not
+                found.append((def_lines.get(name, line), f"plaindef: the module defines a plain {name}, and "
+                                                         f"re-exports {', '.join(reexporters)}'s {name}: its "
+                                                         f"importers see both, Python only its own: write @dispatch"))
             continue
         if kind == "set":
             if missing:
@@ -4548,9 +4674,77 @@ def check_reserved_names(ast_obj, file: str = "") -> None:
                          "\n".join(f"  {_located(file, line)}: {name} -> {name}_" for line, name in bindings))
 
 
+def _block_jumps(body: list) -> list:
+    """The `return`s of a template call's block, and its `break` / `continue` that aren't inside a loop of the
+    block (they leave the block); not those of a nested proc, lambda or class."""
+    found = []
+
+    def visit(node, in_loop: bool):
+        for child in iter_child_nodes(node):
+            if isinstance(child, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
+                continue
+            if isinstance(child, Return) or (isinstance(child, (Break, Continue)) and not in_loop):
+                found.append(child)
+            visit(child, in_loop or isinstance(child, (For, While)))
+
+    for stmt in body:
+        visit(Module(body=[stmt], type_ignores=[]), False)
+    return found
+
+
+def block_template_problems(tree, module) -> list:
+    """rules §2, block templates: Nim inlines a template, so a `return`, `break` or `continue` in a call's block
+    leaves the template there; nimic runs it as a generator. `for _ in t(args):` closes it on a jump (its `finally`
+    clauses run), `with t(args):` can't tell a jump from the block's end. Returns (line, message) for each block
+    whose jump would differ from Nim: a `return` in a `with` block (write `for _ in t(args):`); a `break` /
+    `continue` leaving a `with` block of a template with code after its block; a `break` / `continue` in a `for`
+    block of a template without its own loop (Python: the template's `for`, Nim: the enclosing loop); a `break` in
+    a loop template with code after its loop, a `continue` with code after the block in the loop; a `return`
+    through a bare `except:` of the template. The template's shape: `_n_block_shape` (nimic.inliner)."""
+    found = []
+    for node in walk(tree):
+        if isinstance(node, With) and len(node.items) == 1:
+            form, call = "with", node.items[0].context_expr
+        elif isinstance(node, For) and isinstance(node.target, Name) and node.target.id == "_":
+            form, call = "for", node.iter
+        else:
+            continue
+        if not (isinstance(call, Call) and isinstance(call.func, Name)):
+            continue
+        shape = getattr(vars(module).get(call.func.id), "_n_block_shape", None)
+        if shape is None:
+            continue
+        name = call.func.id
+        for jump in _block_jumps(node.body):
+            kind = type(jump).__name__.lower()
+            if form == "with" and kind == "return":
+                problem = f"a return in the block of `with {name}(...)` leaves {name} in Nim; Python's `with` " \
+                          f"can't tell it from the block's end: write `for _ in {name}(...):`"
+            elif form == "with":
+                problem = (f"a {kind} leaves the block of `with {name}(...)`: Nim skips {name}'s code after its "
+                           f"block, Python runs it, and `for` would make the {kind} {name}'s"
+                           if shape["after_block"] else None)
+            elif kind == "return":
+                problem = (f"a return in the block of {name} passes a bare `except:` of {name}, which catches it in "
+                           f"Python" if shape["catches_exit"] else None)
+            elif not shape["in_loop"]:
+                problem = (f"a {kind} in the block of `for _ in {name}(...)` is the template's in Python, the "
+                           f"enclosing loop's in Nim ({name} has no loop of its own): use `with {name}(...)`")
+            elif kind == "break":
+                problem = (f"a break in the block of {name} leaves {name}'s loop, and Nim runs {name}'s code after "
+                           f"the loop; Python closes {name} there" if shape["after_loop"] else None)
+            else:
+                problem = (f"a continue in the block of {name}: Nim skips {name}'s code after the block in its "
+                           f"loop, Python runs it" if shape["after_block"] else None)
+            if problem:
+                found.append((jump.lineno, f"blockjump: {problem}"))
+    return found
+
+
 def check_imported_module(ast_obj, module, file: str = "") -> None:
     """The checks of a module's AST that need the imported module (what its imports bind), run before unparse(),
-    and when a nimic module's imports have run (nimic.nsystem): rule:methodcall, rule:import. Off while
+    and when a nimic module's imports have run (nimic.nsystem): rule:methodcall, rule:import, the blocks that
+    leave a template (block_template_problems). Off while
     migrating_imports() runs."""
     if _import_checks_off:
         return
@@ -4560,6 +4754,9 @@ def check_imported_module(ast_obj, module, file: str = "") -> None:
     if problems := import_problems(ast_obj, module):
         raise ValueError("imports that bind other procs than Nim's imports:\n" +
                          "\n".join(f"  {_located(file, line)}: {msg}" for line, msg in problems))
+    if jumps := block_template_problems(ast_obj, module):
+        raise ValueError("blocks that leave a template otherwise than Nim's inlined template:\n" +
+                         "\n".join(f"  {_located(file, line)}: {msg}" for line, msg in jumps))
 
 
 def unparse(ast_obj, type_registry: dict[str, ] | None = None, package: str | None = None):

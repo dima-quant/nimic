@@ -295,6 +295,13 @@ def comptime(x: object) -> object:
     return x
 
 
+def stmtlist(*steps: object) -> object:
+    """Nim's statement list expression `(let x = e; var y = f; g(x); value)` (rule:stmtlist): its steps run in
+    order, as Python evaluates arguments; `x := e` binds a `let`, `mut @ (y := f)` a `var`, `_ := f()` discards; the
+    last step is the value. `stmtlist(d := int(intVal(n)), skip(n), d)` is `(let d = int(intVal(n)); skip n; d)`."""
+    return steps[-1]
+
+
 
 
 def new_exception(except_cls: type, msg: str):

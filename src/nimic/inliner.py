@@ -33,10 +33,8 @@ import ast
 import builtins
 import contextvars
 import copy
-import dis
 import inspect
 import linecache
-import sys
 import textwrap
 import types
 import warnings
@@ -44,7 +42,6 @@ from functools import wraps
 
 from nimic.ntypesystem import (dispatch, _n_registry, _n_routine_pragmas, _n_templates, _n_template_codes,
                                 _NGeneric, _DispatchedCallable)
-from nimic.nsystem import _n_node_at
 from nimic import valuecheck
 
 
@@ -116,10 +113,12 @@ class _BlockTemplateCall:
 
     def __iter__(self):
         """`for _ in t(args):` — a template that runs its block in a loop (Nim `t(args): body` of a template
-        such as `loopInto`): one iteration per run of the block. A `break` leaves the template's loop and
-        the template finishes (Nim); a `return` or an exception leaves the template where it is (its
-        `finally` clauses run). A `continue` resumes the template after the block (Nim would skip the rest
-        of the template's loop body: the same when nothing follows the block there)."""
+        such as `loopInto`, one iteration per run of the block), or a single-block template whose block may
+        `return`: a `return`, `break` or exception closes the template where it is, without resuming it (its
+        `finally` clauses run), as Nim leaves its inlined template there. The block's end resumes it. Import
+        checks (transpiler.block_template_problems) reject the jumps whose Nim meaning differs: a `break` with
+        code after the template's loop, a `continue` with code after the block, a `break` / `continue` out of a
+        template without its own loop (Nim: the enclosing loop's)."""
         if self._n_blocks != 1:
             raise TemplateBlockError(f"template {self._name} takes {self._n_blocks} blocks: `for` gives one")
         self._entered = True
@@ -128,40 +127,19 @@ class _BlockTemplateCall:
             next(gen)
         except StopIteration:
             return  # the template didn't run its block
-        while True:
-            try:
+        try:
+            while True:
                 yield
-            except GeneratorExit:
-                if _n_closed_by_break(sys._getframe(1)):
-                    try:
-                        gen.send(True)
-                    except StopIteration:
-                        return
-                    raise TemplateBlockError(f"template {self._name} runs its block after a `break` "
-                                             "(the block is not in the template's innermost loop)") from None
-                gen.close()
-                raise
-            try:
                 next(gen)
-            except StopIteration:
-                return
+        except StopIteration:
+            return
+        finally:
+            gen.close()  # left early (return, break, exception): the template's finally clauses, nothing else
 
     def __del__(self):
         if not self._entered:
             warnings.warn(f"block template {self._name} called without `with`: its block never ran",
                           RuntimeWarning, stacklevel=2)
-
-
-def _n_closed_by_break(frame) -> bool:
-    """Whether the `for` loop running in `frame` drops its iterator because of a `break` (not a `return` or
-    an exception): the statement at the current instruction is the `break`, or the iterator is popped and
-    a jump follows. (A `break` inside `try`/`finally` that ends the function compiles like a `return`.)"""
-    if _n_node_at(frame, ast.Break) is not None:
-        return True
-    ops = list(dis.get_instructions(frame.f_code))
-    at = next((i for i, op in enumerate(ops) if op.offset == frame.f_lasti), None)
-    return (at is not None and ops[at].opname in ("POP_TOP", "POP_ITER") and at + 1 < len(ops)
-            and ops[at + 1].opname.startswith("JUMP"))
 
 
 class _DoBlock:
@@ -200,33 +178,53 @@ def _n_block_params(func_def: ast.FunctionDef, annotations: dict) -> list[str]:
     return blocks
 
 
+def _n_block_shape(func_def: ast.FunctionDef, blocks: list[str], module_globals: dict) -> dict:
+    """Where a block template runs its (first) block, for the checks of blocks that jump out
+    (transpiler.block_template_problems): `in_loop` (inside the template's own loop), `after_block` (code that
+    follows the block: up to the template's end, or, in a loop, within the iteration), `after_loop` (code after
+    that loop), `catches_exit` (a bare `except:` / `except BaseException` around the block would catch the
+    GeneratorExit of a `return`). A `finally` isn't code after (it runs on a jump in Nim too); an enclosing call
+    of another block template with code after its block is (loopInto's `into`)."""
+    shape = {"in_loop": False, "after_block": False, "after_loop": False, "catches_exit": False}
+    stmt = next((n for n in ast.walk(func_def) if isinstance(n, ast.Expr) and isinstance(n.value, ast.Name)
+                 and blocks and n.value.id == blocks[0]), None)
+    if stmt is None:
+        return shape
+    parents = {child: node for node in ast.walk(func_def) for child in ast.iter_child_nodes(node)}
+    key, node = "after_block", stmt
+    while node is not func_def:
+        parent = parents[node]
+        for field in ("body", "orelse", "handlers"):
+            siblings = getattr(parent, field, None)
+            if isinstance(siblings, list) and node in siblings and siblings.index(node) + 1 < len(siblings):
+                shape[key] = True
+        if isinstance(parent, ast.Try) and node in parent.body and any(
+                h.type is None or (isinstance(h.type, ast.Name) and h.type.id in ("BaseException", "GeneratorExit"))
+                for h in parent.handlers):
+            shape["catches_exit"] = True
+        if isinstance(parent, ast.With) and node in parent.body:
+            for item in parent.items:
+                call = item.context_expr
+                inner = (module_globals.get(call.func.id)
+                         if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) else None)
+                if getattr(inner, "_n_block_shape", {}).get("after_block"):
+                    shape[key] = True
+        if isinstance(parent, (ast.While, ast.For)) and node in parent.body and not shape["in_loop"]:
+            shape["in_loop"], key = True, "after_loop"  # the innermost loop: what follows it is after the loop
+        node = parent
+    return shape
+
+
 class _BlockYields(ast.NodeTransformer):
-    """Replace the bare statements `block` by `yield <block index>`. Inside a loop of
-    the template it is `if (yield <index>): break`: a `break` in the block of `for _ in t():` leaves the
-    template's loop, as Nim's `break` in the expanded body does (_BlockTemplateCall.__iter__ sends True)."""
+    """Replace the bare statements `block` by `yield <block index>`."""
 
     def __init__(self, blocks: list[str]):
         self.index = {name: i for i, name in enumerate(blocks)}
-        self.loops = 0
 
-    def _maybe(self, node):
+    def visit_Expr(self, node):
         if isinstance(node.value, ast.Name) and node.value.id in self.index:
-            yield_ = ast.Yield(ast.Constant(self.index[node.value.id]))
-            if self.loops:
-                return ast.copy_location(ast.If(test=yield_, body=[ast.Break()], orelse=[]), node)
-            return ast.copy_location(ast.Expr(yield_), node)
+            return ast.copy_location(ast.Expr(ast.Yield(ast.Constant(self.index[node.value.id]))), node)
         return node
-
-    visit_Expr = _maybe
-
-    def _loop(self, node):
-        self.loops += 1
-        node.body = [self.visit(stmt) for stmt in node.body]
-        self.loops -= 1
-        node.orelse = [self.visit(stmt) for stmt in node.orelse]
-        return node
-
-    visit_While = visit_For = _loop
 
     def visit_FunctionDef(self, node):  # nested procs keep their own statements
         return node
@@ -303,6 +301,7 @@ def _n_make_block_template(template_func, func_def: ast.FunctionDef, blocks: lis
     factory._n_globals = template_func.__globals__  # dispatch resolves annotations in the template's module
     factory._n_template_code = template_func.__code__  # the template a binding of the factory is (_n_bound_template)
     factory._n_block_params = tuple(blocks)
+    factory._n_block_shape = _n_block_shape(func_def, blocks, template_func.__globals__)
     _n_registry.block_templates.add(name)  # the transpiler writes `for _ in t(...):` as `t(...):`
     return factory
 

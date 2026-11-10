@@ -146,7 +146,7 @@ else:
         sleep(nint(ms))
 
 if comptime(defined("nimony")):
-    from nimic.std.os import existsOrCreateDir, fileExists, getLastModificationTime, moveFile, sleep
+    from nimic.std.os import existsOrCreateDir, fileExists, getLastModificationTime, moveFile, PathComponent, sleep
     from nimic.std.dirs import path, removeFile, tryCreateFinalDir, tryRemoveFile, tryRemoveFinalDir, walkDir
     from nimic.std import paths
     from nimic.std.private.oscommons import tryMoveFSObject
@@ -170,7 +170,7 @@ if comptime(defined("nimony")):
     def _removeTreeImpl(d: string):
         try:
             for it in walkDir(path(d)):
-                if it.kind == pcDir: _removeTreeImpl(str(it.path))
+                if it.kind == PathComponent.pcDir: _removeTreeImpl(str(it.path))
                 else: _ = tryRemoveFile(it.path)
             _ = tryRemoveFinalDir(path(d))
         except: pass

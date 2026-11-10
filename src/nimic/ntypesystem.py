@@ -2163,8 +2163,10 @@ def distinct(cls: type) -> type:
 
     DICT_OF_TYPES[cls.__name__] = cls
     for base in getattr(cls, '__mro__', [])[1:]:
-        if base.__name__ in DICT_OF_C_TYPES:
-            DICT_OF_C_TYPES[cls.__name__] = DICT_OF_C_TYPES[base.__name__]
+        if (base_c := _n_c_type_of(base)) is not None:
+            DICT_OF_C_TYPES[cls.__name__] = base_c
+            if "_n_c_struct" in getattr(base, "__dict__", {}):
+                cls._n_c_struct = base_c  # a distinct Object: its base's struct, not one found by name
             break
     return cls
 
@@ -2294,6 +2296,15 @@ def _n_resolve_forward_fields(cls: type) -> None:
 # Backward-compatible aliases — these point to the same dict objects
 DICT_OF_TYPES = _n_registry.types
 DICT_OF_C_TYPES = _n_registry.c_types
+
+
+def _n_c_type_of(cls) -> type | None:
+    """The C type of a nimic class, None when it has none. An Object's struct is stored on its class
+    (`_n_c_struct`): two modules' types of one name are two types, as in Nim (codegen's and llvmcodegen's private
+    PragmaInfo), so it isn't looked up by the name. Other classes (scalars, cstring, arrays, pointers) by their
+    registered name."""
+    own = getattr(cls, "__dict__", {}).get("_n_c_struct")
+    return own if own is not None else DICT_OF_C_TYPES.get(getattr(cls, "__name__", None))
 
 # --- Base Memory Type (Ntype) ---
 
@@ -3091,6 +3102,8 @@ class NMetaClass(type):
         if "__annotations__" not in namespace and "__annotate_func__" in namespace:
             # a module without `from __future__ import annotations` (Python 3.14): the fields as strings
             dict.__setitem__(namespace, "__annotations__", _n_namespace_annotations(namespace))
+        # whether the class body declares fields of its own (`@ref class X(T): pass` doesn't: _n_named_target)
+        dict.__setitem__(namespace, "_n_declares_fields", bool(namespace.get("__annotations__")))
         # set before type.__new__ so __init_subclass__ (type registration) can see them
         if getattr(namespace, "_n_unset_read", False):
             namespace["_n_body_has_case"] = True
@@ -3134,9 +3147,20 @@ def _n_len_of_object(self) -> int:
 
 
 def _n_hash_of_object(self) -> int:
-    """`hash(b)` of an Object whose class declares a `hash` method: Nim's `hash(b)` is `b.hash`, so Python's
+    """`hash(b)` of a value whose class declares a `hash` method: Nim's `hash(b)` is `b.hash`, so Python's
     builtin hash (and a dict or set) agrees with nimic.std.hashes' `hash`."""
     return int(self.hash())
+
+
+def _n_hash_protocol(cls) -> None:
+    """Python's hashing of a nimic class (an Object, a scalar such as a distinct integer) follows Nim's `hash`
+    and `==`, which are independent procs: a `hash` method the class declares (rules §4) is also Python's
+    hash(b) (`hash(b)` / `b.hash` are one call in Nim), and an overloaded `==` (__eq__, for which Python drops
+    __hash__) keeps the inherited hashing (PIdent's `==`, nifcore's borrowed `==` of SymId)."""
+    if callable(cls.__dict__.get("hash")) and cls.__dict__.get("__hash__") is None:
+        cls.__hash__ = _n_hash_of_object  # before the `==` case, which would bring back the inherited hash
+    if "__eq__" in cls.__dict__ and cls.__dict__.get("__hash__", 0) is None:
+        cls.__hash__ = next(b.__hash__ for b in cls.__mro__[1:] if b.__dict__.get("__hash__") is not None)
 
 
 class Trange:
@@ -3382,8 +3406,8 @@ def _n_c_field_type(field_cls: object) -> object:
     _ua = DICT_OF_TYPES.get("UncheckedArray")
     if is_class and ((_pointer and issubclass(field_cls, _pointer)) or getattr(field_cls, '_n_is_ref', False)):
         return ctypes.c_void_p  # pointer, ptr[X] or ref object
-    if getattr(field_cls, '__name__', None) in DICT_OF_C_TYPES:
-        return DICT_OF_C_TYPES[field_cls.__name__]  # scalars, cstring, Object structs, arrays
+    if (field_c := _n_c_type_of(field_cls)) is not None:
+        return field_c  # scalars, cstring, Object structs, arrays
     if getattr(field_cls, '_n_is_calltype', False):
         return ctypes.c_void_p  # proc type → opaque pointer
     if is_class and _ua and issubclass(field_cls, _ua):
@@ -3647,9 +3671,8 @@ class _Object(Ntype):
         if addressed is not None:
             return addressed  # the object whose address was taken: one value, with its Python-held fields
         # Create Object backed by this memory
-        class_name = cls.__name__
-        if class_name in DICT_OF_C_TYPES:
-            c_type = DICT_OF_C_TYPES[class_name]
+        c_type = _n_c_type_of(cls)
+        if c_type is not None:
             c_instance = c_type.from_address(address)
             obj = cls.__new__(cls)
             obj._n_view = c_instance
@@ -3677,9 +3700,8 @@ class _Object(Ntype):
         else:
             address = ctypes.addressof(instance)
 
-        class_name = cls.__name__
-        if class_name in DICT_OF_C_TYPES:
-            c_type = DICT_OF_C_TYPES[class_name]
+        c_type = _n_c_type_of(cls)
+        if c_type is not None:
             c_instance = c_type.from_address(address)
             obj = cls.__new__(cls)
             obj._n_view = c_instance
@@ -3729,7 +3751,7 @@ class _Object(Ntype):
             if value and isinstance(value, Object) and not kwargs:
                 self._n_view = value._n_get_value()
             else:
-                _buf = DICT_OF_C_TYPES[class_name]()
+                _buf = _n_c_type_of(type(self))()
                 self._n_owned_addr = BUFFER_REGISTRY.register(_buf)
                 self._n_view = _buf
             self._n_setup(value)
@@ -3822,8 +3844,8 @@ class _Object(Ntype):
         for name in active:
             if name in python_fields:
                 set_attr(name, _n_default_value(field_types.get(name)))
-        if cls.__name__ in DICT_OF_C_TYPES:
-            _buf = DICT_OF_C_TYPES[cls.__name__]()
+        if (c_type := _n_c_type_of(cls)) is not None:
+            _buf = c_type()
             self._n_owned_addr = BUFFER_REGISTRY.register(_buf)
             self._n_view = _buf
             disc_source = types.SimpleNamespace(**discs)  # discriminators are written, not read
@@ -4304,6 +4326,7 @@ class _Object(Ntype):
                 f_list, anonymous = _n_build_c_fields(flat, cls._n_field_types, python_fields, c_class_name)
             _c_type = type(c_class_name, (ctypes.Structure,), {"_anonymous_": tuple(anonymous), "_fields_": f_list})
             dict_of_c_types[class_name] = _c_type
+            cls._n_c_struct = _c_type  # the class's own: another module's type of the name has its own
 
     @classmethod
     def _n_check_exhaustive(cls) -> None:
@@ -4332,18 +4355,11 @@ class _Object(Ntype):
 
     @classmethod
     def _n_c_type(cls) -> type:
-        return DICT_OF_C_TYPES[cls.__name__]
+        return _n_c_type_of(cls)
 
 class Object(_Object, metaclass=NMetaClass):
     def __init_subclass__(cls) -> None:
-        if callable(cls.__dict__.get("hash")) and cls.__dict__.get("__hash__") is None:
-            # a `hash` method (rules §4) is also Python's hash(b): one call in Nim, `hash(b)` / `b.hash`. Set
-            # before the `==` case below, which otherwise brings back the inherited (identity) hash
-            cls.__hash__ = _n_hash_of_object
-        if "__eq__" in cls.__dict__ and cls.__dict__.get("__hash__", 0) is None:
-            # Python drops __hash__ when a class defines __eq__; in Nim `==` and `hash` are independent
-            # procs, so an overloaded `==` keeps the inherited hashing (e.g. PIdent's `==`)
-            cls.__hash__ = next(b.__hash__ for b in cls.__mro__[1:] if b.__dict__.get("__hash__") is not None)
+        _n_hash_protocol(cls)
         # Nim's `len(b)` and `b.len` are one call: a class declaring one form answers the other (a `len` @property,
         # rules §4, or method answers Python's len(b); a container's __len__ gives `.len`). A length of 0 keeps
         # the object truthy, as before
@@ -4365,9 +4381,31 @@ class Object(_Object, metaclass=NMetaClass):
         type_params = getattr(cls, '__type_params__', ())
         if not type_params:
             cls._n_register_type()
+            _n_bind_forward_aliases(cls)
         else:
             # Type parameters not resolved yet, just register the class
             _n_registry.types[cls.__name__] = cls
+
+
+def _n_bind_forward_aliases(cls: type) -> None:
+    """`type X = ref[T]` / `type X = ptr[T]` written before `class T` (Nim's `X = ref T` ahead of `T = object` in a
+    type section): when T is defined, its module binds X to ref[T] / ptr[T], so `X(...)` constructs and X dispatches
+    from then on. A Python `type` alias is lazy and not callable; bound at T's definition, X is a class whatever runs
+    later. An alias written after T is the assignment `X = ref[T]` (rules §3)."""
+    module_globals = cls.__dict__.get("_n_caller_globals")
+    if module_globals is None or "_n_caller_locals" in cls.__dict__:
+        return  # a class defined inside a function: its aliases are the function's
+    for name, value in list(module_globals.items()):
+        if not isinstance(value, TypeAliasType):
+            continue
+        source = annotationlib.call_evaluate_function(value.evaluate_value, annotationlib.Format.STRING).strip()
+        node = ast.parse(source, mode="eval").body
+        if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and isinstance(node.slice, ast.Name)
+                and node.slice.id == cls.__name__):
+            constructor = module_globals.get(node.value.id, globals().get(node.value.id))
+            if constructor is ref or constructor is ptr:
+                module_globals[name] = constructor[cls]
+
 
 DICT_OF_TYPES["Object"] = Object
 DICT_OF_TYPES["RootObj"] = Object
@@ -4452,10 +4490,9 @@ class UncheckedArray(Ntype):
         else:
             address = _resolve_addr(instance)
         if hasattr(cls, "_n_type"):
-            type_name = cls._n_type.__name__
-            if type_name not in DICT_OF_C_TYPES:
+            if _n_c_type_of(cls._n_type) is None:
                 cls._n_type._n_register_type()
-            c_elem_type = DICT_OF_C_TYPES[type_name]
+            c_elem_type = _n_c_type_of(cls._n_type)
             ptr_c_type = ctypes.POINTER(c_elem_type)
             data_ptr = ctypes.c_void_p(address)
             c_data_ptr = ctypes.cast(data_ptr, ptr_c_type)
@@ -4659,8 +4696,8 @@ class array(_NIndexed, _NLen, Ntype):
     def _n_register_type(cls) -> None:
         if getattr(cls._n_type, '_n_hooks', None):
             pass  # elements with lifetime hooks are held as their owning objects (no C storage)
-        elif cls._n_type.__name__ in DICT_OF_C_TYPES:
-            DICT_OF_C_TYPES[cls.__name__] = DICT_OF_C_TYPES[cls._n_type.__name__] * cls._n_size
+        elif (elem_c := _n_c_type_of(cls._n_type)) is not None:
+            cls._n_c_struct = DICT_OF_C_TYPES[cls.__name__] = elem_c * cls._n_size  # the element's own struct
         elif isinstance(cls._n_type, pointer):
             # TODO: is this true for typed pointer?
             DICT_OF_C_TYPES[cls.__name__] = ctypes.c_void_p * cls._n_size
@@ -4732,15 +4769,15 @@ class seq(_NIndexed, Ntype):
                 self._n_is_list = True
                 self._n_list = list(c_base) if isinstance(c_base, (list, tuple)) else []
                 return
-            if type_name not in DICT_OF_C_TYPES:
+            if _n_c_type_of(ntype) is None:
                 if hasattr(ntype, '_n_register_type'):
                     ntype._n_register_type()
                 else:
                     for base in getattr(ntype, '__mro__', [])[1:]:
-                        if base.__name__ in DICT_OF_C_TYPES:
-                            DICT_OF_C_TYPES[type_name] = DICT_OF_C_TYPES[base.__name__]
+                        if (base_c := _n_c_type_of(base)) is not None:
+                            DICT_OF_C_TYPES[type_name] = base_c
                             break
-            if type_name not in DICT_OF_C_TYPES:
+            if _n_c_type_of(ntype) is None:
                 self._n_is_list = True
                 self._n_list = list(c_base) if isinstance(c_base, (list, tuple)) else []
                 return
@@ -4753,7 +4790,7 @@ class seq(_NIndexed, Ntype):
                     ctypes.addressof(self._n_backing)
                 )
             else:
-                self._n_backing = (DICT_OF_C_TYPES[type_name] * self._n_reserved)()
+                self._n_backing = (_n_c_type_of(ntype) * self._n_reserved)()
                 self._n_owned_addr = BUFFER_REGISTRY.register(self._n_backing)
                 # the view is the backing itself: an element taken from it holds it alive (_n_resize)
                 self._n_view = self._n_backing
@@ -4969,9 +5006,8 @@ class seq(_NIndexed, Ntype):
             self._n_list = [self._n_type() for _ in range(new_len)]
             return
         self._n_reserved = max(new_len, 1)
-        type_name = self._n_type.__name__
         old_addr = getattr(self, "_n_owned_addr", None)
-        self._n_backing = (DICT_OF_C_TYPES[type_name] * self._n_reserved)()
+        self._n_backing = (_n_c_type_of(self._n_type) * self._n_reserved)()
         self._n_owned_addr = (BUFFER_REGISTRY.register(self._n_backing) if old_addr is None
                               else BUFFER_REGISTRY.update(old_addr, self._n_backing))
         self._n_view = self._n_backing  # an element taken before holds the old buffer
@@ -5366,12 +5402,11 @@ class pointer(Ntype):
 
     def _n_c_slot(self, ct):
         """A ctypes pointer to the pointee's C slot, or None when `ct` has no C type."""
-        type_name = ct.__name__
-        if type_name not in DICT_OF_C_TYPES and hasattr(ct, '_n_register_type'):
+        if _n_c_type_of(ct) is None and hasattr(ct, '_n_register_type'):
             ct._n_register_type()
-        if type_name not in DICT_OF_C_TYPES:
+        if (c_type := _n_c_type_of(ct)) is None:
             return None
-        return ctypes.cast(ctypes.c_void_p(self._n_addr), ctypes.POINTER(DICT_OF_C_TYPES[type_name]))
+        return ctypes.cast(ctypes.c_void_p(self._n_addr), ctypes.POINTER(c_type))
 
     @property
     def contents(self):
@@ -5698,6 +5733,9 @@ class ByteAddress(Ntype):
     def __ne__(self, other):
         return not self.__eq__(other)
 
+    def __hash__(self):
+        return hash(self._n_get_value())  # as it compares: by the address, equal to the address's int
+
     def __lt__(self, other):
         if isinstance(other, ByteAddress):
             return self._n_get_value() < other._n_get_value()
@@ -5749,13 +5787,49 @@ def make_pointer_type(t: type, class_name: str = None) -> type:
     ptr_type._n_register_type()
     return ptr_type
 
+# The members a class body has that aren't its own definitions (a named target's @ref/@ptr class gives its methods
+# to the canonical ref[T] / ptr[T] class)
+_n_class_machinery = frozenset({"__module__", "__qualname__", "__doc__", "__dict__", "__weakref__", "__annotations__",
+                                "__annotate__", "__annotate_func__", "__annotations_cache__", "__firstlineno__",
+                                "__static_attributes__", "__type_params__", "__orig_bases__", "__parameters__"})
+
+
+def _n_named_target(cls: type) -> type | None:
+    """The object type `T` of `@ref class X(T): pass` / `@ptr class X(T): pass` (Nim `X = ref T`, `X = ptr T`): one
+    base, an object type other than Object itself, and no fields of the class's own (with fields it is Nim's
+    `ref object` / `ptr object`, with Object as its base). None for any other class."""
+    if len(cls.__bases__) != 1:
+        return None
+    base = cls.__bases__[0]
+    if not (isinstance(base, type) and issubclass(base, Object)) or base is Object:
+        return None
+    return None if cls.__dict__.get("_n_declares_fields", True) else base
+
+
+def _n_adopt(canonical: type, cls: type) -> type:
+    """`@ref class X(T)` / `@ptr class X(T)` after `ref[T]` / `ptr[T]` was made: X is that class (Nim's alias), with
+    the methods X's body defines; the name X resolves to it."""
+    for name, value in cls.__dict__.items():
+        if name not in _n_class_machinery:
+            setattr(canonical, name, value)
+    DICT_OF_TYPES[cls.__name__] = canonical
+    return canonical
+
+
 class _SomeRefClass:
+    """`ptr`: `ptr[T]` is the pointer type of T, one class per T (Nim's `ptr T`, structural); `@ptr` on a class
+    with fields is Nim's `ptr object`, and `@ptr class X(T): pass` names `ptr[T]` (Nim `X = ptr T`: an alias, the
+    same type)."""
+
     def __call__(cls, other: object) -> object:
         """When used as @ptr decorator on a class, mark it as pointer type,
         i.e. ctypes backing is a pointer to a struct
         the class exists only as a pointer type and should be equivalent
         to ptr[other] when other is not decorated"""
         if isinstance(other, type):
+            target = _n_named_target(other)
+            if target is not None:  # `@ptr class X(T): pass`: X is ptr[T]
+                return _n_adopt(cls[target], other)
             original_name = other.__name__
             # keep the bare class by an alias in the DICT_OF_TYPES
             other.__name__ = f"_n_bare_{original_name}"
@@ -5781,14 +5855,31 @@ class _SomeRefClass:
 
 
 class _SomeManagedRefClass:
+    """`ref`: `ref[T]` is the ref type of the object type T, one class per T (Nim's `ref T`, structural): a subclass
+    of T whose values are references (stores share them, the zero value is nil). `@ref` on a class with fields is
+    Nim's `ref object`; `@ref class X(T): pass` is `ref[T]` itself (Nim `X = ref T`: an alias, the same type), with
+    the methods its body defines."""
+
+    def __init__(self) -> None:
+        self._n_by_target: dict[type, type] = {}  # T -> ref[T]
+
     def __call__(self, cls: type) -> type:
         """When used as @ref decorator, mark class as a managed reference type.
         This prevents C-backing for arrays, allowing them to store None and behave
         like managed Python references."""
+        target = _n_named_target(cls)
+        if target is not None:
+            existing = self._n_by_target.get(target)
+            if existing is not None and existing is not cls:
+                return _n_adopt(existing, cls)  # ref[T] was written before the class naming it
+            self._n_by_target[target] = cls
+            DICT_OF_TYPES[f"ref[{target.__name__}]"] = cls
         cls._n_is_ref = True
         class_name = cls.__name__
-        if class_name in DICT_OF_C_TYPES:
+        if _n_c_type_of(cls) is not None and DICT_OF_C_TYPES.get(class_name) is _n_c_type_of(cls):
             del DICT_OF_C_TYPES[class_name]
+        if "_n_c_struct" in cls.__dict__:
+            del cls._n_c_struct  # a ref holds its fields in Python: no struct of its own
         # With no ctypes struct, ALL fields must be python-side so they get
         # initialized in __init__ (otherwise ctypes-classified fields like
         # `s: string` are never set and access raises AttributeError).
@@ -5798,7 +5889,21 @@ class _SomeManagedRefClass:
         return cls
 
     def __getitem__(self, _ntype: type) -> type:
-        return _ntype
+        """ref[T]: the ref class of the object type T (made once, `ref[T]` its name until a `@ref class X(T)` names
+        it). A ref of another type (a scalar, a seq, a ref) isn't supported: TypeError."""
+        if not (isinstance(_ntype, type) and issubclass(_ntype, Object)) or _ntype is Object \
+                or getattr(_ntype, "_n_is_ref", False):
+            raise TypeError(f"ref[{getattr(_ntype, '__name__', _ntype)}]: a ref of an object type is supported, "
+                            f"not of {getattr(_ntype, '__name__', _ntype)}")
+        existing = self._n_by_target.get(_ntype)
+        if existing is not None:
+            return existing
+        namespace = {"__module__": _ntype.__module__, "_n_declares_fields": False}
+        for name in ("_n_caller_globals", "_n_caller_locals"):  # T's module resolves the inherited annotations
+            if name in _ntype.__dict__:
+                namespace[name] = _ntype.__dict__[name]
+        return self(type(f"ref[{_ntype.__name__}]", (_ntype,), namespace))
+
 
 ref = _SomeManagedRefClass()
 ptr = _SomeRefClass()
@@ -5873,6 +5978,7 @@ class NScalar:
         super().__init_subclass__(**kwargs)
         if "__str__" in cls.__dict__:
             cls.__str__ = _n_str_method(cls.__dict__["__str__"])  # a `$` defined in the class
+        _n_hash_protocol(cls)
 
     def _n_bind(
         self, get_value: callable, set_value: callable, get_addr: callable
@@ -5883,7 +5989,7 @@ class NScalar:
         self._n_set_value = set_value
         addr_val = get_addr()
         if addr_val is not None:
-            c_type = DICT_OF_C_TYPES[self._n_type.__name__]
+            c_type = _n_c_type_of(self._n_type)
             self._n_view = c_type.from_address(int(addr_val))
         else:
             self._n_view = None
@@ -6004,7 +6110,7 @@ class NScalar:
         # register alias
         dict_of_types, dict_of_c_types = DICT_OF_TYPES, DICT_OF_C_TYPES
         dict_of_types[cls.__name__] = cls
-        _c_type = dict_of_c_types[cls.__bases__[0].__name__]
+        _c_type = _n_c_type_of(cls.__bases__[0])
         dict_of_c_types[cls.__name__] = _c_type
         # assume it is alias (distinct removes it if not)
         if cls.__bases__[0].__name__ in _n_aliases:

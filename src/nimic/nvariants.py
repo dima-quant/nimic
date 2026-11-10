@@ -6,6 +6,7 @@ Object variants (Nim "case objects"): the declaration as a record tree and the
 branch-activity layout computed from it.
 
     NRecord / NField / NCase / NBranch  — mirror Nim's nkRecList / nkRecCase / nkOfBranch / nkElse
+    NRange                              — a range label of a branch (Nim `of a..b`)
     parse_record(class_def)             — class AST -> NRecord
     parse_class_source(src)             — class source -> NRecord
     NVariantLayout                      — all fields, discriminators, active_fields(), branch_key()
@@ -21,6 +22,8 @@ A nimic variant is declared with a `match` on the immediately preceding field:
             case NodeKind.nkAdd | NodeKind.nkSub:
                 leftOp: Node
                 rightOp: Node
+            case _ if kind in inrange(NodeKind.nkMul, NodeKind.nkDiv) or kind == NodeKind.nkMod:
+                operands: seq[Node]   # Nim `of nkMul..nkDiv, nkMod:`
             case _:
                 pass
         tail: nint
@@ -44,8 +47,15 @@ class NField:
 
 
 @dataclass(frozen=True)
+class NRange:
+    """A range label of a branch, Nim `of a..b`: the source texts of its bounds (inclusive)."""
+    low: str
+    high: str
+
+
+@dataclass(frozen=True)
 class NBranch:
-    values: tuple[str, ...] | None  # pattern source texts; None == else (`case _`)
+    values: tuple[str | NRange, ...] | None  # pattern source texts and ranges; None == else (`case _`)
     items: tuple  # tuple[NField | NCase, ...]
 
 
@@ -129,6 +139,28 @@ def _pattern_values(pattern: ast.pattern, where: str) -> tuple[str, ...] | None:
     raise TypeError(f"{where}: unsupported case pattern `{ast.unparse(pattern)}` at line {pattern.lineno}")
 
 
+def _guard_values(guard: ast.expr, subject: str, where: str) -> tuple[str | NRange, ...]:
+    """The labels of a range branch `case _ if kind in inrange(a, b) or kind == v:` (Nim `of a..b, v:`), the
+    guard form of a `match` statement's range branch (rules §8): terms joined by `or`, each `kind == v` or
+    `kind in inrange(a, b)` on the discriminator `subject`."""
+    terms = guard.values if isinstance(guard, ast.BoolOp) and isinstance(guard.op, ast.Or) else [guard]
+    values: list = []
+    for term in terms:
+        if (isinstance(term, ast.Compare) and len(term.ops) == 1 and isinstance(term.left, ast.Name)
+                and term.left.id == subject):
+            op, value = term.ops[0], term.comparators[0]
+            if isinstance(op, ast.Eq):
+                values.append(ast.unparse(value))
+                continue
+            if (isinstance(op, ast.In) and isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                    and value.func.id == "inrange" and len(value.args) == 2 and not value.keywords):
+                values.append(NRange(ast.unparse(value.args[0]), ast.unparse(value.args[1])))
+                continue
+        raise TypeError(f"{where}: unsupported case guard `{ast.unparse(term)}` at line {term.lineno}: a range "
+                        f"branch is `case _ if {subject} in inrange(a, b) or {subject} == v:`")
+    return tuple(values)
+
+
 def _is_ignorable(stmt: ast.stmt) -> bool:
     """`pass`, docstrings and `...` inside a branch."""
     return isinstance(stmt, ast.Pass) or (
@@ -155,10 +187,11 @@ def _parse_items(body: list[ast.stmt], cls_name: str, *, top_level: bool) -> tup
             where = f"{cls_name}.{prev.name}"
             branches = []
             for i, mc in enumerate(stmt.cases):
-                if mc.guard is not None:
-                    raise TypeError(f"{cls_name}: unsupported statement in variant branch at line "
-                                    f"{mc.guard.lineno} (case guard)")
                 values = _pattern_values(mc.pattern, where)
+                if mc.guard is not None:
+                    if values is not None:
+                        raise TypeError(f"{where}: a case guard needs the pattern `_` (line {mc.guard.lineno})")
+                    values = _guard_values(mc.guard, prev.name, where)
                 if values is None and i != len(stmt.cases) - 1:
                     raise TypeError(f"{where}: `case _` must be the last branch (line {mc.pattern.lineno})")
                 branches.append(NBranch(values, _parse_items(mc.body, cls_name, top_level=False)))
@@ -220,11 +253,17 @@ class NVariantLayout:
     def _ords(self, case: NCase) -> tuple[frozenset[int] | None, ...]:
         ords = self._branch_ords.get(id(case))
         if ords is None:
-            ords = tuple(None if br.values is None else
-                         frozenset(self._ordinal(self._eval_value(v)) for v in br.values)
+            ords = tuple(None if br.values is None else frozenset().union(*map(self._label_ords, br.values))
                          for br in case.branches)
             self._branch_ords[id(case)] = ords
         return ords
+
+    def _label_ords(self, label: str | NRange) -> frozenset[int]:
+        """The ordinals a branch label stands for: one value, or every one of a range (`a..b`, inclusive)."""
+        if isinstance(label, NRange):
+            return frozenset(range(self._ordinal(self._eval_value(label.low)),
+                                   self._ordinal(self._eval_value(label.high)) + 1))
+        return frozenset((self._ordinal(self._eval_value(label)),))
 
     def branch_values(self, case: NCase) -> tuple[frozenset[int] | None, ...]:
         """Normalized values per branch (None for `case _`)."""
