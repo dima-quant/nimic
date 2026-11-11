@@ -252,6 +252,24 @@ def _n_module_dialect(module_name: str) -> str:
     return dialect
 
 
+def _n_frame_dialect(frame) -> str:
+    """The dialect of the code of `frame`: its module's, also when the module runs as the main script
+    (`python -m nnimony.lengc.lengc`: `__name__` is `__main__`, its spec keeps the module's name; rules §0.1)."""
+    spec = frame.f_globals.get("__spec__")
+    name = frame.f_globals.get("__name__", "")
+    if name == "__main__" and spec is not None:
+        name = spec.name
+    return _n_module_dialect(name)
+
+
+def _n_caller_dialect() -> str:
+    """The dialect of the code calling into nimic's runtime: the first frame outside its runtime modules."""
+    frame = sys._getframe(1)
+    while frame is not None and frame.f_code.co_filename.startswith(_N_RUNTIME_DIR):
+        frame = frame.f_back
+    return _n_frame_dialect(frame) if frame is not None else "nim2"
+
+
 def _n_check_enabled(name: str) -> bool:
     """Whether the runtime check `name` (normalized, e.g. "overflowchecks") applies to the code that
     triggered it: the first caller frame outside nimic's runtime modules. Off in a push region, in a proc
@@ -265,7 +283,7 @@ def _n_check_enabled(name: str) -> bool:
         codes = _n_unchecked_codes.get(name)
         if codes and frame.f_code in codes:
             return False
-        if name in _N_DIALECT_NO_CHECKS[_n_module_dialect(frame.f_globals.get("__name__", ""))]:
+        if name in _N_DIALECT_NO_CHECKS[_n_frame_dialect(frame)]:
             return False
     return _n_check_provider(name) if _n_check_provider is not None else True
 

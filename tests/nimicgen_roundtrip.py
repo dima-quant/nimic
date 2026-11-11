@@ -223,8 +223,15 @@ def prepare(mods: list[str]) -> dict[str, str]:
     shutil.rmtree(src, ignore_errors=True)
     shutil.copytree(NIMONY / "src", src)
     errors = {}
+    includes = vt._nnimony_includes()  # include files: transpiled through their includer (its namespace)
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(str(p) for p in (ROOT / "src", ROOT)), NIMONY_DIR=str(NIMONY))
     for m in mods:
-        p = transpile("nnimony." + m.replace("/", "."), [ROOT / "src", ROOT], ROOT)
+        if m in includes:
+            p = subprocess.run([PY, "-c", vt.TRANSPILE_SOURCE, str(NNIMONY / f"{m}.py"),
+                                "nnimony." + includes[m].replace("/", ".")], cwd=ROOT, capture_output=True, text=True,
+                               env=env)
+        else:
+            p = transpile("nnimony." + m.replace("/", "."), [ROOT / "src", ROOT], ROOT)
         if p.returncode != 0:
             errors[m] = " ".join(l.strip() for l in error_lines(p.stderr))
         else:

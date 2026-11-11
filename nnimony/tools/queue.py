@@ -43,13 +43,24 @@ NOT_CONVERTED = {
                              "converts the expansion: nimgrammar, tests/mini)",
     "nifler2/tests/tnimlexer": "☑️ Covered: its cases are nimlexer's self-test (it doesn't build at the pin: nimony "
                                "rejects its unsynchronized global `failures`)",
+    "lengc/leng_model": "⏭️ Later: used by hexer and the optimizer, not by lengc's backends (they read NIF through "
+                        "lib/nifcdecl)",
 }
+# whole directories left for a later phase, with the reason
+NOT_CONVERTED_DIRS = {
+    "lengc/shoggoth/": "⏭️ Later: the optimizer (`--opt:speed|size`, the shoggoth binary), after hexer (Phase D)",
+}
+
+
+def _not_converted(key: str) -> str | None:
+    """Why a module isn't converted (decided with the user), or None."""
+    return NOT_CONVERTED.get(key) or next((why for d, why in NOT_CONVERTED_DIRS.items() if key.startswith(d)), None)
 
 # components in the order of the plan; the current one is scanned module by module
 COMPONENTS = [
     ("lib", "NIF libraries: the foundation of every nimony tool", "current"),
     ("nifler2", "the parser (Nim -> NIF), a nimony program generated from a grammar (converted by nimicgen)", "current"),
-    ("lengc", "the C backend (NIF -> C)", "next"),
+    ("lengc", "the C and LLVM backend (NIF -> C, LLVM IR), converted by nimicgen", "current"),
     ("hexer", "lowering (shoggoth)", "later"),
     ("nimony", "semantic checking (nimsem) and the driver", "later"),
 ]
@@ -156,10 +167,10 @@ def write_queue() -> None:
         deps, std, sizes = scan(component)
         tier = tiers(deps)
         done = {k for k in deps if _converted(k)}
-        ready = sorted((k for k in deps if k not in done and k not in LEGACY_MODULES and k not in NOT_CONVERTED and deps[k] <= done),
+        ready = sorted((k for k in deps if k not in done and k not in LEGACY_MODULES and not _not_converted(k) and deps[k] <= done),
                        key=lambda k: sizes[k])
         legacy = [k for k in deps if k in LEGACY_MODULES]
-        covered = [k for k in deps if k in NOT_CONVERTED]
+        covered = [k for k in deps if _not_converted(k)]
         lines += ["", f"## Ready to Convert (`src/{component}`)", "",
                   "| Module | Size | Std imports (✗ = no nimic shim yet) | Agent |", "|---|---|---|---|"]
         for k in ready:
@@ -170,7 +181,7 @@ def write_queue() -> None:
                   "| Module | Tier | Size | Depends on | Std imports | Status |", "|---|---|---|---|---|---|"]
         for k in sorted(deps, key=lambda k: (tier[k], k)):
             status = ("✅ Converted" if k in done else f"⛔ Legacy: {LEGACY_MODULES[k]}" if k in LEGACY_MODULES
-                      else NOT_CONVERTED[k] if k in NOT_CONVERTED else "🔲 Pending")
+                      else _not_converted(k) or "🔲 Pending")
             lines.append(f"| `{k}` | {tier[k]} | {sizes[k]:,} bytes | {', '.join(sorted(deps[k]))} | "
                          f"{_std_list(std[k])} | {status} |")
     QUEUE.write_text("\n".join(lines) + "\n")

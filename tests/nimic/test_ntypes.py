@@ -5290,6 +5290,47 @@ class TestNTypes(unittest.TestCase):
         finally:
             nsys._n_exit = saved
 
+    def test_quit_message_with_code(self):
+        """QuitSuccess (0) and QuitFailure (1), Nim 2's system / nimony's syncio constants. quit(errormsg,
+        errorcode) writes the message and exits with the code: Nim 2 writes it to stderr, nimony (its syncio:
+        `echo msg`) to stdout, by the dialect of the calling module (lengc's `quit(Usage, QuitSuccess)`)."""
+        self.assertEqual((QuitSuccess, QuitFailure), (0, 1))
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        body = "from nimic.ntypes import *\nquit(string('usage'), QuitSuccess)\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "nimonypkg"))
+            with open(os.path.join(tmp, "nimonypkg", "__init__.py"), "w") as f:
+                f.write('__nimic_dialect__ = "nimony"\n')
+            for path in (os.path.join(tmp, "nimonypkg", "m.py"), os.path.join(tmp, "nim2m.py")):
+                with open(path, "w") as f:
+                    f.write(body)
+            env = dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(root, "src"), tmp)))
+            for module, out, err in (("nimonypkg.m", "usage\n", ""), ("nim2m", "", "usage\n")):
+                run = subprocess.run([sys.executable, "-m", module], capture_output=True, text=True, cwd=tmp, env=env)
+                self.assertEqual((run.returncode, run.stdout, run.stderr), (0, out, err), module)
+
+    def test_dialect_of_module_run_as_main(self):
+        """A module's dialect holds also when it runs as the main script (rules §0.1: `python -m pkg.m` has
+        `__name__ == "__main__"`, its spec keeps the module's name): nimony's signed arithmetic wraps, Nim 2's
+        raises OverflowDefect."""
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        body = "from nimic.ntypes import *\nx = int8(127)\nx += int8(1)\necho(x)\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "nimonypkg"))
+            with open(os.path.join(tmp, "nimonypkg", "__init__.py"), "w") as f:
+                f.write('__nimic_dialect__ = "nimony"\n')
+            for path in (os.path.join(tmp, "nimonypkg", "m.py"), os.path.join(tmp, "nim2m.py")):
+                with open(path, "w") as f:
+                    f.write(body)
+            env = dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(root, "src"), tmp)))
+            wraps = subprocess.run([sys.executable, "-m", "nimonypkg.m"], capture_output=True, text=True, cwd=tmp,
+                                   env=env)
+            self.assertEqual((wraps.returncode, wraps.stdout), (0, "-128\n"), wraps.stderr)
+            raises = subprocess.run([sys.executable, "-m", "nim2m"], capture_output=True, text=True, cwd=tmp,
+                                    env=env)
+            self.assertNotEqual(raises.returncode, 0)
+            self.assertIn("OverflowDefect", raises.stderr)
+
     def test_quit_is_no_exception(self):
         """Nim's quit ends the process at once: an `except:` around it (nifler2's `try: main() except: quit "…"`,
         a `quit` inside `main`) doesn't run, nor does a `finally`; the output so far is written, the exit
@@ -5415,7 +5456,7 @@ class TestNTypes(unittest.TestCase):
             getTotalMem high
             hostCPU hostOS incl include instantiationInfo int16 int32 int64 int8 isNil items lent let likely low
             mitems move moveMem newException newSeq newSeqOfCap newString newStringOfCap nil open openArray ord out
-            pairs pointer pred ptr push quit raiseAssert readBuffer readFile readLine realloc realloc0 ref reset
+            pairs pointer pred ptr push quit QuitFailure QuitSuccess raiseAssert readBuffer readFile readLine realloc realloc0 ref reset
             resize seq setLen shallowCopy sink sizeof slurp stackTraceAvailable static staticRead stderr stdin stdout
             string substr succ swap system template toFloat toInt toOpenArray typed typedesc typeof uint uint16
             uint32 uint64 uint8 uncheckedAssign unlikely untyped var wasMoved write writeFile writeStackTrace
@@ -7928,8 +7969,44 @@ class TestNTypes(unittest.TestCase):
         from nimic.std.paths import Path
         self.assertNotIn("Path", _n_aliases)
 
+    def test_transpile_field_named_result(self):
+        """An object field named `result` is exported like any field (lengc's `LLInstr.result*`); only a routine's
+        own `result` variable is special (rule:resultvar)."""
+        src = textwrap.dedent('''\
+            from nimic.ntypes import *
+            class Instr(Object):
+                result: nint
+                dbg: string
+            def f(i: Instr) -> nint:
+                result: nint = i.result
+                return result
+            ''')
+        out = unparse(ast.parse(src), _n_registry)[0]
+        self.assertIn("    result*: int\n    dbg*: string", out)
+        self.assertNotIn("result*: int = ", out)
+
+    def test_transpile_deferred_let(self):
+        """rule:varini for `let`: a `with let:` binding of an argument-less constructor whose name the routine
+        assigns later is Nim's deferred `let name: T` (lengc's genProcDecl: `let name: string`, assigned in each
+        branch); one never assigned again keeps its value (`let empty = string()`)."""
+        src = textwrap.dedent('''\
+            from nimic.ntypes import *
+            def f(c: bool) -> string:
+                with let:
+                    name = string()
+                    empty = string()
+                if c:
+                    name = string("a")
+                else:
+                    name = string("b")
+                return name + empty
+            ''')
+        out = unparse(ast.parse(src), _n_registry)[0]
+        self.assertIn("  let\n    name: string\n    empty = string()", out)
+
     def test_transpile_type_alias_assignment(self):
-        """rule:typealias, assignment form: a module-level `Name = <type>` is a type alias."""
+        """rule:typealias, assignment form: a module-level `Name = <type>` is a type alias, also an instance of
+        a registered generic type (`OrderedTable[K, V]`); a subscript of a value is no type."""
         src = textwrap.dedent('''\
             Snippet = string
             Rows = seq[Snippet]
@@ -7942,6 +8019,15 @@ class TestNTypes(unittest.TestCase):
         self.assertIn("type\n  Snippet* = string\n  Rows* = seq[Snippet]", out)
         self.assertIn("limit = 5", out)
         self.assertIn("  b = a", out)
+        # an instance of a registered generic type (a std table: lengc's noptions), also imported
+        src = textwrap.dedent('''\
+            from nimic.std.tables import OrderedTable
+            ActionTable = OrderedTable[nint, seq[string]]
+            picked = items[2]
+            ''')
+        out = unparse(ast.parse(src), _n_registry)[0]
+        self.assertIn("type\n  ActionTable* = OrderedTable[int, seq[string]]", out)
+        self.assertIn("picked = items[2]", out)
 
     def test_varargs_dispatch(self):
         """rule:varargs: `*args: T` takes any number of T (Nim varargs[T]); a varargs[T, conv] parameter
@@ -8890,7 +8976,8 @@ def addWord(b: mut@Builder, w: string) -> None:
 
     def test_transpile_for_loop_targets(self):
         """rule:fortupleunpack: Python item unpacking is Nim `for (a, b) in xs` (bare would mean
-        index + item); Nim's magic fields(a, b) / fieldPairs(x) yield separate values: bare names."""
+        index + item); Nim's magic fields(a, b) / fieldPairs(x) yield separate values: bare names; so does an
+        index + item iterator (pairs, mpairs, enumerate), whose item may be destructured."""
         def nim(src):
             return unparse(ast.parse(src))[0].strip()
         self.assertEqual(nim("for name, val in [(a, 1), (b, 2)]:\n    pass"),
@@ -8898,6 +8985,12 @@ def addWord(b: mut@Builder, w: string) -> None:
         self.assertEqual(nim("for dst, src in fields(u, v):\n    pass"), "for dst, src in fields(u, v):\n  discard")
         self.assertEqual(nim("for name, val in fieldPairs(u):\n    pass"), "for name, val in fieldPairs(u):\n  discard")
         self.assertEqual(nim("for x in s:\n    pass"), "for x in s:\n  discard")
+        # index + item (pairs, mpairs, enumerate): Nim's own two-variable form; a destructured item stays in
+        # parentheses (`for (j, (a, b)) in` doesn't parse: lengc's llvmserializer)
+        self.assertEqual(nim("for i, x in pairs(s):\n    pass"), "for i, x in pairs(s):\n  discard")
+        self.assertEqual(nim("for j, (a, b) in pairs(s):\n    pass"), "for j, (a, b) in pairs(s):\n  discard")
+        self.assertEqual(nim("for j, (a, b) in enumerate(s):\n    pass"),
+                         "for j, (a, b) in enumerate(s):\n  discard")
 
     def test_transpile_inplace_operator(self):
         """rule:funcdefinplace: __iadd__ etc. become `+=` procs without a return type or `return self`;

@@ -533,9 +533,26 @@ def _nnimony_modules() -> list[str]:
                   if not {"tools", "checks"} & set(p.relative_to(NNIMONY).parts) and p.stem != "__init__")
 
 
+def _nnimony_includes() -> dict[str, str]:
+    """The converted include files (`include("gentypes")` in lengc/codegen, `include("../lib/compat2")`), each with
+    one module including it, as keys under nimony's src/: they run in their includer's namespace, so they are
+    checked through it (not imported, run or `nim check`ed on their own)."""
+    found = {}
+    for key in _nnimony_modules():
+        text = (NNIMONY / f"{key}.py").read_text()
+        for names in re.findall(r"^\s*include\(([^)]*)\)", text, flags=re.M):
+            for name in names.split(","):
+                rel = name.strip(" \"'")
+                included = (Path(key).parent / rel).as_posix()
+                included = os.path.normpath(included)
+                if (NNIMONY / f"{included}.py").exists():
+                    found.setdefault(included, key)
+    return found
+
+
 # components of nimony whose originals only nimony compiles (plugins, `.raises`, `{.feature.}`): their converted modules
 # are checked with nimony (`nimony check`, `nimony c`), the others with Nim 2
-NIMONY_ONLY = {"nifler2"}
+NIMONY_ONLY = {"nifler2", "lengc"}  # lengc: nimony's dialect (quit(msg, code) on stdout), built by nimony in the boot
 NIMONY_BIN = Path(os.environ.get("NIMONY_NIMIC_DIR", ROOT.parent / "nimony-nimic")).resolve() / "bin" / "nimony"
 
 
@@ -603,7 +620,18 @@ def check_nimony() -> None:
     for base in (conv, orig):  # src/lib/nimversion slurps ../../doc/version.md
         shutil.copytree(NIMONY_SRC.parent / "doc", base.parent / "doc")
     flags = ["--hints:off", "--warnings:off", "--styleCheck:off", f"--path:{ROOT / 'src/nimic'}"]
+    includes = _nnimony_includes()
+    for key, includer in sorted(includes.items()):  # before their includers, whose check reads them
+        tr = run([PY, "-c", TRANSPILE_SOURCE, NNIMONY / f"{key}.py", "nnimony." + includer.replace("/", ".")],
+                 ROOT, [ROOT / "src", ROOT])
+        if tr.returncode != 0:
+            report(False, f"nimony include {key}", "transpile: " + first_error(tr), key)
+            continue
+        (conv / f"{key}.nim").write_text(tr.stdout)
+        print(f"  SKIP  nimony module {key}  — include file, checked through {includer}", flush=True)
     for key in _nnimony_modules():
+        if key in includes:
+            continue
         module = "nnimony." + key.replace("/", ".")
         tr = run([PY, "-c", TRANSPILE_MODULE, module], ROOT, [ROOT / "src", ROOT])
         if tr.returncode != 0:

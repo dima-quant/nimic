@@ -24,7 +24,10 @@ def _selftests() -> list[tuple[str, list, object]]:
     """(module, extra arguments, working directory) of every self-test."""
     found = [(f"ncompiler.{m}", [], vt.ROOT) for m in vt.MODULES if m not in vt.HARNESSED]
     found += [(f"ncompiler.tests.{h}", [], vt.ROOT) for h in vt.HARNESSES]
+    includes = vt._nnimony_includes()  # run in their includer's namespace, with its self-test
     for key in vt._nnimony_modules():
+        if key in includes:
+            continue
         tmp = vt.SCRATCH / "selftests_tmp" / key.replace("/", "_")
         found.append(("nnimony." + key.replace("/", "."), vt._test_args(vt.NNIMONY / f"{key}.py", tmp),
                       vt.NIMONY_SRC.parent))

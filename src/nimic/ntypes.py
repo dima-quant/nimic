@@ -73,6 +73,8 @@ from nimic.nsystem import (
     chr,
     ord,
     quit,
+    QuitSuccess,
+    QuitFailure,
     defined,
     declared,
     compileOption,

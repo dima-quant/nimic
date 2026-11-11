@@ -1012,14 +1012,22 @@ def _n_exit(code: int) -> None:
     os._exit(code)
 
 
-def quit(error: int | str = 0) -> None:
+QuitSuccess = 0  # Nim 2's system, nimony's std/syncio
+QuitFailure = 1
+
+
+def quit(error: int | str = QuitSuccess, errorcode: int | None = None) -> None:
     """{.noreturn.} Nim: quit(errorcode: int = QuitSuccess) exits with the code; quit(errormsg: string) writes
-    the message and a newline to stderr and exits with QuitFailure. Nim's quit is no exception: an `except:`
-    around it doesn't catch it (Python's would catch SystemExit), so the process ends here (`_n_exit`)."""
+    the message and a newline to stderr and exits with QuitFailure; quit(errormsg, errorcode) writes it and exits
+    with the code: Nim 2 writes it to stderr, nimony (its syncio's `echo msg`) to stdout, by the caller's dialect.
+    Nim's quit is no exception: an `except:` around it doesn't catch it (Python's would catch SystemExit), so the
+    process ends here (`_n_exit`)."""
     if isinstance(error, (str, _ntypesystem.string)):
-        sys.stderr.write(str(error) + "\n")
-        sys.stderr.flush()
-        _n_exit(1)
+        stream = (sys.stdout if errorcode is not None and _ntypesystem._n_caller_dialect() == "nimony"
+                  else sys.stderr)
+        stream.write(str(error) + "\n")
+        stream.flush()
+        _n_exit(QuitFailure if errorcode is None else int(errorcode))
     _n_exit(int(error))
 
 

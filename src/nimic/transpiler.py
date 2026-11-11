@@ -129,7 +129,8 @@ Control flow:
     the build profile of the emulated Nim build (nsystem._BuildProfile), never "Python vs Nim"
   rule:declared -> declared("identifier") transpiles as declared(identifier) without quotes (dotted names allowed)
   rule:fortupleunpack -> tuple unpacking in for-loops emits parenthesized (a, b) syntax, except for Nim's
-    multi-value magic iterators fields(a, b) / fieldPairs(x), which need bare `for a, b in`
+    multi-value magic iterators fields(a, b) / fieldPairs(x), which need bare `for a, b in`, and index + item
+    iterators (pairs, mpairs, enumerate): `for i, x in pairs(s)`, the item destructurable (`for j, (a, b) in`)
   rule:templatereturn -> in templates, a "return expr" in tail position (end of every path: last statement, both
     arms of if/else, all arms of a match with case _, the body and handlers of a try without else / finally,
     Nim's try expression) emits just the expression (template value); any other
@@ -267,6 +268,7 @@ Memory & variables:
     as "var buf {.noinit.}: array[12, char]"). Also holds
     without annotation for registered classes or native types as array, openArray, etc. Ref types (registered
     with _n_is_ref or decorated @ref in the module) keep the constructor call, since `var x: T` would be nil.
+    Also a `with let:` binding the routine assigns again later: Nim's deferred `let name: T` (_deferred_let_names).
 
 The docstring for the original ``ast`` module is given below:
 
@@ -1017,6 +1019,8 @@ class _Unparser(NodeVisitor):
         self._tuple_types = set()
         self._string_names = [set()]  # rule:strformat: names declared as string / FormatStr, per scope
         self._implicit_result = [False]  # rule:resultvar: whether the routine being written has Nim's `result`
+        self._deferred_lets = [set()]  # rule:varini: the deferred `let` names of the routine being written
+        self._in_record = False  # writing an object's fields (a field named `result` is a field like any other)
         self._string_seq_names = [set()]  # rule:strformat: names declared as seq/openArray/array/varargs of string
         self._ref_types = set()
         self._set_types = set()
@@ -1199,7 +1203,9 @@ class _Unparser(NodeVisitor):
             types = getattr(self._type_registry, "types", None) if self._type_registry is not None else None
             return isinstance(types, dict) and isinstance(types.get(node.id), type)
         if isinstance(node, Subscript) and isinstance(node.value, Name):
-            return node.value.id in self._type_constructors or node.value.id in self._declared_classes
+            # a type constructor, or an instance of a generic type (the module's, or a registered one:
+            # `OrderedTable[Action, seq[string]]`); a subscript of a value (`items[2]`) is no type
+            return node.value.id in self._type_constructors or self._is_type_expr(node.value)
         if isinstance(node, Call) and isinstance(node.func, Name) and node.func.id == "typeof":
             return True  # `T = typeof(expr)`
         if isinstance(node, BinOp) and isinstance(node.op, BitOr):
@@ -1588,7 +1594,7 @@ class _Unparser(NodeVisitor):
                 # rule:block
                 self._write_block_body()
             elif (
-                "var" in self._context_stack
+                self._declares_bare(node)
                 and self._type_registry is not None
                 and node.value.func.id in self._type_registry.types
                 and node.value.func.id not in self._ref_types  # rule:varini, a ref type must allocate: x = T()
@@ -1603,7 +1609,7 @@ class _Unparser(NodeVisitor):
             and isinstance(node.value.func, Subscript)
             and not node.value.args and not node.value.keywords
         ):
-            if "var" in self._context_stack and node.value.func.value.id in self._native_type_subscript:
+            if self._declares_bare(node) and node.value.func.value.id in self._native_type_subscript:
                 self.write(": ") # needed for array/openArray declaration
                 self.traverse(node.value.func)
             else:
@@ -1680,7 +1686,8 @@ class _Unparser(NodeVisitor):
         set_annotation = isinstance(node.annotation, Set)
         if node.simple and isinstance(node.target, Name) and not set_annotation:
             target_name = node.target.id
-            if (not self._context_stack or self._context_stack[-1] != "tuple") and target_name != "result":
+            if (not self._context_stack or self._context_stack[-1] != "tuple") and (target_name != "result"
+                                                                                   or self._in_record):
                 is_module_level = (self._scope_depth == 0)
                 in_declaration = True
                 # class def or any(x in self._context_stack for x in ("var", "let", "const"))
@@ -2068,6 +2075,13 @@ class _Unparser(NodeVisitor):
         """Object fields, where `field: T` followed by `match field:` is a Nim record case
         (`case field*: T` with `of` / `else` branches). Branch bodies are records too,
         so cases nest. The discriminator's default value is a nimic artifact and is dropped."""
+        outer, self._in_record = self._in_record, True
+        try:
+            self._traverse_record_fields(items)
+        finally:
+            self._in_record = outer
+
+    def _traverse_record_fields(self, items):
         i = 0
         while i < len(items):
             b = items[i]
@@ -2161,6 +2175,39 @@ class _Unparser(NodeVisitor):
         return isinstance(node, Call) and isinstance(node.func, Name) and (
             node.func.id in ("string", "FormatStr") or self._is_string_name(node.func.id + "()"))
 
+    def _declares_bare(self, node) -> bool:
+        """rule:varini: whether a binding `x = T()` is Nim's bare declaration: in `with var:`, or a deferred `let`
+        (`_deferred_let_names`)."""
+        if "var" in self._context_stack:
+            return True
+        return ("let" in self._context_stack and len(node.targets) == 1 and isinstance(node.targets[0], Name)
+                and node.targets[0].id in self._deferred_lets[-1])
+
+    @staticmethod
+    def _deferred_let_names(body: list) -> set:
+        """rule:varini for `let`: the names a routine binds in `with let:` to an argument-less constructor (`name =
+        string()`) and assigns again later: Nim's deferred `let name: T`, assigned on each path. Not those of nested
+        routines."""
+        bindings, assigned = {}, set()
+        stack = list(body)
+        while stack:
+            node = stack.pop()
+            if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef, Lambda)):
+                continue
+            if isinstance(node, With) and any(isinstance(i.context_expr, Name) and i.context_expr.id == "let"
+                                              for i in node.items):
+                for stmt in node.body:
+                    if (isinstance(stmt, Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], Name)
+                            and isinstance(stmt.value, Call) and not stmt.value.args and not stmt.value.keywords):
+                        bindings[stmt.targets[0].id] = stmt
+            elif isinstance(node, (Assign, AugAssign)):
+                for target in (node.targets if isinstance(node, Assign) else [node.target]):
+                    if isinstance(target, Name):
+                        assigned.add((target.id, id(node)))
+            stack.extend(iter_child_nodes(node))
+        return {name for name, binding in bindings.items()
+                if any(n == name and node_id != id(binding) for n, node_id in assigned)}
+
     def visit_FunctionDef(self, node):
         if self._is_string_annotation(node.returns):
             self._string_names[-1].add(node.name + "()")  # rule:strformat: a proc returning a string
@@ -2169,7 +2216,9 @@ class _Unparser(NodeVisitor):
         self._string_names.append({x.arg for x in params if self._is_string_annotation(x.annotation)})
         self._string_seq_names.append({x.arg for x in params if self._is_string_seq_annotation(x.annotation)})
         self._implicit_result.append(self._has_implicit_result(node))
+        self._deferred_lets.append(self._deferred_let_names(node.body))
         self._function_helper(node, "")
+        self._deferred_lets.pop()
         self._implicit_result.pop()
         self._string_names.pop()
         self._string_seq_names.pop()
@@ -2532,9 +2581,11 @@ class _Unparser(NodeVisitor):
         # rule:fortupleunpack -> Python unpacks each item, which in Nim is `for (a, b) in xs`
         # (bare `for a, b in xs` would mean pairs: index + item). Nim's magic iterators
         # fields(a, b) / fieldPairs(x) yield separate values, not a tuple: they need bare names.
-        if isinstance(node.target, Tuple) and not (
-                isinstance(node.iter, Call) and isinstance(node.iter.func, Name)
-                and node.iter.func.id in self._multi_value_iterators):
+        bare = (isinstance(node.iter, Call) and isinstance(node.iter.func, Name)
+                and (node.iter.func.id in self._multi_value_iterators
+                     or (node.iter.func.id in self._index_item_iterators and isinstance(node.target, Tuple)
+                         and len(node.target.elts) == 2)))
+        if isinstance(node.target, Tuple) and not bare:
             with self.delimit("(", ")"):
                 self.items_view(self.traverse, node.target.elts)
         elif isinstance(node.target, Tuple):
@@ -3237,6 +3288,9 @@ class _Unparser(NodeVisitor):
     # rule:funcdefrenamedunder
     # Nim magic iterators yielding several values (not a tuple) per step (rule:fortupleunpack)
     _multi_value_iterators = frozenset({"fields", "fieldPairs"})
+    # iterators of index + item (rule:fortupleunpack): Nim's two-variable form `for i, x in pairs(s)`, whose item may
+    # be destructured (`for j, (a, b) in pairs(s)`; `for (j, (a, b)) in` doesn't parse)
+    _index_item_iterators = frozenset({"pairs", "mpairs", "enumerate"})
 
     dunder_ops = {
         # unops
