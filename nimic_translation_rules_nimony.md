@@ -26,6 +26,7 @@ from nimic.ntypes import *
 | --- | --- | --- |
 | `isNil`, `copyMem` | `is_nil`, `copy_mem` | Nimic follows the Python convention, replacing `camelCase` with `snake_case` for functions and attributes **(Nim 2: the Nim 3 version is in §14)** |
 | `let x = 5` | `with let: x = 5` | Immutable assignments |
+| `let name: string` (deferred: assigned on each path later) | `with let: name = string()`, then `name = …` | `rule:varini` for `let`: a `with let:` binding of an argument-less constructor that the routine assigns again later is Nim's deferred `let name: T` (lengc's `genProcDecl`); one never assigned again keeps its value |
 
 ## 0. Unity principle — one source, one behavior
 

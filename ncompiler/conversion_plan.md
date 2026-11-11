@@ -69,9 +69,9 @@ see *History*).
 
 | Phase | Component | Lines (at the pin) | Notes |
 |---|---|---|---|
-| **A, current** | `src/lib` (+ the `src/models` it needs) | 12k (+ models) | NIF data structures, reader/builder, streams, cursors. Many small modules import only the standard library: the first agent tasks |
-| B | `src/nifler2` | 7k | the parser, generated from a grammar; a nimony program (uses Nim 3 features) |
-| C | `src/lengc` | 23k | the C backend. The milestone: C from the Python lengc is byte-identical to lengc's |
+| A (done) | `src/lib` (+ the `src/models` it needs) | 12k (+ models) | NIF data structures, reader/builder, streams, cursors. Many small modules import only the standard library: the first agent tasks |
+| B (done) | `src/nifler2` | 7k | the parser, generated from a grammar; a nimony program (uses Nim 3 features); converted by nimicgen |
+| **C, current** | `src/lengc` | 10k (+ 14k optimizer) | the C backend. The milestone: C from the Python lengc is byte-identical to lengc's. Converted by nimicgen (2026-11-10): 61/61 inputs byte-identical (`tests/lengc_c_identical.py`); next nimony's own build, the LLVM backend. The optimizer (`src/lengc/shoggoth`, `--opt:speed|size`) comes after hexer |
 | D | `src/hexer` | 24k | lowering (shoggoth) |
 | E | `src/nimony` | 50k | semantic checking (nimsem) and the driver: nimony in Python |
 | F | the raytracer and nimic itself | | the raytracer compiles with nimony; nimic drops Nim 2-only features |
