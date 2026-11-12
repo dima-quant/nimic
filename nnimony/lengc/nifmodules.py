@@ -39,8 +39,8 @@ from ..lib.nifcoreparse import (
     kind, NifKind, NifLineInfo, NoNifLineInfo, Pool, pool, registerTag, StrId, strVal, SymId, symId, symName,
     TagId, TagPool, TokenBuf, uintVal)
 from ..lib.nifcdecl import (
-    asTypeDecl, createLengTagPool, inc, into, LengOther, LengPragma, LengStmt, LengSym, pragmaKind, skip,
-    stmtKind, substructureKind, symKind)  # stmtKind/symKind/pragmaKind, decls
+    asTypeDecl, createLengTagPool, into, LengOther, LengPragma, LengStmt, LengSym, pragmaKind, skip, stmtKind,
+    substructureKind, symKind)  # stmtKind/symKind/pragmaKind, decls
 from ..lib import nifreader as rd  # Reader, jumpTo, indexStartsAt
 from ..lib.symparser import splitModulePath, SplittedModulePath  # splitModulePath
 from ..lib.foreignmodules import ForeignModule, openForeignModule  # shared lazy loader (ForeignModule)
@@ -147,12 +147,6 @@ class MainModule(Object):
         result = m.hasDecl(c.pool.symString(s))
         return result
 
-    def getExtern(c: mut @ MainModule, s: SymId) -> StrId:
-        with let:
-            d = getDeclOrNil(c, s)
-        result = d.extern if not isNil(d) else StrId(0)
-        return result
-
     def registerLocal(c: mut @ MainModule, s: SymId, typ: Cursor):
         c.current.locals[s] = typ
 
@@ -249,6 +243,13 @@ def getDeclOrNil(c: mut @ MainModule, s: SymId) -> ptr[Definition]:
         else:
             raiseAssert(string("Expected SymbolDef after toplevel declaration"))
     result = addr(getOrQuit(c._defs, s))
+    return result
+
+
+def getExtern(c: mut @ MainModule, s: SymId) -> StrId:
+    with let:
+        d = getDeclOrNil(c, s)
+    result = d.extern if not isNil(d) else StrId(0)
     return result
 
 # ---- scopes ---------------------------------------------------------------

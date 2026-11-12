@@ -106,7 +106,7 @@ class ForeignModule(Object):
         result = buf.beginRead()
         m.declBufs.add(ensureMove(buf))
         m.decls[name] = result
-        return result.copy()  # `decls` holds it too (rules §1.1: the callee copies, callers never do)
+        return result
 
 
 def readEmbeddedIndex(r: mut @ Reader) -> Table[string, nint]:

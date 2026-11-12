@@ -36,9 +36,9 @@ from ..lib.nifcoreparse import (
     intVal, isCrucialFile, isValid, kind, NifKind, NifLineInfo, pool, realFile, StrId, strId, strVal, SymId,
     symId, tags, uintVal)  # re-exports nifcore
 from ..lib.nifcdecl import (
-    asTypeDecl, asUnionBranch, CallConv, callConvKind, exprKind, FieldDecl, inc, into, isUnionBranch,
-    LengExpr, LengOther, LengPragma, LengStmt, LengSym, LengType, LengTypeQualifier, loopInto, pragmaKind,
-    skip, stmtKind, substructureKind, symKind, takeFieldDecl, takeParamDecl, takeProcDecl, takeProcType,
+    asTypeDecl, asUnionBranch, CallConv, callConvKind, exprKind, FieldDecl, into, isUnionBranch, LengExpr,
+    LengOther, LengPragma, LengStmt, LengSym, LengType, LengTypeQualifier, loopInto, pragmaKind, skip,
+    stmtKind, substructureKind, symKind, takeFieldDecl, takeParamDecl, takeProcDecl, takeProcType,
     takeVarDecl, typeKind, typeQual, UnionBranch)  # leng_model replacement
 from .mangler import mangleToC
 from .noptions import State
@@ -256,26 +256,6 @@ class LLVMCode(Object):
             instr = LLInstr(kind=LLInstrKind.llAlloca, result=llReg(name, c.prim.ptrT), allocaType=typ, allocaAlign=nint(align))
         c._currentFunc().entryAllocas.add(instr)
 
-    def emitGEP(c: mut @ LLVMCode, baseType: LLType, base: LLValue, indices: openArray[LLValue], inbounds=True) -> LLValue:
-        with let:
-            t = c.nextTemp()
-        result = llReg(t, c.prim.ptrT)
-        with var:
-            idxs: seq[LLValue] = seq[LLValue]([])
-        for x in indices: idxs.add(x)
-        emit_(c, LLInstr(kind=LLInstrKind.llGep, result=result, gepBaseType=baseType, gepBase=base, gepIndices=idxs, gepInbounds=inbounds))
-        return result
-
-    def emitLoad(c: mut @ LLVMCode, ptrVal: LLValue, typ: LLType) -> LLValue:
-        with let:
-            t = c.nextTemp()
-        result = llReg(t, typ)
-        emit_(c, LLInstr(kind=LLInstrKind.llLoad, result=result, loadPtr=ptrVal))
-        return result
-
-    def emitStore(c: mut @ LLVMCode, value: LLValue, ptrVal: LLValue):
-        emit_(c, LLInstr(kind=LLInstrKind.llStore, storeValue=value, storePtr=ptrVal))
-
     def _mangleSym(c: mut @ LLVMCode, s: SymId) -> string:
         ## extern name if declared, else mangleToC. Shared-SymId locals (inlined copies
         ## of one source var) are dedup'd at the alloca site, not here.
@@ -394,6 +374,29 @@ def emit_(c: mut @ LLVMCode, instr: sink @ LLInstr):
     c._currentBlock().instrs.add(instr)
     if instr.kind in _Terminators:
         c._currentProc.needsTerminator = True
+
+
+def emitGEP(c: mut @ LLVMCode, baseType: LLType, base: LLValue, indices: openArray[LLValue], inbounds=True) -> LLValue:
+    with let:
+        t = c.nextTemp()
+    result = llReg(t, c.prim.ptrT)
+    with var:
+        idxs: seq[LLValue] = seq[LLValue]([])
+    for x in indices: idxs.add(x)
+    emit_(c, LLInstr(kind=LLInstrKind.llGep, result=result, gepBaseType=baseType, gepBase=base, gepIndices=idxs, gepInbounds=inbounds))
+    return result
+
+
+def emitLoad(c: mut @ LLVMCode, ptrVal: LLValue, typ: LLType) -> LLValue:
+    with let:
+        t = c.nextTemp()
+    result = llReg(t, typ)
+    emit_(c, LLInstr(kind=LLInstrKind.llLoad, result=result, loadPtr=ptrVal))
+    return result
+
+
+def emitStore(c: mut @ LLVMCode, value: LLValue, ptrVal: LLValue):
+    emit_(c, LLInstr(kind=LLInstrKind.llStore, storeValue=value, storePtr=ptrVal))
 
 
 def llIntTextC(text: string, typ: LLType) -> LLValue:

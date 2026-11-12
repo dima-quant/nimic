@@ -134,11 +134,11 @@ elif comptime(defined("nimony")):
     importFrom("nimic.std.posix.posix", "Timespec", "nanosleep")
     def vfsSleepMs(ms: uint32):
         with var:
-            req = Timespec()
+            req = default(Timespec)
         req.tv_sec = typeof(req.tv_sec)(clong(ms // u32(1000)))
         req.tv_nsec = clong(ms % u32(1000)) * 1_000_000
         with var:
-            rem = Timespec()
+            rem = default(Timespec)
         _ = nanosleep(req, rem)
 else:
     importFrom("nimic.std.os", "sleep")

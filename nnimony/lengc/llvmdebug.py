@@ -52,7 +52,7 @@ def _initDebugInfo(c: mut @ LLVMCode, filename: string):
 
 
 def _bitsFromLLVMType(typ: LLType, defaultBits: nint) -> nint:
-    if typ is not None and typ.kind == LLTypeKind.llInt: return typ.intBits
+    if typ is not None and typ.kind == LLTypeKind.llInt: return copy(typ.intBits)
     else: return defaultBits
 
 
@@ -132,7 +132,7 @@ def _dbgLocationId(c: mut @ LLVMCode, info: NifLineInfo) -> nint:
     # proc. Everything the chain builds hangs off it.
     def scopeInProc(c: mut @ LLVMCode, fileId: nint) -> nint:
         if fileId == c._currentProc.subprogramFileId:
-            return c._currentProc.subprogramId
+            return copy(c._currentProc.subprogramId)
         else:
             return _addMetadata(c, string("!DILexicalBlockFile(scope: !") + str(c._currentProc.subprogramId) + string(", file: !") + str(fileId) + string(", discriminator: 0)"))
 

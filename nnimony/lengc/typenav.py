@@ -24,8 +24,8 @@ from ..lib.nifcoreparse import (
     addSubtree, createTokenBuf, Cursor, intVal, kind, NifKind, parseFromBuffer, strId, strVal, sub, SymId,
     symId, TagId)  # re-exports nifcore + parseFromBuffer
 from ..lib.nifcdecl import (
-    asTypeDecl, exprKind, inc, into, isUnionBranch, LengExpr, LengOther, LengPragma, LengStmt, LengSym,
-    LengType, loopInto, pragmaKind, skip, stmtKind, substructureKind, symKind, takeFieldDecl, takeParamDecl,
+    asTypeDecl, exprKind, into, isUnionBranch, LengExpr, LengOther, LengPragma, LengStmt, LengSym, LengType,
+    loopInto, pragmaKind, skip, stmtKind, substructureKind, symKind, takeFieldDecl, takeParamDecl,
     takeUnionBranch, typeKind)  # stmtKind/exprKind/typeKind, tag enums
 from ..models.tags import TagEnum  # *TagId ordinals for synthesis
 from .nifmodules import getDeclOrNil, MainModule  # MainModule, getDeclOrNil

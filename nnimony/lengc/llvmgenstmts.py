@@ -50,7 +50,7 @@ def _genOnErrorLLVM(c: mut @ LLVMCode, n: mut @ Cursor):
         onErrInfo = _info(n)
         errPtr = llGlobalRef(string("LENGC_ERR_"), c.prim.ptrT)
         i8_ = c.prim.i8_
-        errVal = c.emitLoad(errPtr, i8_)
+        errVal = emitLoad(c, errPtr, i8_)
         cond = c.nextTemp()
         condRes = llReg(cond, c.prim.i1)
     setLoc(c, onErrInfo)
@@ -415,7 +415,7 @@ def _genMflagDeclLLVM(c: mut @ LLVMCode, n: mut @ Cursor):
                 name = mangleToC(c._m.pool.symString(s))
                 i8_ = c.prim.i8_
             c.emitAlloca(name, i8_)
-            c.emitStore(llIntTextC(string("0"), c.prim.i8_), llReg(name, c.prim.ptrT))
+            emitStore(c, llIntTextC(string("0"), c.prim.i8_), llReg(name, c.prim.ptrT))
             n.inc()
         else:
             _error(c._m, string("expected SymbolDef but got: "), n)
@@ -482,8 +482,8 @@ def _genKeepOverflowLLVM(c: mut @ LLVMCode, n: mut @ Cursor):
                 _genExprLLVM(c, n, value)
                 _genLvalueLLVM(c, n, target)
                 while n.hasMore(): skip(n)
-                c.emitStore(value, target)
-                c.emitStore(llIntTextC(string("0"), c.prim.i8_), llGlobalRef(string("LENGC_OVF_"), c.prim.ptrT))
+                emitStore(c, value, target)
+                emitStore(c, llIntTextC(string("0"), c.prim.i8_), llGlobalRef(string("LENGC_OVF_"), c.prim.ptrT))
                 return
 
         with into(n):
@@ -521,7 +521,7 @@ def _genKeepOverflowLLVM(c: mut @ LLVMCode, n: mut @ Cursor):
         resultVal = c.nextTemp()
         rvRes = llReg(resultVal, typ)
     emit_(c, LLInstr(kind=LLInstrKind.llExtractValue, result=rvRes, evAggregate=rsRes, evAggType=aggTyp, evIndex=0))
-    c.emitStore(rvRes, target)
+    emitStore(c, rvRes, target)
     with let:
         ovfFlag = c.nextTemp()
         ovfRes = llReg(ovfFlag, c.prim.i1)
@@ -532,7 +532,7 @@ def _genKeepOverflowLLVM(c: mut @ LLVMCode, n: mut @ Cursor):
         nobRes = llReg(newOvfByte, c.prim.i8_)
     setLoc(c, ovfInfo)
     emit_(c, LLInstr(kind=LLInstrKind.llZext, result=nobRes, castOp=string("zext"), castSrc=ovfRes, castDstType=c.prim.i8_))
-    c.emitStore(nobRes, llGlobalRef(string("LENGC_OVF_"), c.prim.ptrT))
+    emitStore(c, nobRes, llGlobalRef(string("LENGC_OVF_"), c.prim.ptrT))
 
     _declareExtern(c, LLExternDecl(name=intrinsic, retType=aggTyp, params=seq([typ, typ])))
 
@@ -628,7 +628,7 @@ def _genStmtBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor):
                 _genExprLLVM(c, n, rval)
                 _coerceInPlace(c, rval, srcType, slotType)
                 setLoc(c, asgnInfo)
-                c.emitStore(rval, lval)
+                emitStore(c, rval, lval)
                 while n.hasMore(): skip(n)
         case LengStmt.IfS:
             _genIfLLVM(c, n)

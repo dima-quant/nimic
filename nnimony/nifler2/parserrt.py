@@ -41,11 +41,11 @@ pragma("feature: \"lenientnils\"")
 
 from nimic.std.parseutils import parseBiggestFloat
 from nimic.std import syncio
-from ..lib.nifpools import NoLineInfo, tagId
+from ..lib.nifpools import add, NoLineInfo, tagId
 from .linkedtok import (
     Arena, charToken, charVal, dotToken, FileId, flatten, floatVal, getOrIncl, identToken, initArena, intVal,
-    isEmpty, kind, NifKind, NifLineInfo, NifToken, Node, Pool, strId, strLitToken, tag, TagId, tagLitToken, TagPool,
-    TokenBuf, uintVal)
+    isEmpty, kind, NifKind, NifLineInfo, NifToken, Node, Pool, strId, strLitToken, tag, TagId, tagLitToken,
+    TagPool, TokenBuf, uintVal)
 from . import linkedtok
 export(linkedtok)
 importFrom("..lib.nifcore", "createTokenBuf")
@@ -114,7 +114,7 @@ class Mark(Object):  ## where a node *would* start, if the rule turns out to bui
 
     def discardUnused(m: Mark):
         """{.inline.}"""
-        pass
+        discard
         ## A mark the rule turned out not to need. The generator emits one per
         ## alternative because it cannot know, before it has seen the whole
         ## alternative, whether a tag will claim it.
@@ -590,13 +590,13 @@ def prettyTok(t: Token) -> string:
         case _ if t.kind in inrange(KeywordLow, KeywordHigh): return string("keyword ") + str(t.kind)
         case _ if t.kind in inrange(TokKind.tkIntLit, TokKind.tkInt64Lit): return str(t.iNumber)
         case _ if t.kind in inrange(TokKind.tkUIntLit, TokKind.tkUInt64Lit):
-        # Nim's `iNumber` is a `BiggestInt` for these too
+            # Nim's `iNumber` is a `BiggestInt` for these too
             return str(t.iNumber)
         case _ if t.kind in inrange(TokKind.tkParLe, TokKind.tkColon) or t.kind == TokKind.tkEof or t.kind == TokKind.tkAccent: return str(t.kind)
         case TokKind.tkBracketLeColon: return string("")
         case TokKind.tkColonColon | TokKind.tkEquals | TokKind.tkDot | TokKind.tkDotDot:
             return t.s if t.s.len > 0 else str(t.kind)
-        case _: return t.s
+        case _: return t.s.copy()
 
 
 def _expectedTok(p: mut @ Parser, spelling: string):
@@ -621,8 +621,8 @@ def ruleError(p: mut @ Parser, rule: string, misplaced: bool):
         case "section_variable" | "section_constant" | "section_typeDef" | "symbol" | "plainSymbol" | "identVis" | "identVisDot" | "identWithPragma" | "identWithPragmaDot" | "qualifiedIdent" | "forHead" | "symbolOrKeyword":
             identExpected(p)
         case "complexOrSimpleStmt":
-        # `'type' section(typeDef)` and `'type' typeof[...]` factor into one
-        # dispatch after `type`; parser.nim's `parseSection` owns that token
+            # `'type' section(typeDef)` and `'type' typeof[...]` factor into one
+            # dispatch after `type`; parser.nim's `parseSection` owns that token
             if p.prevKind == TokKind.tkType: identExpected(p)
             else: exprExpected(p)
         case "declColonEquals" | "identColonEquals" | "declColonEqualsDot":
@@ -630,10 +630,10 @@ def ruleError(p: mut @ Parser, rule: string, misplaced: bool):
         case "castExpr":
             _expectedTok(p, string("("))
         case "genericParamName":
-        # a keyword other than `in`/`out` ends `parseGenericParamList`'s loop
+            # a keyword other than `in`/`out` ends `parseGenericParamList`'s loop
             _expectedTok(p, string("]"))
         case "par":
-        # `parsePar` ends in `optPar(p); eat(p, tkParRi)`
+            # `parsePar` ends in `optPar(p); eat(p, tkParRi)`
             if misplaced or p.indClass() == IndClass.icLt: indentError(p)
             elif p.prevKind == TokKind.tkParLe: exprExpected(p)
             else: _expectedTok(p, string(")"))
@@ -641,7 +641,7 @@ def ruleError(p: mut @ Parser, rule: string, misplaced: bool):
             p.error(string("expected '.}'"))
         case "stmt":
             if p.indClass() == IndClass.icGt:
-            # `parseStmt`'s block loop parses anything but these as a statement
+                # `parseStmt`'s block loop parses anything but these as a statement
                 if p.tok.kind in Tset[TokKind](TokKind.tkCurlyRi, TokKind.tkParRi, TokKind.tkCurlyDotRi, TokKind.tkBracketRi, TokKind.tkElse, TokKind.tkElif):
                     indentError(p)
                 else:
@@ -834,9 +834,9 @@ def _nameNodeInfo(name: Node, exp: Node, pragmas: Node) -> NifLineInfo:
     ## The position of parser.nim's name node, which is what a declaration is
     ## positioned at: `nkPragmaExpr` (created at the `{.`) if there is a pragma,
     ## else `nkPostfix` (created at the export operator), else the name.
-    if not isEmpty(pragmas): return copy(pragmas.info)
-    elif not isEmpty(exp): return copy(exp.info)
-    else: return copy(name.info)
+    if not isEmpty(pragmas): return pragmas.info.copy()
+    elif not isEmpty(exp): return exp.info.copy()
+    else: return name.info.copy()
 
 
 def wrapLikeFirst(p: mut @ Parser, m: Mark, tag: NiflerKind):
@@ -1020,8 +1020,8 @@ def attachBlocks(p: mut @ Parser, m: Mark):
             t = tag(op)
         isCall = t == tagId(NiflerKind.CallL) or t == tagId(NiflerKind.CmdL) or t == tagId(NiflerKind.InfixL) or t == tagId(NiflerKind.PrefixL) or t == tagId(NiflerKind.CallstrlitL)
     if isCall:
-    # The operand already IS the call, so the blocks just join its children:
-    # `kids[1..]` are still chained to each other, so one link does it.
+        # The operand already IS the call, so the blocks just join its children:
+        # `kids[1..]` are still chained to each other, so one link does it.
         with var:
             tail = op.down
         if isNil(tail):
@@ -1052,11 +1052,11 @@ def doLayout(p: mut @ Parser, m: Mark, atBody: bool):
     if isEmpty(kids[1]) and isEmpty(kids[2]) and isEmpty(kids[3]):
         p.append(kids[4])
     else:
-    # `postExprBlocks` builds the first `do` with `stmtList.info`, the loop
-    # over further blocks with the position of the `do` keyword. The formal
-    # parameters are created where their list starts -- unless there is no
-    # list at all, only pragmas, in which case an empty one is made up after
-    # the body has been parsed.
+        # `postExprBlocks` builds the first `do` with `stmtList.info`, the loop
+        # over further blocks with the position of the `do` keyword. The formal
+        # parameters are created where their list starts -- unless there is no
+        # list at all, only pragmas, in which case an empty one is made up after
+        # the body has been parsed.
         with let:
             info = kids[4].info if atBody else m.info
             paramsInfo = kids[5].info if isEmpty(kids[1]) and isEmpty(kids[2]) else kids[0].info
@@ -1283,8 +1283,8 @@ def emitLeaf(p: mut @ Parser):
                 s = p.tok.s.copy()
             p._emitStr(s, info)
         case TokKind.tkRStrLit | TokKind.tkTripleStrLit | TokKind.tkGStrLit | TokKind.tkGTripleStrLit:
-        # a generalized string literal is raw: `parseGStrLit` makes the argument
-        # an `nkRStrLit` (or `nkTripleStrLit`)
+            # a generalized string literal is raw: `parseGStrLit` makes the argument
+            # an `nkRStrLit` (or `nkTripleStrLit`)
             with let:
                 x = p._openNode()
                 s = p.tok.s.copy()
@@ -1294,8 +1294,8 @@ def emitLeaf(p: mut @ Parser):
         case TokKind.tkCharLit:
             p.append(p._newNode(charToken(p.tok.s[0] if p.tok.s.len > 0 else char('\x00')), info))
         case TokKind.tkCustomLit:
-        # `identOrLiteral` turns `-1'big` into a call of the s4 operator:
-        # `nkDotExpr(nkRStrLit("-1"), ident("'big"))`, the apostrophe included.
+            # `identOrLiteral` turns `-1'big` into a call of the suffix operator:
+            # `nkDotExpr(nkRStrLit("-1"), ident("'big"))`, the apostrophe included.
             with let:
                 outer = p._openNode()
                 inner = p._openNode()
@@ -1305,13 +1305,13 @@ def emitLeaf(p: mut @ Parser):
             p._emitIdent(p.tok.s.substr(nint(p.tok.suffixPos)), info)
             _closeNode(p, outer, NiflerKind.DotL, info)
         case TokKind.tkComment:
-        # nifler attaches a comment to its node and writes none of it (unless
-        # `--docs`); a `commentStmt` is just `(comment)`. Emitting the text as a
-        # string would take a slot that belongs to something else.
+            # nifler attaches a comment to its node and writes none of it (unless
+            # `--docs`); a `commentStmt` is just `(comment)`. Emitting the text as a
+            # string would take a slot that belongs to something else.
             pass
         case _:
-        # Identifiers, operators and every keyword used as a name. `tkSymbol` is
-        # the common case; the rest reach here through `symbolOrKeyword`, `OPR`
-        # and the `quoted[...]` production.
+            # Identifiers, operators and every keyword used as a name. `tkSymbol` is
+            # the common case; the rest reach here through `symbolOrKeyword`, `OPR`
+            # and the `quoted[...]` production.
             p._emitIdent((p.tok.s if p.tok.s.len > 0 else str(p.tok.kind)), info)
     p.getTok()

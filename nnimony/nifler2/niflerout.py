@@ -65,7 +65,7 @@ class _Writer(Object):
         ## difference to the reference, and nothing when that is zero.
         if w._noLineInfo or not isValid(info.file): return
         if not isValid(reference.file) or info.file != reference.file:
-        # absolute, with the file: the root, and an empty node's `???`
+            # absolute, with the file: the root, and an empty node's `???`
             with let:
                 name = w._file if info.file == w._rootFile else w._pool.filenames[info.file]
             # an empty node's position is `unknownLineInfo`, column -1; nifcore
@@ -78,7 +78,7 @@ class _Writer(Object):
 
     def _tagName(w: _Writer, n: Node) -> string:
         """{.inline.}"""
-        return copy(w._tags.tags[tag(n)])
+        return w._tags.tags[tag(n)].copy()
 
 
 def _tagKind(n: Node) -> NiflerKind:
@@ -175,7 +175,7 @@ def _emit(w: mut @ _Writer, n: Node, reference: NifLineInfo, parentTag: NiflerKi
                 prevParams = NoLineInfo
                 k = n.down
             while not isNil(k):
-            # the child's reference in bridge.nim
+                # the child's reference in bridge.nim
                 with var:
                     childRef = own
                 if routine and prevParams.isValid():
@@ -187,7 +187,7 @@ def _emit(w: mut @ _Writer, n: Node, reference: NifLineInfo, parentTag: NiflerKi
                 prevParams = NoLineInfo
                 if kind(k) == NifKind.Ident and i == 1 and _isDecl(tg) and w._pool.strings[strId(k)] == "x":
                     addRaw(w._b, string(" x"))  # bridge.nim's export marker, verbatim:
-                                               # a space even after a `)`
+                                                # a space even after a `)`
                 elif kind(k) == NifKind.DotToken:
                     with let:
                         dots = runs._runAt(i)
@@ -223,7 +223,7 @@ def _emit(w: mut @ _Writer, n: Node, reference: NifLineInfo, parentTag: NiflerKi
             addUIntLit(w._b, uintVal(n))
             w._lineInfo(info, reference)
         case NifKind.FloatLit:
-        # nifbuilder puts the position inside `(inf)` itself
+            # nifbuilder puts the position inside `(inf)` itself
             if info.isValid() and reference.isValid():
                 addFloatLit(w._b, floatVal(n), info.col - reference.col, info.line - reference.line)
             else:
@@ -344,15 +344,15 @@ class _DepsWalker(Object):
                     addStrLit(d._w._b, name)
                     endTree(d._w._b)
                 elif kind(k) == NifKind.Ident and d._w._pool.strings[strId(k)] == "enableTrace":
-                # the memory management runtime collects cycles (`deps.processDep`)
+                    # the memory management runtime collects cycles (`deps.processDep`)
                     addTree(d._w._b, string("enableTrace"))
                     d._whenMarker()
                     endTree(d._w._b)
                 k = k.next
             return
         if tg == NiflerKind.WhenL and not inObject:
-        # `nkWhenStmt`: each branch's condition covers its body, and an `else`
-        # is covered by the negation of all of them
+            # `nkWhenStmt`: each branch's condition covers its body, and an `else`
+            # is covered by the negation of all of them
             with var:
                 prior: seq[Node] = seq[Node]([])
                 br = n.down

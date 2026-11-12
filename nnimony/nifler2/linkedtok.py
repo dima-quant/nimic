@@ -68,7 +68,6 @@ class LinkedToken(Object):
     down: Node  ## first child; `nil` for an atom
     next: Node  ## next sibling
 
-
 @ptr
 class Node(LinkedToken):
     pass
@@ -179,7 +178,7 @@ def intVal(n: Node) -> int64:
 @dispatch
 def uintVal(n: Node) -> uint64:
     """{.inline.}"""
-    return copy(n.wide)
+    return n.wide.copy()
 
 
 @dispatch

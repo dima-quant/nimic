@@ -254,6 +254,9 @@ def nimicgen(m: str, dst: Path) -> list[str]:
     args = [str(NIMICGEN), f"--path:{ROOT / 'src' / 'nimic'}", f"--set:{WORK / 'set.txt'}"]
     if header:
         args.append(f"--source:{header.group(1)}")
+    includer = vt._nnimony_includes().get(m)  # an include file gets its includer's sem (as .scratch/lengc/gen.sh)
+    if includer:
+        args.append(f"--includer:{WORK / 'src' / (includer + '.nim')}")
     p = subprocess.run(args + [str(WORK / "src" / (m + ".nim")), str(dst)], cwd=WORK, capture_output=True, text=True)
     return [l for l in p.stderr.splitlines() if l.strip()]
 
@@ -267,8 +270,14 @@ def nim_check(m: str, generated: Path) -> tuple[int, list[str]]:
     target = pkg / "nnimony" / (m + ".py")
     original = target.read_text()
     target.write_text(generated.read_text())
+    includer = vt._nnimony_includes().get(m)  # an include file is transpiled through its includer, as in prepare()
     try:
-        p = transpile("nnimony." + m.replace("/", "."), [pkg, ROOT / "src"], pkg)
+        if includer:
+            env = dict(os.environ, PYTHONPATH=os.pathsep.join(str(q) for q in (pkg, ROOT / "src")), NIMONY_DIR=str(NIMONY))
+            p = subprocess.run([PY, "-c", vt.TRANSPILE_SOURCE, str(target), "nnimony." + includer.replace("/", ".")],
+                               cwd=pkg, capture_output=True, text=True, env=env)
+        else:
+            p = transpile("nnimony." + m.replace("/", "."), [pkg, ROOT / "src"], pkg)
     finally:
         target.write_text(original)
     if p.returncode != 0:

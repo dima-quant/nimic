@@ -647,7 +647,7 @@ def _genStmt(c: mut @ GeneratedCode, n: mut @ Cursor):
             _genCallCanRaise(c, n)
             c.add(_PredefinedToken.Semicolon)
             if kind(onErrAction) != NifKind.DotToken:
-                c._genOnError(onErrAction)
+                _genOnError(c, onErrAction)
         case LengStmt.ProcS | LengStmt.TypeS:
             _error(c._m, string("expected statement but got: "), n)
         case LengStmt.KeepovfS:

@@ -30,7 +30,7 @@ def _floatBinOpName(binOp: string) -> string:
         case "mul": return string("fmul")
         case "sdiv" | "udiv": return string("fdiv")
         case "srem" | "urem": return string("frem")
-        case _: return binOp
+        case _: return binOp.copy()
 
 
 with const:

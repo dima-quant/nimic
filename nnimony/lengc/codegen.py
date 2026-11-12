@@ -37,10 +37,10 @@ from ..lib.nifcoreparse import (
     initBiTable, intVal, isValid, kind, NifKind, NifLineInfo, pool, realFile, StrId, strId, SymId, symId,
     tags, toString, uintVal)  # re-exports nifcore
 from ..lib.nifcdecl import (
-    AddrKinds, asTypeDecl, asUnionBranch, CallConv, callConvKind, elementType, exprKind, inc, into,
-    isUnionBranch, LengExpr, LengOther, LengPragma, LengStmt, LengSym, LengType, LengTypeQualifier, loopInto,
-    pragmaKind, skip, stmtKind, substructureKind, takeFieldDecl, takeParamDecl, takeProcDecl, takeProcType,
-    takeTypeDecl, takeVarDecl, typeKind, typeQual)  # leng_model replacement (stmtKind/decls/tags)
+    AddrKinds, asTypeDecl, asUnionBranch, CallConv, callConvKind, elementType, exprKind, into, isUnionBranch,
+    LengExpr, LengOther, LengPragma, LengStmt, LengSym, LengType, LengTypeQualifier, loopInto, pragmaKind,
+    skip, stmtKind, substructureKind, takeFieldDecl, takeParamDecl, takeProcDecl, takeProcType, takeTypeDecl,
+    takeVarDecl, typeKind, typeQual)  # leng_model replacement (stmtKind/decls/tags)
 from ..lib.intrinsics import IntrinsicNames, IntrinsicOp, IntrinsicRows  # the shared `{.instruction.}` / `{.intrinsic.}` table
 from .mangler import makeCString, mangleToC, toCChar
 from .cprelude import Prelude
@@ -242,34 +242,6 @@ class GeneratedCode(Object):
             c.add(_PredefinedToken.NewLine)
             if isValid(id):
                 c._fileIds.incl(id)
-
-    def _genOnError(c: mut @ GeneratedCode, n: mut @ Cursor):
-        c.add(_PredefinedToken.IfKeyword)
-        c.add(_PredefinedToken.ParLe)
-        c.add(_PredefinedToken.ErrToken)
-        c.add(_PredefinedToken.ParRi)
-        c.add(_PredefinedToken.Space)
-        c.add(_PredefinedToken.CurlyLe)
-        _genStmt(c, n)
-        c.add(_PredefinedToken.CurlyRi)
-
-    def _genVarInitValue(c: mut @ GeneratedCode, n: mut @ Cursor):
-        if kind(n) == NifKind.DotToken:
-            n.inc()
-            c.add(_PredefinedToken.Semicolon)
-        elif stmtKind(n) == LengStmt.OnerrS:
-            with var:
-                onErrAction = n.copy()
-            onErrAction.inc()
-            c.add(_PredefinedToken.AsgnOpr)
-            _genCallCanRaise(c, n)
-            c.add(_PredefinedToken.Semicolon)
-            if kind(onErrAction) != NifKind.DotToken:
-                c._genOnError(onErrAction)
-        else:
-            c.add(_PredefinedToken.AsgnOpr)
-            _genx(c, n)
-            c.add(_PredefinedToken.Semicolon)
 
     def _overflowDeclTokens(c: mut @ GeneratedCode) -> seq[_Token]:
         ## The `NB8 ovf = NIM_FALSE;` prologue. Returned instead of inserted by the
@@ -688,6 +660,36 @@ def _genStmt(c: mut @ GeneratedCode, n: mut @ Cursor):
     pass
 
 
+def _genOnError(c: mut @ GeneratedCode, n: mut @ Cursor):
+    c.add(_PredefinedToken.IfKeyword)
+    c.add(_PredefinedToken.ParLe)
+    c.add(_PredefinedToken.ErrToken)
+    c.add(_PredefinedToken.ParRi)
+    c.add(_PredefinedToken.Space)
+    c.add(_PredefinedToken.CurlyLe)
+    _genStmt(c, n)
+    c.add(_PredefinedToken.CurlyRi)
+
+
+def _genVarInitValue(c: mut @ GeneratedCode, n: mut @ Cursor):
+    if kind(n) == NifKind.DotToken:
+        n.inc()
+        c.add(_PredefinedToken.Semicolon)
+    elif stmtKind(n) == LengStmt.OnerrS:
+        with var:
+            onErrAction = n.copy()
+        onErrAction.inc()
+        c.add(_PredefinedToken.AsgnOpr)
+        _genCallCanRaise(c, n)
+        c.add(_PredefinedToken.Semicolon)
+        if kind(onErrAction) != NifKind.DotToken:
+            _genOnError(c, onErrAction)
+    else:
+        c.add(_PredefinedToken.AsgnOpr)
+        _genx(c, n)
+        c.add(_PredefinedToken.Semicolon)
+
+
 def _genVarDecl(c: mut @ GeneratedCode, n: mut @ Cursor, vk: _VarKind, toExtern=False, useStatic=False):
     c._genCLineDir(_info(n))
     with var:
@@ -732,7 +734,7 @@ def _genVarDecl(c: mut @ GeneratedCode, n: mut @ Cursor, vk: _VarKind, toExtern=
             c.add(_PredefinedToken.Semicolon)
         else:
             if vk != _VarKind.IsLocal and not mustMoveToInit: c._objConstrNeedsType = False
-            c._genVarInitValue(d.value)
+            _genVarInitValue(c, d.value)
             if vk != _VarKind.IsLocal and not mustMoveToInit: c._objConstrNeedsType = True
 
         if skipDecl:

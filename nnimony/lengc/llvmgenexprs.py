@@ -246,7 +246,7 @@ def _genAtomicCall(c: mut @ LLVMCode, externName: string, args: seq[LLValue], re
                 oldVal = c.nextTemp()
                 oldRes = llReg(oldVal, valTyp)
             emit_(c, LLInstr(kind=LLInstrKind.llExtractValue, result=oldRes, evAggregate=cmpxRes, evAggType=aggTyp, evIndex=0))
-            c.emitStore(oldRes, args[1])
+            emitStore(c, oldRes, args[1])
             with let:
                 r = c.nextTemp()
                 rRes = llReg(r, c.prim.i8_)
@@ -727,10 +727,10 @@ def _genFieldPtrLLVM(c: mut @ LLVMCode, objBody: Cursor, fldSym: SymId, gepType:
         idx0 = llIntTextC(string("0"), c.prim.i32_)
     if access.isBranch:
         with let:
-            unionPtr = c.emitGEP(gepType, gepTarget, [idx0, llIntTextC(str(access.index), c.prim.i32_)])
-        result = c.emitGEP(access.branchType, unionPtr, [idx0, llIntTextC(str(access.branchIndex), c.prim.i32_)])
+            unionPtr = emitGEP(c, gepType, gepTarget, [idx0, llIntTextC(str(access.index), c.prim.i32_)])
+        result = emitGEP(c, access.branchType, unionPtr, [idx0, llIntTextC(str(access.branchIndex), c.prim.i32_)])
     else:
-        result = c.emitGEP(gepType, gepTarget, [idx0, llIntTextC(str(access.index), c.prim.i32_)])
+        result = emitGEP(c, gepType, gepTarget, [idx0, llIntTextC(str(access.index), c.prim.i32_)])
     return result
 
 
@@ -741,7 +741,7 @@ def _emitBaseGEP(c: mut @ LLVMCode, objType: LLType, baseValue: LLValue, nifBody
     for i in range(inhDepth):
         with let:
             baseTypeCursor = baseTypeOfObject(c._m, curBody)
-        result = (_genTypeLLVMReadOnly(c, baseTypeCursor), c.emitGEP(result[0], result[1], [llIntTextC(string("0"), c.prim.i32_), llIntTextC(string("0"), c.prim.i32_)]))
+        result = (_genTypeLLVMReadOnly(c, baseTypeCursor), emitGEP(c, result[0], result[1], [llIntTextC(string("0"), c.prim.i32_), llIntTextC(string("0"), c.prim.i32_)]))
         if not baseTypeCursor.cursorIsNil():
             curBody = navigateToObjectBody(c._m, baseTypeCursor)
     nifBody <<= curBody
@@ -773,7 +773,7 @@ def _genDotLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
         gepTarget = obj
         gepType = objTypeLL
     for i in range(inhDepth):
-        gepTarget = c.emitGEP(gepType, gepTarget, [llIntTextC(string("0"), c.prim.i32_), llIntTextC(string("0"), c.prim.i32_)])
+        gepTarget = emitGEP(c, gepType, gepTarget, [llIntTextC(string("0"), c.prim.i32_), llIntTextC(string("0"), c.prim.i32_)])
         with let:
             baseTypeCursor = baseTypeOfObject(c._m, curBody)
         if not baseTypeCursor.cursorIsNil():
@@ -826,13 +826,13 @@ def _genAtLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
                 typ = _genTypeLLVMReadOnly(c, arrType)
                 tmp = c.nextTemp()
             c.emitAlloca(tmp, typ)
-            c.emitStore(val, llReg(tmp, c.prim.ptrT))
+            emitStore(c, val, llReg(tmp, c.prim.ptrT))
             arr = llReg(tmp, c.prim.ptrT)
         _genIndexLLVM(c, n, idx)
         while n.hasMore(): skip(n)
     with let:
         arrTypeName = _genTypeLLVMReadOnly(c, arrType)
-    result <<= withType(c.emitGEP(arrTypeName, arr, [llIntTextC(string("0"), c.prim.i32_), idx]), c.prim.ptrT)
+    result <<= withType(emitGEP(c, arrTypeName, arr, [llIntTextC(string("0"), c.prim.i32_), idx]), c.prim.ptrT)
 
 
 def _genPatLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
@@ -851,7 +851,7 @@ def _genPatLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
         _error(c._m, string("expected pointer type for `pat` but got: "), baseType)
     with let:
         elemType = _genTypeLLVMReadOnly(c, elemCursor)
-    result <<= withType(c.emitGEP(elemType, base, [idx], inbounds=False), c.prim.ptrT)
+    result <<= withType(emitGEP(c, elemType, base, [idx], inbounds=False), c.prim.ptrT)
 
 
 def _genSizeofLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
@@ -861,7 +861,7 @@ def _genSizeofLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
         typ = _genTypeLLVM(c, n)
         while n.hasMore(): skip(n)
     with let:
-        t1 = c.emitGEP(typ, llNull(c.prim.ptrT), [llIntTextC(string("1"), c.prim.i32_)], inbounds=False)
+        t1 = emitGEP(c, typ, llNull(c.prim.ptrT), [llIntTextC(string("1"), c.prim.i32_)], inbounds=False)
         t2 = c.nextTemp()
         res = llReg(t2, c.llIntBits(c._bits))
     emit_(c, LLInstr(kind=LLInstrKind.llPtrtoint, result=res, castOp=string("ptrtoint"), castSrc=t1, castDstType=c.llIntBits(c._bits)))
@@ -1018,7 +1018,7 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
                         typ = _genTypeLLVMReadOnly(c, symType)
                         prefix = string("@") if _isGlobalSym(c, s) else string("%")
                         base = llGlobalRef(name, c.prim.ptrT) if prefix == "@" else llReg(name, c.prim.ptrT)
-                    result <<= c.emitLoad(base, typ)
+                    result <<= emitLoad(c, base, typ)
                 case _:
                     with let:
                         exprType = getType(c._m, n)
@@ -1026,7 +1026,7 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
                     with var:
                         lval = default(LLValue)
                     _genLvalueLLVM(c, n, lval)
-                    result <<= c.emitLoad(lval, typ)
+                    result <<= emitLoad(c, lval, typ)
         case LengExpr.FalseC:
             skip(n)
             result <<= llIntTextC(string("0"), c.prim.i8_)
@@ -1100,7 +1100,7 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
                 with let:
                     i8_ = c.prim.i8_
                 c.emitAlloca(resName, i8_)
-                c.emitStore(llIntTextC(string("0"), c.prim.i8_), llReg(resName, c.prim.ptrT))
+                emitStore(c, llIntTextC(string("0"), c.prim.i8_), llReg(resName, c.prim.ptrT))
                 _genExprLLVM(c, n, lhs)
                 with let:
                     lhsBool = c.nextTemp()
@@ -1122,11 +1122,11 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
                     rhsExt = c.nextTemp()
                     rhsExtRes = llReg(rhsExt, c.prim.i8_)
                 emit_(c, LLInstr(kind=LLInstrKind.llZext, result=rhsExtRes, castOp=string("zext"), castSrc=rhsBoolRes, castDstType=c.prim.i8_))
-                c.emitStore(rhsExtRes, llReg(resName, c.prim.ptrT))
+                emitStore(c, rhsExtRes, llReg(resName, c.prim.ptrT))
                 setLoc(c, andInfo)
                 emit_(c, LLInstr(kind=LLInstrKind.llBr, brTarget=endLabel))
                 _ = c.startBlock(endLabel)
-                result <<= c.emitLoad(llReg(resName, c.prim.ptrT), i8_)
+                result <<= emitLoad(c, llReg(resName, c.prim.ptrT), i8_)
                 while n.hasMore(): skip(n)
         case LengExpr.OrC:
             with let:
@@ -1139,7 +1139,7 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
                 with let:
                     i8_ = c.prim.i8_
                 c.emitAlloca(resName, i8_)
-                c.emitStore(llIntTextC(string("1"), c.prim.i8_), llReg(resName, c.prim.ptrT))
+                emitStore(c, llIntTextC(string("1"), c.prim.i8_), llReg(resName, c.prim.ptrT))
                 _genExprLLVM(c, n, lhs)
                 with let:
                     lhsBool = c.nextTemp()
@@ -1161,11 +1161,11 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
                     rhsExt = c.nextTemp()
                     rhsExtRes = llReg(rhsExt, c.prim.i8_)
                 emit_(c, LLInstr(kind=LLInstrKind.llZext, result=rhsExtRes, castOp=string("zext"), castSrc=rhsBoolRes, castDstType=c.prim.i8_))
-                c.emitStore(rhsExtRes, llReg(resName, c.prim.ptrT))
+                emitStore(c, rhsExtRes, llReg(resName, c.prim.ptrT))
                 setLoc(c, orInfo)
                 emit_(c, LLInstr(kind=LLInstrKind.llBr, brTarget=endLabel))
                 _ = c.startBlock(endLabel)
-                result <<= c.emitLoad(llReg(resName, c.prim.ptrT), i8_)
+                result <<= emitLoad(c, llReg(resName, c.prim.ptrT), i8_)
                 while n.hasMore(): skip(n)
         case LengExpr.NotC:
             with let:
@@ -1207,7 +1207,7 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
                 if n.hasMore() and typeQual(n) == LengTypeQualifier.CpprefQ:
                     skip(n)
                 while n.hasMore(): skip(n)
-            result <<= c.emitLoad(ptrVal, loadType)
+            result <<= emitLoad(c, ptrVal, loadType)
         case LengExpr.AtC:
             with let:
                 elemType = getType(c._m, n)
@@ -1215,7 +1215,7 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
             with var:
                 lval = default(LLValue)
             _genAtLLVM(c, n, lval)
-            result <<= c.emitLoad(lval, loadType)
+            result <<= emitLoad(c, lval, loadType)
         case LengExpr.PatC:
             with let:
                 elemType = getType(c._m, n)
@@ -1223,7 +1223,7 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
             with var:
                 lval = default(LLValue)
             _genPatLLVM(c, n, lval)
-            result <<= c.emitLoad(lval, loadType)
+            result <<= emitLoad(c, lval, loadType)
         case LengExpr.DotC:
             with let:
                 fldType = getType(c._m, n)
@@ -1234,7 +1234,7 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
             if typeKind(fldType) == LengType.FlexarrayT:
                 result <<= withType(lval, c.prim.ptrT)
             else:
-                result <<= c.emitLoad(lval, loadType)
+                result <<= emitLoad(c, lval, loadType)
         case LengExpr.SizeofC:
             _genSizeofLLVM(c, n, result)
         case LengExpr.AlignofC:
@@ -1253,7 +1253,7 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
             with let:
                 objBody = navigateToObjectBody(c._m, typCursor)
                 fldIdx = _fieldIndex(c, objBody, fldSym)
-                t1 = c.emitGEP(typ, llNull(c.prim.ptrT), [llIntTextC(string("0"), c.prim.i32_), llIntTextC(str(fldIdx), c.prim.i32_)], inbounds=False)
+                t1 = emitGEP(c, typ, llNull(c.prim.ptrT), [llIntTextC(string("0"), c.prim.i32_), llIntTextC(str(fldIdx), c.prim.i32_)], inbounds=False)
                 t2 = c.nextTemp()
                 res = llReg(t2, c.llIntBits(c._bits))
             emit_(c, LLInstr(kind=LLInstrKind.llPtrtoint, result=res, castOp=string("ptrtoint"), castSrc=t1, castDstType=c.llIntBits(c._bits)))
@@ -1331,7 +1331,7 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
                 typ = _genTypeLLVM(c, n)
                 tmpName = c.nextTemp()
                 c.emitAlloca(tmpName, typ)
-                c.emitStore(llZeroInit(typ), llReg(tmpName, c.prim.ptrT))
+                emitStore(c, llZeroInit(typ), llReg(tmpName, c.prim.ptrT))
                 while n.hasMore():
                     if substructureKind(n) == LengOther.KvU:
                         with into(n):
@@ -1351,7 +1351,7 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
                                 gepType = _genTypeLLVMReadOnly(c, curType)
                                 gepTarget = llReg(tmpName, c.prim.ptrT)
                             for i in range(inhDepth):
-                                gepTarget = c.emitGEP(gepType, gepTarget, [llIntTextC(string("0"), c.prim.i32_), llIntTextC(string("0"), c.prim.i32_)])
+                                gepTarget = emitGEP(c, gepType, gepTarget, [llIntTextC(string("0"), c.prim.i32_), llIntTextC(string("0"), c.prim.i32_)])
                                 with let:
                                     baseTypeCursor = baseTypeOfObject(c._m, curBody)
                                 if not baseTypeCursor.cursorIsNil():
@@ -1362,16 +1362,16 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
                                 fldPtr = _genFieldPtrLLVM(c, curBody, fldSym, gepType, gepTarget)
                                 fldType = typeOfField(c._m, curBody, fldSym)
                             _coerceInPlace(c, fieldVal, srcType, fldType)
-                            c.emitStore(fieldVal, fldPtr)
+                            emitStore(c, fieldVal, fldPtr)
                             while n.hasMore(): skip(n)
                     else:
                         with var:
                             baseVal = default(LLValue)
                         _genExprLLVM(c, n, baseVal)
                         with let:
-                            basePtr = c.emitGEP(typ, llReg(tmpName, c.prim.ptrT), [llIntTextC(string("0"), c.prim.i32_), llIntTextC(string("0"), c.prim.i32_)])
-                        c.emitStore(baseVal, basePtr)
-                result <<= c.emitLoad(llReg(tmpName, c.prim.ptrT), typ)
+                            basePtr = emitGEP(c, typ, llReg(tmpName, c.prim.ptrT), [llIntTextC(string("0"), c.prim.i32_), llIntTextC(string("0"), c.prim.i32_)])
+                        emitStore(c, baseVal, basePtr)
+                result <<= emitLoad(c, llReg(tmpName, c.prim.ptrT), typ)
         case LengExpr.AconstrC:
             with var:
                 arrayTypeCursor = Cursor()
@@ -1410,14 +1410,14 @@ def _genExprBodyLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):
             with var:
                 lval = default(LLValue)
             _genLvalueLLVM(c, n, lval)
-            result <<= c.emitLoad(lval, loadType)
+            result <<= emitLoad(c, lval, loadType)
         case LengExpr.ErrvC | LengExpr.OvfC:
             with var:
                 lval = default(LLValue)
             _genLvalueLLVM(c, n, lval)
             with let:
                 i8_ = c.prim.i8_
-            result <<= c.emitLoad(lval, i8_)
+            result <<= emitLoad(c, lval, i8_)
 
 
 def _genCondLLVM(c: mut @ LLVMCode, n: mut @ Cursor, result: mut @ LLValue):

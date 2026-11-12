@@ -25,8 +25,8 @@ from nimic.std.strutils import cmpIgnoreStyle, repeat, spaces, startsWith
 from nimic.std import syncio
 from . import nimgrammar
 from .nimgrammar import (
-    charLit, childCursor, Cursor, endRead, globalTags, intVal, kind, NifKind, openParser, pModule,
-    pool, resolvedTagId, skip, strVal, tags)
+    add, charLit, childCursor, Cursor, endRead, globalTags, intVal, kind, NifKind, openParser, pModule, pool,
+    resolvedTagId, skip, strVal, tags)
 from nimic.std import strutils
 replace = overloads(strutils.replace, nimgrammar.replace)
 
@@ -82,7 +82,7 @@ class _FilterContext(Object):
 
 def _tag(c: Cursor) -> string:
     """{.inline.}"""
-    return copy(tags(c).tags[resolvedTagId(c)])
+    return tags(c).tags[resolvedTagId(c)].copy()
 
 
 def _render(c: Cursor) -> string:
@@ -369,21 +369,21 @@ def _parseLine(ctx: mut @ _FilterContext, p: mut @ _TmplParser):
                 p._outp.add(_spacesN(p._indent))
                 p._outp.add(substr(p._x, d))
                 if not (p._x.contains(char(':')) or p._x.contains(char('='))):
-                # no inline element --> treat as block:
+                    # no inline element --> treat as block:
                     p._indent += 2
             case _:
                 p._outp.add(_spacesN(p._indent))
                 p._outp.add(substr(p._x, d))
         p._state = _TmplState.psDirective
     else:
-    # data line
+        # data line
         p._par = 0
         p._curly = 0
         p._bracket = 0
         j = 0
         match p._state:
             case _TmplState.psTempl:
-            # next line of string literal:
+                # next line of string literal:
                 p._outp.add(p._conc)
                 p._outp.add(string("\n"))
                 p._outp.add(_spacesN(p._indent + 2))
@@ -412,7 +412,7 @@ def _parseLine(ctx: mut @ _FilterContext, p: mut @ _TmplParser):
                 p._outp.add(string("\\\""))
                 j += 1
             elif c == p._subsChar:
-            # parse Nim expression:
+                # parse Nim expression:
                 j += 1
                 with let:
                     e = p._at(j)

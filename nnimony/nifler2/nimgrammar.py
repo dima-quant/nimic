@@ -31,13 +31,13 @@ from __future__ import annotations
 from nimic.ntypes import *
 from nimic.std import strutils
 from .parserrt import (
-    accentEnd, addSubtree, afterOperator, attachBlocks, blockNameEnd, callOrObjConstr, checkInd, childCursor,
-    curlyOrTable, doLayout, dotLayout, emitLeaf, emptyDiscriminator, endRead, enumListEnd, expect, expectLeaf,
-    exprExpected, fanOut, fanOutKv, identExpected, IndClass, indentError, inheritLayout, inSemiStmtList,
-    insertTokAt, listEnd, Mark, NiflerKind, noIndHere, openParser, Parser, Pool, pragmaBlock, PrimaryMode,
-    procLayout, pushInd, requireFields, routineLayout, ruleError, skip, stmtListEnd, stmtListExprLayout,
-    strictListEnd, strictListStart, TagPool, TokenBuf, TokKind, tupleEnd, wrap, wrapAt, wrapLikeFirst,
-    wrapNoInfo, wrapSection)
+    accentEnd, add, addSubtree, afterOperator, attachBlocks, blockNameEnd, callOrObjConstr, checkInd,
+    childCursor, curlyOrTable, doLayout, dotLayout, emitLeaf, emptyDiscriminator, endRead, enumListEnd,
+    expect, expectLeaf, exprExpected, fanOut, fanOutKv, identExpected, IndClass, indentError, inheritLayout,
+    inSemiStmtList, insertTokAt, listEnd, Mark, NiflerKind, noIndHere, openParser, Parser, Pool, pragmaBlock,
+    PrimaryMode, procLayout, pushInd, requireFields, routineLayout, ruleError, skip, stmtListEnd,
+    stmtListExprLayout, strictListEnd, strictListStart, TagPool, TokenBuf, TokKind, tupleEnd, wrap, wrapAt,
+    wrapLikeFirst, wrapNoInfo, wrapSection)
 importFrom("..lib.nifcore", "createTokenBuf")
 from . import parserrt
 export(parserrt)
@@ -4782,8 +4782,8 @@ def parseModule(p: mut @ Parser):
         indentError(p)  # `parseTopLevelStmt`: the first statement starts a line
     pModule(p)
     if not p.failed and p.tok.kind != TokKind.tkEof:
-    # `module` stops at a token that does not start a statement, or not its
-    # own line: parser.nim's `parseTopLevelStmt`
+        # `module` stops at a token that does not start a statement, or not its
+        # own line: parser.nim's `parseTopLevelStmt`
         if p.tok.indent == 0 or (p.tok.indent < 0 and p.prevKind in Tset[TokKind](TokKind.tkInvalid, TokKind.tkSemiColon)):
             exprExpected(p)
         elif p.tok.kind == TokKind.tkOpr and p.tok.s == "*":
@@ -4803,8 +4803,8 @@ def parseSnippet(code: string, asExpr: bool, pool: Pool, tags: TagPool, err: mut
     parseModule(p)
     err <<= string("")
     if p.lex.errors.len > 0:
-    # the lexer's message is formatted, `(line, col) Error: msg` for a parser
-    # without a file name
+        # the lexer's message is formatted, `(line, col) Error: msg` for a parser
+        # without a file name
         with let:
             e = p.lex.errors[0]
             sep = e.find(string(") Error: "))

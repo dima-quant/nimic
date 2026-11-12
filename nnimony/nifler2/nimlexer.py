@@ -208,7 +208,7 @@ class Token(Object):
             i = 2 if tok.s.len > 0 and tok.s[0] == char('-') else 1
         if i < tok.s.len:
             with let:
-                c = copy(tok.s[i])
+                c = tok.s[i].copy()
             if c >= char('A') and c <= char('Z'): tok.s[i] = chr(ord(c) - ord(char('A')) + ord(char('a')))
 
 
@@ -238,6 +238,48 @@ class Lexer(Object):
         elif tok.s == "..": tok.kind = TokKind.tkDotDot
         else: tok.kind = TokKind.tkOpr
         L.pos = stop + 1
+
+
+with const:
+    KeywordLow = TokKind.tkAddr
+    KeywordHigh = TokKind.tkYield
+
+    OpChars = Tset[char](char('+'), char('-'), char('*'), char('/'), char('\\'), char('<'), char('>'), char('!'), char('?'), char('^'), char('.'), char('|'), char('='), char('%'), char('&'), char('$'), char('@'), char('~'), char(':'))
+    SymChars = Tset[char](inrange(char('a'), char('z')), inrange(char('A'), char('Z')), inrange(char('0'), char('9')), inrange(char('\x80'), char('\xff')))
+    SymStartChars = Tset[char](inrange(char('a'), char('z')), inrange(char('A'), char('Z')), inrange(char('\x80'), char('\xff')))
+    UnicodeOperatorStartChars = Tset[char](char('\xc2'), char('\xc3'), char('\xe2'))
+    ## `∙ ∘ × ★ ☆ ⊗ ⊘ ⊙ ⊛ ⊠ ⊡ ∩ ∧ ⊓ ⟑ ⟇ ⩓ ⩔ ■ □ ± ⊕ ⊖ ⊞ ⊟ ∪ ∨ ⊔` all start
+    ## with one of these three bytes.
+    _UnaryMinusWhitelist = Tset[char](char(' '), char('\t'), char('\n'), char('\r'), char(','), char(';'), char('('), char('['), char('{'))
+
+    _MulPred = 9
+    _PlusPred = 8
+
+# ---------------------------------------------------------------------------
+# Buffer access
+#
+# Nim's lexer reads from a sentinel-terminated buffer, so it may peek one or
+# two characters past the token without a bounds check. `ch` gives us the same
+# freedom over a plain string: everything past the end reads as '\0', which is
+# also what the real lexer's end-of-file sentinel is.
+# ---------------------------------------------------------------------------
+
+
+def _str(c: char) -> string:
+    """{.inline.}"""
+    result = string("")
+    result.add(c)
+    return result
+
+
+def _charAt(buf: string, i: nint) -> char:
+    """{.inline.}"""
+    return buf[i] if i >= 0 and i < buf.len else char('\x00')
+
+
+def ch(L: Lexer, i: nint) -> char:
+    """{.inline.}"""
+    return _charAt(L.buf, i)
 
 
 def _litNumText(L: Lexer, start: nint) -> string:
@@ -276,6 +318,127 @@ def _handleCRLF(L: mut @ Lexer, pos: nint) -> nint:
     L.lineNumber += 1
     L.lineStart = result
     return result
+
+# ---------------------------------------------------------------------------
+# Identifiers and keywords
+# ---------------------------------------------------------------------------
+
+
+def nimIdentNormalize(s: string) -> string:
+    ## Nim's identifier equality made explicit: the first character counts as
+    ## written, the rest is lowercased and underscores drop out. The lexer does
+    ## not use it; the differential tools compare identifiers with it, because
+    ## Nim's identifier cache cannot report the spelling it saw.
+    result = string("")
+    if s.len > 0: result.add(s[0])
+    with var:
+        i = nint(1)
+    while i < s.len:
+        with let:
+            c = s[i]
+        if c == char('_'): pass
+        elif c >= char('A') and c <= char('Z'): result.add(chr(ord(c) - ord(char('A')) + ord(char('a'))))
+        else: result.add(c)
+        i += 1
+    return result
+
+# ---------------------------------------------------------------------------
+# Unicode operators
+# ---------------------------------------------------------------------------
+
+
+class _UnicodeOprPred(NIntEnum):
+    uopNone = auto()
+    uopMul = auto()
+    uopAdd = auto()
+
+
+def unicodeOprLen(buf: string, pos: nint) -> tuple[nint, _UnicodeOprPred]:
+    ## Length and precedence class of the unicode operator at `pos`, or
+    ## `(0, uopNone)`. A byte in `UnicodeOperatorStartChars` that does not begin
+    ## one of these is an ordinary identifier character, which is the whole
+    ## reason this has to be consulted while scanning a symbol.
+    result = (0, _UnicodeOprPred.uopNone)
+    match _charAt(buf, pos):
+        case _ if _charAt(buf, pos) == char('\xe2'):
+            with let:
+                b1 = _charAt(buf, pos + 1)
+                b2 = _charAt(buf, pos + 2)
+            if b1 == char('\x88'):
+                if b2 == char('\x98') or b2 == char('\x99') or b2 == char('\xa7') or b2 == char('\xa9'):
+                    result = (3, _UnicodeOprPred.uopMul)  # ∘ ∙ ∧ ∩
+                elif b2 == char('\xa8') or b2 == char('\xaa'):
+                    result = (3, _UnicodeOprPred.uopAdd)  # ∨ ∪
+            elif b1 == char('\x8a'):
+                if b2 == char('\x93') or b2 == char('\x97') or b2 == char('\x98') or b2 == char('\x99') or b2 == char('\x9b') or b2 == char('\xa0') or b2 == char('\xa1'):
+                    result = (3, _UnicodeOprPred.uopMul)  # ⊓ ⊗ ⊘ ⊙ ⊛ ⊠ ⊡
+                elif b2 == char('\x94') or b2 == char('\x95') or b2 == char('\x96') or b2 == char('\x9e') or b2 == char('\x9f'):
+                    result = (3, _UnicodeOprPred.uopAdd)  # ⊔ ⊕ ⊖ ⊞ ⊟
+            elif b1 == char('\x96'):
+                if b2 == char('\xa0') or b2 == char('\xa1'): result = (3, _UnicodeOprPred.uopMul)  # ■ □
+            elif b1 == char('\x98'):
+                if b2 == char('\x85') or b2 == char('\x86'): result = (3, _UnicodeOprPred.uopMul)  # ★ ☆
+            elif b1 == char('\x9f'):
+                if b2 == char('\x87') or b2 == char('\x91'): result = (3, _UnicodeOprPred.uopMul)  # ⟇ ⟑
+            elif b1 == char('\xa9'):
+                if b2 == char('\x93') or b2 == char('\x94'): result = (3, _UnicodeOprPred.uopMul)  # ⩓ ⩔
+        case _ if _charAt(buf, pos) == char('\xc2'):
+            if _charAt(buf, pos + 1) == char('\xb1'): result = (2, _UnicodeOprPred.uopAdd)  # ±
+        case _ if _charAt(buf, pos) == char('\xc3'):
+            if _charAt(buf, pos + 1) == char('\x97'): result = (2, _UnicodeOprPred.uopMul)  # ×
+        case _: pass
+    return result
+
+# ---------------------------------------------------------------------------
+# Operator classification -- lexer-level in Nim, and the parser runtime needs
+# all of it.
+# ---------------------------------------------------------------------------
+
+
+def getPrecedence(tok: Token) -> nint:
+    ## Nim computes an operator's precedence from its spelling, which is why the
+    ## grammar's `binary(...)` takes this as a parameter rather than baking a
+    ## precedence table into the generated parser.
+    match tok.kind:
+        case TokKind.tkOpr:
+            with let:
+                s = tok.s
+            if s.len == 0: return -10
+            with let:
+                last = s[s.len - 1]
+            if s.len > 1 and last == char('>') and (s[s.len - 2] == char('-') or s[s.len - 2] == char('~') or s[s.len - 2] == char('=')):
+                return 0  # arrow-like
+            with let:
+                asgn = last == char('=')
+            match s[0]:
+                case _ if s[0] == char('$') or s[0] == char('^'): result = (1 if asgn else 10)
+                case _ if s[0] == char('*') or s[0] == char('%') or s[0] == char('/') or s[0] == char('\\'): result = (1 if asgn else _MulPred)
+                case _ if s[0] == char('~'): result = 8
+                case _ if s[0] == char('+') or s[0] == char('-') or s[0] == char('|'): result = (1 if asgn else _PlusPred)
+                case _ if s[0] == char('&'): result = (1 if asgn else 7)
+                case _ if s[0] == char('=') or s[0] == char('<') or s[0] == char('>') or s[0] == char('!'): result = 5
+                case _ if s[0] == char('.'): result = (1 if asgn else 6)
+                case _ if s[0] == char('?'): result = 2
+                case _ if s[0] == char('\xc2') or s[0] == char('\xc3') or s[0] == char('\xe2'):
+                    if asgn:
+                        result = 1
+                    else:
+                        with let:
+                            (n, pred) = unicodeOprLen(s, 0)
+                        if n != 0: result = (_MulPred if pred == _UnicodeOprPred.uopMul else _PlusPred)
+                        else: result = 2
+                case _: result = (1 if asgn else 2)
+        case TokKind.tkDiv | TokKind.tkMod | TokKind.tkShl | TokKind.tkShr: result = 9
+        case TokKind.tkDotDot: result = 6
+        case TokKind.tkIn | TokKind.tkNotin | TokKind.tkIs | TokKind.tkIsnot | TokKind.tkOf | TokKind.tkAs | TokKind.tkFrom: result = 5
+        case TokKind.tkAnd: result = 4
+        case TokKind.tkOr | TokKind.tkXor | TokKind.tkPtr | TokKind.tkRef: result = 3
+        case _: result = -10
+    return result
+
+# ---------------------------------------------------------------------------
+# The generated automata
+# ---------------------------------------------------------------------------
 
 
 def _numberSuffix(L: mut @ Lexer, tok: mut @ Token, start: nint, isFloat: bool):
@@ -909,334 +1072,6 @@ def _numberSuffix(L: mut @ Lexer, tok: mut @ Token, start: nint, isFloat: bool):
     tok.kind = kind
 
 
-def _skipMultiLineComment(L: mut @ Lexer, tok: mut @ Token, start: nint, isDoc: bool):
-    with var:
-        pos = copy(start)
-        toStrip = nint(0)
-    if isDoc:
-        toStrip = pos - L.lineStart
-        while ch(L, pos) == char(' '):
-            pos += 1
-            toStrip += 1
-        while ch(L, pos) == char('\r') or ch(L, pos) == char('\n'):
-            pos = _handleCRLF(L, pos)
-            toStrip = 0
-            while ch(L, pos) == char(' '):
-                pos += 1
-                toStrip += 1
-    with var:
-        nesting = nint(0)
-    while True:
-        with let:
-            c = ch(L, pos)
-        if c == char('#'):
-            if isDoc:
-                if ch(L, pos + 1) == char('#') and ch(L, pos + 2) == char('['): nesting += 1
-                tok.s.add(char('#'))
-            elif ch(L, pos + 1) == char('['):
-                nesting += 1
-            pos += 1
-        elif c == char(']'):
-            if isDoc:
-                if ch(L, pos + 1) == char('#') and ch(L, pos + 2) == char('#'):
-                    if nesting == 0:
-                        pos += 3
-                        break
-                    nesting -= 1
-                tok.s.add(char(']'))
-            elif ch(L, pos + 1) == char('#'):
-                if nesting == 0:
-                    pos += 2
-                    break
-                nesting -= 1
-            pos += 1
-        elif c == char('\r') or c == char('\n'):
-            pos = _handleCRLF(L, pos)
-            if isDoc:
-                tok.s.add(char('\n'))
-                with var:
-                    n = copy(toStrip)
-                while ch(L, pos) == char(' ') and n > 0:
-                    pos += 1
-                    n -= 1
-        elif c == char('\x00'):
-            L._error(pos, string("end of multiline comment expected"))
-            break
-        else:
-            if isDoc: tok.s.add(c)
-            pos += 1
-    L.pos = pos
-
-
-def _scanComment(L: mut @ Lexer, tok: mut @ Token):
-    ## Only doc comments get here: `skip` eats the ordinary ones. Consecutive
-    ## `##` lines become **one** token, and the indentation of the line after
-    ## the block is remembered in `indentAhead` for the token that follows.
-    with var:
-        pos = copy(L.pos)
-    tok.kind = TokKind.tkComment
-    if ch(L, pos + 2) == char('['):
-        _skipMultiLineComment(L, tok, pos + 3, True)
-        return
-    pos += 2
-    with var:
-        toStrip = nint(0)
-        stripInit = False
-    while True:
-        if not stripInit:
-            while ch(L, pos) == char(' '):
-                pos += 1
-                toStrip += 1
-            if ch(L, pos) == char('\r') or ch(L, pos) == char('\n'): toStrip = 0
-            else: stripInit = True
-        while ch(L, pos) != char('\r') and ch(L, pos) != char('\n') and ch(L, pos) != char('\x00'):
-            tok.s.add(L.buf[pos])
-            pos += 1
-        if ch(L, pos) == char('\x00'): break
-        pos = _handleCRLF(L, pos)
-        with var:
-            indent = nint(0)
-        while ch(L, pos) == char(' '):
-            pos += 1
-            indent += 1
-        if ch(L, pos) == char('#') and ch(L, pos + 1) == char('#'):
-            tok.s.add(char('\n'))
-            pos += 2
-            if stripInit:
-                with var:
-                    n = copy(toStrip)
-                while ch(L, pos) == char(' ') and n > 0:
-                    pos += 1
-                    n -= 1
-        else:
-            if ch(L, pos) > char(' '): L.indentAhead = int32(indent)
-            break
-    L.pos = pos
-
-
-def _handleHexChar(L: mut @ Lexer, xi: mut @ nint, position: Trange[0, 4]):
-    with let:
-        c = ch(L, L.pos)
-    if c >= char('0') and c <= char('9'): xi <<= (xi << 4) | (ord(c) - ord(char('0')))
-    elif c >= char('a') and c <= char('f'): xi <<= (xi << 4) | (ord(c) - ord(char('a')) + 10)
-    elif c >= char('A') and c <= char('F'): xi <<= (xi << 4) | (ord(c) - ord(char('A')) + 10)
-    else:
-        if position <= 1: L._error(L.pos, string("expected a hex digit"))
-        return
-    L.pos += 1
-
-
-def _skip(L: mut @ Lexer, tok: mut @ Token):
-    ## Everything that is not a token. `tok.indent` comes out of here: it is the
-    ## column of the first token on a line and -1 for every other token, which
-    ## is the single input the generated parser's `IndClass` is computed from.
-    with var:
-        pos = copy(L.pos)
-    tok.spacing.excl(TokSpacing.tsLeading)
-    while True:
-        with let:
-            c = ch(L, pos)
-        if c == char(' '):
-            pos += 1
-            tok.spacing.incl(TokSpacing.tsLeading)
-        elif c == char('\t'):
-            L._error(pos, string("tabs are not allowed, use spaces instead"))
-            pos += 1
-        elif c == char('\r') or c == char('\n'):
-            pos = _handleCRLF(L, pos)
-            with var:
-                indent = nint(0)
-            while True:
-                if ch(L, pos) == char(' '):
-                    pos += 1
-                    indent += 1
-                elif ch(L, pos) == char('#') and ch(L, pos + 1) == char('['):
-                    L.pos = pos
-                    _skipMultiLineComment(L, tok, pos + 2, False)
-                    pos = L.pos.copy()
-                else:
-                    break
-            tok.spacing.excl(TokSpacing.tsLeading)
-            if ch(L, pos) > char(' ') and (ch(L, pos) != char('#') or ch(L, pos + 1) == char('#')):
-                tok.indent = int32(indent)
-                L.currLineIndent = int32(indent)
-                break
-        elif c == char('#'):
-            if ch(L, pos + 1) == char('#'): break  # a doc comment is a token
-            if ch(L, pos + 1) == char('['):
-                L.pos = pos
-                _skipMultiLineComment(L, tok, pos + 2, False)
-                pos = L.pos.copy()
-            else:
-                while ch(L, pos) != char('\r') and ch(L, pos) != char('\n') and ch(L, pos) != char('\x00'):
-                    pos += 1
-        else:
-            break  # end of file leaves the loop too
-    L.pos = pos
-
-with const:
-    KeywordLow = TokKind.tkAddr
-    KeywordHigh = TokKind.tkYield
-
-    OpChars = Tset[char](char('+'), char('-'), char('*'), char('/'), char('\\'), char('<'), char('>'), char('!'), char('?'), char('^'), char('.'), char('|'), char('='), char('%'), char('&'), char('$'), char('@'), char('~'), char(':'))
-    SymChars = Tset[char](inrange(char('a'), char('z')), inrange(char('A'), char('Z')), inrange(char('0'), char('9')), inrange(char('\x80'), char('\xff')))
-    SymStartChars = Tset[char](inrange(char('a'), char('z')), inrange(char('A'), char('Z')), inrange(char('\x80'), char('\xff')))
-    UnicodeOperatorStartChars = Tset[char](char('\xc2'), char('\xc3'), char('\xe2'))
-    ## `∙ ∘ × ★ ☆ ⊗ ⊘ ⊙ ⊛ ⊠ ⊡ ∩ ∧ ⊓ ⟑ ⟇ ⩓ ⩔ ■ □ ± ⊕ ⊖ ⊞ ⊟ ∪ ∨ ⊔` all start
-    ## with one of these three bytes.
-    _UnaryMinusWhitelist = Tset[char](char(' '), char('\t'), char('\n'), char('\r'), char(','), char(';'), char('('), char('['), char('{'))
-
-    _MulPred = 9
-    _PlusPred = 8
-
-# ---------------------------------------------------------------------------
-# Buffer access
-#
-# Nim's lexer reads from a sentinel-terminated buffer, so it may peek one or
-# two characters past the token without a bounds check. `ch` gives us the same
-# freedom over a plain string: everything past the end reads as '\0', which is
-# also what the real lexer's end-of-file sentinel is.
-# ---------------------------------------------------------------------------
-
-
-def _str(c: char) -> string:
-    """{.inline.}"""
-    result = string("")
-    result.add(c)
-    return result
-
-
-def _charAt(buf: string, i: nint) -> char:
-    """{.inline.}"""
-    return buf[i] if i >= 0 and i < buf.len else char('\x00')
-
-
-def ch(L: Lexer, i: nint) -> char:
-    """{.inline.}"""
-    return _charAt(L.buf, i)
-
-# ---------------------------------------------------------------------------
-# Identifiers and keywords
-# ---------------------------------------------------------------------------
-
-
-def nimIdentNormalize(s: string) -> string:
-    ## Nim's identifier equality made explicit: the first character counts as
-    ## written, the rest is lowercased and underscores drop out. The lexer does
-    ## not use it; the differential tools compare identifiers with it, because
-    ## Nim's identifier cache cannot report the spelling it saw.
-    result = string("")
-    if s.len > 0: result.add(s[0])
-    with var:
-        i = nint(1)
-    while i < s.len:
-        with let:
-            c = s[i]
-        if c == char('_'): pass
-        elif c >= char('A') and c <= char('Z'): result.add(chr(ord(c) - ord(char('A')) + ord(char('a'))))
-        else: result.add(c)
-        i += 1
-    return result
-
-# ---------------------------------------------------------------------------
-# Unicode operators
-# ---------------------------------------------------------------------------
-
-
-class _UnicodeOprPred(NIntEnum):
-    uopNone = auto()
-    uopMul = auto()
-    uopAdd = auto()
-
-
-def unicodeOprLen(buf: string, pos: nint) -> tuple[nint, _UnicodeOprPred]:
-    ## Length and precedence class of the unicode operator at `pos`, or
-    ## `(0, uopNone)`. A byte in `UnicodeOperatorStartChars` that does not begin
-    ## one of these is an ordinary identifier character, which is the whole
-    ## reason this has to be consulted while scanning a symbol.
-    result = (0, _UnicodeOprPred.uopNone)
-    match _charAt(buf, pos):
-        case _ if _charAt(buf, pos) == char('\xe2'):
-            with let:
-                b1 = _charAt(buf, pos + 1)
-                b2 = _charAt(buf, pos + 2)
-            if b1 == char('\x88'):
-                if b2 == char('\x98') or b2 == char('\x99') or b2 == char('\xa7') or b2 == char('\xa9'):
-                    result = (3, _UnicodeOprPred.uopMul)  # ∘ ∙ ∧ ∩
-                elif b2 == char('\xa8') or b2 == char('\xaa'):
-                    result = (3, _UnicodeOprPred.uopAdd)  # ∨ ∪
-            elif b1 == char('\x8a'):
-                if b2 == char('\x93') or b2 == char('\x97') or b2 == char('\x98') or b2 == char('\x99') or b2 == char('\x9b') or b2 == char('\xa0') or b2 == char('\xa1'):
-                    result = (3, _UnicodeOprPred.uopMul)  # ⊓ ⊗ ⊘ ⊙ ⊛ ⊠ ⊡
-                elif b2 == char('\x94') or b2 == char('\x95') or b2 == char('\x96') or b2 == char('\x9e') or b2 == char('\x9f'):
-                    result = (3, _UnicodeOprPred.uopAdd)  # ⊔ ⊕ ⊖ ⊞ ⊟
-            elif b1 == char('\x96'):
-                if b2 == char('\xa0') or b2 == char('\xa1'): result = (3, _UnicodeOprPred.uopMul)  # ■ □
-            elif b1 == char('\x98'):
-                if b2 == char('\x85') or b2 == char('\x86'): result = (3, _UnicodeOprPred.uopMul)  # ★ ☆
-            elif b1 == char('\x9f'):
-                if b2 == char('\x87') or b2 == char('\x91'): result = (3, _UnicodeOprPred.uopMul)  # ⟇ ⟑
-            elif b1 == char('\xa9'):
-                if b2 == char('\x93') or b2 == char('\x94'): result = (3, _UnicodeOprPred.uopMul)  # ⩓ ⩔
-        case _ if _charAt(buf, pos) == char('\xc2'):
-            if _charAt(buf, pos + 1) == char('\xb1'): result = (2, _UnicodeOprPred.uopAdd)  # ±
-        case _ if _charAt(buf, pos) == char('\xc3'):
-            if _charAt(buf, pos + 1) == char('\x97'): result = (2, _UnicodeOprPred.uopMul)  # ×
-        case _: pass
-    return result
-
-# ---------------------------------------------------------------------------
-# Operator classification -- lexer-level in Nim, and the parser runtime needs
-# all of it.
-# ---------------------------------------------------------------------------
-
-
-def getPrecedence(tok: Token) -> nint:
-    ## Nim computes an operator's precedence from its spelling, which is why the
-    ## grammar's `binary(...)` takes this as a parameter rather than baking a
-    ## precedence table into the generated parser.
-    match tok.kind:
-        case TokKind.tkOpr:
-            with let:
-                s = tok.s
-            if s.len == 0: return -10
-            with let:
-                last = s[s.len - 1]
-            if s.len > 1 and last == char('>') and (s[s.len - 2] == char('-') or s[s.len - 2] == char('~') or s[s.len - 2] == char('=')):
-                return 0  # arrow-like
-            with let:
-                asgn = last == char('=')
-            match s[0]:
-                case _ if s[0] == char('$') or s[0] == char('^'): result = (1 if asgn else 10)
-                case _ if s[0] == char('*') or s[0] == char('%') or s[0] == char('/') or s[0] == char('\\'): result = (1 if asgn else _MulPred)
-                case _ if s[0] == char('~'): result = 8
-                case _ if s[0] == char('+') or s[0] == char('-') or s[0] == char('|'): result = (1 if asgn else _PlusPred)
-                case _ if s[0] == char('&'): result = (1 if asgn else 7)
-                case _ if s[0] == char('=') or s[0] == char('<') or s[0] == char('>') or s[0] == char('!'): result = 5
-                case _ if s[0] == char('.'): result = (1 if asgn else 6)
-                case _ if s[0] == char('?'): result = 2
-                case _ if s[0] == char('\xc2') or s[0] == char('\xc3') or s[0] == char('\xe2'):
-                    if asgn:
-                        result = 1
-                    else:
-                        with let:
-                            (n, pred) = unicodeOprLen(s, 0)
-                        if n != 0: result = (_MulPred if pred == _UnicodeOprPred.uopMul else _PlusPred)
-                        else: result = 2
-                case _: result = (1 if asgn else 2)
-        case TokKind.tkDiv | TokKind.tkMod | TokKind.tkShl | TokKind.tkShr: result = 9
-        case TokKind.tkDotDot: result = 6
-        case TokKind.tkIn | TokKind.tkNotin | TokKind.tkIs | TokKind.tkIsnot | TokKind.tkOf | TokKind.tkAs | TokKind.tkFrom: result = 5
-        case TokKind.tkAnd: result = 4
-        case TokKind.tkOr | TokKind.tkXor | TokKind.tkPtr | TokKind.tkRef: result = 3
-        case _: result = -10
-    return result
-
-# ---------------------------------------------------------------------------
-# The generated automata
-# ---------------------------------------------------------------------------
-
-
 def _hexVal(c: char) -> nint:
     """{.inline.}"""
     if c >= char('0') and c <= char('9'): return ord(c) - ord(char('0'))
@@ -1303,7 +1138,7 @@ def _numberValue(L: mut @ Lexer, tok: mut @ Token, start: nint):
         with let:
             limit = u64(0xffffffffffffffff) if tok.kind == TokKind.tkUIntLit or tok.kind == TokKind.tkUInt64Lit else u64(0x8000000000000000) if negative else u64(0x7fffffffffffffff)
         if overflow or xi > limit:
-        # Nim's third stage has rewound to the start of the digits
+            # Nim's third stage has rewound to the start of the digits
             L._error(start, string("number out of range: '") + _litNumText(L, start) + string("'"))
             return
         # negated as `uint64`: `xi` may be `2^63`, whose signed negation
@@ -1343,7 +1178,7 @@ def _scanNumber(L: mut @ Lexer, tok: mut @ Token):
             d = start + 1 if ch(L, start) == char('-') else start
         if ch(L, d) == char('0') and ch(L, d + 1) == char('O'):
             L._error(d + 1, _litNumText(L, d) + string(" is an invalid int literal; For octal literals use the '0o' prefix."))
-    # plugexpand: `lex L.buf, pos:` (line 446), expanded
+    # plugexpand: `lex L.buf, pos:` (line 449), expanded
     with var:
         tmp6 = 1
         tmp8 = 0
@@ -1585,7 +1420,7 @@ def _symbolKind(s: string, pos: mut @ nint) -> TokKind:
     ## the identifier pattern and wins because it comes first; `iffy` is longer
     ## than `if` and so is an identifier.
     result = TokKind.tkInvalid
-    # plugexpand: `lex s, pos:` (line 481), expanded
+    # plugexpand: `lex s, pos:` (line 484), expanded
     with var:
         tmp11 = 69
         tmp13 = 0
@@ -5012,9 +4847,126 @@ def _scanSymbol(L: mut @ Lexer, tok: mut @ Token):
 # Comments
 # ---------------------------------------------------------------------------
 
+
+def _skipMultiLineComment(L: mut @ Lexer, tok: mut @ Token, start: nint, isDoc: bool):
+    with var:
+        pos = copy(start)
+        toStrip = nint(0)
+    if isDoc:
+        toStrip = pos - L.lineStart
+        while ch(L, pos) == char(' '):
+            pos += 1
+            toStrip += 1
+        while ch(L, pos) == char('\r') or ch(L, pos) == char('\n'):
+            pos = _handleCRLF(L, pos)
+            toStrip = 0
+            while ch(L, pos) == char(' '):
+                pos += 1
+                toStrip += 1
+    with var:
+        nesting = nint(0)
+    while True:
+        with let:
+            c = ch(L, pos)
+        if c == char('#'):
+            if isDoc:
+                if ch(L, pos + 1) == char('#') and ch(L, pos + 2) == char('['): nesting += 1
+                tok.s.add(char('#'))
+            elif ch(L, pos + 1) == char('['):
+                nesting += 1
+            pos += 1
+        elif c == char(']'):
+            if isDoc:
+                if ch(L, pos + 1) == char('#') and ch(L, pos + 2) == char('#'):
+                    if nesting == 0:
+                        pos += 3
+                        break
+                    nesting -= 1
+                tok.s.add(char(']'))
+            elif ch(L, pos + 1) == char('#'):
+                if nesting == 0:
+                    pos += 2
+                    break
+                nesting -= 1
+            pos += 1
+        elif c == char('\r') or c == char('\n'):
+            pos = _handleCRLF(L, pos)
+            if isDoc:
+                tok.s.add(char('\n'))
+                with var:
+                    n = copy(toStrip)
+                while ch(L, pos) == char(' ') and n > 0:
+                    pos += 1
+                    n -= 1
+        elif c == char('\x00'):
+            L._error(pos, string("end of multiline comment expected"))
+            break
+        else:
+            if isDoc: tok.s.add(c)
+            pos += 1
+    L.pos = pos
+
+
+def _scanComment(L: mut @ Lexer, tok: mut @ Token):
+    ## Only doc comments get here: `skip` eats the ordinary ones. Consecutive
+    ## `##` lines become **one** token, and the indentation of the line after
+    ## the block is remembered in `indentAhead` for the token that follows.
+    with var:
+        pos = copy(L.pos)
+    tok.kind = TokKind.tkComment
+    if ch(L, pos + 2) == char('['):
+        _skipMultiLineComment(L, tok, pos + 3, True)
+        return
+    pos += 2
+    with var:
+        toStrip = nint(0)
+        stripInit = False
+    while True:
+        if not stripInit:
+            while ch(L, pos) == char(' '):
+                pos += 1
+                toStrip += 1
+            if ch(L, pos) == char('\r') or ch(L, pos) == char('\n'): toStrip = 0
+            else: stripInit = True
+        while ch(L, pos) != char('\r') and ch(L, pos) != char('\n') and ch(L, pos) != char('\x00'):
+            tok.s.add(L.buf[pos])
+            pos += 1
+        if ch(L, pos) == char('\x00'): break
+        pos = _handleCRLF(L, pos)
+        with var:
+            indent = nint(0)
+        while ch(L, pos) == char(' '):
+            pos += 1
+            indent += 1
+        if ch(L, pos) == char('#') and ch(L, pos + 1) == char('#'):
+            tok.s.add(char('\n'))
+            pos += 2
+            if stripInit:
+                with var:
+                    n = copy(toStrip)
+                while ch(L, pos) == char(' ') and n > 0:
+                    pos += 1
+                    n -= 1
+        else:
+            if ch(L, pos) > char(' '): L.indentAhead = int32(indent)
+            break
+    L.pos = pos
+
 # ---------------------------------------------------------------------------
 # String and character literals
 # ---------------------------------------------------------------------------
+
+
+def _handleHexChar(L: mut @ Lexer, xi: mut @ nint, position: Trange[0, 4]):
+    with let:
+        c = ch(L, L.pos)
+    if c >= char('0') and c <= char('9'): xi <<= (xi << 4) | (ord(c) - ord(char('0')))
+    elif c >= char('a') and c <= char('f'): xi <<= (xi << 4) | (ord(c) - ord(char('a')) + 10)
+    elif c >= char('A') and c <= char('F'): xi <<= (xi << 4) | (ord(c) - ord(char('A')) + 10)
+    else:
+        if position <= 1: L._error(L.pos, string("expected a hex digit"))
+        return
+    L.pos += 1
 
 
 def _addUnicodeCodePoint(s: mut @ string, i: nint):
@@ -5178,13 +5130,13 @@ def _getString(L: mut @ Lexer, tok: mut @ Token, mode: _StringMode):
                     pos += 1
                     break
             elif c == char('\r') or c == char('\n') or c == char('\x00'):
-            # at `L.pos`: the opening quote, or behind the last escape sequence
+                # at `L.pos`: the opening quote, or behind the last escape sequence
                 L._error(L.pos, string("closing \" expected"))
                 break
             elif c == char('\\') and mode == _StringMode.smNormal:
                 L.pos = pos
                 _getEscapedChar(L, tok)
-                pos = L.pos.copy()
+                pos = copy(L.pos)
             else:
                 tok.s.add(c)
                 pos += 1
@@ -5209,7 +5161,7 @@ def _getCharacter(L: mut @ Lexer, tok: mut @ Token):
     if ch(L, L.pos) == char('\''):
         L.pos += 1
     elif startPos > 0 and ch(L, startPos - 1) == char('`'):
-    # `'` as an operator name inside backticks
+        # `'` as an operator name inside backticks
         tok.s = string("'")
         L.pos = startPos + 1
     else:
@@ -5255,6 +5207,55 @@ def _getOperator(L: mut @ Lexer, tok: mut @ Token):
 # Whitespace, and the indentation it produces
 # ---------------------------------------------------------------------------
 
+
+def _skip(L: mut @ Lexer, tok: mut @ Token):
+    ## Everything that is not a token. `tok.indent` comes out of here: it is the
+    ## column of the first token on a line and -1 for every other token, which
+    ## is the single input the generated parser's `IndClass` is computed from.
+    with var:
+        pos = copy(L.pos)
+    tok.spacing.excl(TokSpacing.tsLeading)
+    while True:
+        with let:
+            c = ch(L, pos)
+        if c == char(' '):
+            pos += 1
+            tok.spacing.incl(TokSpacing.tsLeading)
+        elif c == char('\t'):
+            L._error(pos, string("tabs are not allowed, use spaces instead"))
+            pos += 1
+        elif c == char('\r') or c == char('\n'):
+            pos = _handleCRLF(L, pos)
+            with var:
+                indent = nint(0)
+            while True:
+                if ch(L, pos) == char(' '):
+                    pos += 1
+                    indent += 1
+                elif ch(L, pos) == char('#') and ch(L, pos + 1) == char('['):
+                    L.pos = pos
+                    _skipMultiLineComment(L, tok, pos + 2, False)
+                    pos = copy(L.pos)
+                else:
+                    break
+            tok.spacing.excl(TokSpacing.tsLeading)
+            if ch(L, pos) > char(' ') and (ch(L, pos) != char('#') or ch(L, pos + 1) == char('#')):
+                tok.indent = int32(indent)
+                L.currLineIndent = int32(indent)
+                break
+        elif c == char('#'):
+            if ch(L, pos + 1) == char('#'): break  # a doc comment is a token
+            if ch(L, pos + 1) == char('['):
+                L.pos = pos
+                _skipMultiLineComment(L, tok, pos + 2, False)
+                pos = copy(L.pos)
+            else:
+                while ch(L, pos) != char('\r') and ch(L, pos) != char('\n') and ch(L, pos) != char('\x00'):
+                    pos += 1
+        else:
+            break  # end of file leaves the loop too
+    L.pos = pos
+
 # ---------------------------------------------------------------------------
 # The main dispatch
 # ---------------------------------------------------------------------------
@@ -5294,7 +5295,7 @@ def next(L: mut @ Lexer, tok: mut @ Token):
     elif c == char('#'):
         _scanComment(L, tok)
     elif c == char('*'):
-    # `*:` is two tokens in `var v*: int`, and one operator in `a *: b`
+        # `*:` is two tokens in `var v*: int`, and one operator in `a *: b`
         if ch(L, L.pos + 1) == char(':') and ch(L, L.pos + 2) not in OpChars:
             L._endOperator(tok, L.pos, L.pos)
         else:
@@ -5369,7 +5370,7 @@ def next(L: mut @ Lexer, tok: mut @ Token):
             tok.s = string("_")
             L._error(L.pos, string("invalid token: _"))
     elif c == char('"'):
-    # `foo"bar"` is a generalized string literal, `foo "bar"` is a command
+        # `foo"bar"` is a generalized string literal, `foo "bar"` is a command
         with let:
             mode = _StringMode.smGeneralized if L.pos > 0 and ch(L, L.pos - 1) in SymChars else _StringMode.smNormal
         _getString(L, tok, mode)
