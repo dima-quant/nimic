@@ -453,6 +453,4 @@ def newLLFuncType(retType: LLType, params: seq[LLType], isVarargs=False) -> LLTy
 
 def newLLBinInstr(res: LLValue, binOp: string, binLhs: LLValue, binRhs: LLValue, dbgLoc=string("")) -> LLInstr:
     ## Construct a binary-op instruction.
-    result = LLInstr()
-    _ = LLInstr(result=res, dbgLoc=dbgLoc, kind=LLInstrKind.llBinOp, binOp=binOp, binLhs=binLhs, binRhs=binRhs)
-    return result
+    return LLInstr(result=res, dbgLoc=dbgLoc, kind=LLInstrKind.llBinOp, binOp=binOp, binLhs=binLhs, binRhs=binRhs)

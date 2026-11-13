@@ -1191,13 +1191,13 @@ def generateLLVMCode(s: mut @ State, inp: string, outp: string, flags: Tset[LLVM
                 if i > 0: gList.add(string(", "))
                 gList.add(string("!") + str(gid))
             with let:
-                globalsId = c.addMetadata(string("!{") + gList + string("}"))
+                globalsId = _addMetadata(c, string("!{") + gList + string("}"))
                 oldCu = c.debug.metadata[c.debug.cuId].copy()
             c.debug.metadata[c.debug.cuId] = oldCu[inrange(0, back(2))] + string(", globals: !") + str(globalsId) + string(", splitDebugInlining: false)")
 
         with let:
-            dwarfId = c.addMetadata(string("!{i32 7, !\"Dwarf Version\", i32 4}"))
-            diVersionId = c.addMetadata(string("!{i32 2, !\"Debug Info Version\", i32 3}"))
+            dwarfId = _addMetadata(c, string("!{i32 7, !\"Dwarf Version\", i32 4}"))
+            diVersionId = _addMetadata(c, string("!{i32 2, !\"Debug Info Version\", i32 3}"))
         c.module.cuId = c.debug.cuId
         c.module.dwarfVerId = dwarfId
         c.module.diVerId = diVersionId

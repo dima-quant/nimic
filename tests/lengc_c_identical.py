@@ -1,15 +1,17 @@
 """Ad hoc check (not part of run_selftests.py / verify_transpiled.py: it takes 10–30 minutes): lengc converted by
-nimicgen runs in Python and must write the same C as nimony's compiled lengc, byte for byte, for every input.
+nimicgen runs in Python and must write the same C (or LLVM IR, `--backend llvm`) as nimony's compiled lengc, byte
+for byte, for every input.
 
     .venv/bin/python tests/lengc_c_identical.py                      # every *.c.nif of the run directory
     .venv/bin/python tests/lengc_c_identical.py cpuf8djhu sysvq0asl  # some inputs (module names)
     .venv/bin/python tests/lengc_c_identical.py --jobs 4 --timeout 900
+    .venv/bin/python tests/lengc_c_identical.py --backend llvm       # `lengc llvm`: the .ll files
 
 Inputs (local, not in git): `.scratch/lengc/run/*.c.nif` (with their `.idx.nif`), produced by nimony for its own
-modules. The Python lengc: `.scratch/lengc/pkg` (nimicgen's lengc output in `nnimony/lengc/` next to a copy of
-`nnimony/`; regenerate with `.scratch/lengc/gen.sh`, copy `gen/lengc/*.py` there). The compiled lengc: nimony's
-`bin/lengc` at the pinned commit (`--lengc`, default `$NIMONY_NIMIC_DIR/bin/lengc`, else
-`.scratch/repin/nimony_master/bin/lengc`). Phase C milestone (2026-11-10): all 61 inputs byte-identical."""
+modules. The Python lengc: the project's `nnimony/lengc/` (`--pkg`: another directory holding an `nnimony/`, e.g. a
+copy with a regenerated lengc). The compiled lengc: nimony's `bin/lengc` at the pinned commit (`--lengc`, default
+`$NIMONY_NIMIC_DIR/bin/lengc`, else `.scratch/repin/nimony_master/bin/lengc`). Phase C milestones: all 61 inputs
+byte-identical in C (2026-11-10)."""
 from __future__ import annotations
 import argparse
 import os
@@ -23,7 +25,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RUN = ROOT / ".scratch" / "lengc" / "run"
-PKG = ROOT / ".scratch" / "lengc" / "pkg"
+PKG = ROOT
+EXT = {"c": "c", "llvm": "ll"}  # backend -> extension of its output
 PY = ROOT / ".venv" / "bin" / "python"
 
 
@@ -32,24 +35,26 @@ def default_lengc() -> Path:
     return Path(base) / "bin" / "lengc" if base else ROOT / ".scratch" / "repin" / "nimony_master" / "bin" / "lengc"
 
 
-def check(name: str, run: Path, pkg: Path, lengc: Path, out: Path, timeout: int) -> tuple[str, float, str]:
+def check(name: str, run: Path, pkg: Path, lengc: Path, out: Path, timeout: int,
+          backend: str = "c") -> tuple[str, float, str]:
     """One input through both lengcs; (name, Python seconds, result)."""
     nif = run / f"{name}.c.nif"
     nim_dir, py_dir = out / "nim" / name, out / "py" / name
     nim_dir.mkdir(parents=True), py_dir.mkdir(parents=True)
-    nim = subprocess.run([str(lengc), "c", f"--nimcache:{nim_dir}", str(nif)], cwd=run, capture_output=True,
+    nim = subprocess.run([str(lengc), backend, f"--nimcache:{nim_dir}", str(nif)], cwd=run, capture_output=True,
                          text=True)
     if nim.returncode != 0:
         return name, 0.0, f"compiled lengc failed: {(nim.stderr or nim.stdout).strip()[-200:]}"
-    env = dict(os.environ, PYTHONPATH=os.pathsep.join((str(ROOT / "src"), ".")))
+    # both run in the input directory: a relative source path in the NIF is made absolute against it (DIFile)
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join((str(ROOT / "src"), str(pkg.resolve()))))
     start = time.monotonic()
     try:
-        py = subprocess.run([str(PY), "-m", "nnimony.lengc.lengc", "c", f"--nimcache:{py_dir}", str(nif)], cwd=pkg,
+        py = subprocess.run([str(PY), "-m", "nnimony.lengc.lengc", backend, f"--nimcache:{py_dir}", str(nif)], cwd=run,
                             env=env, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return name, time.monotonic() - start, f"TIMEOUT after {timeout}s"
     took = time.monotonic() - start
-    produced, expected = py_dir / f"{name}.c", nim_dir / f"{name}.c"
+    produced, expected = py_dir / f"{name}.{EXT[backend]}", nim_dir / f"{name}.{EXT[backend]}"
     if py.returncode != 0 or not produced.exists():
         last = [line for line in (py.stderr or py.stdout).splitlines() if line.strip(" ~^")]
         return name, took, f"FAIL: {last[-1][:200] if last else f'exit {py.returncode}'}"
@@ -67,6 +72,7 @@ def main() -> int:
     parser.add_argument("--lengc", type=Path, default=default_lengc(), help="nimony's compiled lengc")
     parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     parser.add_argument("--timeout", type=int, default=1800, help="seconds per input in Python")
+    parser.add_argument("--backend", choices=sorted(EXT), default="c", help="lengc's command: c (default) or llvm")
     args = parser.parse_args()
     for needed in (args.run, args.pkg / "nnimony" / "lengc", args.lengc):
         if not needed.exists():
@@ -74,10 +80,10 @@ def main() -> int:
             return 2
     names = args.names or sorted((p.name[:-len(".c.nif")] for p in args.run.glob("*.c.nif")
                                   if not p.name.endswith(".idx.nif")), key=lambda n: (args.run / f"{n}.c.nif").stat().st_size)
-    out = Path(tempfile.mkdtemp(prefix="lengc_c_identical_"))
+    out = Path(tempfile.mkdtemp(prefix=f"lengc_{args.backend}_identical_"))
     try:
         with ThreadPoolExecutor(args.jobs) as pool:
-            results = list(pool.map(lambda n: check(n, args.run, args.pkg, args.lengc, out, args.timeout), names))
+            results = list(pool.map(lambda n: check(n, args.run, args.pkg, args.lengc, out, args.timeout, args.backend), names))
     finally:
         shutil.rmtree(out, ignore_errors=True)
     for name, took, result in results:

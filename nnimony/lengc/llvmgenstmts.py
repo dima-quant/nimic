@@ -534,7 +534,7 @@ def _genKeepOverflowLLVM(c: mut @ LLVMCode, n: mut @ Cursor):
     emit_(c, LLInstr(kind=LLInstrKind.llZext, result=nobRes, castOp=string("zext"), castSrc=ovfRes, castDstType=c.prim.i8_))
     emitStore(c, nobRes, llGlobalRef(string("LENGC_OVF_"), c.prim.ptrT))
 
-    _declareExtern(c, LLExternDecl(name=intrinsic, retType=aggTyp, params=seq([typ, typ])))
+    _declareExtern(c, LLExternDecl(name=intrinsic, retType=aggTyp, params=seq[LLType]([typ, typ])))
 
 
 def _genEmitStmtLLVM(c: mut @ LLVMCode, n: mut @ Cursor):

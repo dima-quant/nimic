@@ -3350,6 +3350,35 @@ class TestNTypes(unittest.TestCase):
         self.assertIs(g["Node"], ptr[g["Tok"]])
         self.assertEqual((g["t"].name, g["t"].next.name), ("a", "b"))
 
+    def test_forward_field_of_named_target_class(self):
+        """A field naming `X` before `@ptr class X(T): pass` / `@ref class X(T): pass` (nifler2's linkedtok:
+        `LinkedToken.down: Node`, then `@ptr class Node(LinkedToken): pass`) gets ptr[T] / ref[T] as its type when X
+        is defined, as a forward field of another class does: its zero value is nil, also in alloc'd memory."""
+        src = textwrap.dedent('''
+            from nimic.ntypes import *
+            class Cell(Object):
+                v: nint
+                down: Node
+                up: Up
+            @ptr
+            class Node(Cell):
+                pass
+            @ref
+            class Up(Cell):
+                pass
+            fresh = Cell()
+            cells = cast[ptr[UncheckedArray[Cell]]](alloc0(sizeof(Cell) * 2))
+            cell_down_nil = isNil(cells[1].down)
+            dealloc(cells)
+        ''')
+        g = {"__name__": "_t_forward_named_target"}
+        exec(compile(src, "<forward_named_target>", "exec"), g)
+        self.assertIs(g["Cell"]._n_field_types["down"], ptr[g["Cell"]])
+        self.assertIs(g["Cell"]._n_field_types["up"], ref[g["Cell"]])
+        self.assertTrue(isNil(g["fresh"].down))
+        self.assertIsNone(g["fresh"].up)
+        self.assertTrue(g["cell_down_nil"])
+
     def test_transpile_ref_identity(self):
         """rule:refident: `a is b` with neither operand None is reference identity, Nim's system.`==`(a, b) (llvmcodegen's
         typeEq fast path), `a is not b` its negation; `is None` stays `== nil` (rule:nilident)."""
@@ -4746,6 +4775,97 @@ class TestNTypes(unittest.TestCase):
         v, w = FdV(), FdV(kind=FdK.a)
         self.assertEqual((v.kind, v.name, v.y, w.kind, w.x, w.name), (FdK.b, "v", 22, FdK.a, 11, "v"))
         self.assertEqual(FdV(kind=FdK.a, x=nint(1)).x, 1)
+
+    def test_nested_object_python_fields_zero(self):
+        """An object field and an array element of an object type are views of their parent's struct; their
+        Python-held fields (seq, string, Table) still have Nim's zero value: empty, each value its own (lengc's
+        `LLVMCode.debug: DebugInfo` with `diBasicTypeCache: Table[string, int]` used to have no such field)."""
+        class NzInner(Object):
+            n: nint
+            names: seq[string]
+            s: string
+            t: Table[string, nint]
+            k: nint
+
+        class NzOuter(Object):
+            a: nint
+            inner: NzInner
+            items: array[2, NzInner]
+
+        for o in (NzOuter(), NzOuter(a=nint(1)), default(NzOuter)):
+            self.assertEqual((len(o.inner.names), o.inner.s, len(o.inner.t), o.inner.n, o.inner.k), (0, "", 0, 0, 0))
+            self.assertEqual((len(o.items[0].names), len(o.items[1].t)), (0, 0))
+        o, p = NzOuter(), NzOuter()
+        o.inner.names.add(string("x"))
+        o.inner.t[string("a")] = nint(1)
+        o.items[1].s.add("y")
+        self.assertEqual((len(o.inner.names), len(o.inner.t), o.items[1].s, o.items[0].s), (1, 1, "y", ""))
+        self.assertEqual((len(p.inner.names), len(p.inner.t), p.items[1].s), (0, 0, ""))
+        class NzCell(Object):  # pointer fields of a cell in alloc'd memory stay nil, not a constructed object
+            v: nint
+            down: ptr[NzInner]
+        cells = cast[ptr[UncheckedArray[NzCell]]](alloc0(sizeof(NzCell) * 2))
+        self.assertTrue(isNil(cells[1].down))
+        dealloc(cells)
+        q = o.copy()  # a copy takes the given fields (path C copies them), not new zero values
+        q.inner.names.add(string("z"))
+        self.assertEqual((len(q.inner.names), len(o.inner.names), q.inner.t[string("a")], q.items[1].s), (2, 1, 1, "y"))
+
+    def test_seq_moves_keep_nested_python_data(self):
+        """A seq's elements live in one struct buffer; growing it, deleting from it or copying it rebuilds the
+        element views on the moved bytes. The data held on the Python side comes along at every depth: a variant
+        branch's string, a nested object's string and seq, an array of objects in the element (lengc's
+        `LLGlobal.initVal: LLValue` lost `intText` when `module.globals` grew)."""
+        class SkK(NIntEnum):
+            a = auto()
+            b = auto()
+
+        class SkV(Object):
+            n: nint
+            kind: SkK
+            match kind:
+                case SkK.a:
+                    text: string
+                case SkK.b:
+                    k: nint
+
+        class SkInner(Object):
+            s: string
+            names: seq[string]
+
+        class SkG(Object):
+            name: string
+            val: SkV
+            inner: SkInner
+            pair: array[2, SkV]
+
+        def mk(i: int) -> SkG:
+            g = SkG(name=string(f"g{i}"), val=SkV(kind=SkK.a, text=string(f"t{i}")))
+            g.inner.s.add(f"s{i}")
+            g.inner.names.add(string(f"n{i}"))
+            g.pair[1] = SkV(kind=SkK.a, text=string(f"p{i}"))
+            return g
+
+        def state(s) -> list:
+            return [(str(g.name), str(g.val.text), str(g.inner.s), [str(x) for x in g.inner.names], str(g.pair[1].text))
+                    for g in s]
+
+        vs = seq[SkV]()
+        for i in range(5):  # grows at 1, 2, 4
+            vs.add(SkV(kind=SkK.a, text=string(f"v{i}")))
+        self.assertEqual([str(v.text) for v in vs], ["v0", "v1", "v2", "v3", "v4"])
+        gs = seq[SkG]()
+        for i in range(5):
+            gs.add(mk(i))
+        expected = [(f"g{i}", f"t{i}", f"s{i}", [f"n{i}"], f"p{i}") for i in range(5)]
+        self.assertEqual(state(gs), expected)
+        gs.delete(1)
+        self.assertEqual(state(gs), expected[:1] + expected[2:])
+        arr = array[2, SkG]()
+        arr[0] = mk(7)
+        arr2 = array[2, SkG]()
+        arr2 <<= arr
+        self.assertEqual(state([arr2[0]]), [("g7", "t7", "s7", ["n7"], "p7")])
 
     def test_source_checks_run_at_import(self):
         """The transpiler's source checks run when a nimic module runs, as the main program or imported, in every

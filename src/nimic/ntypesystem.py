@@ -2306,8 +2306,11 @@ def _n_resolve_forward_fields(cls: type) -> None:
     for key, field_cls in cls._n_field_types.items():
         if isinstance(field_cls, type) and field_cls.__dict__.get('_n_forward', False):
             _n_forward_fields.setdefault((cls.__module__, field_cls.__name__), []).append((cls, key))
-    for owner, key in _n_forward_fields.pop((cls.__module__, cls.__name__), ()):
+    resolved = _n_forward_fields.pop((cls.__module__, cls.__name__), ())
+    for owner, key in resolved:
         owner._n_field_types[key] = cls
+    if resolved:
+        cls._n_forward_owners = resolved  # rebound by _n_adopt when cls turns out to name ptr[T] / ref[T]
 
 
 
@@ -3958,7 +3961,25 @@ class _Object(Ntype):
         self = cls.__new__(cls)
         self._n_view = parent_elems[id]
         self._n_setup(value)
+        if value is None:
+            self._n_zero_python_fields()
         return self
+
+    def _n_zero_python_fields(self) -> None:
+        """The zero values of the Python-held fields (seq, string, Table, ...) the view doesn't have yet: a value
+        living in its parent's struct (an object field, an array element) is made by no constructor, and Nim's
+        zero value of it has them empty (lengc's `LLVMCode.debug.diBasicTypeCache`). Not for casts of raw memory:
+        a fresh empty seq on each cast would lose what was stored through another one. Only values: a pointer, ref or
+        proc field is nil, read from its slot (an arena cell's `down: Node` links, nifler2's linkedtok)."""
+        python_fields = getattr(type(self), '_n_python_fields', ())
+        field_types = getattr(type(self), '_n_field_types', {})
+        for name in self._n_fields:
+            if name in python_fields and name not in self.__dict__:
+                ft = field_types.get(name)
+                if isinstance(ft, type) and (issubclass(ft, pointer) or getattr(ft, '_n_is_ref', False)
+                                             or getattr(ft, '_n_is_calltype', False)):
+                    continue
+                super(_Object, self).__setattr__(name, _n_default_value(ft))
 
     def __del__(self):
         addr = getattr(self, '_n_owned_addr', None)
@@ -3972,6 +3993,8 @@ class _Object(Ntype):
         self = cls.__new__(cls)
         self._n_view = getattr(parent_elems, id)
         self._n_setup(value)
+        if value is None:
+            self._n_zero_python_fields()
         return self
 
     def _n_setup(self, value: Object | None = None) -> None:
@@ -5826,11 +5849,14 @@ def _n_named_target(cls: type) -> type | None:
 
 def _n_adopt(canonical: type, cls: type) -> type:
     """`@ref class X(T)` / `@ptr class X(T)` after `ref[T]` / `ptr[T]` was made: X is that class (Nim's alias), with
-    the methods X's body defines; the name X resolves to it."""
+    the methods X's body defines; the name X resolves to it, also in the fields that named X before it was defined
+    (nifler2's `LinkedToken.down: Node`, _n_resolve_forward_fields)."""
     for name, value in cls.__dict__.items():
         if name not in _n_class_machinery:
             setattr(canonical, name, value)
     DICT_OF_TYPES[cls.__name__] = canonical
+    for owner, key in cls.__dict__.get("_n_forward_owners", ()):
+        owner._n_field_types[key] = canonical
     return canonical
 
 
@@ -7381,19 +7407,68 @@ class string(_NIndexed, collections.UserString):
 def _n_carry_held_fields(target, source_cache: dict, offset: int = 0) -> None:
     """After element memory of `target` (seq/array) was written by a raw copy, rebuild its cached
     elements at index + offset from `source_cache` ({index: element}): ctypes fields come from the
-    target memory, Python-held fields (strings, refs) from the source elements."""
+    target memory, the data held on the Python side (strings, refs, seqs, at any depth: _n_carry_held)
+    from the source elements."""
     elem_type = getattr(target, "_n_type", None)
-    held = _n_python_held_fields(elem_type)
-    if not held:
+    if not _n_holds_python_data(elem_type):
         return
     for i, src in source_cache.items():
         if src is None:
             continue
         elem = elem_type._n_on_array(target._n_view, i + offset)
-        for name in held:
-            if name in src.__dict__:
-                elem.__dict__[name] = src.__dict__[name]
+        _n_carry_held(elem, src)
         target._n_cache[i + offset] = elem
+
+
+def _n_carry_held(dst: object, src: object) -> None:
+    """The data `src` holds on the Python side, into `dst`, a view rebuilt on a raw copy of src's bytes: its
+    Python-held fields (also a variant's active branch), and those of the objects and arrays of objects held in
+    its struct, at any depth (lengc's `LLGlobal.initVal: LLValue` keeps its `intText` when a seq grows)."""
+    held = _n_python_held_fields(type(dst))
+    for name in held:
+        if name in src.__dict__:
+            dst.__dict__[name] = src.__dict__[name]
+    for name, inner_src in src.__dict__.items():
+        if name in held or name.startswith("_n_"):
+            continue
+        inner = dst.__dict__.get(name)
+        if inner is None or type(inner) is not type(inner_src) or not _n_holds_python_data(type(inner_src)):
+            continue
+        if isinstance(inner_src, array):
+            _n_carry_held_fields(inner, dict(inner_src._n_cache))
+        else:
+            _n_carry_held(inner, inner_src)
+
+
+def _n_holds_python_data(cls: type) -> bool:
+    """Whether a value of `cls` (an Object or array type) held in struct memory has data on the Python side, which
+    a raw copy of its bytes doesn't move: Python-held fields of its own, or of an object or array of objects
+    held in its struct. Cached on the class."""
+    if not isinstance(cls, type) or not issubclass(cls, (_Object, array)):
+        return False
+    known = cls.__dict__.get("_n_python_data")
+    if known is None:
+        cls._n_python_data = False  # a value doesn't contain its own type (refs are held fields)
+        if issubclass(cls, array):
+            known = _n_holds_python_data(getattr(cls, "_n_type", None))
+        else:
+            known = bool(_n_python_held_fields(cls)) or any(
+                _n_holds_python_data(ft) for ft in getattr(cls, "_n_field_types", {}).values())
+        cls._n_python_data = known
+    return known
+
+
+def _n_slot_names(c_type: type) -> set:
+    """Names of the pointer slots (c_char_p strings, c_void_p refs) of a ctypes struct, also in its anonymous
+    members (a variant's union of branches)."""
+    anonymous = set(getattr(c_type, "_anonymous_", ()))
+    names = set()
+    for name, ct, *_ in c_type._fields_:
+        if name in anonymous:
+            names |= _n_slot_names(ct)
+        elif ct in (ctypes.c_char_p, ctypes.c_void_p):
+            names.add(name)
+    return names
 
 
 def _n_python_held_fields(cls: type) -> tuple:
@@ -7403,10 +7478,10 @@ def _n_python_held_fields(cls: type) -> tuple:
     if not isinstance(cls, type) or c_type is None:
         return ()
     try:
-        fields = c_type()._fields_
+        c_struct = c_type()
+        names = _n_slot_names(c_struct)
     except (TypeError, AttributeError):
         return ()
-    names = {name for name, ct, *_ in fields if ct in (ctypes.c_char_p, ctypes.c_void_p)}
     return tuple(names | set(getattr(cls, "_n_python_fields", ())))
 
 
